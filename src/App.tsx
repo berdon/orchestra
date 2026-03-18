@@ -428,8 +428,8 @@ export function App() {
                       </label>
                       <div className="composer__footer">
                         <p className="muted-copy">
-                          Messages sent here append to the live session transcript. In browser mode, responses come from the mock
-                          session adapter.
+                          Desktop mode sends prompts through real pi sessions over RPC. Browser mode still uses the mock session
+                          adapter.
                         </p>
                         <button className="primary-button" type="submit" disabled={isSubmitting || draftMessage.trim().length === 0}>
                           Send message
@@ -462,8 +462,8 @@ export function App() {
                 <ul className="bullet-list">
                   <li>Project switcher placeholder and stable left navigation</li>
                   <li>Runtime log surface in Settings</li>
-                  <li>Browser-backed mock adapter for session workflows</li>
-                  <li>Tauri command surface ready for real backend wiring</li>
+                  <li>Browser-backed mock adapter for preview/dev-in-browser workflows</li>
+                  <li>Tauri session controls wired to real pi session files and pi RPC turns</li>
                 </ul>
               </div>
 
@@ -474,7 +474,7 @@ export function App() {
                   <li>Projects and repositories</li>
                   <li>Task workflow lanes and lane history</li>
                   <li>Agents, roles, queues, and interruption semantics</li>
-                  <li>Real pi-agent-core integration</li>
+                  <li>Live RPC streaming, richer transcript metadata, and multi-session orchestration</li>
                 </ul>
               </div>
             </section>

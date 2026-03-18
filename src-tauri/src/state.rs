@@ -1,10 +1,10 @@
-use std::sync::Mutex;
+use std::{collections::HashSet, sync::Mutex};
 
-use crate::models::{LogEntry, SessionEvent, SessionRecord};
+use crate::models::LogEntry;
 
 pub struct AppState {
     pub logs: Mutex<Vec<LogEntry>>,
-    pub sessions: Mutex<Vec<SessionRecord>>,
+    subscribed_sessions: Mutex<HashSet<String>>,
 }
 
 pub fn now_iso() -> String {
@@ -13,15 +13,6 @@ pub fn now_iso() -> String {
 
 pub fn generate_id(prefix: &str) -> String {
     format!("{}-{}", prefix, chrono::Utc::now().timestamp_micros())
-}
-
-fn create_event(kind: &str, message: &str) -> SessionEvent {
-    SessionEvent {
-        id: generate_id("event"),
-        kind: kind.into(),
-        message: message.into(),
-        timestamp: now_iso(),
-    }
 }
 
 fn create_log(level: &str, target: &str, message: &str) -> LogEntry {
@@ -36,32 +27,16 @@ fn create_log(level: &str, target: &str, message: &str) -> LogEntry {
 
 impl AppState {
     pub fn new() -> Self {
-        let timestamp = now_iso();
-
         Self {
             logs: Mutex::new(vec![
-                create_log("info", "app.bootstrap", "Orchestra backend scaffold initialized"),
+                create_log("info", "app.bootstrap", "Orchestra backend initialized"),
                 create_log(
                     "info",
                     "session.backend",
-                    "Session command surface ready for create, resume, and interaction wiring",
+                    "Desktop mode now uses real pi session files plus pi --mode rpc for prompt execution",
                 ),
             ]),
-            sessions: Mutex::new(vec![SessionRecord {
-                id: generate_id("session"),
-                title: "Session-first spike".into(),
-                status: "idle".into(),
-                created_at: timestamp.clone(),
-                updated_at: timestamp,
-                subscribed: false,
-                events: vec![
-                    create_event("system", "Seed session created by the Orchestra backend scaffold."),
-                    create_event(
-                        "assistant",
-                        "This placeholder session exists so the Sessions UI can list, resume, subscribe, and interact immediately.",
-                    ),
-                ],
-            }]),
+            subscribed_sessions: Mutex::new(HashSet::new()),
         }
     }
 
@@ -71,15 +46,26 @@ impl AppState {
             logs.truncate(200);
         }
     }
-}
 
-pub fn assistant_reply(message: &str) -> String {
-    format!(
-        "Acknowledged: {}\n\nThis is the scaffold session backend. The app flow for create, resume, subscribe, and interaction is ready for real pi-agent-core integration.",
-        message
-    )
-}
+    pub fn set_session_subscription(&self, session_id: &str, subscribed: bool) -> Result<(), String> {
+        let mut sessions = self
+            .subscribed_sessions
+            .lock()
+            .map_err(|_| "Unable to access session subscription state".to_string())?;
 
-pub fn create_session_event(kind: &str, message: &str) -> SessionEvent {
-    create_event(kind, message)
+        if subscribed {
+            sessions.insert(session_id.to_string());
+        } else {
+            sessions.remove(session_id);
+        }
+
+        Ok(())
+    }
+
+    pub fn subscribed_session_ids(&self) -> Result<HashSet<String>, String> {
+        self.subscribed_sessions
+            .lock()
+            .map(|sessions| sessions.clone())
+            .map_err(|_| "Unable to access session subscription state".to_string())
+    }
 }

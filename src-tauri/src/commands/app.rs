@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     models::{AppInfo, LogEntry, SessionStorageInfo},
-    services::orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
+    services::pi_sessions::detect_session_context,
     state::AppState,
 };
 
@@ -26,13 +26,11 @@ pub fn get_logs(state: State<'_, AppState>) -> Vec<LogEntry> {
 
 #[tauri::command]
 pub fn get_session_storage_info(project_slug: Option<String>) -> Result<SessionStorageInfo, String> {
-    let root = default_orchestra_root()?;
-    let project_slug = sanitize_slug(project_slug.as_deref().unwrap_or("orchestra"));
-    let session_dir = project_session_dir(&root, &project_slug);
+    let context = detect_session_context(project_slug.as_deref())?;
 
     Ok(SessionStorageInfo {
-        orchestra_root: root.display().to_string(),
-        project_slug,
-        session_dir: session_dir.display().to_string(),
+        orchestra_root: context.orchestra_root.display().to_string(),
+        project_slug: context.project_slug,
+        session_dir: context.session_dir.display().to_string(),
     })
 }

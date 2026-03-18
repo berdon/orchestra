@@ -44,6 +44,16 @@ const opened = SessionManager.open(sessionPath, sessionDir);
 const forked = SessionManager.forkFrom(sourcePath, cwd, sessionDir);
 ```
 
+## Current desktop runtime bridge
+
+The Orchestra desktop app now uses a hybrid runtime:
+
+- **Session discovery/storage:** Orchestra reads and writes real pi JSONL session files under the managed `sessionDir`
+- **Prompt execution:** Orchestra spawns `pi --mode rpc` with `--session <file>` and `--session-dir <dir>` to run real turns against those same files
+- **Create session:** Orchestra pre-creates a valid session header file (plus optional `session_info` title entry), then pi fills in model/thinking/message entries on the first real turn
+
+This keeps the app aligned with pi's actual session format while avoiding a separate fake backend protocol.
+
 ## Current helper paths
 
 This repository now includes path helpers that formalize the layout:
