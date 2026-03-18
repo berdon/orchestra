@@ -17,3 +17,24 @@ pub struct LogEntry {
     pub message: String,
     pub timestamp: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEvent {
+    pub id: String,
+    pub kind: String,
+    pub message: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRecord {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub subscribed: bool,
+    pub events: Vec<SessionEvent>,
+}

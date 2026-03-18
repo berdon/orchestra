@@ -3,7 +3,13 @@ mod models;
 mod services;
 mod state;
 
-use commands::app::{get_app_info, get_logs};
+use commands::{
+    app::{get_app_info, get_logs},
+    sessions::{
+        create_session, list_sessions, resume_session, send_session_message, subscribe_session,
+        unsubscribe_session,
+    },
+};
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -12,7 +18,16 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![get_app_info, get_logs])
+        .invoke_handler(tauri::generate_handler![
+            get_app_info,
+            get_logs,
+            list_sessions,
+            create_session,
+            resume_session,
+            subscribe_session,
+            unsubscribe_session,
+            send_session_message
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
