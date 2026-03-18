@@ -46,7 +46,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -111,6 +112,7 @@ strong {
 .primary-button,
 .text-input,
 .text-area,
+.select-input,
 .session-list-item {
   appearance: none;
   border: 1px solid var(--border);
@@ -341,7 +343,8 @@ strong {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   gap: 18px;
-  min-height: 0;
+  min-height: min(72vh, calc(100vh - 220px));
+  align-items: stretch;
 }
 
 .session-list-panel,
@@ -349,6 +352,15 @@ strong {
   display: grid;
   gap: 18px;
   min-height: 0;
+}
+
+.session-list-panel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.session-detail-panel {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: min(72vh, calc(100vh - 220px));
 }
 
 .session-list {
@@ -376,14 +388,20 @@ strong {
   gap: 12px;
 }
 
+.field-group--compact {
+  gap: 8px;
+}
+
 .text-input,
-.text-area {
+.text-area,
+.select-input {
   width: 100%;
   background: white;
 }
 
 .text-input:focus,
-.text-area:focus {
+.text-area:focus,
+.select-input:focus {
   outline: 2px solid rgba(143, 79, 47, 0.2);
   outline-offset: 1px;
   border-color: var(--accent);
@@ -396,10 +414,10 @@ strong {
 .session-transcript {
   display: grid;
   gap: 12px;
-  min-height: 360px;
-  max-height: 58vh;
+  min-height: 0;
   overflow: auto;
   padding-right: 4px;
+  align-content: start;
 }
 
 .transcript-event--assistant {
@@ -414,11 +432,42 @@ strong {
   background: rgba(251, 246, 242, 0.95);
 }
 
+.transcript-event--pending {
+  opacity: 0.68;
+  border-style: dashed;
+}
+
+.transcript-event__meta-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pending-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .panel--session-hero {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 20px;
+}
+
+.action-cluster--session-tools {
+  align-items: flex-end;
+}
+
+.session-model-field {
+  min-width: min(320px, 100%);
 }
 
 .error-copy {
@@ -441,7 +490,8 @@ strong {
 .primary-button:disabled,
 .secondary-button:disabled,
 .text-input:disabled,
-.text-area:disabled {
+.text-area:disabled,
+.select-input:disabled {
   cursor: not-allowed;
   opacity: 0.65;
   transform: none;

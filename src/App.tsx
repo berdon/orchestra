@@ -1,15 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createSession,
   getAppInfo,
   getLogs,
+  getSessionModelState,
+  isTauriAvailable,
   listSessions,
+  listenToSessionStream,
   resumeSession,
   sendSessionMessage,
+  setSessionModel,
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
-import type { AppInfo, LogEntry, PrimaryPage, SessionEvent, SessionRecord, SessionStatus } from "./types";
+import type {
+  AppInfo,
+  LogEntry,
+  PrimaryPage,
+  SessionEvent,
+  SessionModelState,
+  SessionRecord,
+  SessionStatus,
+  SessionStreamEvent,
+} from "./types";
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "tasks", label: "Tasks" },
@@ -31,6 +44,20 @@ const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings">, { eyebrow
   },
 };
 
+interface PendingSessionRun {
+  runId: string;
+  userEvent: SessionEvent;
+  assistantEvent?: SessionEvent;
+}
+
+function createClientId(prefix: string) {
+  return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
 function formatTimestamp(timestamp: string) {
   return new Date(timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -51,6 +78,7 @@ function formatDateTime(timestamp: string) {
 function getStatusTone(status: SessionStatus) {
   switch (status) {
     case "active":
+    case "streaming":
       return "success";
     case "paused":
       return "warning";
@@ -72,6 +100,18 @@ function getEventTone(kind: SessionEvent["kind"]) {
   }
 }
 
+function formatModelOptionLabel(modelState: SessionModelState | undefined) {
+  if (!modelState) {
+    return "Loading models…";
+  }
+
+  if (modelState.currentModel) {
+    return `${modelState.currentModel.name} · ${modelState.currentModel.provider}`;
+  }
+
+  return "Choose a model";
+}
+
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -84,11 +124,79 @@ export function App() {
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingRuns, setPendingRuns] = useState<Record<string, PendingSessionRun>>({});
+  const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
+  const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
+  const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
+
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
     [selectedSessionId, sessions],
   );
+
+  const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
+  const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
+
+  const displayedEvents = useMemo(() => {
+    if (!selectedSession) {
+      return [];
+    }
+
+    const pendingRun = pendingRuns[selectedSession.id];
+    if (!pendingRun) {
+      return selectedSession.events;
+    }
+
+    return [
+      ...selectedSession.events,
+      pendingRun.userEvent,
+      ...(pendingRun.assistantEvent ? [pendingRun.assistantEvent] : []),
+    ];
+  }, [pendingRuns, selectedSession]);
+
+  const activeSessionCount = useMemo(() => {
+    const alreadyActive = new Set(sessions.filter((session) => session.status === "active").map((session) => session.id));
+    return sessions.filter((session) => session.status === "active").length + Object.keys(pendingRuns).filter((id) => !alreadyActive.has(id)).length;
+  }, [pendingRuns, sessions]);
+
+  const subscribedSessionCount = useMemo(() => sessions.filter((session) => session.subscribed).length, [sessions]);
+
+  const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
+    setSessions((current) => {
+      const withoutOld = current.filter((session) => session.id !== updatedSession.id);
+      return [updatedSession, ...withoutOld].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    });
+    setSelectedSessionId(updatedSession.id);
+  }, []);
+
+  const removePendingRun = useCallback((sessionId: string, runId?: string) => {
+    setPendingRuns((current) => {
+      const existing = current[sessionId];
+      if (!existing || (runId && existing.runId !== runId)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const updatePendingRun = useCallback((sessionId: string, updater: (run: PendingSessionRun) => PendingSessionRun) => {
+    setPendingRuns((current) => {
+      const existing = current[sessionId];
+      if (!existing) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [sessionId]: updater(existing),
+      };
+    });
+  }, []);
 
   async function loadLogs() {
     setLoadingLogs(true);
@@ -120,15 +228,6 @@ export function App() {
     }
   }
 
-  function applySessionUpdate(updatedSession: SessionRecord) {
-    setSessions((current) => {
-      const withoutOld = current.filter((session) => session.id !== updatedSession.id);
-      const next = [updatedSession, ...withoutOld].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-      return next;
-    });
-    setSelectedSessionId(updatedSession.id);
-  }
-
   async function runSessionAction(action: () => Promise<SessionRecord>) {
     setIsSubmitting(true);
     setSessionActionError(null);
@@ -143,9 +242,80 @@ export function App() {
     }
   }
 
+  const handleSessionStreamEvent = useCallback(
+    (payload: SessionStreamEvent) => {
+      switch (payload.event) {
+        case "assistantStart": {
+          updatePendingRun(payload.sessionId, (current) => ({
+            ...current,
+            assistantEvent: current.assistantEvent ?? {
+              id: `pending-assistant-${payload.runId}`,
+              kind: "assistant",
+              message: "",
+              timestamp: payload.timestamp ?? nowIso(),
+              pending: true,
+              runId: payload.runId,
+            },
+          }));
+          break;
+        }
+        case "assistantDelta": {
+          updatePendingRun(payload.sessionId, (current) => ({
+            ...current,
+            assistantEvent: {
+              id: current.assistantEvent?.id ?? `pending-assistant-${payload.runId}`,
+              kind: "assistant",
+              message: `${current.assistantEvent?.message ?? ""}${payload.delta ?? ""}`,
+              timestamp: current.assistantEvent?.timestamp ?? payload.timestamp ?? nowIso(),
+              pending: true,
+              runId: payload.runId,
+            },
+          }));
+          break;
+        }
+        case "sessionUpdated": {
+          if (payload.record) {
+            applySessionUpdate(payload.record);
+          }
+          removePendingRun(payload.sessionId, payload.runId);
+          break;
+        }
+        case "error": {
+          removePendingRun(payload.sessionId, payload.runId);
+          setSessionActionError(payload.message ?? "Session action failed.");
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [applySessionUpdate, removePendingRun, updatePendingRun],
+  );
+
   useEffect(() => {
     void getAppInfo().then(setAppInfo);
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    if (!isTauriAvailable()) {
+      void listenToSessionStream(handleSessionStreamEvent).then((dispose) => {
+        unlisten = dispose;
+      });
+      return () => {
+        unlisten?.();
+      };
+    }
+
+    void listenToSessionStream(handleSessionStreamEvent).then((dispose) => {
+      unlisten = dispose;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [handleSessionStreamEvent]);
 
   useEffect(() => {
     if (activePage === "settings") {
@@ -158,7 +328,118 @@ export function App() {
     }
   }, [activePage]);
 
+  useEffect(() => {
+    if (activePage !== "sessions" || !selectedSession) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingModelSessionId(selectedSession.id);
+
+    void getSessionModelState(selectedSession.id)
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+
+        setModelStates((current) => ({
+          ...current,
+          [state.sessionId]: state,
+        }));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSessionActionError(error instanceof Error ? error.message : "Unable to load session model.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingModelSessionId((current) => (current === selectedSession.id ? null : current));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, selectedSession?.id]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+
+    node.scrollTop = node.scrollHeight;
+  }, [displayedEvents, selectedSession?.id]);
+
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
+  const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun ? "streaming" : selectedSession?.status ?? "idle";
+  const selectedSessionBusy = Boolean(selectedSessionPendingRun) || isSubmitting;
+
+  async function handleModelChange(value: string) {
+    if (!selectedSession) {
+      return;
+    }
+
+    const [provider, ...modelParts] = value.split("/");
+    const modelId = modelParts.join("/");
+    if (!provider || !modelId) {
+      return;
+    }
+
+    setSessionActionError(null);
+    setChangingModelSessionId(selectedSession.id);
+
+    try {
+      const state = await setSessionModel(selectedSession.id, provider, modelId);
+      setModelStates((current) => ({
+        ...current,
+        [state.sessionId]: state,
+      }));
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to change models.");
+    } finally {
+      setChangingModelSessionId((current) => (current === selectedSession.id ? null : current));
+    }
+  }
+
+  function handleSendMessage() {
+    if (!selectedSession) {
+      return;
+    }
+
+    const trimmedMessage = draftMessage.trim();
+    if (!trimmedMessage || pendingRuns[selectedSession.id]) {
+      return;
+    }
+
+    const runId = createClientId("run");
+    const timestamp = nowIso();
+    const sessionId = selectedSession.id;
+
+    setSessionActionError(null);
+    setDraftMessage("");
+    setPendingRuns((current) => ({
+      ...current,
+      [sessionId]: {
+        runId,
+        userEvent: {
+          id: `pending-user-${runId}`,
+          kind: "user",
+          message: trimmedMessage,
+          timestamp,
+          pending: true,
+          runId,
+        },
+      },
+    }));
+
+    void sendSessionMessage(sessionId, trimmedMessage, runId).catch((error) => {
+      removePendingRun(sessionId, runId);
+      setDraftMessage((current) => (current.length === 0 ? trimmedMessage : current));
+      setSessionActionError(error instanceof Error ? error.message : "Unable to queue message.");
+    });
+  }
 
   return (
     <div className="app-shell">
@@ -272,11 +553,11 @@ export function App() {
                 </div>
                 <div className="metric-card">
                   <span className="metric-card__label">Active</span>
-                  <strong>{sessions.filter((session) => session.status === "active").length}</strong>
+                  <strong>{activeSessionCount}</strong>
                 </div>
                 <div className="metric-card">
                   <span className="metric-card__label">Subscribed</span>
-                  <strong>{sessions.filter((session) => session.subscribed).length}</strong>
+                  <strong>{subscribedSessionCount}</strong>
                 </div>
               </div>
             </section>
@@ -323,27 +604,30 @@ export function App() {
                 {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
 
                 <div className="session-list" role="list">
-                  {sessions.map((session) => (
-                    <button
-                      key={session.id}
-                      className={session.id === selectedSession?.id ? "session-list-item session-list-item--active" : "session-list-item"}
-                      type="button"
-                      onClick={() => setSelectedSessionId(session.id)}
-                    >
-                      <div className="session-list-item__header">
-                        <strong>{session.title}</strong>
-                        <span className={`status-badge status-badge--${getStatusTone(session.status)}`}>{session.status}</span>
-                      </div>
-                      <div className="session-list-item__meta">
-                        <span>{session.id}</span>
-                        <span>{formatDateTime(session.updatedAt)}</span>
-                      </div>
-                      <div className="session-list-item__footer">
-                        <span>{session.events.length} events</span>
-                        <span>{session.subscribed ? "Subscribed" : "Unsubscribed"}</span>
-                      </div>
-                    </button>
-                  ))}
+                  {sessions.map((session) => {
+                    const displayStatus = pendingRuns[session.id] ? "streaming" : session.status;
+                    return (
+                      <button
+                        key={session.id}
+                        className={session.id === selectedSession?.id ? "session-list-item session-list-item--active" : "session-list-item"}
+                        type="button"
+                        onClick={() => setSelectedSessionId(session.id)}
+                      >
+                        <div className="session-list-item__header">
+                          <strong>{session.title}</strong>
+                          <span className={`status-badge status-badge--${getStatusTone(displayStatus)}`}>{displayStatus}</span>
+                        </div>
+                        <div className="session-list-item__meta">
+                          <span>{session.id}</span>
+                          <span>{formatDateTime(session.updatedAt)}</span>
+                        </div>
+                        <div className="session-list-item__footer">
+                          <span>{session.events.length} events</span>
+                          <span>{session.subscribed ? "Subscribed" : "Unsubscribed"}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </aside>
 
@@ -361,15 +645,38 @@ export function App() {
                         </div>
                       </div>
 
-                      <div className="action-cluster">
-                        <span className={`status-badge status-badge--${getStatusTone(selectedSession.status)}`}>{selectedSession.status}</span>
+                      <div className="action-cluster action-cluster--session-tools">
+                        <label className="field-group field-group--compact session-model-field">
+                          <span className="field-group__label">Model</span>
+                          <select
+                            className="select-input"
+                            value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
+                            disabled={
+                              loadingModelSessionId === selectedSession.id ||
+                              changingModelSessionId === selectedSession.id ||
+                              Boolean(selectedSessionPendingRun)
+                            }
+                            onChange={(event) => void handleModelChange(event.target.value)}
+                          >
+                            {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
+                              <option value="">{formatModelOptionLabel(selectedModelState)}</option>
+                            ) : null}
+                            {selectedModelState?.availableModels.map((model) => (
+                              <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                                {model.name} · {model.provider}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
                         <span className={selectedSession.subscribed ? "status-badge status-badge--accent" : "status-badge status-badge--neutral"}>
                           {selectedSession.subscribed ? "Subscribed" : "Not subscribed"}
                         </span>
                         <button
                           className="secondary-button"
                           type="button"
-                          disabled={isSubmitting}
+                          disabled={selectedSessionBusy}
                           onClick={() => void runSessionAction(() => resumeSession(selectedSession.id))}
                         >
                           Resume session
@@ -377,7 +684,7 @@ export function App() {
                         <button
                           className="secondary-button"
                           type="button"
-                          disabled={isSubmitting}
+                          disabled={selectedSessionBusy}
                           onClick={() =>
                             void runSessionAction(() =>
                               selectedSession.subscribed ? unsubscribeSession(selectedSession.id) : subscribeSession(selectedSession.id),
@@ -389,14 +696,20 @@ export function App() {
                       </div>
                     </div>
 
-                    <div className="session-transcript" role="log" aria-live="polite">
-                      {selectedSession.events.map((event) => (
-                        <article className={`transcript-event transcript-event--${getEventTone(event.kind)}`} key={event.id}>
+                    <div className="session-transcript" ref={transcriptRef} role="log" aria-live="polite">
+                      {displayedEvents.map((event) => (
+                        <article
+                          className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
+                          key={event.id}
+                        >
                           <div className="transcript-event__meta">
                             <span>{event.kind}</span>
-                            <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+                            <div className="transcript-event__meta-group">
+                              {event.pending ? <span className="pending-badge">Pending</span> : null}
+                              <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+                            </div>
                           </div>
-                          <p>{event.message}</p>
+                          <p>{event.message || (event.kind === "assistant" ? "Thinking…" : "Queued…")}</p>
                         </article>
                       ))}
                     </div>
@@ -405,15 +718,7 @@ export function App() {
                       className="composer"
                       onSubmit={(event) => {
                         event.preventDefault();
-                        if (!selectedSession) {
-                          return;
-                        }
-
-                        void runSessionAction(async () => {
-                          const session = await sendSessionMessage(selectedSession.id, draftMessage);
-                          setDraftMessage("");
-                          return session;
-                        });
+                        handleSendMessage();
                       }}
                     >
                       <label className="field-group field-group--composer">
@@ -424,15 +729,24 @@ export function App() {
                           placeholder="Tell the session what to do next…"
                           value={draftMessage}
                           onChange={(event) => setDraftMessage(event.target.value)}
+                          onKeyDown={(event) => {
+                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                              event.preventDefault();
+                              handleSendMessage();
+                            }
+                          }}
                         />
                       </label>
                       <div className="composer__footer">
                         <p className="muted-copy">
-                          Desktop mode sends prompts through real pi sessions over RPC. Browser mode still uses the mock session
-                          adapter.
+                          {selectedSessionPendingRun ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
                         </p>
-                        <button className="primary-button" type="submit" disabled={isSubmitting || draftMessage.trim().length === 0}>
-                          Send message
+                        <button
+                          className="primary-button"
+                          type="submit"
+                          disabled={Boolean(selectedSessionPendingRun) || draftMessage.trim().length === 0}
+                        >
+                          {selectedSessionPendingRun ? "Sending…" : "Send message"}
                         </button>
                       </div>
                     </form>
@@ -458,12 +772,12 @@ export function App() {
             <section className="panel panel--split">
               <div>
                 <p className="eyebrow">Foundation</p>
-                <h3>Session-first app shell</h3>
+                <h3>Session workspace</h3>
                 <ul className="bullet-list">
                   <li>Project switcher placeholder and stable left navigation</li>
-                  <li>Runtime log surface in Settings</li>
-                  <li>Browser-backed mock adapter for preview/dev-in-browser workflows</li>
-                  <li>Tauri session controls wired to real pi session files and pi RPC turns</li>
+                  <li>Live transcript that stays pinned to the newest message</li>
+                  <li>Keyboard-first composer with optimistic pending states</li>
+                  <li>Per-session model selection from the app</li>
                 </ul>
               </div>
 
@@ -474,7 +788,7 @@ export function App() {
                   <li>Projects and repositories</li>
                   <li>Task workflow lanes and lane history</li>
                   <li>Agents, roles, queues, and interruption semantics</li>
-                  <li>Live RPC streaming, richer transcript metadata, and multi-session orchestration</li>
+                  <li>Multi-session orchestration and richer runtime controls</li>
                 </ul>
               </div>
             </section>

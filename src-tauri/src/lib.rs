@@ -6,8 +6,8 @@ mod state;
 use commands::{
     app::{get_app_info, get_logs, get_session_storage_info},
     sessions::{
-        create_session, list_sessions, resume_session, send_session_message, subscribe_session,
-        unsubscribe_session,
+        create_session, get_session_model_state, list_sessions, resume_session,
+        send_session_message, set_session_model, subscribe_session, unsubscribe_session,
     },
 };
 use state::AppState;
@@ -27,6 +27,8 @@ pub fn run() {
             resume_session,
             subscribe_session,
             unsubscribe_session,
+            get_session_model_state,
+            set_session_model,
             send_session_message
         ])
         .run(tauri::generate_context!())

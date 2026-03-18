@@ -1,10 +1,14 @@
-use std::{collections::HashSet, sync::Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+};
 
 use crate::models::LogEntry;
 
 pub struct AppState {
     pub logs: Mutex<Vec<LogEntry>>,
     subscribed_sessions: Mutex<HashSet<String>>,
+    active_session_runs: Mutex<HashMap<String, String>>,
 }
 
 pub fn now_iso() -> String {
@@ -33,10 +37,11 @@ impl AppState {
                 create_log(
                     "info",
                     "session.backend",
-                    "Desktop mode now uses real pi session files plus pi --mode rpc for prompt execution",
+                    "Desktop mode uses real pi session files, background RPC turns, and streaming session events",
                 ),
             ]),
             subscribed_sessions: Mutex::new(HashSet::new()),
+            active_session_runs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -67,5 +72,39 @@ impl AppState {
             .lock()
             .map(|sessions| sessions.clone())
             .map_err(|_| "Unable to access session subscription state".to_string())
+    }
+
+    pub fn begin_session_run(&self, session_id: &str, run_id: &str) -> Result<(), String> {
+        let mut active_runs = self
+            .active_session_runs
+            .lock()
+            .map_err(|_| "Unable to access active session run state".to_string())?;
+
+        if active_runs.contains_key(session_id) {
+            return Err("This session is already processing a message".into());
+        }
+
+        active_runs.insert(session_id.to_string(), run_id.to_string());
+        Ok(())
+    }
+
+    pub fn end_session_run(&self, session_id: &str, run_id: &str) -> Result<(), String> {
+        let mut active_runs = self
+            .active_session_runs
+            .lock()
+            .map_err(|_| "Unable to access active session run state".to_string())?;
+
+        if active_runs.get(session_id).is_some_and(|current| current == run_id) {
+            active_runs.remove(session_id);
+        }
+
+        Ok(())
+    }
+
+    pub fn is_session_running(&self, session_id: &str) -> Result<bool, String> {
+        self.active_session_runs
+            .lock()
+            .map(|active_runs| active_runs.contains_key(session_id))
+            .map_err(|_| "Unable to access active session run state".to_string())
     }
 }

@@ -28,6 +28,49 @@ pub struct SessionStorageInfo {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionModel {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub api: String,
+    pub reasoning: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionModelState {
+    pub session_id: String,
+    pub current_model: Option<SessionModel>,
+    pub available_models: Vec<SessionModel>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedSessionMessage {
+    pub session_id: String,
+    pub run_id: String,
+    pub message: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStreamEvent {
+    pub session_id: String,
+    pub run_id: String,
+    pub event: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record: Option<SessionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionEvent {
     pub id: String,
     pub kind: String,

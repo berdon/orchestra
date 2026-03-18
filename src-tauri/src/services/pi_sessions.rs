@@ -13,12 +13,15 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    models::{SessionEvent, SessionRecord},
+    models::{SessionEvent, SessionModel, SessionModelState, SessionRecord, SessionStreamEvent},
     services::orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
 };
 
 const DEFAULT_EMPTY_SESSION_MESSAGE: &str = "Real pi session ready. Send a message to begin.";
 const PROMPT_REQUEST_ID: &str = "prompt-1";
+const GET_STATE_REQUEST_ID: &str = "get-state-1";
+const GET_MODELS_REQUEST_ID: &str = "get-models-1";
+const SET_MODEL_REQUEST_ID: &str = "set-model-1";
 
 #[derive(Debug, Clone)]
 pub struct SessionContext {
@@ -118,32 +121,70 @@ pub fn get_session(session_dir: &Path, session_id: &str, subscribed: bool) -> Re
     resolve_session(session_dir, session_id, subscribed).map(|session| session.record)
 }
 
-pub fn prompt_session(
+pub fn stream_prompt_session<F>(
     project_root: &Path,
     session_dir: &Path,
     session_id: &str,
+    run_id: &str,
     message: &str,
     subscribed: bool,
-) -> Result<SessionRecord, String> {
-    prompt_session_with_executable(project_root, session_dir, session_id, message, subscribed, Path::new("pi"))
+    on_stream_event: F,
+) -> Result<SessionRecord, String>
+where
+    F: FnMut(SessionStreamEvent),
+{
+    stream_prompt_session_with_executable(
+        project_root,
+        session_dir,
+        session_id,
+        message,
+        subscribed,
+        Path::new("pi"),
+        attach_run_id(run_id, on_stream_event),
+    )
 }
 
-pub fn prompt_session_with_executable(
+pub fn get_session_model_state(
     project_root: &Path,
     session_dir: &Path,
     session_id: &str,
-    message: &str,
-    subscribed: bool,
-    executable: &Path,
-) -> Result<SessionRecord, String> {
-    let trimmed = message.trim();
-    if trimmed.is_empty() {
-        return Err("Message cannot be empty".into());
-    }
+) -> Result<SessionModelState, String> {
+    get_session_model_state_with_executable(project_root, session_dir, session_id, Path::new("pi"))
+}
 
-    let stored = resolve_session(session_dir, session_id, subscribed)?;
-    run_prompt_rpc(executable, project_root, session_dir, &stored.path, trimmed)?;
-    parse_session_file(&stored.path, subscribed).map(|session| session.record)
+pub fn set_session_model(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    provider: &str,
+    model_id: &str,
+) -> Result<SessionModelState, String> {
+    set_session_model_with_executable(
+        project_root,
+        session_dir,
+        session_id,
+        provider,
+        model_id,
+        Path::new("pi"),
+    )
+}
+
+fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
+where
+    F: FnMut(SessionStreamEvent),
+{
+    let run_id = run_id.to_string();
+    move |event| {
+        on_stream_event(SessionStreamEvent {
+            session_id: event.session_id,
+            run_id: run_id.clone(),
+            event: event.event,
+            timestamp: event.timestamp,
+            delta: event.delta,
+            message: event.message,
+            record: event.record,
+        });
+    }
 }
 
 fn infer_project_slug(project_root: &Path) -> String {
@@ -426,13 +467,208 @@ fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
         .collect()
 }
 
-fn run_prompt_rpc(
+fn stream_prompt_session_with_executable<F>(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    message: &str,
+    subscribed: bool,
+    executable: &Path,
+    mut on_stream_event: F,
+) -> Result<SessionRecord, String>
+where
+    F: FnMut(PartialStreamEvent),
+{
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Err("Message cannot be empty".into());
+    }
+
+    let stored = resolve_session(session_dir, session_id, subscribed)?;
+    let mut saw_prompt_response = false;
+    let mut saw_agent_end = false;
+    let mut rpc_error = None;
+    let mut assistant_started = false;
+
+    let payloads = run_rpc_process(
+        executable,
+        project_root,
+        session_dir,
+        &stored.path,
+        &[json!({
+            "id": PROMPT_REQUEST_ID,
+            "type": "prompt",
+            "message": trimmed,
+        })],
+        |payload| match payload.get("type").and_then(Value::as_str) {
+            Some("response") => {
+                if payload.get("id").and_then(Value::as_str) == Some(PROMPT_REQUEST_ID) {
+                    saw_prompt_response = true;
+                    if payload.get("success").and_then(Value::as_bool) != Some(true) {
+                        rpc_error = Some(extract_rpc_error(payload));
+                    }
+                }
+            }
+            Some("message_update") => {
+                let event_type = payload
+                    .pointer("/assistantMessageEvent/type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+
+                if event_type == "error" {
+                    rpc_error = Some(extract_rpc_error(payload));
+                }
+
+                if matches!(event_type, "text_start" | "text_delta") && !assistant_started {
+                    assistant_started = true;
+                    on_stream_event(PartialStreamEvent {
+                        session_id: session_id.to_string(),
+                        event: "assistantStart".into(),
+                        timestamp: Some(now_iso()),
+                        delta: None,
+                        message: None,
+                        record: None,
+                    });
+                }
+
+                if event_type == "text_delta" {
+                    on_stream_event(PartialStreamEvent {
+                        session_id: session_id.to_string(),
+                        event: "assistantDelta".into(),
+                        timestamp: None,
+                        delta: payload
+                            .pointer("/assistantMessageEvent/delta")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        message: None,
+                        record: None,
+                    });
+                }
+            }
+            Some("agent_end") => {
+                saw_agent_end = true;
+            }
+            _ => {}
+        },
+    )?;
+
+    if let Some(error) = rpc_error {
+        return Err(error);
+    }
+
+    require_successful_response(&payloads, PROMPT_REQUEST_ID, "prompt")?;
+
+    if !saw_prompt_response {
+        return Err("pi RPC process did not acknowledge the prompt command".into());
+    }
+
+    if !saw_agent_end {
+        return Err("pi RPC process ended before the agent finished the turn".into());
+    }
+
+    parse_session_file(&stored.path, subscribed).map(|session| session.record)
+}
+
+fn get_session_model_state_with_executable(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    executable: &Path,
+) -> Result<SessionModelState, String> {
+    let stored = resolve_session(session_dir, session_id, true)?;
+    let payloads = run_rpc_process(
+        executable,
+        project_root,
+        session_dir,
+        &stored.path,
+        &[
+            json!({ "id": GET_STATE_REQUEST_ID, "type": "get_state" }),
+            json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" }),
+        ],
+        |_| {},
+    )?;
+
+    let state_payload = require_successful_response(&payloads, GET_STATE_REQUEST_ID, "get_state")?;
+    let models_payload = require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
+
+    let current_model = state_payload
+        .pointer("/data/model")
+        .and_then(parse_model_summary);
+    let available_models = models_payload
+        .pointer("/data/models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_model_summary)
+        .collect();
+
+    Ok(SessionModelState {
+        session_id: session_id.to_string(),
+        current_model,
+        available_models,
+    })
+}
+
+fn set_session_model_with_executable(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    provider: &str,
+    model_id: &str,
+    executable: &Path,
+) -> Result<SessionModelState, String> {
+    let stored = resolve_session(session_dir, session_id, true)?;
+    let payloads = run_rpc_process(
+        executable,
+        project_root,
+        session_dir,
+        &stored.path,
+        &[
+            json!({
+                "id": SET_MODEL_REQUEST_ID,
+                "type": "set_model",
+                "provider": provider,
+                "modelId": model_id,
+            }),
+            json!({ "id": GET_STATE_REQUEST_ID, "type": "get_state" }),
+            json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" }),
+        ],
+        |_| {},
+    )?;
+
+    require_successful_response(&payloads, SET_MODEL_REQUEST_ID, "set_model")?;
+    let state_payload = require_successful_response(&payloads, GET_STATE_REQUEST_ID, "get_state")?;
+    let models_payload = require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
+
+    let current_model = state_payload
+        .pointer("/data/model")
+        .and_then(parse_model_summary);
+    let available_models = models_payload
+        .pointer("/data/models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_model_summary)
+        .collect();
+
+    Ok(SessionModelState {
+        session_id: session_id.to_string(),
+        current_model,
+        available_models,
+    })
+}
+
+fn run_rpc_process<F>(
     executable: &Path,
     project_root: &Path,
     session_dir: &Path,
     session_path: &Path,
-    message: &str,
-) -> Result<(), String> {
+    commands: &[Value],
+    mut on_payload: F,
+) -> Result<Vec<Value>, String>
+where
+    F: FnMut(&Value),
+{
     let mut child = Command::new(executable)
         .arg("--mode")
         .arg("rpc")
@@ -468,24 +704,17 @@ fn run_prompt_rpc(
         buffer
     });
 
-    writeln!(
-        stdin,
-        "{}",
-        json!({
-            "id": PROMPT_REQUEST_ID,
-            "type": "prompt",
-            "message": message,
-        })
-    )
-    .map_err(|error| format!("Unable to send prompt to pi RPC process: {error}"))?;
+    for command in commands {
+        writeln!(stdin, "{command}")
+            .map_err(|error| format!("Unable to send command to pi RPC process: {error}"))?;
+    }
+
     stdin
         .flush()
         .map_err(|error| format!("Unable to flush pi RPC stdin: {error}"))?;
     drop(stdin);
 
-    let mut saw_prompt_response = false;
-    let mut saw_agent_end = false;
-    let mut rpc_error = None;
+    let mut payloads = Vec::new();
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
 
@@ -505,27 +734,8 @@ fn run_prompt_rpc(
 
         let payload: Value = serde_json::from_str(trimmed)
             .map_err(|error| format!("Unable to parse pi RPC output as JSON: {error}"))?;
-
-        match payload.get("type").and_then(Value::as_str) {
-            Some("response") => {
-                if payload.get("id").and_then(Value::as_str) == Some(PROMPT_REQUEST_ID) {
-                    saw_prompt_response = true;
-                    if payload.get("success").and_then(Value::as_bool) != Some(true) {
-                        rpc_error = Some(extract_rpc_error(&payload));
-                    }
-                }
-            }
-            Some("message_update") => {
-                if payload.pointer("/assistantMessageEvent/type").and_then(Value::as_str) == Some("error") {
-                    rpc_error = Some(extract_rpc_error(&payload));
-                }
-            }
-            Some("agent_end") => {
-                saw_agent_end = true;
-                break;
-            }
-            _ => {}
-        }
+        on_payload(&payload);
+        payloads.push(payload);
     }
 
     let status = child
@@ -535,13 +745,6 @@ fn run_prompt_rpc(
         .join()
         .unwrap_or_else(|_| "Unable to join pi RPC stderr reader".to_string());
 
-    if let Some(error) = rpc_error {
-        let stderr_suffix = non_empty_trimmed(&stderr_output)
-            .map(|output| format!("\n{output}"))
-            .unwrap_or_default();
-        return Err(format!("{error}{stderr_suffix}"));
-    }
-
     if !status.success() {
         let stderr_suffix = non_empty_trimmed(&stderr_output)
             .map(|output| format!(": {output}"))
@@ -549,15 +752,41 @@ fn run_prompt_rpc(
         return Err(format!("pi RPC process exited unsuccessfully{stderr_suffix}"));
     }
 
-    if !saw_prompt_response {
-        return Err("pi RPC process did not acknowledge the prompt command".into());
+    Ok(payloads)
+}
+
+fn require_successful_response<'a>(payloads: &'a [Value], request_id: &str, command: &str) -> Result<&'a Value, String> {
+    let response = payloads
+        .iter()
+        .find(|payload| {
+            payload.get("type").and_then(Value::as_str) == Some("response")
+                && payload.get("id").and_then(Value::as_str) == Some(request_id)
+        })
+        .ok_or_else(|| format!("pi RPC process did not respond to {command}"))?;
+
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(extract_rpc_error(response));
     }
 
-    if !saw_agent_end {
-        return Err("pi RPC process ended before the agent finished the turn".into());
-    }
+    Ok(response)
+}
 
-    Ok(())
+fn parse_model_summary(value: &Value) -> Option<SessionModel> {
+    Some(SessionModel {
+        id: value.get("id")?.as_str()?.to_string(),
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| value.get("id").and_then(Value::as_str).unwrap_or("Model"))
+            .to_string(),
+        provider: value.get("provider")?.as_str()?.to_string(),
+        api: value
+            .get("api")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        reasoning: value.get("reasoning").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 fn extract_rpc_error(payload: &Value) -> String {
@@ -670,6 +899,16 @@ fn non_empty_trimmed(value: &str) -> Option<&str> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PartialStreamEvent {
+    session_id: String,
+    event: String,
+    timestamp: Option<String>,
+    delta: Option<String>,
+    message: Option<String>,
+    record: Option<SessionRecord>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,6 +941,47 @@ if (!sessionFile) {
   process.exit(1);
 }
 
+const MODELS = [
+  {
+    id: 'claude-sonnet-4-20250514',
+    name: 'Claude Sonnet 4',
+    api: 'anthropic-messages',
+    provider: 'anthropic',
+    reasoning: true,
+  },
+  {
+    id: 'gpt-5.4',
+    name: 'GPT-5.4',
+    api: 'openai-codex-responses',
+    provider: 'openai-codex',
+    reasoning: true,
+  },
+];
+
+function readSessionEntries() {
+  return fs
+    .readFileSync(sessionFile, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function getCurrentModel() {
+  const entries = readSessionEntries();
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.type === 'model_change') {
+      return MODELS.find((model) => model.provider === entry.provider && model.id === entry.modelId) ?? MODELS[0];
+    }
+  }
+  return MODELS[0];
+}
+
+function appendEntry(entry) {
+  fs.appendFileSync(sessionFile, JSON.stringify(entry) + '\n');
+}
+
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
@@ -713,9 +993,6 @@ process.stdin.on('end', () => {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  const prompt = commands.find((command) => command.type === 'prompt');
-  const now = new Date();
-  const later = new Date(now.getTime() + 1);
   const usage = {
     input: 0,
     output: 0,
@@ -724,42 +1001,113 @@ process.stdin.on('end', () => {
     totalTokens: 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
-  fs.appendFileSync(
-    sessionFile,
-    JSON.stringify({
-      type: 'message',
-      id: '11111111',
-      parentId: null,
-      timestamp: now.toISOString(),
-      message: {
-        role: 'user',
-        content: prompt.message,
-        timestamp: now.getTime(),
-        attachments: [],
-      },
-    }) + '\n'
-  );
-  fs.appendFileSync(
-    sessionFile,
-    JSON.stringify({
-      type: 'message',
-      id: '22222222',
-      parentId: '11111111',
-      timestamp: later.toISOString(),
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: `Echo: ${prompt.message}` }],
-        api: 'test',
-        provider: 'test',
-        model: 'stub',
-        usage,
-        stopReason: 'stop',
-        timestamp: later.getTime(),
-      },
-    }) + '\n'
-  );
-  process.stdout.write(JSON.stringify({ id: 'prompt-1', type: 'response', command: 'prompt', success: true }) + '\n');
-  process.stdout.write(JSON.stringify({ type: 'agent_end', messages: [] }) + '\n');
+
+  for (const command of commands) {
+    if (command.type === 'get_state') {
+      process.stdout.write(
+        JSON.stringify({
+          id: command.id,
+          type: 'response',
+          command: 'get_state',
+          success: true,
+          data: { model: getCurrentModel() },
+        }) + '\n'
+      );
+      continue;
+    }
+
+    if (command.type === 'get_available_models') {
+      process.stdout.write(
+        JSON.stringify({
+          id: command.id,
+          type: 'response',
+          command: 'get_available_models',
+          success: true,
+          data: { models: MODELS },
+        }) + '\n'
+      );
+      continue;
+    }
+
+    if (command.type === 'set_model') {
+      appendEntry({
+        type: 'model_change',
+        id: 'model0001',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        provider: command.provider,
+        modelId: command.modelId,
+      });
+      const model = MODELS.find((entry) => entry.provider === command.provider && entry.id === command.modelId);
+      process.stdout.write(
+        JSON.stringify({
+          id: command.id,
+          type: 'response',
+          command: 'set_model',
+          success: Boolean(model),
+          ...(model ? { data: model } : { error: 'Model not found' }),
+        }) + '\n'
+      );
+      continue;
+    }
+
+    if (command.type === 'prompt') {
+      const now = new Date();
+      const later = new Date(now.getTime() + 1);
+      const model = getCurrentModel();
+      appendEntry({
+        type: 'message',
+        id: '11111111',
+        parentId: null,
+        timestamp: now.toISOString(),
+        message: {
+          role: 'user',
+          content: command.message,
+          timestamp: now.getTime(),
+          attachments: [],
+        },
+      });
+      process.stdout.write(JSON.stringify({ id: command.id, type: 'response', command: 'prompt', success: true }) + '\n');
+      process.stdout.write(
+        JSON.stringify({
+          type: 'message_update',
+          message: { role: 'assistant', content: [] },
+          assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial: {} },
+        }) + '\n'
+      );
+      process.stdout.write(
+        JSON.stringify({
+          type: 'message_update',
+          message: { role: 'assistant', content: [] },
+          assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Echo: ', partial: {} },
+        }) + '\n'
+      );
+      process.stdout.write(
+        JSON.stringify({
+          type: 'message_update',
+          message: { role: 'assistant', content: [] },
+          assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: command.message, partial: {} },
+        }) + '\n'
+      );
+      appendEntry({
+        type: 'message',
+        id: '22222222',
+        parentId: '11111111',
+        timestamp: later.toISOString(),
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: `Echo: ${command.message}` }],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage,
+          stopReason: 'stop',
+          timestamp: later.getTime(),
+        },
+      });
+      process.stdout.write(JSON.stringify({ type: 'agent_end', messages: [] }) + '\n');
+    }
+  }
 });
 "#;
 
@@ -864,7 +1212,7 @@ process.stdin.on('end', () => {
     }
 
     #[test]
-    fn prompts_real_session_through_rpc_process() {
+    fn prompts_real_session_through_rpc_process_and_emits_deltas() {
         let root = unique_temp_dir("orchestra-real-session-rpc");
         let project_root = root.join("project");
         let session_dir = root.join("sessions");
@@ -875,21 +1223,55 @@ process.stdin.on('end', () => {
         let stored = create_session_file(&project_root, &session_dir, Some("RPC session"), true)
             .expect("session should be created");
 
-        let updated = prompt_session_with_executable(
+        let mut events = Vec::new();
+        let updated = stream_prompt_session_with_executable(
             &project_root,
             &session_dir,
             &stored.record.id,
             "Hello from the UI",
             true,
             &fake_pi,
+            |event| events.push(event),
         )
         .expect("prompt should succeed");
 
         assert_eq!(updated.title, "RPC session");
+        assert!(events.iter().any(|event| event.event == "assistantStart"));
+        assert!(events.iter().any(|event| event.delta.as_deref() == Some("Echo: ")));
         assert!(updated.events.iter().any(|event| event.kind == "user" && event.message == "Hello from the UI"));
         assert!(updated
             .events
             .iter()
             .any(|event| event.kind == "assistant" && event.message == "Echo: Hello from the UI"));
+    }
+
+    #[test]
+    fn queries_and_updates_session_model_via_rpc() {
+        let root = unique_temp_dir("orchestra-real-session-models");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        let fake_pi = root.join("fake-pi.mjs");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        write_fake_pi_executable(&fake_pi);
+
+        let stored = create_session_file(&project_root, &session_dir, Some("Model session"), true)
+            .expect("session should be created");
+
+        let before = get_session_model_state_with_executable(&project_root, &session_dir, &stored.record.id, &fake_pi)
+            .expect("initial model state should load");
+        assert_eq!(before.current_model.as_ref().map(|model| model.provider.as_str()), Some("anthropic"));
+        assert_eq!(before.available_models.len(), 2);
+
+        let after = set_session_model_with_executable(
+            &project_root,
+            &session_dir,
+            &stored.record.id,
+            "openai-codex",
+            "gpt-5.4",
+            &fake_pi,
+        )
+        .expect("model should update");
+
+        assert_eq!(after.current_model.as_ref().map(|model| model.id.as_str()), Some("gpt-5.4"));
     }
 }
