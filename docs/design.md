@@ -157,7 +157,7 @@ Characteristics:
 - configured but not memory-bearing
 - spin up role instances on demand
 - operate under a concurrency limit
-- use project worktrees rather than agent-owned persistent worktrees
+- use disposable project-scoped worktrees rather than agent-owned persistent worktrees
 
 Examples:
 - Developer
@@ -209,8 +209,9 @@ Suggested task fields:
 
 Important behavior:
 - comments on an assigned task should be delivered to the currently responsible entity
+- the comment UI should offer an `Interrupt agent` checkbox so the user can choose whether a new comment should interrupt the currently active session immediately
 - each lane run should record which session worked that lane
-- when a task re-enters a lane, Orchestra can resume the prior session when appropriate
+- when a task re-enters a lane, Orchestra should always resume the previously recorded session for that lane
 
 Suggested lane run model:
 - `laneId`
@@ -269,10 +270,9 @@ This is one of the most important parts of the system.
 When an agent has an active main session:
 - new task assignments should enqueue work
 - new comments should enqueue notifications or messages
-- the session should receive queued items when it becomes available
-
-Open design question:
-- should queued comments interrupt the active session if they belong to the current task?
+- the comment composer should include an explicit `Interrupt agent` checkbox
+- when `Interrupt agent` is checked, the active session should receive the comment immediately as an interrupting message
+- when `Interrupt agent` is unchecked, the message should remain queued until the session is ready to process it
 
 ### Role queues
 
@@ -280,9 +280,8 @@ For roles:
 - tasks queue against the role definition
 - if active instances are below capacity, a new role instance may be created
 - if capacity is exhausted, the task waits in the role queue
-
-Open design question:
-- should roles support priority scheduling or only FIFO initially?
+- queue processing is FIFO by default
+- the UI should eventually allow manual reordering via drag-and-drop without changing the default dispatch policy
 
 ## Tooling model
 
@@ -347,20 +346,29 @@ This will likely reduce coupling versus putting workflow advancement logic direc
 
 ### Event model
 
-A durable event model would make the system easier to reason about.
+For the initial implementation, prefer straightforward application logging over a durable event system.
 
-Examples:
+Initial approach:
+- log important backend actions and session lifecycle events
+- expose the log in the Settings area of the UI
+- use logs for debugging and validating orchestration behavior during early development
+
+Examples of things worth logging:
 - `task.created`
 - `task.commented`
+- `task.comment.interrupt_requested`
 - `task.lane.entered`
 - `task.lane.completed`
 - `session.created`
 - `session.resumed`
+- `session.message.sent`
 - `session.message.received`
 - `agent.queue.updated`
 - `role.queue.updated`
+- `role.worktree.created`
+- `role.worktree.disposed`
 
-This does not require full event sourcing, but event records would help with debugging, timeline views, and auditability.
+Later, if needed, this logging layer can evolve into a more structured event store or timeline model.
 
 ## Frontend design
 
@@ -407,6 +415,11 @@ Refinement:
 - selected session shows transcript/event stream
 - active subscription state displayed clearly
 - ability to send messages back into the session
+- this should be one of the first fully working vertical slices of the app
+
+#### Settings
+- workflow management
+- application log viewer for backend/session logs during early development
 
 ## Visual design direction
 
@@ -444,30 +457,21 @@ Suggestion:
 
 ### 3. Worktree ownership
 
-Question:
-- should worktrees belong to projects, agents, or role instances?
-
-Suggestion:
+Decision:
 - store canonical repo clones under projects
 - let agents have durable worktrees for continuity
 - let role instances use disposable project-scoped worktrees
 
 ### 4. Session resumption policy
 
-Question:
-- when a task goes back to a prior lane, should Orchestra always resume the old session?
-
-Suggestion:
-- default to resuming the previous session for that lane when still valid
-- fall back to a fresh session if the old session is dead, stale, or bound to incompatible context
+Decision:
+- when a task returns to a previously used lane, always resume the previously recorded session for that lane
 
 ### 5. Notifications and intervention
 
-Question:
-- how should the system surface user-required decisions?
-
-Suggestion:
-- elevate these into a dedicated inbox/to-review surface instead of only inline task state
+Decision:
+- elevate user-required decisions into a dedicated inbox/to-review surface instead of only inline task state
+- allow comments to explicitly request interruption of the assigned agent via a checkbox in the comment UI
 
 ### 6. Workflow flexibility
 
@@ -489,23 +493,33 @@ Suggestion:
 
 ## Recommended near-term milestones
 
-### Milestone 1: Core data and task flow
-- define persisted models
+### Milestone 1: App scaffolding
+- scaffold the Tauri + TypeScript application structure
+- establish frontend routing, layout shell, and shared UI primitives
+- establish the Rust backend command structure and service boundaries
+- add a Settings page with a visible application log panel
+
+### Milestone 2: Session-first vertical slice
+- integrate `pi-agent-core`
+- implement create/resume/list sessions through backend commands
+- implement session event subscription and unsubscription
+- implement a Sessions UI that can create a session, resume a session, view output, and send messages back into the session
+- prioritize this milestone so session creation and interaction can be tested as early as possible
+
+### Milestone 3: Core project/task data
+- define persisted models for projects, repositories, tasks, workflows, agents, roles, and lane runs
 - implement project/repository/task/workflow CRUD
 - implement lane transitions and lane run history
-- implement user-assigned lanes before autonomous dispatch
+- wire task comments, including interrupt-vs-queue behavior
 
-### Milestone 2: Session integration
-- create/resume/list sessions through `pi-agent-core`
-- wire session subscriptions and chat
-- attach sessions to tasks and lanes
-
-### Milestone 3: Agent and role dispatch
+### Milestone 4: Agent and role dispatch
 - add persistent agents with queues
 - add role definitions and capped role instance spawning
-- implement queue processing and assignment
+- implement FIFO role queues with future manual reorder support
+- implement disposable role worktree lifecycle
+- attach tasks and lanes to resumed sessions
 
-### Milestone 4: Operational UX
+### Milestone 5: Operational UX
 - build task workflow UI
 - build agent/role workload views
 - build intervention inbox and queue health indicators
