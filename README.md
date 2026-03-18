@@ -4,6 +4,8 @@ Agent orchestration framework focused on getting project work done.
 
 ## Docs
 
+- [Product north star](docs/north-star.md)
+- [UX north star](docs/ux-north-star.md)
 - [Design draft](docs/design.md)
 - [Implementation plan](docs/implementation-plan.md)
 
