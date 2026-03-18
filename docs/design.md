@@ -115,6 +115,7 @@ Key behavior:
 - sessions are resumable
 - frontend subscriptions to session output should be transient
 - unsubscribed sessions may continue running without streaming output to the UI
+- Orchestra-managed pi session files should be stored under `~/.orchestra/projects/{project-slug}/sessions/` via a custom `sessionDir`, not under pi's default global session directory
 
 ### Agents
 

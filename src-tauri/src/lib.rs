@@ -4,7 +4,7 @@ mod services;
 mod state;
 
 use commands::{
-    app::{get_app_info, get_logs},
+    app::{get_app_info, get_logs, get_session_storage_info},
     sessions::{
         create_session, list_sessions, resume_session, send_session_message, subscribe_session,
         unsubscribe_session,
@@ -21,6 +21,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             get_logs,
+            get_session_storage_info,
             list_sessions,
             create_session,
             resume_session,

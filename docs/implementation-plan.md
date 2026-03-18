@@ -85,6 +85,7 @@ Implement Tauri commands for:
 
 Backend responsibilities:
 - manage `pi-agent-core` session lifecycle
+- create and resume sessions with an Orchestra-managed `sessionDir` under `~/.orchestra/projects/{project-slug}/sessions/`
 - track active subscriptions per session
 - translate session events into frontend-consumable events
 - log all major session actions
@@ -145,6 +146,7 @@ Goal: turn the first session slice into a durable foundation for orchestration f
 
 ### Suggested design choices
 - keep subscriptions ephemeral and client-bound
+- store Orchestra-managed pi session files in project-scoped directories under `~/.orchestra` rather than pi's default global session location
 - persist session metadata even if transcript persistence remains minimal at first
 - use logs plus transcript stream before designing a richer audit/event store
 
