@@ -20,6 +20,14 @@ pub struct LogEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionStorageInfo {
+    pub orchestra_root: String,
+    pub project_slug: String,
+    pub session_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionEvent {
     pub id: String,
     pub kind: String,

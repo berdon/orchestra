@@ -8,6 +8,7 @@ Agent orchestration framework focused on getting project work done.
 - [UX north star](docs/ux-north-star.md)
 - [Design draft](docs/design.md)
 - [Implementation plan](docs/implementation-plan.md)
+- [Session storage](docs/session-storage.md)
 
 ## App scaffold
 
@@ -25,6 +26,12 @@ This repository now includes the first-pass Orchestra application scaffold:
 ```bash
 npm install
 npm run dev
+```
+
+### Tests
+
+```bash
+npm test
 ```
 
 ### Tauri desktop app
