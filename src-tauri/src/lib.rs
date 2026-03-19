@@ -6,7 +6,7 @@ mod state;
 use commands::{
     app::{clear_logs, get_app_info, get_logs, get_session_storage_info, open_logs_window},
     sessions::{
-        create_session, get_session_model_state, list_sessions, resume_session,
+        create_session, delete_session, get_session_model_state, list_sessions, resume_session,
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
     },
     workflows::{
@@ -42,6 +42,7 @@ pub fn run() {
             get_session_storage_info,
             list_sessions,
             create_session,
+            delete_session,
             resume_session,
             subscribe_session,
             unsubscribe_session,

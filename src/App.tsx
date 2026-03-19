@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearLogs,
   createSession,
+  deleteSession,
   getAppInfo,
   getLogs,
   getSessionModelState,
@@ -9,7 +10,6 @@ import {
   listSessions,
   listenToSessionStream,
   openLogsWindow,
-  resumeSession,
   sendSessionMessage,
   setSessionModel,
   subscribeSession,
@@ -18,13 +18,14 @@ import {
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AppInfo,
+  JsonValue,
   LogEntry,
   PrimaryPage,
   SessionEvent,
   SessionModelState,
   SessionRecord,
   SessionStatus,
-  SessionStreamEvent,
+  SessionStreamEnvelope,
 } from "./types";
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
@@ -141,6 +142,77 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
   }
 
   return "Choose a model";
+}
+
+function isObject(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asArray(value: JsonValue | undefined | null) {
+  return Array.isArray(value) ? value : [];
+}
+
+function asString(value: JsonValue | undefined | null) {
+  return typeof value === "string" ? value : "";
+}
+
+function extractRpcMessageText(message: JsonValue | undefined | null) {
+  if (!isObject(message)) {
+    return "";
+  }
+
+  return asArray(message.content)
+    .map((block) => {
+      if (!isObject(block)) {
+        return "";
+      }
+
+      if (asString(block.type) === "text") {
+        return asString(block.text);
+      }
+
+      if (asString(block.type) === "thinking") {
+        return asString(block.thinking);
+      }
+
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function getRpcEventType(envelope: SessionStreamEnvelope) {
+  return isObject(envelope.event) ? asString(envelope.event.type) : "";
+}
+
+function getRpcAssistantDeltaType(envelope: SessionStreamEnvelope) {
+  if (!isObject(envelope.event)) {
+    return "";
+  }
+
+  const delta = envelope.event.assistantMessageEvent;
+  return isObject(delta) ? asString(delta.type) : "";
+}
+
+function buildTranscriptEvent(kind: SessionEvent["kind"], message: string, timestamp: string, overrides?: Partial<SessionEvent>): SessionEvent {
+  return {
+    id: createClientId(`event-${kind}`),
+    kind,
+    message,
+    timestamp,
+    ...overrides,
+  };
+}
+
+function buildToolPlaceholder(runId: string, timestamp: string) {
+  return buildPendingAssistantEvent(runId, timestamp, {
+    message: "Running tools…",
+    thinking: false,
+  });
+}
+
+function hasVisibleAssistantText(event?: SessionEvent) {
+  return Boolean(event?.message.trim() && event.message.trim() !== "Running tools…");
 }
 
 function RuntimeLogPanel({ logs, loadingLogs, clearingLogs, onRefresh, onClear }: RuntimeLogPanelProps) {
@@ -340,103 +412,240 @@ export function App() {
     }
   }
 
+  async function handleDeleteSession(sessionId: string) {
+    setSessionActionError(null);
+    setIsSubmitting(true);
+
+    try {
+      await deleteSession(sessionId);
+      setPendingRuns((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      setModelStates((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      await loadSessions();
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to delete session.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   const handleSessionStreamEvent = useCallback(
-    (payload: SessionStreamEvent) => {
-      switch (payload.event) {
-        case "thinking_start": {
+    (payload: SessionStreamEnvelope) => {
+      const eventType = getRpcEventType(payload);
+      const eventTimestamp = payload.receivedAt ?? nowIso();
+      const runId = payload.runId ?? createClientId("run");
+
+      if (eventType === "agent_start") {
+        patchSessionRecord(payload.sessionId, (session) => ({
+          ...session,
+          status: "streaming",
+          updatedAt: eventTimestamp,
+        }));
+        return;
+      }
+
+      if (eventType === "message_start") {
+        const rpcEvent = isObject(payload.event) ? payload.event : null;
+        const message = rpcEvent?.message;
+        const role = isObject(message) ? asString(message.role) : "";
+
+        if (role === "user") {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
             userEvent: {
               ...current.userEvent,
               pending: false,
+              timestamp: eventTimestamp,
             },
-            assistantEvent: current.assistantEvent
-              ? {
-                  ...current.assistantEvent,
-                  pending: true,
-                  thinking: true,
-                }
-              : buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso(), {
-                  thinking: true,
-                }),
           }));
-          break;
+          return;
         }
-        case "text_start": {
+
+        if (role === "assistant") {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
             userEvent: {
               ...current.userEvent,
               pending: false,
             },
-            assistantEvent: current.assistantEvent
-              ? {
-                  ...current.assistantEvent,
+            assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp),
+          }));
+        }
+        return;
+      }
+
+      if (eventType === "message_update") {
+        const deltaType = getRpcAssistantDeltaType(payload);
+        const rpcEvent = isObject(payload.event) ? payload.event : null;
+        const message = rpcEvent?.message;
+        const delta = isObject(rpcEvent?.assistantMessageEvent) ? rpcEvent?.assistantMessageEvent : null;
+
+        switch (deltaType) {
+          case "thinking_start":
+            updatePendingRun(payload.sessionId, (current) => ({
+              ...current,
+              userEvent: {
+                ...current.userEvent,
+                pending: false,
+              },
+              assistantEvent: current.assistantEvent
+                ? {
+                    ...current.assistantEvent,
+                    pending: true,
+                    thinking: true,
+                    timestamp: eventTimestamp,
+                  }
+                : buildPendingAssistantEvent(runId, eventTimestamp, { thinking: true }),
+            }));
+            return;
+          case "thinking_end":
+            updatePendingRun(payload.sessionId, (current) => ({
+              ...current,
+              assistantEvent: current.assistantEvent
+                ? {
+                    ...current.assistantEvent,
+                    thinking: false,
+                    pending: true,
+                  }
+                : buildPendingAssistantEvent(runId, eventTimestamp),
+            }));
+            return;
+          case "text_start":
+            updatePendingRun(payload.sessionId, (current) => ({
+              ...current,
+              userEvent: {
+                ...current.userEvent,
+                pending: false,
+              },
+              assistantEvent: current.assistantEvent
+                ? {
+                    ...current.assistantEvent,
+                    pending: true,
+                    thinking: false,
+                    message: hasVisibleAssistantText(current.assistantEvent) ? current.assistantEvent.message : "",
+                  }
+                : buildPendingAssistantEvent(runId, eventTimestamp),
+            }));
+            return;
+          case "text_delta":
+            updatePendingRun(payload.sessionId, (current) => {
+              const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp);
+              const chunk = delta ? asString(delta.delta) : "";
+              const nextMessage = hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk;
+              return {
+                ...current,
+                userEvent: {
+                  ...current.userEvent,
+                  pending: false,
+                },
+                assistantEvent: {
+                  ...base,
+                  message: nextMessage,
                   pending: true,
                   thinking: false,
-                }
-              : buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso()),
-          }));
-          break;
+                },
+              };
+            });
+            return;
+          case "toolcall_start":
+          case "toolcall_delta":
+          case "toolcall_end":
+            updatePendingRun(payload.sessionId, (current) => ({
+              ...current,
+              userEvent: {
+                ...current.userEvent,
+                pending: false,
+              },
+              assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
+            }));
+            return;
+          case "error":
+            patchSessionRecord(payload.sessionId, (session) => ({
+              ...session,
+              status: "failed",
+              updatedAt: eventTimestamp,
+              events: session.events.filter((event) => event.runId !== runId),
+            }));
+            removePendingRun(payload.sessionId, runId);
+            setSessionActionError(asString(delta?.message) || extractRpcMessageText(message) || "Session action failed.");
+            return;
+          default:
+            return;
         }
-        case "text_delta": {
-          updatePendingRun(payload.sessionId, (current) => ({
-            ...current,
-            userEvent: {
-              ...current.userEvent,
-              pending: false,
-            },
-            assistantEvent: {
-              ...(current.assistantEvent ?? buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso())),
-              message: `${current.assistantEvent?.message ?? ""}${payload.delta ?? ""}`,
-              pending: true,
-              thinking: false,
-            },
-          }));
-          break;
+      }
+
+      if (eventType === "tool_execution_start" || eventType === "tool_execution_update" || eventType === "tool_execution_end") {
+        updatePendingRun(payload.sessionId, (current) => ({
+          ...current,
+          userEvent: {
+            ...current.userEvent,
+            pending: false,
+          },
+          assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
+        }));
+        return;
+      }
+
+      if (eventType === "turn_end") {
+        const rpcEvent = isObject(payload.event) ? payload.event : null;
+        const finalMessage = extractRpcMessageText(rpcEvent?.message);
+        if (!finalMessage.trim()) {
+          return;
         }
-        case "turn_end": {
-          updatePendingRun(payload.sessionId, (current) => ({
-            ...current,
-            userEvent: {
-              ...current.userEvent,
-              pending: false,
-            },
-            assistantEvent: current.assistantEvent
-              ? {
-                  ...current.assistantEvent,
-                  message: payload.message ?? current.assistantEvent.message,
-                  pending: false,
-                  thinking: false,
-                  timestamp: payload.timestamp ?? current.assistantEvent.timestamp,
-                }
-              : buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso(), {
-                  message: payload.message ?? "",
-                  pending: false,
-                }),
-          }));
-          break;
-        }
-        case "session_updated": {
-          if (payload.record) {
-            applySessionUpdate(payload.record);
-          }
-          removePendingRun(payload.sessionId, payload.runId);
-          break;
-        }
-        case "error": {
-          patchSessionRecord(payload.sessionId, (session) => ({
-            ...session,
-            status: "failed",
-            updatedAt: nowIso(),
-            events: session.events.filter((event) => event.runId !== payload.runId),
-          }));
-          removePendingRun(payload.sessionId, payload.runId);
-          setSessionActionError(payload.message ?? "Session action failed.");
-          break;
-        }
-        default:
-          break;
+
+        updatePendingRun(payload.sessionId, (current) => ({
+          ...current,
+          userEvent: {
+            ...current.userEvent,
+            pending: false,
+          },
+          assistantEvent: current.assistantEvent
+            ? {
+                ...current.assistantEvent,
+                message: finalMessage,
+                pending: false,
+                thinking: false,
+                timestamp: eventTimestamp,
+              }
+            : buildPendingAssistantEvent(runId, eventTimestamp, {
+                message: finalMessage,
+                pending: false,
+                thinking: false,
+              }),
+        }));
+        return;
+      }
+
+      if (eventType === "agent_end") {
+        void subscribeSession(payload.sessionId)
+          .then((record) => {
+            applySessionUpdate(record);
+            removePendingRun(payload.sessionId, runId);
+          })
+          .catch((error) => {
+            removePendingRun(payload.sessionId, runId);
+            setSessionActionError(error instanceof Error ? error.message : "Unable to refresh session.");
+          });
+        return;
+      }
+
+      if (eventType === "error") {
+        const rpcEvent = isObject(payload.event) ? payload.event : null;
+        patchSessionRecord(payload.sessionId, (session) => ({
+          ...session,
+          status: "failed",
+          updatedAt: eventTimestamp,
+          events: session.events.filter((event) => event.runId !== runId),
+        }));
+        removePendingRun(payload.sessionId, runId);
+        setSessionActionError(asString(rpcEvent?.message) || "Session action failed.");
       }
     },
     [applySessionUpdate, patchSessionRecord, removePendingRun, updatePendingRun],
@@ -569,7 +778,6 @@ export function App() {
 
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun ? "streaming" : selectedSession?.status ?? "idle";
-  const selectedSessionBusy = Boolean(selectedSessionPendingRun) || isSubmitting;
 
   async function handleModelChange(value: string) {
     if (!selectedSession) {
@@ -737,12 +945,7 @@ export function App() {
       </aside>
 
       <main className="content">
-        <header className="page-header">
-          <div>
-            <p className="eyebrow">Agent orchestration framework</p>
-            <h1>Orchestra</h1>
-          </div>
-
+        <header className="page-header page-header--compact">
           <div className="status-cluster">
             <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
               Open logs
@@ -786,7 +989,7 @@ export function App() {
         ) : activePage === "sessions" ? (
           <section className="panel-stack panel-stack--sessions">
             <section className="session-shell">
-              <aside className="panel session-list-panel">
+              <aside className="session-list-panel">
                 <form
                   className="session-create-form"
                   onSubmit={(event) => {
@@ -798,17 +1001,14 @@ export function App() {
                     });
                   }}
                 >
-                  <label className="field-group">
-                    <span className="field-group__label">New session title</span>
-                    <input
-                      className="text-input"
-                      data-role="new-session-title"
-                      type="text"
-                      placeholder="e.g. Session-first spike"
-                      value={newSessionTitle}
-                      onChange={(event) => setNewSessionTitle(event.target.value)}
-                    />
-                  </label>
+                  <input
+                    className="text-input"
+                    data-role="new-session-title"
+                    type="text"
+                    placeholder="New session title"
+                    value={newSessionTitle}
+                    onChange={(event) => setNewSessionTitle(event.target.value)}
+                  />
                   <button className="primary-button" data-role="create-session" type="submit" disabled={isSubmitting}>
                     Create session
                   </button>
@@ -817,38 +1017,42 @@ export function App() {
                 {loadingSessions ? <p className="muted-copy">Loading sessions…</p> : null}
                 {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
 
-                <div className="session-list" role="list">
+                <nav className="session-list" aria-label="Sessions">
                   {sessions.map((session) => (
-                    <a
+                    <div
                       key={session.id}
-                      data-role="session-link"
-                      data-session-id={session.id}
-                      className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
-                      href="#"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        setSelectedSessionId(session.id);
-                      }}
+                      className={session.id === selectedSession?.id ? "session-list-row session-list-row--active" : "session-list-row"}
                     >
-                      {session.title}
-                    </a>
+                      <a
+                        data-role="session-link"
+                        data-session-id={session.id}
+                        className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setSelectedSessionId(session.id);
+                        }}
+                      >
+                        {session.title}
+                      </a>
+                      <button
+                        className="session-delete-button"
+                        type="button"
+                        aria-label={`Delete ${session.title}`}
+                        onClick={() => void handleDeleteSession(session.id)}
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))}
-                </div>
+                </nav>
               </aside>
 
               <section className="panel session-detail-panel">
                 {selectedSession ? (
                   <>
                     <div className="panel__header panel__header--session-detail">
-                      <div>
-                        <p className="eyebrow">Session detail</p>
-                        <h3 data-role="selected-session-title">{selectedSession.title}</h3>
-                        <div className="session-detail__meta">
-                          <span data-role="selected-session-id">{selectedSession.id}</span>
-                          <span>Created {formatDateTime(selectedSession.createdAt)}</span>
-                          <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
-                        </div>
-                      </div>
+                      <h3 data-role="selected-session-title">{selectedSession.title}</h3>
 
                       <div className="action-cluster action-cluster--session-tools">
                         <label className="field-group field-group--compact session-model-field">
@@ -875,29 +1079,6 @@ export function App() {
                         </label>
 
                         <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
-                        <span className={selectedSession.subscribed ? "status-badge status-badge--accent" : "status-badge status-badge--neutral"}>
-                          {selectedSession.subscribed ? "Subscribed" : "Not subscribed"}
-                        </span>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={selectedSessionBusy}
-                          onClick={() => void runSessionAction(() => resumeSession(selectedSession.id))}
-                        >
-                          Resume session
-                        </button>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={selectedSessionBusy}
-                          onClick={() =>
-                            void runSessionAction(() =>
-                              selectedSession.subscribed ? unsubscribeSession(selectedSession.id) : subscribeSession(selectedSession.id),
-                            )
-                          }
-                        >
-                          {selectedSession.subscribed ? "Unsubscribe" : "Subscribe"}
-                        </button>
                       </div>
                     </div>
 
@@ -945,9 +1126,15 @@ export function App() {
                         />
                       </label>
                       <div className="composer__footer">
-                        <p className="muted-copy">
-                          {selectedSessionPendingRun ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
-                        </p>
+                        <div className="composer__meta">
+                          <p className="muted-copy">
+                            {selectedSessionPendingRun ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
+                          </p>
+                          <div className="session-detail__meta session-detail__meta--footer">
+                            <span>Created {formatDateTime(selectedSession.createdAt)}</span>
+                            <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
+                          </div>
+                        </div>
                         <button
                           className="primary-button"
                           data-role="send-message"

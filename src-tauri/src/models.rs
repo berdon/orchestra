@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +52,16 @@ pub struct QueuedSessionMessage {
     pub run_id: String,
     pub message: String,
     pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStreamEnvelope {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub event: Value,
+    pub received_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

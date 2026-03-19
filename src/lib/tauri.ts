@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
+  JsonValue,
   LogEntry,
   LogLevel,
   QueuedSessionMessage,
@@ -8,7 +9,7 @@ import type {
   SessionModel,
   SessionModelState,
   SessionRecord,
-  SessionStreamEvent,
+  SessionStreamEnvelope,
   WorkflowDefinition,
   WorkflowLane,
   WorkflowSummary,
@@ -95,8 +96,17 @@ function setStoredValue<T>(key: string, value: T) {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
-function emitMockSessionStream(event: SessionStreamEvent) {
+function emitMockSessionStream(event: SessionStreamEnvelope) {
   window.dispatchEvent(new CustomEvent("orchestra:session-stream", { detail: event }));
+}
+
+function createMockSessionEnvelope(sessionId: string, runId: string, event: JsonValue): SessionStreamEnvelope {
+  return {
+    sessionId,
+    runId,
+    event,
+    receivedAt: nowIso(),
+  };
 }
 
 function seedMockLogs(): LogEntry[] {
@@ -424,11 +434,11 @@ function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow
 }
 
 export async function listenToSessionStream(
-  handler: (event: SessionStreamEvent) => void,
+  handler: (event: SessionStreamEnvelope) => void,
 ): Promise<() => void> {
   const listener = (event: Event) => {
     if (event instanceof CustomEvent) {
-      handler(event.detail as SessionStreamEvent);
+      handler(event.detail as SessionStreamEnvelope);
     }
   };
 
@@ -522,6 +532,19 @@ export async function createSession(title?: string): Promise<SessionRecord> {
   return invoke<SessionRecord>("create_session", { title });
 }
 
+export async function deleteSession(sessionId: string): Promise<void> {
+  if (!isTauriAvailable()) {
+    saveMockSessions(ensureMockSessions().filter((session) => session.id !== sessionId));
+    const models = getMockSessionModels();
+    delete models[sessionId];
+    setMockSessionModels(models);
+    appendMockLog("info", "sessions.delete", `Deleted session ${sessionId}`);
+    return;
+  }
+
+  await invoke("delete_session", { sessionId });
+}
+
 export async function resumeSession(sessionId: string): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const session = updateMockSession(sessionId, (current) => ({
@@ -549,7 +572,6 @@ export async function subscribeSession(sessionId: string): Promise<SessionRecord
       ...current,
       subscribed: true,
       updatedAt: nowIso(),
-      events: [...current.events, createEvent("system", "Live subscription enabled for this session.")],
     }));
 
     if (!session) {
@@ -569,7 +591,6 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
       ...current,
       subscribed: false,
       updatedAt: nowIso(),
-      events: [...current.events, createEvent("system", "Live subscription disabled for this session.")],
     }));
 
     if (!session) {
@@ -624,43 +645,65 @@ export async function sendSessionMessage(sessionId: string, message: string, run
 
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);
+    const userMessage = {
+      role: "user",
+      content: [{ type: "text", text: trimmedMessage }],
+      timestamp: Date.now(),
+    };
+    const assistantMessageBase = {
+      role: "assistant",
+      content: [] as JsonValue[],
+      timestamp: Date.now(),
+    };
 
     window.setTimeout(() => {
-      emitMockSessionStream({
-        sessionId,
-        runId,
-        event: "thinking_start",
-        timestamp: nowIso(),
-      });
-
-      window.setTimeout(() => {
-        emitMockSessionStream({
-          sessionId,
-          runId,
-          event: "text_start",
-          timestamp: nowIso(),
-        });
-      }, 80);
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "agent_start" }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "turn_start" }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_start", message: userMessage }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_end", message: userMessage }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_start", message: assistantMessageBase }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+        type: "message_update",
+        message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: "" }] },
+        assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} },
+      }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+        type: "message_update",
+        message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: "Thinking…" }] },
+        assistantMessageEvent: { type: "thinking_end", contentIndex: 0, partial: {} },
+      }));
+      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+        type: "message_update",
+        message: { ...assistantMessageBase, content: [{ type: "text", text: "" }] },
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: {} },
+      }));
 
       chunks.forEach((chunk, index) => {
         window.setTimeout(() => {
-          emitMockSessionStream({
-            sessionId,
-            runId,
-            event: "text_delta",
-            delta: chunk,
-          });
-        }, 80 * (index + 2));
+          emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+            type: "message_update",
+            message: { ...assistantMessageBase, content: [{ type: "text", text: assistantReply.slice(0, assistantReply.indexOf(chunk) >= 0 ? assistantReply.indexOf(chunk) + chunk.length : assistantReply.length) }] },
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: chunk, partial: {} },
+          }));
+        }, 80 * (index + 1));
       });
 
       window.setTimeout(() => {
-        emitMockSessionStream({
-          sessionId,
-          runId,
-          event: "turn_end",
-          timestamp: nowIso(),
-          message: assistantReply,
-        });
+        const assistantMessage = {
+          ...assistantMessageBase,
+          content: [{ type: "text", text: assistantReply }],
+        };
+        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+          type: "message_update",
+          message: assistantMessage,
+          assistantMessageEvent: { type: "text_end", contentIndex: 0, content: assistantReply, partial: {} },
+        }));
+        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_end", message: assistantMessage }));
+        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+          type: "turn_end",
+          message: assistantMessage,
+          toolResults: [],
+        }));
 
         const session = updateMockSession(sessionId, (current) => {
           const timestamp = nowIso();
@@ -682,23 +725,17 @@ export async function sendSessionMessage(sessionId: string, message: string, run
         });
 
         if (!session) {
-          emitMockSessionStream({
-            sessionId,
-            runId,
-            event: "error",
+          emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+            type: "error",
             message: `Unable to find session ${sessionId}`,
-          });
+            source: "mock",
+          }));
           return;
         }
 
         appendMockLog("info", "sessions.message", `Sent message to session ${session.id}`);
-        emitMockSessionStream({
-          sessionId,
-          runId,
-          event: "session_updated",
-          record: session,
-        });
-      }, 80 * (chunks.length + 3));
+        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "agent_end" }));
+      }, 80 * (chunks.length + 2));
     }, 120);
 
     return queued;

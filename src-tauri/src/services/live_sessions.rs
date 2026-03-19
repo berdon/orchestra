@@ -13,8 +13,8 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
-    models::{SessionModel, SessionModelState, SessionStreamEvent},
-    services::pi_sessions::{get_session, get_session_path},
+    models::{SessionModel, SessionModelState, SessionStreamEnvelope},
+    services::pi_sessions::get_session_path,
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -115,9 +115,16 @@ impl SessionRuntime {
                         match serde_json::from_str::<Value>(trimmed) {
                             Ok(payload) => runtime.handle_payload(payload),
                             Err(error) => {
-                                runtime.emit_error_for_active_run(format!(
-                                    "Unable to parse pi RPC output: {error}"
-                                ));
+                                runtime.app.state::<crate::state::AppState>().log(
+                                    "error",
+                                    "sessions.rpc.parse",
+                                    &format!("Unable to parse pi RPC output for {}: {error}", runtime.session_id),
+                                );
+                                runtime.emit_stream_event(json!({
+                                    "type": "error",
+                                    "message": format!("Unable to parse pi RPC output: {error}"),
+                                    "source": "orchestra",
+                                }));
                             }
                         }
                     }
@@ -173,206 +180,27 @@ impl SessionRuntime {
             }
         }
 
-        match payload.get("type").and_then(Value::as_str) {
-            Some("message_update") => self.handle_message_update(&payload),
-            Some("turn_end") => {
-                self.app.state::<crate::state::AppState>().log(
-                    "info",
-                    "sessions.rpc.lifecycle",
-                    &format!("Session {} received turn_end", self.session_id),
-                );
-
-                if let Some(run_id) = self.current_run_id() {
-                    let final_message = payload
-                        .get("message")
-                        .map(extract_message_text)
-                        .filter(|text| !text.trim().is_empty());
-                    self.app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.rpc.emit",
-                        &format!("Session {} emitting turn_end", self.session_id),
-                    );
-                    self.emit_stream_event(SessionStreamEvent {
-                        session_id: self.session_id.clone(),
-                        run_id,
-                        event: "turn_end".into(),
-                        timestamp: Some(crate::state::now_iso()),
-                        delta: None,
-                        message: final_message,
-                        record: None,
-                    });
-                }
-            }
-            Some("agent_end") => {
-                self.app.state::<crate::state::AppState>().log(
-                    "info",
-                    "sessions.rpc.lifecycle",
-                    &format!("Session {} received agent_end", self.session_id),
-                );
-                self.handle_agent_end()
-            }
-            Some("response") => {
-                self.app.state::<crate::state::AppState>().log(
-                    "debug",
-                    "sessions.rpc.response",
-                    &format!(
-                        "Session {} received response {} success={} ",
-                        self.session_id,
-                        payload
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("(no id)"),
-                        payload
-                            .get("success")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                    ),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_message_update(&self, payload: &Value) {
-        let Some(run_id) = self.current_run_id() else {
-            return;
-        };
-
-        let Some(event_type) = payload
-            .pointer("/assistantMessageEvent/type")
+        let event_type = payload
+            .get("type")
             .and_then(Value::as_str)
-        else {
-            return;
-        };
+            .unwrap_or("unknown");
 
-        if matches!(
-            event_type,
-            "text_start" | "text_delta" | "thinking_start" | "error"
-        ) {
-            self.app.state::<crate::state::AppState>().log(
-                "info",
-                "sessions.rpc.message_update",
-                &format!("Session {} message_update {}", self.session_id, event_type),
-            );
-        }
+        self.app.state::<crate::state::AppState>().log(
+            "info",
+            "sessions.rpc.event",
+            &format!("Session {} received {}", self.session_id, event_type),
+        );
+        self.emit_stream_event(payload.clone());
 
-        match event_type {
-            "done" => {
-                self.app.state::<crate::state::AppState>().log(
-                    "info",
-                    "sessions.rpc.message_update",
-                    &format!("Session {} message_update done", self.session_id),
-                );
+        if event_type == "agent_end" {
+            if let Some(run_id) = self.take_current_run_id() {
+                let _ = self
+                    .app
+                    .state::<crate::state::AppState>()
+                    .end_session_run(&self.session_id, &run_id);
             }
-            "thinking_start" => {
-                if self.is_subscribed() {
-                    self.app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.rpc.emit",
-                        &format!("Session {} emitting thinking_start", self.session_id),
-                    );
-                    self.emit_stream_event(SessionStreamEvent {
-                        session_id: self.session_id.clone(),
-                        run_id,
-                        event: "thinking_start".into(),
-                        timestamp: Some(crate::state::now_iso()),
-                        delta: None,
-                        message: None,
-                        record: None,
-                    });
-                }
-            }
-            "text_start" => {
-                if self.is_subscribed() {
-                    self.app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.rpc.emit",
-                        &format!("Session {} emitting text_start", self.session_id),
-                    );
-                    self.emit_stream_event(SessionStreamEvent {
-                        session_id: self.session_id.clone(),
-                        run_id,
-                        event: "text_start".into(),
-                        timestamp: Some(crate::state::now_iso()),
-                        delta: None,
-                        message: None,
-                        record: None,
-                    });
-                }
-            }
-            "text_delta" => {
-                if self.is_subscribed() {
-                    self.app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.rpc.emit",
-                        &format!("Session {} emitting text_delta", self.session_id),
-                    );
-                    self.emit_stream_event(SessionStreamEvent {
-                        session_id: self.session_id.clone(),
-                        run_id,
-                        event: "text_delta".into(),
-                        timestamp: None,
-                        delta: payload
-                            .pointer("/assistantMessageEvent/delta")
-                            .and_then(Value::as_str)
-                            .map(ToOwned::to_owned),
-                        message: None,
-                        record: None,
-                    });
-                }
-            }
-            "error" => {
-                self.emit_error_for_active_run(extract_rpc_error(payload));
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_agent_end(&self) {
-        let Some(run_id) = self.take_current_run_id() else {
             self.close_if_idle();
-            return;
-        };
-
-        let _ = self
-            .app
-            .state::<crate::state::AppState>()
-            .end_session_run(&self.session_id, &run_id);
-
-        if self.is_subscribed() {
-            match get_session(&self.session_dir, &self.session_id, true) {
-                Ok(record) => {
-                    self.app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.runtime.complete",
-                        &format!(
-                            "Session {} emitting session_updated for run {}",
-                            self.session_id, run_id
-                        ),
-                    );
-                    self.emit_stream_event(SessionStreamEvent {
-                        session_id: self.session_id.clone(),
-                        run_id,
-                        event: "session_updated".into(),
-                        timestamp: None,
-                        delta: None,
-                        message: None,
-                        record: Some(record),
-                    });
-                }
-                Err(error) => self.emit_stream_event(SessionStreamEvent {
-                    session_id: self.session_id.clone(),
-                    run_id,
-                    event: "error".into(),
-                    timestamp: None,
-                    delta: None,
-                    message: Some(error),
-                    record: None,
-                }),
-            }
         }
-
-        self.close_if_idle();
     }
 
     fn handle_process_end(&self, message: impl Into<String>) {
@@ -383,33 +211,31 @@ impl SessionRuntime {
                 let _ = sender.send(Err(error_message.clone()));
             }
         }
-        self.emit_error_for_active_run(error_message);
-    }
 
-    fn emit_error_for_active_run(&self, message: String) {
         if let Some(run_id) = self.take_current_run_id() {
             let _ = self
                 .app
                 .state::<crate::state::AppState>()
                 .end_session_run(&self.session_id, &run_id);
-
-            if self.is_subscribed() {
-                self.emit_stream_event(SessionStreamEvent {
-                    session_id: self.session_id.clone(),
-                    run_id,
-                    event: "error".into(),
-                    timestamp: None,
-                    delta: None,
-                    message: Some(message),
-                    record: None,
-                });
-            }
+            self.emit_stream_event(json!({
+                "type": "error",
+                "message": error_message,
+                "source": "orchestra",
+            }));
         }
-
-        self.close_if_idle();
     }
 
-    fn emit_stream_event(&self, payload: SessionStreamEvent) {
+    fn emit_stream_event(&self, event: Value) {
+        if !self.is_subscribed() {
+            return;
+        }
+
+        let payload = SessionStreamEnvelope {
+            session_id: self.session_id.clone(),
+            run_id: self.current_run_id(),
+            event,
+            received_at: crate::state::now_iso(),
+        };
         let serialized = match serde_json::to_string(&payload) {
             Ok(serialized) => serialized,
             Err(error) => {
@@ -508,6 +334,19 @@ impl SessionRuntime {
             *current = subscribed;
         }
         self.close_if_idle();
+    }
+
+    pub fn shutdown(&self) {
+        self.mark_closed();
+        if let Ok(mut stdin) = self.stdin.lock() {
+            *stdin = None;
+        }
+        if let Ok(mut child) = self.child.lock() {
+            if let Some(child) = child.as_mut() {
+                let _ = child.kill();
+            }
+            *child = None;
+        }
     }
 
     pub fn start_run(&self, run_id: &str, message: &str) -> Result<(), String> {

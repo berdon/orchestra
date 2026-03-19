@@ -1,5 +1,7 @@
 export type PrimaryPage = "tasks" | "agents" | "sessions" | "settings";
 
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type SessionStatus = "starting" | "active" | "idle" | "paused" | "failed" | "streaming";
 export type SessionEventKind = "system" | "user" | "assistant";
@@ -59,14 +61,11 @@ export interface QueuedSessionMessage {
   timestamp: string;
 }
 
-export interface SessionStreamEvent {
+export interface SessionStreamEnvelope {
   sessionId: string;
-  runId: string;
-  event: "thinking_start" | "text_start" | "text_delta" | "turn_end" | "session_updated" | "error";
-  timestamp?: string;
-  delta?: string;
-  message?: string;
-  record?: SessionRecord;
+  runId?: string | null;
+  event: JsonValue;
+  receivedAt: string;
 }
 
 export type WorkflowOwnerType = "user" | "agent" | "role";

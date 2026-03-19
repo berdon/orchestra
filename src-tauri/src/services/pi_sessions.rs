@@ -160,6 +160,12 @@ pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf,
     resolve_session(session_dir, session_id, true).map(|session| session.path)
 }
 
+pub fn delete_session_file(session_dir: &Path, session_id: &str) -> Result<(), String> {
+    let path = get_session_path(session_dir, session_id)?;
+    fs::remove_file(&path)
+        .map_err(|error| format!("Unable to delete session file {}: {error}", path.display()))
+}
+
 pub fn stream_prompt_session<F>(
     project_root: &Path,
     session_dir: &Path,
