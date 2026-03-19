@@ -148,23 +148,7 @@ export function App() {
 
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
-
-  const displayedEvents = useMemo(() => {
-    if (!selectedSession) {
-      return [];
-    }
-
-    const pendingRun = pendingRuns[selectedSession.id];
-    if (!pendingRun) {
-      return selectedSession.events;
-    }
-
-    return [
-      ...selectedSession.events,
-      pendingRun.userEvent,
-      ...(pendingRun.assistantEvent ? [pendingRun.assistantEvent] : []),
-    ];
-  }, [pendingRuns, selectedSession]);
+  const displayedEvents = selectedSession?.events ?? [];
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
     setSessions((current) => {
@@ -194,19 +178,46 @@ export function App() {
     });
   }, []);
 
+  const patchSessionRecord = useCallback((sessionId: string, patch: (session: SessionRecord) => SessionRecord) => {
+    setSessions((current) => current.map((session) => (session.id === sessionId ? patch(session) : session)));
+  }, []);
+
   const updatePendingRun = useCallback((sessionId: string, updater: (run: PendingSessionRun) => PendingSessionRun) => {
+    let nextRun: PendingSessionRun | undefined;
+
     setPendingRuns((current) => {
       const existing = current[sessionId];
       if (!existing) {
         return current;
       }
 
+      const updatedRun = updater(existing);
+      nextRun = updatedRun;
       return {
         ...current,
-        [sessionId]: updater(existing),
+        [sessionId]: updatedRun,
       };
     });
-  }, []);
+
+    if (!nextRun) {
+      return;
+    }
+
+    const resolvedRun = nextRun;
+    patchSessionRecord(sessionId, (session) => {
+      const persistedEvents = session.events.filter((event) => event.runId !== resolvedRun.runId);
+      return {
+        ...session,
+        status: "streaming",
+        updatedAt: resolvedRun.userEvent.timestamp,
+        events: [
+          ...persistedEvents,
+          resolvedRun.userEvent,
+          ...(resolvedRun.assistantEvent ? [resolvedRun.assistantEvent] : []),
+        ],
+      };
+    });
+  }, [patchSessionRecord]);
 
   async function loadLogs() {
     setLoadingLogs(true);
@@ -291,6 +302,12 @@ export function App() {
           break;
         }
         case "error": {
+          patchSessionRecord(payload.sessionId, (session) => ({
+            ...session,
+            status: "failed",
+            updatedAt: nowIso(),
+            events: session.events.filter((event) => event.runId !== payload.runId),
+          }));
           removePendingRun(payload.sessionId, payload.runId);
           setSessionActionError(payload.message ?? "Session action failed.");
           break;
@@ -299,7 +316,7 @@ export function App() {
           break;
       }
     },
-    [applySessionUpdate, removePendingRun, updatePendingRun],
+    [applySessionUpdate, patchSessionRecord, removePendingRun, updatePendingRun],
   );
 
   useEffect(() => {
@@ -459,24 +476,37 @@ export function App() {
     const timestamp = nowIso();
     const sessionId = selectedSession.id;
 
+    const pendingUserEvent: SessionEvent = {
+      id: `pending-user-${runId}`,
+      kind: "user",
+      message: trimmedMessage,
+      timestamp,
+      pending: true,
+      runId,
+    };
+
     setSessionActionError(null);
     setDraftMessage("");
     setPendingRuns((current) => ({
       ...current,
       [sessionId]: {
         runId,
-        userEvent: {
-          id: `pending-user-${runId}`,
-          kind: "user",
-          message: trimmedMessage,
-          timestamp,
-          pending: true,
-          runId,
-        },
+        userEvent: pendingUserEvent,
       },
+    }));
+    patchSessionRecord(sessionId, (session) => ({
+      ...session,
+      status: "streaming",
+      updatedAt: timestamp,
+      events: [...session.events.filter((event) => event.runId !== runId), pendingUserEvent],
     }));
 
     void sendSessionMessage(sessionId, trimmedMessage, runId).catch((error) => {
+      patchSessionRecord(sessionId, (session) => ({
+        ...session,
+        status: "failed",
+        events: session.events.filter((event) => event.runId !== runId),
+      }));
       removePendingRun(sessionId, runId);
       setDraftMessage((current) => (current.length === 0 ? trimmedMessage : current));
       setSessionActionError(error instanceof Error ? error.message : "Unable to queue message.");

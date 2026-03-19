@@ -223,6 +223,11 @@ impl SessionRuntime {
             }
             "text_start" | "thinking_start" => {
                 if self.is_subscribed() {
+                    self.app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.rpc.emit",
+                        &format!("Session {} emitting assistantStart", self.session_id),
+                    );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
@@ -236,6 +241,11 @@ impl SessionRuntime {
             }
             "text_delta" => {
                 if self.is_subscribed() {
+                    self.app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.rpc.emit",
+                        &format!("Session {} emitting assistantDelta", self.session_id),
+                    );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
@@ -252,6 +262,11 @@ impl SessionRuntime {
             }
             "thinking_delta" => {
                 if self.is_subscribed() {
+                    self.app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.rpc.emit",
+                        &format!("Session {} emitting assistantDelta(thinking)", self.session_id),
+                    );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
