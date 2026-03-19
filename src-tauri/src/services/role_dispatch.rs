@@ -287,7 +287,8 @@ fn apply_role_session_defaults(
     role: &crate::models::RoleDefinition,
 ) -> Result<(), String> {
     if let (Some(provider), Some(model)) = (role.provider.as_deref(), role.model.as_deref()) {
-        let _ = pi_sessions::set_session_model(project_root, session_dir, session_id, provider, model)?;
+        let _ =
+            pi_sessions::set_session_model(project_root, session_dir, session_id, provider, model)?;
     }
 
     let _ = pi_sessions::set_session_thinking_level(
@@ -463,6 +464,8 @@ mod tests {
                 model: None,
                 thinking_level: Some("off".into()),
                 capacity,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
             },
         )
         .expect("role should create")

@@ -34,8 +34,12 @@ pub fn clear_logs(state: State<'_, AppState>) {
 #[tauri::command]
 pub fn open_logs_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("logs") {
-        window.show().map_err(|error| format!("Unable to show logs window: {error}"))?;
-        window.set_focus().map_err(|error| format!("Unable to focus logs window: {error}"))?;
+        window
+            .show()
+            .map_err(|error| format!("Unable to show logs window: {error}"))?;
+        window
+            .set_focus()
+            .map_err(|error| format!("Unable to focus logs window: {error}"))?;
         return Ok(());
     }
 

@@ -135,7 +135,10 @@ impl AppState {
         Ok(())
     }
 
-    pub fn remove_session_runtime(&self, session_id: &str) -> Result<Option<Arc<SessionRuntime>>, String> {
+    pub fn remove_session_runtime(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<SessionRuntime>>, String> {
         self.session_runtimes
             .lock()
             .map_err(|_| "Unable to access session runtime state".to_string())

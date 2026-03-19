@@ -56,7 +56,11 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 system_prompt TEXT,
                 provider TEXT,
                 model TEXT,
+                role_id TEXT,
                 thinking_level TEXT NOT NULL DEFAULT 'off',
+                direct_permissions TEXT NOT NULL DEFAULT '[]',
+                system INTEGER NOT NULL DEFAULT 0,
+                immutable INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -72,9 +76,40 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 model TEXT,
                 thinking_level TEXT NOT NULL DEFAULT 'off',
                 capacity INTEGER NOT NULL DEFAULT 1,
+                direct_permissions TEXT NOT NULL DEFAULT '[]',
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS policies (
+                id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                permissions TEXT NOT NULL DEFAULT '[]',
+                system INTEGER NOT NULL DEFAULT 0,
+                immutable INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS role_policy_assignments (
+                role_id TEXT NOT NULL,
+                policy_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (role_id, policy_id),
+                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE,
+                FOREIGN KEY(policy_id) REFERENCES policies(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_policy_assignments (
+                agent_id TEXT NOT NULL,
+                policy_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (agent_id, policy_id),
+                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+                FOREIGN KEY(policy_id) REFERENCES policies(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS role_instances (
@@ -120,6 +155,12 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_role_queue_entries_status
                 ON role_queue_entries(status);
+
+            CREATE INDEX IF NOT EXISTS idx_role_policy_assignments_policy_id
+                ON role_policy_assignments(policy_id);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_policy_assignments_policy_id
+                ON agent_policy_assignments(policy_id);
 
             CREATE TABLE IF NOT EXISTS workflows (
                 id TEXT PRIMARY KEY,
@@ -185,13 +226,17 @@ fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
     if !columns.contains("description") {
         connection
             .execute("ALTER TABLE agents ADD COLUMN description TEXT", [])
-            .map_err(|error| format!("Unable to add description column to agents table: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to add description column to agents table: {error}")
+            })?;
     }
 
     if !columns.contains("system_prompt") {
         connection
             .execute("ALTER TABLE agents ADD COLUMN system_prompt TEXT", [])
-            .map_err(|error| format!("Unable to add system_prompt column to agents table: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to add system_prompt column to agents table: {error}")
+            })?;
     }
 
     if !columns.contains("provider") {
@@ -206,6 +251,12 @@ fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
             .map_err(|error| format!("Unable to add model column to agents table: {error}"))?;
     }
 
+    if !columns.contains("role_id") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN role_id TEXT", [])
+            .map_err(|error| format!("Unable to add role_id column to agents table: {error}"))?;
+    }
+
     if !columns.contains("thinking_level") {
         connection
             .execute(
@@ -216,6 +267,42 @@ fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
                 format!("Unable to add thinking_level column to agents table: {error}")
             })?;
     }
+
+    if !columns.contains("direct_permissions") {
+        connection
+            .execute(
+                "ALTER TABLE agents ADD COLUMN direct_permissions TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add direct_permissions column to agents table: {error}")
+            })?;
+    }
+
+    if !columns.contains("system") {
+        connection
+            .execute(
+                "ALTER TABLE agents ADD COLUMN system INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("Unable to add system column to agents table: {error}"))?;
+    }
+
+    if !columns.contains("immutable") {
+        connection
+            .execute(
+                "ALTER TABLE agents ADD COLUMN immutable INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("Unable to add immutable column to agents table: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "UPDATE agents SET direct_permissions = '[]' WHERE direct_permissions IS NULL OR trim(direct_permissions) = ''",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill direct_permissions for agents: {error}"))?;
 
     Ok(())
 }
@@ -242,7 +329,10 @@ fn backfill_missing_agent_slugs(connection: &Connection) -> Result<(), String> {
     for (id, name) in missing_slugs {
         let slug = next_available_agent_slug(&name, &mut used_slugs);
         connection
-            .execute("UPDATE agents SET slug = ?2 WHERE id = ?1", params![id, slug])
+            .execute(
+                "UPDATE agents SET slug = ?2 WHERE id = ?1",
+                params![id, slug],
+            )
             .map_err(|error| format!("Unable to backfill agent slug for {id}: {error}"))?;
     }
 
@@ -300,7 +390,9 @@ fn ensure_roles_table_columns(connection: &Connection) -> Result<(), String> {
                 "ALTER TABLE roles ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'off'",
                 [],
             )
-            .map_err(|error| format!("Unable to add thinking_level column to roles table: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to add thinking_level column to roles table: {error}")
+            })?;
     }
 
     if !columns.contains("capacity") {
@@ -311,6 +403,24 @@ fn ensure_roles_table_columns(connection: &Connection) -> Result<(), String> {
             )
             .map_err(|error| format!("Unable to add capacity column to roles table: {error}"))?;
     }
+
+    if !columns.contains("direct_permissions") {
+        connection
+            .execute(
+                "ALTER TABLE roles ADD COLUMN direct_permissions TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add direct_permissions column to roles table: {error}")
+            })?;
+    }
+
+    connection
+        .execute(
+            "UPDATE roles SET direct_permissions = '[]' WHERE direct_permissions IS NULL OR trim(direct_permissions) = ''",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill direct_permissions for roles: {error}"))?;
 
     Ok(())
 }
@@ -337,7 +447,10 @@ fn backfill_missing_role_slugs(connection: &Connection) -> Result<(), String> {
     for (id, name) in missing_slugs {
         let slug = next_available_role_slug(&name, &mut used_slugs);
         connection
-            .execute("UPDATE roles SET slug = ?2 WHERE id = ?1", params![id, slug])
+            .execute(
+                "UPDATE roles SET slug = ?2 WHERE id = ?1",
+                params![id, slug],
+            )
             .map_err(|error| format!("Unable to backfill role slug for {id}: {error}"))?;
     }
 
@@ -355,8 +468,9 @@ fn ensure_roles_slug_index(connection: &Connection) -> Result<(), String> {
 }
 
 fn migrate_workflow_worker_references_to_slugs(connection: &Connection) -> Result<(), String> {
-    connection.execute_batch(
-        r#"
+    connection
+        .execute_batch(
+            r#"
         UPDATE workflow_lanes
         SET assigned_entity_id = (
                 SELECT slug FROM agents WHERE agents.id = workflow_lanes.assigned_entity_id
@@ -377,7 +491,10 @@ fn migrate_workflow_worker_references_to_slugs(connection: &Connection) -> Resul
                 SELECT 1 FROM roles WHERE roles.id = workflow_lanes.assigned_entity_id
             );
         "#,
-    ).map_err(|error| format!("Unable to migrate workflow worker references to slugs: {error}"))?;
+        )
+        .map_err(|error| {
+            format!("Unable to migrate workflow worker references to slugs: {error}")
+        })?;
 
     Ok(())
 }
@@ -570,6 +687,7 @@ mod tests {
             "model",
             "thinking_level",
             "capacity",
+            "direct_permissions",
             "archived",
             "created_at",
             "updated_at",
@@ -577,6 +695,69 @@ mod tests {
             assert!(
                 columns.contains(expected),
                 "missing expected roles column: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn initializes_agent_and_policy_tables_with_auth_columns() {
+        let path = unique_temp_db("agent-policy-schema");
+        initialize_database_at(&path).expect("database should initialize");
+        let connection = Connection::open(&path).expect("database should open");
+
+        let agent_columns =
+            table_columns(&connection, "agents").expect("agents columns should load");
+        for expected in [
+            "id",
+            "name",
+            "role_id",
+            "direct_permissions",
+            "system",
+            "immutable",
+            "archived",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                agent_columns.contains(expected),
+                "missing expected agents column: {expected}"
+            );
+        }
+
+        let policy_columns =
+            table_columns(&connection, "policies").expect("policies columns should load");
+        for expected in [
+            "id",
+            "slug",
+            "name",
+            "description",
+            "permissions",
+            "system",
+            "immutable",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                policy_columns.contains(expected),
+                "missing expected policies column: {expected}"
+            );
+        }
+
+        let agent_policy_columns = table_columns(&connection, "agent_policy_assignments")
+            .expect("agent_policy_assignments columns should load");
+        for expected in ["agent_id", "policy_id", "created_at"] {
+            assert!(
+                agent_policy_columns.contains(expected),
+                "missing expected agent_policy_assignments column: {expected}"
+            );
+        }
+
+        let role_policy_columns = table_columns(&connection, "role_policy_assignments")
+            .expect("role_policy_assignments columns should load");
+        for expected in ["role_id", "policy_id", "created_at"] {
+            assert!(
+                role_policy_columns.contains(expected),
+                "missing expected role_policy_assignments column: {expected}"
             );
         }
     }
@@ -808,7 +989,13 @@ mod tests {
             .expect("role rows should collect");
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], ("role-1".into(), "reviewer".into(), "off".into(), 1));
-        assert_eq!(rows[1], ("role-2".into(), "reviewer-2".into(), "off".into(), 1));
+        assert_eq!(
+            rows[0],
+            ("role-1".into(), "reviewer".into(), "off".into(), 1)
+        );
+        assert_eq!(
+            rows[1],
+            ("role-2".into(), "reviewer-2".into(), "off".into(), 1)
+        );
     }
 }

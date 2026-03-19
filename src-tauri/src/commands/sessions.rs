@@ -77,12 +77,20 @@ pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> R
     })
     .await
     .map_err(|error| format!("Unable to join delete_session task: {error}"))??;
-    state.log("info", "sessions.delete", &format!("Deleted pi session {}", session_id));
+    state.log(
+        "info",
+        "sessions.delete",
+        &format!("Deleted pi session {}", session_id),
+    );
     Ok(())
 }
 
 #[tauri::command]
-pub async fn resume_session(app: AppHandle, state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
+pub async fn resume_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRecord, String> {
     let (project_root, session_dir) = spawn_blocking(move || {
         let context = detect_session_context(None)?;
         Ok::<_, String>((context.project_root, context.session_dir))
@@ -103,7 +111,11 @@ pub async fn resume_session(app: AppHandle, state: State<'_, AppState>, session_
     let record = spawn_blocking(move || get_session(&session_dir, &session_id_for_task, true))
         .await
         .map_err(|error| format!("Unable to join resume_session record task: {error}"))??;
-    state.log("info", "sessions.resume", &format!("Resumed pi session {}", record.id));
+    state.log(
+        "info",
+        "sessions.resume",
+        &format!("Resumed pi session {}", record.id),
+    );
     Ok(record)
 }
 
@@ -143,7 +155,10 @@ pub async fn subscribe_session(
 }
 
 #[tauri::command]
-pub async fn unsubscribe_session(state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
+pub async fn unsubscribe_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRecord, String> {
     state.set_session_subscription(&session_id, false)?;
     if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
         runtime.set_subscribed(false);
@@ -251,7 +266,10 @@ pub async fn set_session_model(
     state.log(
         "info",
         "sessions.model",
-        &format!("Changed session {} to {}/{}", session_id, provider, model_id),
+        &format!(
+            "Changed session {} to {}/{}",
+            session_id, provider, model_id
+        ),
     );
 
     Ok(result)

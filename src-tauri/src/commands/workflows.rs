@@ -1,17 +1,13 @@
 use tauri::State;
 
 use crate::{
-    models::{
-        WorkflowDefinition, WorkflowSummary, WorkflowUpsertInput, WorkflowValidationResult,
-    },
+    models::{WorkflowDefinition, WorkflowSummary, WorkflowUpsertInput, WorkflowValidationResult},
     services::{database, workflows},
     state::AppState,
 };
 
 #[tauri::command]
-pub fn list_workflows(
-    include_archived: Option<bool>,
-) -> Result<Vec<WorkflowSummary>, String> {
+pub fn list_workflows(include_archived: Option<bool>) -> Result<Vec<WorkflowSummary>, String> {
     let connection = database::open_connection()?;
     workflows::list_workflows(&connection, include_archived.unwrap_or(false))
 }
@@ -35,7 +31,11 @@ pub fn create_workflow(
 ) -> Result<WorkflowDefinition, String> {
     let mut connection = database::open_connection()?;
     let workflow = workflows::create_workflow(&mut connection, input)?;
-    state.log("info", "workflow.created", &format!("Created workflow {}", workflow.id));
+    state.log(
+        "info",
+        "workflow.created",
+        &format!("Created workflow {}", workflow.id),
+    );
     Ok(workflow)
 }
 
@@ -47,7 +47,11 @@ pub fn update_workflow(
 ) -> Result<WorkflowDefinition, String> {
     let mut connection = database::open_connection()?;
     let workflow = workflows::update_workflow(&mut connection, &workflow_id, input)?;
-    state.log("info", "workflow.updated", &format!("Updated workflow {}", workflow.id));
+    state.log(
+        "info",
+        "workflow.updated",
+        &format!("Updated workflow {}", workflow.id),
+    );
     Ok(workflow)
 }
 
@@ -74,6 +78,10 @@ pub fn archive_workflow(
 ) -> Result<WorkflowDefinition, String> {
     let connection = database::open_connection()?;
     let workflow = workflows::archive_workflow(&connection, &workflow_id)?;
-    state.log("info", "workflow.archived", &format!("Archived workflow {}", workflow.id));
+    state.log(
+        "info",
+        "workflow.archived",
+        &format!("Archived workflow {}", workflow.id),
+    );
     Ok(workflow)
 }

@@ -6,7 +6,11 @@ use crate::{
     services::orchestra_paths::{default_orchestra_root, sanitize_slug},
 };
 
-pub fn build_agent_memory_info(agent_id: &str, slug: &str, orchestra_root: &Path) -> AgentMemoryInfo {
+pub fn build_agent_memory_info(
+    agent_id: &str,
+    slug: &str,
+    orchestra_root: &Path,
+) -> AgentMemoryInfo {
     let root_dir = orchestra_root.join("agents").join(sanitize_slug(slug));
     let daily_memory_dir = root_dir.join("memory");
 
@@ -28,7 +32,11 @@ pub fn get_agent_memory_info(agent_id: &str, slug: &str) -> Result<AgentMemoryIn
     Ok(build_agent_memory_info(agent_id, slug, &orchestra_root))
 }
 
-pub fn bootstrap_agent_files(agent_id: &str, slug: &str, name: &str) -> Result<AgentMemoryInfo, String> {
+pub fn bootstrap_agent_files(
+    agent_id: &str,
+    slug: &str,
+    name: &str,
+) -> Result<AgentMemoryInfo, String> {
     let orchestra_root = default_orchestra_root()?;
     bootstrap_agent_files_in(&orchestra_root, agent_id, slug, name)
 }
@@ -50,10 +58,22 @@ pub fn bootstrap_agent_files_in(
         )
     })?;
 
-    write_if_missing(Path::new(&info.identity_path), &format!("# Identity\n\n- Name: {name}\n- Slug: {}\n- Role: Persistent Orchestra agent\n", info.slug))?;
+    write_if_missing(
+        Path::new(&info.identity_path),
+        &format!(
+            "# Identity\n\n- Name: {name}\n- Slug: {}\n- Role: Persistent Orchestra agent\n",
+            info.slug
+        ),
+    )?;
     write_if_missing(Path::new(&info.soul_path), "# Soul\n\n- Voice: calm, direct, operational\n- Values: clarity, continuity, correctness\n- Collaboration: preserve context, avoid needless restarts\n")?;
-    write_if_missing(Path::new(&info.memory_path), "# Memory\n\n## Long-Term Memory\n\n")?;
-    write_if_missing(Path::new(&info.tools_path), "# Tools\n\n- Add durable operational notes here.\n")?;
+    write_if_missing(
+        Path::new(&info.memory_path),
+        "# Memory\n\n## Long-Term Memory\n\n",
+    )?;
+    write_if_missing(
+        Path::new(&info.tools_path),
+        "# Tools\n\n- Add durable operational notes here.\n",
+    )?;
     write_if_missing(
         Path::new(&info.agents_path),
         &format!(
@@ -69,14 +89,16 @@ fn write_if_missing(path: &Path, content: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    fs::write(path, content)
-        .map_err(|error| format!("Unable to write {}: {error}", path.display()))
+    fs::write(path, content).map_err(|error| format!("Unable to write {}: {error}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        env,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         let suffix = format!(
