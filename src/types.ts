@@ -31,6 +31,7 @@ export interface SessionModel {
 export interface SessionModelState {
   sessionId: string;
   currentModel: SessionModel | null;
+  currentThinkingLevel: string;
   availableModels: SessionModel[];
 }
 
@@ -57,6 +58,7 @@ export interface SessionRecord {
 export interface AgentSummary {
   id: string;
   name: string;
+  thinkingLevel: string;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -102,6 +104,7 @@ export interface RoleDefinition {
   systemPrompt?: string | null;
   provider?: string | null;
   model?: string | null;
+  thinkingLevel: string;
   capacity: number;
   archived: boolean;
   createdAt: string;
@@ -115,6 +118,7 @@ export interface RoleSummary {
   description?: string | null;
   provider?: string | null;
   model?: string | null;
+  thinkingLevel: string;
   capacity: number;
   archived: boolean;
   createdAt: string;
@@ -127,6 +131,7 @@ export interface RoleUpsertInput {
   systemPrompt?: string | null;
   provider?: string | null;
   model?: string | null;
+  thinkingLevel?: string | null;
   capacity: number;
 }
 

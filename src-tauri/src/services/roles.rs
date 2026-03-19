@@ -16,7 +16,7 @@ pub fn list_roles(
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, slug, name, description, provider, model, capacity, archived, created_at, updated_at
+            SELECT id, slug, name, description, provider, model, thinking_level, capacity, archived, created_at, updated_at
             FROM roles
             WHERE (?1 = 1 OR archived = 0)
             ORDER BY archived ASC, updated_at DESC, name ASC
@@ -33,10 +33,11 @@ pub fn list_roles(
                 description: row.get(3)?,
                 provider: row.get(4)?,
                 model: row.get(5)?,
-                capacity: row.get(6)?,
-                archived: row.get::<_, i64>(7)? != 0,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                thinking_level: row.get(6)?,
+                capacity: row.get(7)?,
+                archived: row.get::<_, i64>(8)? != 0,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })
         .map_err(|error| format!("Unable to query roles: {error}"))?;
@@ -49,7 +50,7 @@ pub fn get_role(connection: &Connection, role_id: &str) -> Result<RoleDefinition
     connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, system_prompt, provider, model, capacity, archived, created_at, updated_at
+            SELECT id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, archived, created_at, updated_at
             FROM roles
             WHERE id = ?1
             "#,
@@ -63,10 +64,11 @@ pub fn get_role(connection: &Connection, role_id: &str) -> Result<RoleDefinition
                     system_prompt: row.get(4)?,
                     provider: row.get(5)?,
                     model: row.get(6)?,
-                    capacity: row.get(7)?,
-                    archived: row.get::<_, i64>(8)? != 0,
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    thinking_level: row.get(7)?,
+                    capacity: row.get(8)?,
+                    archived: row.get::<_, i64>(9)? != 0,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             },
         )
@@ -112,6 +114,14 @@ pub fn validate_role(
         _ => {}
     }
 
+    if !is_valid_thinking_level(normalized.thinking_level.as_deref().unwrap_or("off")) {
+        errors.push(validation_error(
+            "invalid",
+            "thinkingLevel",
+            "Thinking level must be one of: off, minimal, low, medium, high.",
+        ));
+    }
+
     Ok(RoleValidationResult {
         valid: errors.is_empty(),
         errors,
@@ -145,12 +155,13 @@ pub fn create_role(
             system_prompt,
             provider,
             model,
+            thinking_level,
             capacity,
             archived,
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?10)
         "#,
         params![
             role_id,
@@ -160,6 +171,7 @@ pub fn create_role(
             normalized.system_prompt,
             normalized.provider,
             normalized.model,
+            normalized.thinking_level.clone().unwrap_or_else(|| "off".into()),
             normalized.capacity,
             now,
         ],
@@ -203,8 +215,9 @@ pub fn update_role(
             system_prompt = ?5,
             provider = ?6,
             model = ?7,
-            capacity = ?8,
-            updated_at = ?9
+            thinking_level = ?8,
+            capacity = ?9,
+            updated_at = ?10
         WHERE id = ?1
         "#,
         params![
@@ -215,6 +228,7 @@ pub fn update_role(
             normalized.system_prompt,
             normalized.provider,
             normalized.model,
+            normalized.thinking_level.clone().unwrap_or_else(|| "off".into()),
             normalized.capacity,
             now,
         ],
@@ -292,8 +306,13 @@ fn normalize_input(input: RoleUpsertInput) -> RoleUpsertInput {
         system_prompt: normalized_optional_string(input.system_prompt),
         provider: normalized_optional_string(input.provider),
         model: normalized_optional_string(input.model),
+        thinking_level: normalized_optional_string(input.thinking_level).map(|value| value.to_lowercase()),
         capacity: input.capacity,
     }
+}
+
+fn is_valid_thinking_level(value: &str) -> bool {
+    matches!(value, "off" | "minimal" | "low" | "medium" | "high")
 }
 
 fn normalized_optional_string(value: Option<String>) -> Option<String> {
@@ -368,6 +387,7 @@ mod tests {
             system_prompt: Some("Review the proposed code changes and report findings.".into()),
             provider: Some("anthropic".into()),
             model: Some("claude-sonnet-4-20250514".into()),
+            thinking_level: Some("medium".into()),
             capacity: 2,
         }
     }
@@ -383,6 +403,7 @@ mod tests {
                 system_prompt: None,
                 provider: Some("anthropic".into()),
                 model: None,
+                thinking_level: Some("turbo".into()),
                 capacity: 0,
             },
         )
@@ -391,6 +412,7 @@ mod tests {
         assert!(!validation.valid);
         assert!(validation.errors.iter().any(|error| error.path == "name"));
         assert!(validation.errors.iter().any(|error| error.path == "model"));
+        assert!(validation.errors.iter().any(|error| error.path == "thinkingLevel"));
         assert!(validation
             .errors
             .iter()
@@ -420,12 +442,14 @@ mod tests {
                 system_prompt: created.system_prompt.clone(),
                 provider: created.provider.clone(),
                 model: created.model.clone(),
+                thinking_level: Some("high".into()),
                 capacity: 3,
             },
         )
         .expect("role should update");
 
         assert_eq!(updated.slug, "lead-reviewer");
+        assert_eq!(updated.thinking_level, "high");
         assert_eq!(updated.capacity, 3);
 
         let archived = archive_role(&connection, &created.id).expect("role should archive");

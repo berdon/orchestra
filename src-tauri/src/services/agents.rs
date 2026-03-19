@@ -6,7 +6,7 @@ pub fn list_agents(connection: &Connection, include_archived: bool) -> Result<Ve
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, name, archived, created_at, updated_at
+            SELECT id, name, thinking_level, archived, created_at, updated_at
             FROM agents
             WHERE (?1 = 1 OR archived = 0)
             ORDER BY archived ASC, updated_at DESC, name ASC
@@ -19,9 +19,10 @@ pub fn list_agents(connection: &Connection, include_archived: bool) -> Result<Ve
             Ok(AgentSummary {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                archived: row.get::<_, i64>(2)? != 0,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
+                thinking_level: row.get(2)?,
+                archived: row.get::<_, i64>(3)? != 0,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
             })
         })
         .map_err(|error| format!("Unable to query agents: {error}"))?;
@@ -68,5 +69,6 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].id, "agent-reviewer");
         assert_eq!(agents[0].name, "Reviewer Agent");
+        assert_eq!(agents[0].thinking_level, "off");
     }
 }

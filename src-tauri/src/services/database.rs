@@ -51,6 +51,7 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                thinking_level TEXT NOT NULL DEFAULT 'off',
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -64,6 +65,7 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 system_prompt TEXT,
                 provider TEXT,
                 model TEXT,
+                thinking_level TEXT NOT NULL DEFAULT 'off',
                 capacity INTEGER NOT NULL DEFAULT 1,
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -154,11 +156,27 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|error| format!("Unable to initialize Orchestra database schema: {error}"))?;
 
+    ensure_agents_table_columns(connection)?;
     ensure_roles_table_columns(connection)?;
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
+    Ok(())
+}
+
+fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "agents")?;
+
+    if !columns.contains("thinking_level") {
+        connection
+            .execute(
+                "ALTER TABLE agents ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'off'",
+                [],
+            )
+            .map_err(|error| format!("Unable to add thinking_level column to agents table: {error}"))?;
+    }
+
     Ok(())
 }
 
@@ -195,6 +213,15 @@ fn ensure_roles_table_columns(connection: &Connection) -> Result<(), String> {
         connection
             .execute("ALTER TABLE roles ADD COLUMN model TEXT", [])
             .map_err(|error| format!("Unable to add model column to roles table: {error}"))?;
+    }
+
+    if !columns.contains("thinking_level") {
+        connection
+            .execute(
+                "ALTER TABLE roles ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'off'",
+                [],
+            )
+            .map_err(|error| format!("Unable to add thinking_level column to roles table: {error}"))?;
     }
 
     if !columns.contains("capacity") {
@@ -387,6 +414,7 @@ mod tests {
             "system_prompt",
             "provider",
             "model",
+            "thinking_level",
             "capacity",
             "archived",
             "created_at",
@@ -483,13 +511,14 @@ mod tests {
         let connection = Connection::open(&path).expect("migrated database should open");
 
         let rows = connection
-            .prepare("SELECT id, slug, capacity FROM roles ORDER BY id ASC")
+            .prepare("SELECT id, slug, thinking_level, capacity FROM roles ORDER BY id ASC")
             .expect("role query should prepare")
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
                 ))
             })
             .expect("role query should execute")
@@ -497,7 +526,7 @@ mod tests {
             .expect("role rows should collect");
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], ("role-1".into(), "reviewer".into(), 1));
-        assert_eq!(rows[1], ("role-2".into(), "reviewer-2".into(), 1));
+        assert_eq!(rows[0], ("role-1".into(), "reviewer".into(), "off".into(), 1));
+        assert_eq!(rows[1], ("role-2".into(), "reviewer-2".into(), "off".into(), 1));
     }
 }

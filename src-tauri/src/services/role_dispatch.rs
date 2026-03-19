@@ -56,7 +56,7 @@ pub fn dispatch_role_queue(
             connection,
             project_root,
             session_dir,
-            &role.name,
+            &role,
             &queue_entry.title,
             &instance,
         )?;
@@ -245,12 +245,13 @@ fn ensure_instance_session(
     connection: &Connection,
     project_root: &Path,
     session_dir: &Path,
-    role_name: &str,
+    role: &crate::models::RoleDefinition,
     queue_title: &str,
     instance: &RoleInstance,
 ) -> Result<String, String> {
     if let Some(session_id) = instance.session_id.as_deref() {
         if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
+            apply_role_session_defaults(project_root, session_dir, session_id, role)?;
             return Ok(session_id.to_string());
         }
     }
@@ -258,7 +259,7 @@ fn ensure_instance_session(
     let created = pi_sessions::create_session_file(
         project_root,
         session_dir,
-        Some(&format!("{} · {}", role_name, queue_title)),
+        Some(&format!("{} · {}", role.name, queue_title)),
         false,
     )?;
 
@@ -274,7 +275,29 @@ fn ensure_instance_session(
             )
         })?;
 
+    apply_role_session_defaults(project_root, session_dir, &created.record.id, role)?;
+
     Ok(created.record.id)
+}
+
+fn apply_role_session_defaults(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    role: &crate::models::RoleDefinition,
+) -> Result<(), String> {
+    if let (Some(provider), Some(model)) = (role.provider.as_deref(), role.model.as_deref()) {
+        let _ = pi_sessions::set_session_model(project_root, session_dir, session_id, provider, model)?;
+    }
+
+    let _ = pi_sessions::set_session_thinking_level(
+        project_root,
+        session_dir,
+        session_id,
+        &role.thinking_level,
+    )?;
+
+    Ok(())
 }
 
 fn assign_queue_entry_to_instance(
@@ -438,6 +461,7 @@ mod tests {
                 system_prompt: None,
                 provider: None,
                 model: None,
+                thinking_level: Some("off".into()),
                 capacity,
             },
         )

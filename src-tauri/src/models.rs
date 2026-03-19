@@ -42,6 +42,7 @@ pub struct SessionModel {
 pub struct SessionModelState {
     pub session_id: String,
     pub current_model: Option<SessionModel>,
+    pub current_thinking_level: String,
     pub available_models: Vec<SessionModel>,
 }
 
@@ -106,6 +107,7 @@ pub struct SessionRecord {
 pub struct AgentSummary {
     pub id: String,
     pub name: String,
+    pub thinking_level: String,
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -121,6 +123,7 @@ pub struct RoleDefinition {
     pub system_prompt: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub thinking_level: String,
     pub capacity: i64,
     pub archived: bool,
     pub created_at: String,
@@ -136,6 +139,7 @@ pub struct RoleSummary {
     pub description: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub thinking_level: String,
     pub capacity: i64,
     pub archived: bool,
     pub created_at: String,
@@ -150,6 +154,7 @@ pub struct RoleUpsertInput {
     pub system_prompt: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub thinking_level: Option<String>,
     pub capacity: i64,
 }
 
