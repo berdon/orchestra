@@ -526,23 +526,36 @@ strong {
 }
 
 .panel--session-hero,
-.settings-hero {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
-}
-
-.settings-tabs {
-  display: inline-flex;
+.settings-nav {
+  display: grid;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-.settings-tabs .nav-item {
-  width: auto;
-  border-color: var(--border);
-  background: var(--bg-elevated);
+.settings-subnav {
+  display: grid;
+  gap: 4px;
+  padding-left: 12px;
+}
+
+.settings-subnav__item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+
+.settings-subnav__item:hover {
+  color: var(--accent);
+  background: rgba(241, 223, 211, 0.5);
+}
+
+.settings-subnav__item--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
 }
 
 .action-cluster--session-tools {
@@ -631,27 +644,24 @@ strong {
   font-size: 0.88rem;
 }
 
-.workflow-list-item {
-  display: grid;
-  gap: 10px;
-  text-align: left;
-  appearance: none;
-  border: 1px solid var(--border);
-  background: white;
+.workflow-list-link {
+  display: block;
+  padding: 8px 4px;
   color: var(--text);
-  border-radius: 12px;
-  padding: 12px 14px;
-  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid rgba(234, 223, 215, 0.7);
 }
 
-.workflow-list-item:hover {
-  border-color: var(--border-strong);
-  transform: translateY(-1px);
+.workflow-list-link:hover {
+  color: var(--accent);
 }
 
-.workflow-list-item--active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(143, 79, 47, 0.14);
+.workflow-list-link--active {
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .workflow-editor-grid,
@@ -679,21 +689,12 @@ strong {
 }
 
 .workflow-section__header,
-.workflow-lane-card__header,
-.workflow-list-item__header,
-.workflow-list-item__meta,
-.workflow-list-item__footer {
+.workflow-lane-card__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.workflow-list-item__meta,
-.workflow-list-item__footer {
-  font-size: 0.82rem;
-  color: var(--text-muted);
 }
 
 .workflow-validation-list {
@@ -761,7 +762,6 @@ strong {
   .workflow-shell,
   .panel--split,
   .panel--session-hero,
-  .settings-hero,
   .logs-window-header {
     grid-template-columns: 1fr;
     flex-direction: column;

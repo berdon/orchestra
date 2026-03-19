@@ -707,13 +707,32 @@ export function App() {
         </div>
 
         <div className="sidebar__bottom">
-          <button
-            className={activePage === "settings" ? "nav-item nav-item--active" : "nav-item"}
-            type="button"
-            onClick={() => setActivePage("settings")}
-          >
-            Settings
-          </button>
+          <div className="settings-nav">
+            <button
+              className={activePage === "settings" ? "nav-item nav-item--active" : "nav-item"}
+              type="button"
+              onClick={() => setActivePage("settings")}
+            >
+              Settings
+            </button>
+
+            {activePage === "settings" ? (
+              <div className="settings-subnav" role="tablist" aria-label="Settings sections">
+                {SETTINGS_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    className={settingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                    type="button"
+                    role="tab"
+                    aria-selected={settingsTab === tab.id}
+                    onClick={() => setSettingsTab(tab.id)}
+                  >
+                    {tab.id === "logs" ? "General" : tab.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </aside>
 
@@ -741,40 +760,12 @@ export function App() {
 
         {activePage === "settings" ? (
           <section className="panel-stack">
-            <section className="panel panel--hero">
-              <div className="settings-hero">
-                <div>
-                  <p className="eyebrow">Configuration and visibility</p>
-                  <h2>Settings</h2>
-                  <p>
-                    Workflow management lives here first so it can evolve into a strong operational editor without disturbing the
-                    session workspace.
-                  </p>
-                </div>
-
-                <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-                  {SETTINGS_TABS.map((tab) => (
-                    <button
-                      key={tab.id}
-                      className={settingsTab === tab.id ? "nav-item nav-item--active" : "nav-item"}
-                      type="button"
-                      role="tab"
-                      aria-selected={settingsTab === tab.id}
-                      onClick={() => setSettingsTab(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-
             {settingsTab === "workflows" ? (
               <WorkflowsPanel />
             ) : (
               <section className="panel panel--split">
                 <div>
-                  <p className="eyebrow">Application logs</p>
+                  <p className="eyebrow">General</p>
                   <h3>Open runtime logs in a separate window</h3>
                   <p>
                     Keep the log window open while testing sessions so backend/runtime events stay visible without covering the main UI.

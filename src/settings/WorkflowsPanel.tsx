@@ -336,30 +336,18 @@ export function WorkflowsPanel() {
 
         <div className="workflow-list" role="list">
           {workflows.map((workflow) => (
-            <button
+            <a
               key={workflow.id}
-              className={workflow.id === selectedWorkflowId && !isCreatingWorkflow ? "workflow-list-item workflow-list-item--active" : "workflow-list-item"}
-              type="button"
-              onClick={() => {
+              className={workflow.id === selectedWorkflowId && !isCreatingWorkflow ? "workflow-list-link workflow-list-link--active" : "workflow-list-link"}
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
                 setSelectedWorkflowId(workflow.id);
                 setIsCreatingWorkflow(false);
               }}
             >
-              <div className="workflow-list-item__header">
-                <strong>{workflow.name}</strong>
-                <span className={`status-badge status-badge--${workflow.archived ? "neutral" : "accent"}`}>
-                  {workflow.archived ? "Archived" : "Active"}
-                </span>
-              </div>
-              <div className="workflow-list-item__meta">
-                <span>{workflow.slug}</span>
-                <span>{workflow.laneCount} lanes</span>
-              </div>
-              <div className="workflow-list-item__footer">
-                <span>{workflow.description || "No description"}</span>
-                <span>{new Date(workflow.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-              </div>
-            </button>
+              {workflow.name}
+            </a>
           ))}
         </div>
       </aside>
