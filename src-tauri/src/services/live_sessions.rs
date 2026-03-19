@@ -165,15 +165,18 @@ impl SessionRuntime {
 
         match payload.get("type").and_then(Value::as_str) {
             Some("message_update") => self.handle_message_update(&payload),
-            Some("turn_end") | Some("agent_end") => {
+            Some("turn_end") => {
                 self.app.state::<crate::state::AppState>().log(
                     "info",
                     "sessions.rpc.lifecycle",
-                    &format!(
-                        "Session {} received {}",
-                        self.session_id,
-                        payload.get("type").and_then(Value::as_str).unwrap_or("event")
-                    ),
+                    &format!("Session {} received turn_end", self.session_id),
+                );
+            }
+            Some("agent_end") => {
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.rpc.lifecycle",
+                    &format!("Session {} received agent_end", self.session_id),
                 );
                 self.handle_agent_end()
             }
@@ -211,6 +214,13 @@ impl SessionRuntime {
         }
 
         match event_type {
+            "done" => {
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.rpc.message_update",
+                    &format!("Session {} message_update done", self.session_id),
+                );
+            }
             "text_start" | "thinking_start" => {
                 if self.is_subscribed() {
                     self.emit_stream_event(SessionStreamEvent {
@@ -277,6 +287,11 @@ impl SessionRuntime {
         if self.is_subscribed() {
             match get_session(&self.session_dir, &self.session_id, true) {
                 Ok(record) => {
+                    self.app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.runtime.complete",
+                        &format!("Session {} emitting sessionUpdated for run {}", self.session_id, run_id),
+                    );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
