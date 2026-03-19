@@ -588,6 +588,49 @@ strong {
   overflow: auto;
 }
 
+.workflow-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+.workflow-board-lane {
+  display: grid;
+  gap: 12px;
+  text-align: left;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: white;
+  color: var(--text);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.workflow-board-lane:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.workflow-board-lane--active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(143, 79, 47, 0.14);
+}
+
+.workflow-board-lane__header,
+.workflow-board-lane__meta,
+.workflow-board-lane__flow {
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-board-lane__meta,
+.workflow-board-lane__flow {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
 .workflow-list-item {
   display: grid;
   gap: 10px;
@@ -657,6 +700,20 @@ strong {
   margin: 0;
   padding-left: 18px;
   color: var(--danger);
+}
+
+.workflow-flow-note {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-subtle);
+}
+
+.workflow-flow-note strong,
+.workflow-flow-note p {
+  margin: 0;
 }
 
 .checkbox-row {
