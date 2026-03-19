@@ -20,7 +20,12 @@ They own:
 - provider/model/system prompt defaults
 - thinking level defaults
 - concurrency capacity
+- attached policy ids and direct permissions for spawned role instances
 - archived state
+
+Important boundary:
+- roles remain workforce templates, not authorization policies
+- Orchestra's protected `supervisor` actor is a system agent with the immutable `supervisor` policy, not a workforce role
 
 ### Runtime role state
 
@@ -82,6 +87,7 @@ Suggested fields:
 Notes:
 - An idle instance can be reused for the next queue entry for the same role within the same project.
 - The instance owns the runtime session/worktree association.
+- Effective permissions for the instance should be resolved from the role's attached policies plus direct permissions.
 
 ## Dispatch model
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Orchestra is an agent orchestration framework focused on getting project work done. It coordinates projects, repositories, worktrees, agents, roles, sessions, tasks, and workflows in a single desktop application.
+Orchestra is an agent orchestration framework focused on getting project work done. It coordinates projects, repositories, worktrees, agents, roles, policies, sessions, tasks, and workflows in a single desktop application.
 
 ### Initial stack
 
@@ -127,7 +127,7 @@ Key behavior:
 
 ### Agents
 
-Agents are named persistent workers with configured context and memory.
+Agents are named persistent workers with configured context, memory, and access grants.
 
 Characteristics:
 - persistent identity
@@ -137,6 +137,8 @@ Characteristics:
 - project/repo worktrees
 - many sessions over time, but one main session per project/repository binding
 - a queue of deferred work when the main session is busy
+- optional workforce role association
+- policy attachments and direct permissions that define tool access
 
 Suggested global filesystem layout:
 
@@ -160,6 +162,12 @@ Suggested global agent fields:
 - `provider`
 - `model`
 - `thinkingLevel`
+- `roleId?`
+- `policyIds[]`
+- `directPermissions[]`
+- `system`
+- `immutable`
+- `queuePolicy`
 - `archived`
 - `createdAt`
 - `updatedAt`
@@ -181,7 +189,7 @@ Project settings may also attach prompt additions or operating constraints for a
 
 ### Roles
 
-Roles are reusable templates for transient workers.
+Roles are workforce templates for transient workers.
 
 Characteristics:
 - globally defined
@@ -189,6 +197,8 @@ Characteristics:
 - spin up role instances on demand
 - operate under a concurrency limit
 - use disposable project-scoped worktrees rather than agent-owned persistent worktrees
+- remain distinct from authorization policies
+- can attach default policies and direct permissions for spawned instances
 
 Examples:
 - Developer
@@ -206,6 +216,8 @@ Suggested global role fields:
 - `model`
 - `thinkingLevel`
 - `capacity`
+- `policyIds[]`
+- `directPermissions[]`
 - `createdAt`
 - `updatedAt`
 
@@ -219,6 +231,34 @@ Suggested project-scoped role instance fields:
 - `currentTaskId?`
 - `createdAt`
 - `updatedAt`
+
+### Policies
+
+Policies are reusable authorization bundles that can be attached to agents and roles.
+
+Characteristics:
+- separate from workforce roles
+- define permissions rather than runtime behavior
+- may be system-defined and immutable
+- can coexist with direct permissions on agents and roles
+
+Suggested policy fields:
+- `id`
+- `slug`
+- `name`
+- `description`
+- `permissions[]`
+- `system`
+- `immutable`
+- `createdAt`
+- `updatedAt`
+
+Built-in system policy:
+- `supervisor` with full access
+
+Important boundary:
+- there is no supervisor workforce role
+- Orchestra instead ships with a protected system `supervisor` agent that is permanently attached to the `supervisor` policy
 
 ### Tasks
 
@@ -330,6 +370,14 @@ It should:
 
 Sessions can use predefined `pi` tools plus Orchestra-specific tools.
 
+Tool access should be granted by permissions resolved from attached policies and direct permissions on the acting agent or role.
+
+Recommended rules:
+- workforce roles describe how transient workers behave; they do not replace policy-based authorization
+- the built-in `supervisor` system agent gets the immutable `supervisor` policy and therefore the full Orchestra tool surface
+- regular agents and role instances should receive only the tool calls their effective permissions allow
+- backend authorization checks must remain authoritative even if the visible tool manifest lags behind a permission change
+
 Initial Orchestra tool surface:
 - `create_task`
 - `comment_on_task`
@@ -338,6 +386,7 @@ Initial Orchestra tool surface:
 
 Recommended refinement:
 - name tools around task/lane semantics, not UI semantics
+- map tools to explicit `resource.action` permissions such as `tasks.create` or `roles.dispatch`
 - consider `transition_task_lane` as a lower-level primitive
 - keep success/failure helpers as convenience wrappers
 
@@ -350,6 +399,9 @@ Suggested tool set:
 - `complete_lane_as_success`
 - `complete_lane_as_failure`
 - `request_user_intervention`
+- `dispatch_role_queue`
+- `create_session`
+- `send_session_message`
 
 ## Backend design
 
@@ -373,6 +425,8 @@ Entity management:
 - list roles
 - list role queues
 - create/update/delete workflow
+- list policies
+- resolve effective permissions for an actor
 
 ### Suggested backend refinement
 
@@ -383,10 +437,12 @@ Split the backend into clear service areas:
 - `TaskService`
 - `AgentService`
 - `RoleService`
+- `PolicyService`
+- `AuthorizationService`
 - `SessionService`
 - `DispatchService`
 
-This should reduce coupling versus putting workflow advancement logic directly inside session management.
+This should reduce coupling versus putting workflow advancement logic directly inside session management, and keeps permission resolution separate from workforce/runtime behavior.
 
 ## Event model
 
@@ -456,6 +512,7 @@ Refinement:
   - queue
   - active sessions
   - project-specific runtime info
+  - attached policies / direct permissions
   - ability to subscribe/chat with an active session
 
 #### Sessions
@@ -468,7 +525,9 @@ Refinement:
 #### Settings
 - workflow management
 - agent and role definition management
+- policy management
 - application log viewer for backend/session logs during early development
+- later, reusable policy management if direct grants prove insufficient
 
 ## Visual design direction
 
@@ -504,25 +563,33 @@ Suggestion:
 - agents are for named long-lived collaborators with memory
 - roles are for elastic labor pools with shared configuration and no long-term memory
 
-### 3. Worktree ownership
+### 3. Role vs policy boundary
+
+Decision:
+- keep workforce roles and authorization policies separate
+- allow agents and roles to both attach policies and direct permissions
+- ship a built-in immutable `supervisor` policy plus a protected system `supervisor` agent
+- do not create a supervisor workforce role
+
+### 4. Worktree ownership
 
 Decision:
 - store canonical repo clones under projects
 - let agents have durable project worktrees for continuity
 - let role instances use disposable project-scoped worktrees
 
-### 4. Session resumption policy
+### 5. Session resumption policy
 
 Decision:
 - when a task returns to a previously used lane, always resume the previously recorded session for that lane
 
-### 5. Notifications and intervention
+### 6. Notifications and intervention
 
 Decision:
 - elevate user-required decisions into a dedicated inbox/to-review surface instead of only inline task state
 - allow comments to explicitly request interruption of the assigned agent via a checkbox in the comment UI
 
-### 6. Workflow flexibility
+### 7. Workflow flexibility
 
 Question:
 - should workflows allow branching beyond success/failure?
@@ -531,7 +598,7 @@ Suggestion:
 - start with success/failure plus explicit user intervention
 - add richer branching only after real usage proves it necessary
 
-### 7. Tool/API boundary
+### 8. Tool/API boundary
 
 Question:
 - should sessions mutate workflow state directly?
@@ -555,8 +622,9 @@ Suggestion:
 - prioritize this milestone so session creation and interaction can be tested as early as possible
 
 ### Milestone 3: Core project/task data
-- define persisted models for projects, repositories, tasks, workflows, agents, roles, and lane runs
+- define persisted models for projects, repositories, tasks, workflows, agents, roles, policies, and lane runs
 - implement project/repository/task/workflow CRUD
+- implement policy persistence, permission resolution, and direct permission attachment on agents and roles
 - implement lane transitions and lane run history
 - wire task comments, including interrupt-vs-queue behavior
 
