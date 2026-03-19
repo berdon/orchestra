@@ -29,15 +29,6 @@ function getRoleValidationForPath(errors: RoleValidationError[], path: string) {
   return errors.filter((error) => error.path === path);
 }
 
-function formatDateTime(timestamp: string) {
-  return new Date(timestamp).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 export function RolesPanel() {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
@@ -221,34 +212,21 @@ export function RolesPanel() {
         {loadingRoles ? <p className="muted-copy">Loading roles…</p> : null}
         {roleActionError ? <p className="error-copy">{roleActionError}</p> : null}
 
-        <div className="workflow-list" role="list">
+        <nav className="role-list" aria-label="Roles">
           {roles.map((role) => (
-            <button
+            <a
               key={role.id}
-              className={role.id === selectedRoleSummary?.id && !isCreatingRole ? "workflow-list-item workflow-list-item--active" : "workflow-list-item"}
-              type="button"
-              onClick={() => setSelectedRoleId(role.id)}
+              className={role.id === selectedRoleSummary?.id && !isCreatingRole ? "role-list-link role-list-link--active" : "role-list-link"}
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
+                setSelectedRoleId(role.id);
+              }}
             >
-              <div className="workflow-list-item__header">
-                <div>
-                  <strong>{role.name}</strong>
-                  <div className="workflow-list-item__meta">
-                    <span>{role.provider ?? "No provider"}</span>
-                    <span>{role.model ?? "No model"}</span>
-                  </div>
-                </div>
-                <span className={`status-badge status-badge--${role.archived ? "neutral" : "accent"}`}>
-                  {role.archived ? "Archived" : `Capacity ${role.capacity}`}
-                </span>
-              </div>
-              <p>{role.description ?? "No description yet."}</p>
-              <div className="workflow-list-item__footer">
-                <span>{role.slug}</span>
-                <span>Updated {formatDateTime(role.updatedAt)}</span>
-              </div>
-            </button>
+              {role.name}
+            </a>
           ))}
-        </div>
+        </nav>
       </aside>
 
       <section className="panel workflow-editor-panel">

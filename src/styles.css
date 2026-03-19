@@ -423,6 +423,14 @@ strong {
   align-content: start;
 }
 
+.role-list {
+  display: grid;
+  gap: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  align-content: start;
+}
+
 .session-list-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -451,6 +459,30 @@ strong {
 }
 
 .session-list-link--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
+}
+
+.role-list-link {
+  min-width: 0;
+  width: 100%;
+  display: block;
+  padding: 10px 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 12px;
+}
+
+.role-list-link:hover {
+  color: var(--accent);
+  background: var(--bg-subtle);
+}
+
+.role-list-link--active {
   color: var(--accent);
   background: var(--accent-soft);
   font-weight: 650;
