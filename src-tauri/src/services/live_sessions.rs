@@ -397,6 +397,11 @@ impl SessionRuntime {
         Ok(SessionModelState {
             session_id: self.session_id.clone(),
             current_model: state.pointer("/data/model").and_then(parse_model_summary),
+            current_thinking_level: state
+                .pointer("/data/thinkingLevel")
+                .and_then(Value::as_str)
+                .unwrap_or("off")
+                .to_string(),
             available_models: models
                 .pointer("/data/models")
                 .and_then(Value::as_array)

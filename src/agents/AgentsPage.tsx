@@ -134,7 +134,7 @@ export function AgentsPage() {
           <nav className="workforce-agent-nav" aria-label="Named agents">
             {agents.map((agent) => (
               <span className="workforce-agent-link" key={agent.id}>
-                {agent.name}
+                {agent.name} · {agent.thinkingLevel}
               </span>
             ))}
           </nav>

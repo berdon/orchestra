@@ -793,7 +793,7 @@ pub fn seed_worker(
         "roles" => {
             connection
                 .execute(
-                    "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, capacity, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 1, 0, ?4, ?4)",
+                    "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 1, 0, ?4, ?4)",
                     params![id, id, name, now],
                 )
                 .map_err(|error| format!("Unable to seed role for tests: {error}"))?;
@@ -802,7 +802,7 @@ pub fn seed_worker(
             connection
                 .execute(
                     &format!(
-                        "INSERT INTO {table} (id, name, archived, created_at, updated_at) VALUES (?1, ?2, 0, ?3, ?3)"
+                        "INSERT INTO {table} (id, name, thinking_level, archived, created_at, updated_at) VALUES (?1, ?2, 'off', 0, ?3, ?3)"
                     ),
                     params![id, name, now],
                 )

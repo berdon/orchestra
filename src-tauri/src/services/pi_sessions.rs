@@ -214,6 +214,21 @@ pub fn set_session_model(
     )
 }
 
+pub fn set_session_thinking_level(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    level: &str,
+) -> Result<SessionModelState, String> {
+    set_session_thinking_level_with_executable(
+        project_root,
+        session_dir,
+        session_id,
+        level,
+        Path::new("pi"),
+    )
+}
+
 fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
 where
     F: FnMut(SessionStreamEvent),
@@ -676,6 +691,11 @@ fn get_session_model_state_with_executable(
     let current_model = state_payload
         .pointer("/data/model")
         .and_then(parse_model_summary);
+    let current_thinking_level = state_payload
+        .pointer("/data/thinkingLevel")
+        .and_then(Value::as_str)
+        .unwrap_or("off")
+        .to_string();
     let available_models = models_payload
         .pointer("/data/models")
         .and_then(Value::as_array)
@@ -687,6 +707,7 @@ fn get_session_model_state_with_executable(
     Ok(SessionModelState {
         session_id: session_id.to_string(),
         current_model,
+        current_thinking_level,
         available_models,
     })
 }
@@ -726,6 +747,11 @@ fn set_session_model_with_executable(
     let current_model = state_payload
         .pointer("/data/model")
         .and_then(parse_model_summary);
+    let current_thinking_level = state_payload
+        .pointer("/data/thinkingLevel")
+        .and_then(Value::as_str)
+        .unwrap_or("off")
+        .to_string();
     let available_models = models_payload
         .pointer("/data/models")
         .and_then(Value::as_array)
@@ -737,6 +763,61 @@ fn set_session_model_with_executable(
     Ok(SessionModelState {
         session_id: session_id.to_string(),
         current_model,
+        current_thinking_level,
+        available_models,
+    })
+}
+
+fn set_session_thinking_level_with_executable(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    level: &str,
+    executable: &Path,
+) -> Result<SessionModelState, String> {
+    let stored = resolve_session(session_dir, session_id, true)?;
+    let payloads = run_rpc_process(
+        executable,
+        project_root,
+        session_dir,
+        &stored.path,
+        &[
+            json!({
+                "id": "set-thinking-1",
+                "type": "set_thinking_level",
+                "level": level,
+            }),
+            json!({ "id": GET_STATE_REQUEST_ID, "type": "get_state" }),
+            json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" }),
+        ],
+        |_| {},
+    )?;
+
+    require_successful_response(&payloads, "set-thinking-1", "set_thinking_level")?;
+    let state_payload = require_successful_response(&payloads, GET_STATE_REQUEST_ID, "get_state")?;
+    let models_payload =
+        require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
+
+    let current_model = state_payload
+        .pointer("/data/model")
+        .and_then(parse_model_summary);
+    let current_thinking_level = state_payload
+        .pointer("/data/thinkingLevel")
+        .and_then(Value::as_str)
+        .unwrap_or("off")
+        .to_string();
+    let available_models = models_payload
+        .pointer("/data/models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_model_summary)
+        .collect();
+
+    Ok(SessionModelState {
+        session_id: session_id.to_string(),
+        current_model,
+        current_thinking_level,
         available_models,
     })
 }
@@ -1070,6 +1151,17 @@ function getCurrentModel() {
   return MODELS[0];
 }
 
+function getCurrentThinkingLevel() {
+  const entries = readSessionEntries();
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.type === 'thinking_level_change') {
+      return entry.thinkingLevel;
+    }
+  }
+  return 'off';
+}
+
 function appendEntry(entry) {
   fs.appendFileSync(sessionFile, JSON.stringify(entry) + '\n');
 }
@@ -1102,7 +1194,7 @@ process.stdin.on('end', () => {
           type: 'response',
           command: 'get_state',
           success: true,
-          data: { model: getCurrentModel() },
+          data: { model: getCurrentModel(), thinkingLevel: getCurrentThinkingLevel() },
         }) + '\n'
       );
       continue;
@@ -1138,6 +1230,26 @@ process.stdin.on('end', () => {
           command: 'set_model',
           success: Boolean(model),
           ...(model ? { data: model } : { error: 'Model not found' }),
+        }) + '\n'
+      );
+      continue;
+    }
+
+    if (command.type === 'set_thinking_level') {
+      appendEntry({
+        type: 'thinking_level_change',
+        id: 'thinking0001',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        thinkingLevel: command.level,
+      });
+      process.stdout.write(
+        JSON.stringify({
+          id: command.id,
+          type: 'response',
+          command: 'set_thinking_level',
+          success: true,
+          data: { level: command.level },
         }) + '\n'
       );
       continue;
@@ -1369,6 +1481,7 @@ process.stdin.on('end', () => {
             Some("anthropic")
         );
         assert_eq!(before.available_models.len(), 2);
+        assert_eq!(before.current_thinking_level, "off");
 
         let after = set_session_model_with_executable(
             &project_root,
@@ -1384,5 +1497,16 @@ process.stdin.on('end', () => {
             after.current_model.as_ref().map(|model| model.id.as_str()),
             Some("gpt-5.4")
         );
+
+        let after_thinking = set_session_thinking_level_with_executable(
+            &project_root,
+            &session_dir,
+            &stored.record.id,
+            "high",
+            &fake_pi,
+        )
+        .expect("thinking level should update");
+
+        assert_eq!(after_thinking.current_thinking_level, "high");
     }
 }

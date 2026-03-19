@@ -28,6 +28,7 @@ function seedMockAgents(): AgentSummary[] {
     {
       id: createId("agent"),
       name: "Data",
+      thinkingLevel: "medium",
       archived: false,
       createdAt: timestamp,
       updatedAt: timestamp,

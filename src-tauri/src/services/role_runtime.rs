@@ -620,6 +620,7 @@ mod tests {
                 system_prompt: Some(format!("{name} prompt")),
                 provider: None,
                 model: None,
+                thinking_level: Some("off".into()),
                 capacity,
             },
         )

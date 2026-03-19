@@ -277,6 +277,7 @@ function buildMockModelState(sessionId: string): SessionModelState {
   return {
     sessionId,
     currentModel: ensureMockSessionModel(sessionId),
+    currentThinkingLevel: "medium",
     availableModels: MOCK_MODELS,
   };
 }
