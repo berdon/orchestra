@@ -721,6 +721,7 @@ strong {
 .workflow-board-lane {
   display: grid;
   gap: 12px;
+  min-width: 0;
   text-align: left;
   appearance: none;
   border: 1px solid var(--border);
@@ -753,6 +754,14 @@ strong {
 .workflow-board-lane__flow {
   color: var(--text-muted);
   font-size: 0.88rem;
+}
+
+.workflow-board-lane strong,
+.workflow-board-lane__meta span,
+.workflow-board-lane__flow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .workflow-list-link {

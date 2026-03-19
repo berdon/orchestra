@@ -111,6 +111,33 @@ function buildOwnerOptions<T extends { id: string; name: string }>(entries: T[])
   return entries.map((entry) => ({ value: entry.id, label: entry.name }));
 }
 
+function describeOwner(
+  lane: WorkflowLaneInput,
+  agentOptions: Array<{ value: string; label: string }>,
+  roleOptions: Array<{ value: string; label: string }>,
+) {
+  if (lane.assignedEntityType === "user") {
+    return {
+      typeLabel: "Owner: User",
+      referenceLabel: null,
+    };
+  }
+
+  if (lane.assignedEntityType === "agent") {
+    const agent = agentOptions.find((option) => option.value === lane.assignedEntityId);
+    return {
+      typeLabel: "Owner: Agent",
+      referenceLabel: agent?.label ?? (lane.assignedEntityId ? `Missing agent: ${lane.assignedEntityId}` : "No agent selected"),
+    };
+  }
+
+  const role = roleOptions.find((option) => option.value === lane.assignedEntityId);
+  return {
+    typeLabel: "Owner: Role",
+    referenceLabel: role?.label ?? (lane.assignedEntityId ? `Missing role: ${lane.assignedEntityId}` : "No role selected"),
+  };
+}
+
 export function WorkflowsPanel() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
@@ -359,6 +386,7 @@ export function WorkflowsPanel() {
           {workflowDraft.lanes.map((lane, index) => {
             const nextLane = workflowDraft.lanes[index + 1];
             const isSelected = selectedLane?.id === lane.id;
+            const owner = describeOwner(lane, agentOptions, roleOptions);
             return (
               <button
                 key={lane.id ?? `lane-${index}`}
@@ -371,8 +399,8 @@ export function WorkflowsPanel() {
                   <strong>{formatLaneLabel(lane, index)}</strong>
                 </div>
                 <div className="workflow-board-lane__meta">
-                  <span>Owner: {lane.assignedEntityType}</span>
-                  {lane.assignedEntityId ? <span>{lane.assignedEntityId}</span> : null}
+                  <span>{owner.typeLabel}</span>
+                  {owner.referenceLabel ? <span>{owner.referenceLabel}</span> : null}
                 </div>
                 <div className="workflow-board-lane__flow">
                   <span>Success → {nextLane ? formatLaneLabel(nextLane, index + 1) : "End"}</span>
