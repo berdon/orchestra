@@ -130,6 +130,7 @@ export function App() {
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const viewedSessionIdRef = useRef<string | null>(null);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
@@ -329,11 +330,41 @@ export function App() {
   }, [activePage]);
 
   useEffect(() => {
+    const previousViewedSessionId = viewedSessionIdRef.current;
+    const nextViewedSessionId = activePage === "sessions" ? selectedSession?.id ?? null : null;
+
+    viewedSessionIdRef.current = nextViewedSessionId;
+
+    if (previousViewedSessionId && previousViewedSessionId !== nextViewedSessionId) {
+      void unsubscribeSession(previousViewedSessionId)
+        .then((record) => {
+          applySessionUpdate(record);
+        })
+        .catch(() => {
+          // Ignore auto-unsubscribe failures; explicit actions will surface errors.
+        });
+    }
+
     if (activePage !== "sessions" || !selectedSession) {
       return;
     }
 
     let cancelled = false;
+
+    if (!selectedSession.subscribed) {
+      void subscribeSession(selectedSession.id)
+        .then((record) => {
+          if (!cancelled) {
+            applySessionUpdate(record);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setSessionActionError(error instanceof Error ? error.message : "Unable to subscribe to session.");
+          }
+        });
+    }
+
     setLoadingModelSessionId(selectedSession.id);
 
     void getSessionModelState(selectedSession.id)
@@ -361,7 +392,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, selectedSession?.id]);
+  }, [activePage, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate]);
 
   useEffect(() => {
     const node = transcriptRef.current;
