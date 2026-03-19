@@ -69,6 +69,7 @@ export interface SessionStreamEvent {
 }
 
 export type WorkflowOwnerType = "user" | "agent" | "role";
+export type WorkflowTransitionType = "lane" | "user_intervention" | "end";
 
 export interface WorkflowLane {
   id: string;
@@ -79,9 +80,10 @@ export interface WorkflowLane {
   assignedEntityType: WorkflowOwnerType | string;
   assignedEntityId?: string | null;
   entryPromptTemplate?: string | null;
+  successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
+  failureTransitionType: WorkflowTransitionType | string;
   failureTargetLaneId?: string | null;
-  userInterventionTargetLaneId?: string | null;
 }
 
 export interface WorkflowDefinition {
@@ -115,9 +117,10 @@ export interface WorkflowLaneInput {
   assignedEntityType: WorkflowOwnerType | string;
   assignedEntityId?: string | null;
   entryPromptTemplate?: string | null;
+  successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
+  failureTransitionType: WorkflowTransitionType | string;
   failureTargetLaneId?: string | null;
-  userInterventionTargetLaneId?: string | null;
 }
 
 export interface WorkflowUpsertInput {

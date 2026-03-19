@@ -153,9 +153,10 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           assignedEntityType: "user",
           assignedEntityId: null,
           entryPromptTemplate: "Define the approach before implementation begins.",
+          successTransitionType: "lane",
           successTargetLaneId: buildId,
+          failureTransitionType: "user_intervention",
           failureTargetLaneId: null,
-          userInterventionTargetLaneId: null,
         },
         {
           id: buildId,
@@ -165,9 +166,10 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           assignedEntityType: "role",
           assignedEntityId: "developer-role",
           entryPromptTemplate: "Carry out the approved implementation plan.",
+          successTransitionType: "lane",
           successTargetLaneId: reviewId,
+          failureTransitionType: "lane",
           failureTargetLaneId: planId,
-          userInterventionTargetLaneId: reviewId,
         },
         {
           id: reviewId,
@@ -177,9 +179,10 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           assignedEntityType: "user",
           assignedEntityId: null,
           entryPromptTemplate: "Check the completed work and decide what happens next.",
+          successTransitionType: "end",
           successTargetLaneId: null,
+          failureTransitionType: "lane",
           failureTargetLaneId: buildId,
-          userInterventionTargetLaneId: null,
         },
       ],
     },
@@ -351,17 +354,39 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
   const validTargets = new Set(normalizedIds);
   input.lanes.forEach((lane, index) => {
     const transitions = [
-      [lane.successTargetLaneId, "successTargetLaneId"],
-      [lane.failureTargetLaneId, "failureTargetLaneId"],
-      [lane.userInterventionTargetLaneId, "userInterventionTargetLaneId"],
+      [lane.successTransitionType, lane.successTargetLaneId, "successTransitionType", "successTargetLaneId"],
+      [lane.failureTransitionType, lane.failureTargetLaneId, "failureTransitionType", "failureTargetLaneId"],
     ] as const;
 
-    transitions.forEach(([target, key]) => {
-      if (target?.trim() && !validTargets.has(target.trim())) {
+    transitions.forEach(([transitionType, target, typeKey, targetKey]) => {
+      if (!["lane", "user_intervention", "end"].includes(transitionType)) {
         errors.push({
-          code: "invalid_reference",
-          path: `lanes[${index}].${key}`,
-          message: "Transition target must reference an existing lane id.",
+          code: "invalid",
+          path: `lanes[${index}].${typeKey}`,
+          message: "Transition type must be one of: lane, user_intervention, end.",
+        });
+        return;
+      }
+
+      if (transitionType === "lane") {
+        if (!target?.trim()) {
+          errors.push({
+            code: "required",
+            path: `lanes[${index}].${targetKey}`,
+            message: "Lane transitions must reference a target lane.",
+          });
+        } else if (!validTargets.has(target.trim())) {
+          errors.push({
+            code: "invalid_reference",
+            path: `lanes[${index}].${targetKey}`,
+            message: "Transition target must reference an existing lane id.",
+          });
+        }
+      } else if (target?.trim()) {
+        errors.push({
+          code: "invalid",
+          path: `lanes[${index}].${targetKey}`,
+          message: "Only lane transitions may specify a target lane.",
         });
       }
     });
@@ -385,9 +410,10 @@ function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow
     assignedEntityType: lane.assignedEntityType,
     assignedEntityId: lane.assignedEntityId?.trim() || null,
     entryPromptTemplate: lane.entryPromptTemplate?.trim() || null,
-    successTargetLaneId: lane.successTargetLaneId?.trim() || null,
-    failureTargetLaneId: lane.failureTargetLaneId?.trim() || null,
-    userInterventionTargetLaneId: lane.userInterventionTargetLaneId?.trim() || null,
+    successTransitionType: lane.successTransitionType,
+    successTargetLaneId: lane.successTransitionType === "lane" ? lane.successTargetLaneId?.trim() || null : null,
+    failureTransitionType: lane.failureTransitionType,
+    failureTargetLaneId: lane.failureTransitionType === "lane" ? lane.failureTargetLaneId?.trim() || null : null,
   }));
 
   return {
@@ -718,9 +744,10 @@ export async function duplicateWorkflow(workflowId: string, newName?: string): P
         assignedEntityType: lane.assignedEntityType,
         assignedEntityId: lane.assignedEntityId,
         entryPromptTemplate: lane.entryPromptTemplate,
+        successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId,
+        failureTransitionType: lane.failureTransitionType,
         failureTargetLaneId: lane.failureTargetLaneId,
-        userInterventionTargetLaneId: lane.userInterventionTargetLaneId,
       })),
     };
 

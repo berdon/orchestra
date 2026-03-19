@@ -20,9 +20,10 @@ function createEmptyLane(order: number): WorkflowLaneInput {
     assignedEntityType: "user",
     assignedEntityId: null,
     entryPromptTemplate: null,
+    successTransitionType: "end",
     successTargetLaneId: null,
+    failureTransitionType: "end",
     failureTargetLaneId: null,
-    userInterventionTargetLaneId: null,
   };
 }
 
@@ -50,9 +51,10 @@ function workflowToDraft(workflow: WorkflowDefinition): WorkflowUpsertInput {
         assignedEntityType: lane.assignedEntityType,
         assignedEntityId: lane.assignedEntityId ?? "",
         entryPromptTemplate: lane.entryPromptTemplate ?? "",
+        successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId ?? "",
+        failureTransitionType: lane.failureTransitionType,
         failureTargetLaneId: lane.failureTargetLaneId ?? "",
-        userInterventionTargetLaneId: lane.userInterventionTargetLaneId ?? "",
       })),
   };
 }
@@ -562,7 +564,37 @@ export function WorkflowsPanel() {
                       <span className="field-group__label">On success</span>
                       <select
                         className="select-input"
+                        value={lane.successTransitionType}
+                        onChange={(event) =>
+                          updateWorkflowDraft((draft) => ({
+                            ...draft,
+                            lanes: draft.lanes.map((entry, laneIndex) =>
+                              laneIndex === index
+                                ? {
+                                    ...entry,
+                                    successTransitionType: event.target.value,
+                                    successTargetLaneId: event.target.value === "lane" ? entry.successTargetLaneId : "",
+                                  }
+                                : entry,
+                            ),
+                          }))
+                        }
+                      >
+                        <option value="end">End workflow</option>
+                        <option value="lane">Go to lane</option>
+                        <option value="user_intervention">Require user intervention</option>
+                      </select>
+                      {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].successTransitionType`).map((error) => (
+                        <span className="field-error" key={error.message}>{error.message}</span>
+                      ))}
+                    </label>
+
+                    <label className="field-group">
+                      <span className="field-group__label">Success target lane</span>
+                      <select
+                        className="select-input"
                         value={lane.successTargetLaneId ?? ""}
+                        disabled={lane.successTransitionType !== "lane"}
                         onChange={(event) =>
                           updateWorkflowDraft((draft) => ({
                             ...draft,
@@ -572,7 +604,7 @@ export function WorkflowsPanel() {
                           }))
                         }
                       >
-                        <option value="">End workflow</option>
+                        <option value="">Choose lane</option>
                         {laneIdOptions
                           .filter((option) => option.id !== lane.id)
                           .map((option) => (
@@ -590,7 +622,37 @@ export function WorkflowsPanel() {
                       <span className="field-group__label">On failure</span>
                       <select
                         className="select-input"
+                        value={lane.failureTransitionType}
+                        onChange={(event) =>
+                          updateWorkflowDraft((draft) => ({
+                            ...draft,
+                            lanes: draft.lanes.map((entry, laneIndex) =>
+                              laneIndex === index
+                                ? {
+                                    ...entry,
+                                    failureTransitionType: event.target.value,
+                                    failureTargetLaneId: event.target.value === "lane" ? entry.failureTargetLaneId : "",
+                                  }
+                                : entry,
+                            ),
+                          }))
+                        }
+                      >
+                        <option value="end">End workflow</option>
+                        <option value="lane">Go to lane</option>
+                        <option value="user_intervention">Require user intervention</option>
+                      </select>
+                      {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].failureTransitionType`).map((error) => (
+                        <span className="field-error" key={error.message}>{error.message}</span>
+                      ))}
+                    </label>
+
+                    <label className="field-group">
+                      <span className="field-group__label">Failure target lane</span>
+                      <select
+                        className="select-input"
                         value={lane.failureTargetLaneId ?? ""}
+                        disabled={lane.failureTransitionType !== "lane"}
                         onChange={(event) =>
                           updateWorkflowDraft((draft) => ({
                             ...draft,
@@ -600,7 +662,7 @@ export function WorkflowsPanel() {
                           }))
                         }
                       >
-                        <option value="">End workflow</option>
+                        <option value="">Choose lane</option>
                         {laneIdOptions
                           .filter((option) => option.id !== lane.id)
                           .map((option) => (
@@ -610,34 +672,6 @@ export function WorkflowsPanel() {
                           ))}
                       </select>
                       {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].failureTargetLaneId`).map((error) => (
-                        <span className="field-error" key={error.message}>{error.message}</span>
-                      ))}
-                    </label>
-
-                    <label className="field-group">
-                      <span className="field-group__label">Needs user intervention</span>
-                      <select
-                        className="select-input"
-                        value={lane.userInterventionTargetLaneId ?? ""}
-                        onChange={(event) =>
-                          updateWorkflowDraft((draft) => ({
-                            ...draft,
-                            lanes: draft.lanes.map((entry, laneIndex) =>
-                              laneIndex === index ? { ...entry, userInterventionTargetLaneId: event.target.value } : entry,
-                            ),
-                          }))
-                        }
-                      >
-                        <option value="">End workflow</option>
-                        {laneIdOptions
-                          .filter((option) => option.id !== lane.id)
-                          .map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                      </select>
-                      {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].userInterventionTargetLaneId`).map((error) => (
                         <span className="field-error" key={error.message}>{error.message}</span>
                       ))}
                     </label>
