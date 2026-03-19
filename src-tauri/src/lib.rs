@@ -30,6 +30,14 @@ pub fn run() {
     services::logging::init_logging();
     let database_path = services::database::initialize_database()
         .expect("unable to initialize Orchestra SQLite database");
+    let mut bootstrap_connection = services::database::open_connection()
+        .expect("unable to open Orchestra SQLite database for bootstrap");
+    let (supervisor_policy, supervisor_agent) =
+        services::auth_bootstrap::ensure_system_authorization_state(
+            &mut bootstrap_connection,
+            None,
+        )
+        .expect("unable to seed Orchestra supervisor authorization state");
 
     let app_state = AppState::new();
     app_state.log(
@@ -38,6 +46,14 @@ pub fn run() {
         &format!(
             "Initialized Orchestra SQLite database at {}",
             database_path.display()
+        ),
+    );
+    app_state.log(
+        "info",
+        "auth.bootstrap",
+        &format!(
+            "Ensured supervisor policy {} and supervisor agent {}",
+            supervisor_policy.id, supervisor_agent.id
         ),
     );
 
