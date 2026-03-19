@@ -1,4 +1,6 @@
-use tauri::State;
+use std::path::PathBuf;
+
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::{
     models::{AppInfo, LogEntry, SessionStorageInfo},
@@ -27,6 +29,25 @@ pub fn get_logs(state: State<'_, AppState>) -> Vec<LogEntry> {
 #[tauri::command]
 pub fn clear_logs(state: State<'_, AppState>) {
     state.clear_logs();
+}
+
+#[tauri::command]
+pub fn open_logs_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("logs") {
+        window.show().map_err(|error| format!("Unable to show logs window: {error}"))?;
+        window.set_focus().map_err(|error| format!("Unable to focus logs window: {error}"))?;
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, "logs", WebviewUrl::App(PathBuf::from("index.html")))
+        .title("Orchestra Logs")
+        .inner_size(980.0, 760.0)
+        .resizable(true)
+        .visible(true)
+        .build()
+        .map_err(|error| format!("Unable to create logs window: {error}"))?;
+
+    Ok(())
 }
 
 #[tauri::command]

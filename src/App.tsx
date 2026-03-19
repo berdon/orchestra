@@ -5,6 +5,7 @@ import {
   getAppInfo,
   getLogs,
   getSessionModelState,
+  isCurrentLogsWindow,
   isTauriAvailable,
   listSessions,
   listenToSessionStream,
@@ -188,6 +189,7 @@ export function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
+  const [isLogsWindow, setIsLogsWindow] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -202,7 +204,6 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
-  const isLogsWindow = useMemo(() => new URLSearchParams(window.location.search).get("view") === "logs", []);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
@@ -444,6 +445,7 @@ export function App() {
 
   useEffect(() => {
     void getAppInfo().then(setAppInfo);
+    void isCurrentLogsWindow().then(setIsLogsWindow);
   }, []);
 
   useEffect(() => {
