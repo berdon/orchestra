@@ -58,6 +58,19 @@ interface PendingSessionRun {
   assistantEvent?: SessionEvent;
 }
 
+function buildPendingAssistantEvent(runId: string, timestamp: string, overrides?: Partial<SessionEvent>): SessionEvent {
+  return {
+    id: `pending-assistant-${runId}`,
+    kind: "assistant",
+    message: "",
+    timestamp,
+    pending: true,
+    thinking: false,
+    runId,
+    ...overrides,
+  };
+}
+
 function createClientId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
 }
@@ -266,25 +279,43 @@ export function App() {
   const handleSessionStreamEvent = useCallback(
     (payload: SessionStreamEvent) => {
       switch (payload.event) {
-        case "assistantStart": {
+        case "thinking_start": {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
             userEvent: {
               ...current.userEvent,
               pending: false,
             },
-            assistantEvent: current.assistantEvent ?? {
-              id: `pending-assistant-${payload.runId}`,
-              kind: "assistant",
-              message: "",
-              timestamp: payload.timestamp ?? nowIso(),
-              pending: true,
-              runId: payload.runId,
-            },
+            assistantEvent: current.assistantEvent
+              ? {
+                  ...current.assistantEvent,
+                  pending: true,
+                  thinking: true,
+                }
+              : buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso(), {
+                  thinking: true,
+                }),
           }));
           break;
         }
-        case "assistantDelta": {
+        case "text_start": {
+          updatePendingRun(payload.sessionId, (current) => ({
+            ...current,
+            userEvent: {
+              ...current.userEvent,
+              pending: false,
+            },
+            assistantEvent: current.assistantEvent
+              ? {
+                  ...current.assistantEvent,
+                  pending: true,
+                  thinking: false,
+                }
+              : buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso()),
+          }));
+          break;
+        }
+        case "text_delta": {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
             userEvent: {
@@ -292,17 +323,15 @@ export function App() {
               pending: false,
             },
             assistantEvent: {
-              id: current.assistantEvent?.id ?? `pending-assistant-${payload.runId}`,
-              kind: "assistant",
+              ...(current.assistantEvent ?? buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso())),
               message: `${current.assistantEvent?.message ?? ""}${payload.delta ?? ""}`,
-              timestamp: current.assistantEvent?.timestamp ?? payload.timestamp ?? nowIso(),
               pending: true,
-              runId: payload.runId,
+              thinking: false,
             },
           }));
           break;
         }
-        case "turnComplete": {
+        case "turn_end": {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
             userEvent: {
@@ -314,20 +343,17 @@ export function App() {
                   ...current.assistantEvent,
                   message: payload.message ?? current.assistantEvent.message,
                   pending: false,
+                  thinking: false,
                   timestamp: payload.timestamp ?? current.assistantEvent.timestamp,
                 }
-              : {
-                  id: `pending-assistant-${payload.runId}`,
-                  kind: "assistant",
+              : buildPendingAssistantEvent(payload.runId, payload.timestamp ?? nowIso(), {
                   message: payload.message ?? "",
-                  timestamp: payload.timestamp ?? nowIso(),
                   pending: false,
-                  runId: payload.runId,
-                },
+                }),
           }));
           break;
         }
-        case "sessionUpdated": {
+        case "session_updated": {
           if (payload.record) {
             applySessionUpdate(payload.record);
           }
@@ -786,11 +812,12 @@ export function App() {
                           <div className="transcript-event__meta">
                             <span>{event.kind}</span>
                             <div className="transcript-event__meta-group">
+                              {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
                               {event.pending ? <span className="pending-badge">Pending</span> : null}
                               <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
                             </div>
                           </div>
-                          <p>{event.message || (event.kind === "assistant" ? "Thinking…" : "Queued…")}</p>
+                          <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
                         </article>
                       ))}
                     </div>

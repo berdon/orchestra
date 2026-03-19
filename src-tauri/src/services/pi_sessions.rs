@@ -37,7 +37,9 @@ pub struct StoredSession {
     pub record: SessionRecord,
 }
 
-pub fn detect_session_context(project_slug_override: Option<&str>) -> Result<SessionContext, String> {
+pub fn detect_session_context(
+    project_slug_override: Option<&str>,
+) -> Result<SessionContext, String> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(Path::to_path_buf)
@@ -49,8 +51,12 @@ pub fn detect_session_context(project_slug_override: Option<&str>) -> Result<Ses
     let orchestra_root = default_orchestra_root()?;
     let session_dir = project_session_dir(&orchestra_root, &project_slug);
 
-    fs::create_dir_all(&session_dir)
-        .map_err(|error| format!("Unable to create session directory {}: {error}", session_dir.display()))?;
+    fs::create_dir_all(&session_dir).map_err(|error| {
+        format!(
+            "Unable to create session directory {}: {error}",
+            session_dir.display()
+        )
+    })?;
 
     Ok(SessionContext {
         project_root,
@@ -66,16 +72,24 @@ pub fn create_session_file(
     title: Option<&str>,
     subscribed: bool,
 ) -> Result<StoredSession, String> {
-    fs::create_dir_all(session_dir)
-        .map_err(|error| format!("Unable to create session directory {}: {error}", session_dir.display()))?;
+    fs::create_dir_all(session_dir).map_err(|error| {
+        format!(
+            "Unable to create session directory {}: {error}",
+            session_dir.display()
+        )
+    })?;
 
     let session_id = Uuid::new_v4().to_string();
     let timestamp = now_iso();
     let file_timestamp = timestamp.replace(':', "-").replace('.', "-");
     let session_path = session_dir.join(format!("{file_timestamp}_{session_id}.jsonl"));
 
-    let mut file = File::create(&session_path)
-        .map_err(|error| format!("Unable to create session file {}: {error}", session_path.display()))?;
+    let mut file = File::create(&session_path).map_err(|error| {
+        format!(
+            "Unable to create session file {}: {error}",
+            session_path.display()
+        )
+    })?;
 
     writeln!(
         file,
@@ -88,7 +102,12 @@ pub fn create_session_file(
             "cwd": project_root.display().to_string(),
         })
     )
-    .map_err(|error| format!("Unable to write session header {}: {error}", session_path.display()))?;
+    .map_err(|error| {
+        format!(
+            "Unable to write session header {}: {error}",
+            session_path.display()
+        )
+    })?;
 
     if let Some(title) = normalized_title(title) {
         writeln!(
@@ -102,22 +121,38 @@ pub fn create_session_file(
                 "name": title,
             })
         )
-        .map_err(|error| format!("Unable to write session title {}: {error}", session_path.display()))?;
+        .map_err(|error| {
+            format!(
+                "Unable to write session title {}: {error}",
+                session_path.display()
+            )
+        })?;
     }
 
-    file.sync_all()
-        .map_err(|error| format!("Unable to flush session file {}: {error}", session_path.display()))?;
+    file.sync_all().map_err(|error| {
+        format!(
+            "Unable to flush session file {}: {error}",
+            session_path.display()
+        )
+    })?;
 
     parse_session_file(&session_path, subscribed)
 }
 
-pub fn list_sessions(session_dir: &Path, subscribed_ids: &HashSet<String>) -> Result<Vec<SessionRecord>, String> {
+pub fn list_sessions(
+    session_dir: &Path,
+    subscribed_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
     let mut sessions = list_stored_sessions(session_dir, subscribed_ids)?;
     sessions.sort_by(|left, right| right.record.updated_at.cmp(&left.record.updated_at));
     Ok(sessions.into_iter().map(|session| session.record).collect())
 }
 
-pub fn get_session(session_dir: &Path, session_id: &str, subscribed: bool) -> Result<SessionRecord, String> {
+pub fn get_session(
+    session_dir: &Path,
+    session_id: &str,
+    subscribed: bool,
+) -> Result<SessionRecord, String> {
     resolve_session(session_dir, session_id, subscribed).map(|session| session.record)
 }
 
@@ -224,17 +259,25 @@ fn infer_project_slug(project_root: &Path) -> String {
     sanitize_slug(file_name)
 }
 
-fn list_stored_sessions(session_dir: &Path, subscribed_ids: &HashSet<String>) -> Result<Vec<StoredSession>, String> {
+fn list_stored_sessions(
+    session_dir: &Path,
+    subscribed_ids: &HashSet<String>,
+) -> Result<Vec<StoredSession>, String> {
     if !session_dir.exists() {
         return Ok(Vec::new());
     }
 
     let mut sessions = Vec::new();
-    let entries = fs::read_dir(session_dir)
-        .map_err(|error| format!("Unable to read session directory {}: {error}", session_dir.display()))?;
+    let entries = fs::read_dir(session_dir).map_err(|error| {
+        format!(
+            "Unable to read session directory {}: {error}",
+            session_dir.display()
+        )
+    })?;
 
     for entry in entries {
-        let entry = entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
+        let entry =
+            entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
             continue;
@@ -254,7 +297,11 @@ fn list_stored_sessions(session_dir: &Path, subscribed_ids: &HashSet<String>) ->
     Ok(sessions)
 }
 
-fn resolve_session(session_dir: &Path, session_id: &str, subscribed: bool) -> Result<StoredSession, String> {
+fn resolve_session(
+    session_dir: &Path,
+    session_id: &str,
+    subscribed: bool,
+) -> Result<StoredSession, String> {
     if !session_dir.exists() {
         return Err(format!(
             "Session directory {} does not exist yet",
@@ -262,11 +309,16 @@ fn resolve_session(session_dir: &Path, session_id: &str, subscribed: bool) -> Re
         ));
     }
 
-    let entries = fs::read_dir(session_dir)
-        .map_err(|error| format!("Unable to read session directory {}: {error}", session_dir.display()))?;
+    let entries = fs::read_dir(session_dir).map_err(|error| {
+        format!(
+            "Unable to read session directory {}: {error}",
+            session_dir.display()
+        )
+    })?;
 
     for entry in entries {
-        let entry = entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
+        let entry =
+            entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
             continue;
@@ -299,7 +351,10 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
         .ok_or_else(|| format!("Session file {} is empty", path.display()))?;
 
     if header.get("type").and_then(Value::as_str) != Some("session") {
-        return Err(format!("Session file {} does not start with a session header", path.display()));
+        return Err(format!(
+            "Session file {} does not start with a session header",
+            path.display()
+        ));
     }
 
     let session_id = header
@@ -332,7 +387,11 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
 
         match entry_type {
             "session_info" => {
-                if let Some(name) = line.get("name").and_then(Value::as_str).and_then(non_empty_trimmed) {
+                if let Some(name) = line
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .and_then(non_empty_trimmed)
+                {
                     title = Some(name.to_string());
                 }
             }
@@ -340,7 +399,10 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                 let Some(message) = line.get("message") else {
                     continue;
                 };
-                let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+                let role = message
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let message_text = extract_message_text(message);
                 let message_timestamp = message_timestamp(message, &entry_timestamp);
                 maybe_update_timestamp(&message_timestamp, &mut updated_at, &mut updated_sort_key);
@@ -492,7 +554,6 @@ where
     let mut saw_prompt_response = false;
     let mut saw_agent_end = false;
     let mut rpc_error = None;
-    let mut assistant_started = false;
 
     let payloads = run_rpc_process(
         executable,
@@ -523,11 +584,21 @@ where
                     rpc_error = Some(extract_rpc_error(payload));
                 }
 
-                if matches!(event_type, "text_start" | "text_delta") && !assistant_started {
-                    assistant_started = true;
+                if event_type == "thinking_start" {
                     on_stream_event(PartialStreamEvent {
                         session_id: session_id.to_string(),
-                        event: "assistantStart".into(),
+                        event: "thinking_start".into(),
+                        timestamp: Some(now_iso()),
+                        delta: None,
+                        message: None,
+                        record: None,
+                    });
+                }
+
+                if event_type == "text_start" {
+                    on_stream_event(PartialStreamEvent {
+                        session_id: session_id.to_string(),
+                        event: "text_start".into(),
                         timestamp: Some(now_iso()),
                         delta: None,
                         message: None,
@@ -538,7 +609,7 @@ where
                 if event_type == "text_delta" {
                     on_stream_event(PartialStreamEvent {
                         session_id: session_id.to_string(),
-                        event: "assistantDelta".into(),
+                        event: "text_delta".into(),
                         timestamp: None,
                         delta: payload
                             .pointer("/assistantMessageEvent/delta")
@@ -593,7 +664,8 @@ fn get_session_model_state_with_executable(
     )?;
 
     let state_payload = require_successful_response(&payloads, GET_STATE_REQUEST_ID, "get_state")?;
-    let models_payload = require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
+    let models_payload =
+        require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
 
     let current_model = state_payload
         .pointer("/data/model")
@@ -642,7 +714,8 @@ fn set_session_model_with_executable(
 
     require_successful_response(&payloads, SET_MODEL_REQUEST_ID, "set_model")?;
     let state_payload = require_successful_response(&payloads, GET_STATE_REQUEST_ID, "get_state")?;
-    let models_payload = require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
+    let models_payload =
+        require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
 
     let current_model = state_payload
         .pointer("/data/model")
@@ -753,13 +826,19 @@ where
         let stderr_suffix = non_empty_trimmed(&stderr_output)
             .map(|output| format!(": {output}"))
             .unwrap_or_default();
-        return Err(format!("pi RPC process exited unsuccessfully{stderr_suffix}"));
+        return Err(format!(
+            "pi RPC process exited unsuccessfully{stderr_suffix}"
+        ));
     }
 
     Ok(payloads)
 }
 
-fn require_successful_response<'a>(payloads: &'a [Value], request_id: &str, command: &str) -> Result<&'a Value, String> {
+fn require_successful_response<'a>(
+    payloads: &'a [Value],
+    request_id: &str,
+    command: &str,
+) -> Result<&'a Value, String> {
     let response = payloads
         .iter()
         .find(|payload| {
@@ -789,7 +868,10 @@ fn parse_model_summary(value: &Value) -> Option<SessionModel> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        reasoning: value.get("reasoning").and_then(Value::as_bool).unwrap_or(false),
+        reasoning: value
+            .get("reasoning")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -1240,9 +1322,14 @@ process.stdin.on('end', () => {
         .expect("prompt should succeed");
 
         assert_eq!(updated.title, "RPC session");
-        assert!(events.iter().any(|event| event.event == "assistantStart"));
-        assert!(events.iter().any(|event| event.delta.as_deref() == Some("Echo: ")));
-        assert!(updated.events.iter().any(|event| event.kind == "user" && event.message == "Hello from the UI"));
+        assert!(events.iter().any(|event| event.event == "text_start"));
+        assert!(events
+            .iter()
+            .any(|event| event.delta.as_deref() == Some("Echo: ")));
+        assert!(updated
+            .events
+            .iter()
+            .any(|event| event.kind == "user" && event.message == "Hello from the UI"));
         assert!(updated
             .events
             .iter()
@@ -1261,9 +1348,20 @@ process.stdin.on('end', () => {
         let stored = create_session_file(&project_root, &session_dir, Some("Model session"), true)
             .expect("session should be created");
 
-        let before = get_session_model_state_with_executable(&project_root, &session_dir, &stored.record.id, &fake_pi)
-            .expect("initial model state should load");
-        assert_eq!(before.current_model.as_ref().map(|model| model.provider.as_str()), Some("anthropic"));
+        let before = get_session_model_state_with_executable(
+            &project_root,
+            &session_dir,
+            &stored.record.id,
+            &fake_pi,
+        )
+        .expect("initial model state should load");
+        assert_eq!(
+            before
+                .current_model
+                .as_ref()
+                .map(|model| model.provider.as_str()),
+            Some("anthropic")
+        );
         assert_eq!(before.available_models.len(), 2);
 
         let after = set_session_model_with_executable(
@@ -1276,6 +1374,9 @@ process.stdin.on('end', () => {
         )
         .expect("model should update");
 
-        assert_eq!(after.current_model.as_ref().map(|model| model.id.as_str()), Some("gpt-5.4"));
+        assert_eq!(
+            after.current_model.as_ref().map(|model| model.id.as_str()),
+            Some("gpt-5.4")
+        );
     }
 }

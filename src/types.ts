@@ -38,6 +38,7 @@ export interface SessionEvent {
   message: string;
   timestamp: string;
   pending?: boolean;
+  thinking?: boolean;
   runId?: string;
 }
 
@@ -61,7 +62,7 @@ export interface QueuedSessionMessage {
 export interface SessionStreamEvent {
   sessionId: string;
   runId: string;
-  event: "assistantStart" | "assistantDelta" | "turnComplete" | "sessionUpdated" | "error";
+  event: "thinking_start" | "text_start" | "text_delta" | "turn_end" | "session_updated" | "error";
   timestamp?: string;
   delta?: string;
   message?: string;

@@ -115,12 +115,15 @@ impl SessionRuntime {
                         match serde_json::from_str::<Value>(trimmed) {
                             Ok(payload) => runtime.handle_payload(payload),
                             Err(error) => {
-                                runtime.emit_error_for_active_run(format!("Unable to parse pi RPC output: {error}"));
+                                runtime.emit_error_for_active_run(format!(
+                                    "Unable to parse pi RPC output: {error}"
+                                ));
                             }
                         }
                     }
                     Err(error) => {
-                        runtime.handle_process_end(format!("Unable to read pi RPC output: {error}"));
+                        runtime
+                            .handle_process_end(format!("Unable to read pi RPC output: {error}"));
                         break;
                     }
                 }
@@ -135,7 +138,11 @@ impl SessionRuntime {
             let mut buffer = String::new();
             let _ = reader.read_to_string(&mut buffer);
             if !buffer.trim().is_empty() {
-                runtime.app.state::<crate::state::AppState>().log("warn", "sessions.rpc.stderr", buffer.trim());
+                runtime.app.state::<crate::state::AppState>().log(
+                    "warn",
+                    "sessions.rpc.stderr",
+                    buffer.trim(),
+                );
             }
         });
     }
@@ -149,7 +156,10 @@ impl SessionRuntime {
                         self.app.state::<crate::state::AppState>().log(
                             "info",
                             "sessions.rpc.response",
-                            &format!("Session {} received response {} success={}", self.session_id, id, success),
+                            &format!(
+                                "Session {} received response {} success={}",
+                                self.session_id, id, success
+                            ),
                         );
                         let result = if success {
                             Ok(payload)
@@ -180,12 +190,12 @@ impl SessionRuntime {
                     self.app.state::<crate::state::AppState>().log(
                         "info",
                         "sessions.rpc.emit",
-                        &format!("Session {} emitting turnComplete", self.session_id),
+                        &format!("Session {} emitting turn_end", self.session_id),
                     );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
-                        event: "turnComplete".into(),
+                        event: "turn_end".into(),
                         timestamp: Some(crate::state::now_iso()),
                         delta: None,
                         message: final_message,
@@ -208,8 +218,14 @@ impl SessionRuntime {
                     &format!(
                         "Session {} received response {} success={} ",
                         self.session_id,
-                        payload.get("id").and_then(Value::as_str).unwrap_or("(no id)"),
-                        payload.get("success").and_then(Value::as_bool).unwrap_or(false)
+                        payload
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("(no id)"),
+                        payload
+                            .get("success")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
                     ),
                 );
             }
@@ -222,11 +238,17 @@ impl SessionRuntime {
             return;
         };
 
-        let Some(event_type) = payload.pointer("/assistantMessageEvent/type").and_then(Value::as_str) else {
+        let Some(event_type) = payload
+            .pointer("/assistantMessageEvent/type")
+            .and_then(Value::as_str)
+        else {
             return;
         };
 
-        if matches!(event_type, "text_start" | "text_delta" | "thinking_start" | "thinking_delta" | "error") {
+        if matches!(
+            event_type,
+            "text_start" | "text_delta" | "thinking_start" | "error"
+        ) {
             self.app.state::<crate::state::AppState>().log(
                 "info",
                 "sessions.rpc.message_update",
@@ -242,17 +264,35 @@ impl SessionRuntime {
                     &format!("Session {} message_update done", self.session_id),
                 );
             }
-            "text_start" | "thinking_start" => {
+            "thinking_start" => {
                 if self.is_subscribed() {
                     self.app.state::<crate::state::AppState>().log(
                         "info",
                         "sessions.rpc.emit",
-                        &format!("Session {} emitting assistantStart", self.session_id),
+                        &format!("Session {} emitting thinking_start", self.session_id),
                     );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
-                        event: "assistantStart".into(),
+                        event: "thinking_start".into(),
+                        timestamp: Some(crate::state::now_iso()),
+                        delta: None,
+                        message: None,
+                        record: None,
+                    });
+                }
+            }
+            "text_start" => {
+                if self.is_subscribed() {
+                    self.app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.rpc.emit",
+                        &format!("Session {} emitting text_start", self.session_id),
+                    );
+                    self.emit_stream_event(SessionStreamEvent {
+                        session_id: self.session_id.clone(),
+                        run_id,
+                        event: "text_start".into(),
                         timestamp: Some(crate::state::now_iso()),
                         delta: None,
                         message: None,
@@ -265,38 +305,17 @@ impl SessionRuntime {
                     self.app.state::<crate::state::AppState>().log(
                         "info",
                         "sessions.rpc.emit",
-                        &format!("Session {} emitting assistantDelta", self.session_id),
+                        &format!("Session {} emitting text_delta", self.session_id),
                     );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
-                        event: "assistantDelta".into(),
+                        event: "text_delta".into(),
                         timestamp: None,
                         delta: payload
                             .pointer("/assistantMessageEvent/delta")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned),
-                        message: None,
-                        record: None,
-                    });
-                }
-            }
-            "thinking_delta" => {
-                if self.is_subscribed() {
-                    self.app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.rpc.emit",
-                        &format!("Session {} emitting assistantDelta(thinking)", self.session_id),
-                    );
-                    self.emit_stream_event(SessionStreamEvent {
-                        session_id: self.session_id.clone(),
-                        run_id,
-                        event: "assistantDelta".into(),
-                        timestamp: None,
-                        delta: payload
-                            .pointer("/assistantMessageEvent/delta")
-                            .and_then(Value::as_str)
-                            .map(|value| format!("{value}")),
                         message: None,
                         record: None,
                     });
@@ -326,12 +345,15 @@ impl SessionRuntime {
                     self.app.state::<crate::state::AppState>().log(
                         "info",
                         "sessions.runtime.complete",
-                        &format!("Session {} emitting sessionUpdated for run {}", self.session_id, run_id),
+                        &format!(
+                            "Session {} emitting session_updated for run {}",
+                            self.session_id, run_id
+                        ),
                     );
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
                         run_id,
-                        event: "sessionUpdated".into(),
+                        event: "session_updated".into(),
                         timestamp: None,
                         delta: None,
                         message: None,
@@ -415,7 +437,8 @@ impl SessionRuntime {
             let stdin = stdin
                 .as_mut()
                 .ok_or_else(|| "Session runtime stdin is closed".to_string())?;
-            writeln!(stdin, "{command}").map_err(|error| format!("Unable to send command to pi RPC process: {error}"))?;
+            writeln!(stdin, "{command}")
+                .map_err(|error| format!("Unable to send command to pi RPC process: {error}"))?;
             stdin
                 .flush()
                 .map_err(|error| format!("Unable to flush pi RPC stdin: {error}"))?;
@@ -423,11 +446,17 @@ impl SessionRuntime {
         })();
 
         if let Err(error) = write_result {
-            let _ = self.pending.lock().map(|mut pending| pending.remove(&request_id));
+            let _ = self
+                .pending
+                .lock()
+                .map(|mut pending| pending.remove(&request_id));
             self.app.state::<crate::state::AppState>().log(
                 "error",
                 "sessions.rpc.send",
-                &format!("Session {} failed to send command {}: {}", self.session_id, request_id, error),
+                &format!(
+                    "Session {} failed to send command {}: {}",
+                    self.session_id, request_id, error
+                ),
             );
             return Err(error);
         }
@@ -454,7 +483,12 @@ impl SessionRuntime {
         self.app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.start_run",
-            &format!("Session {} starting run {} with {} chars", self.session_id, run_id, message.len()),
+            &format!(
+                "Session {} starting run {} with {} chars",
+                self.session_id,
+                run_id,
+                message.len()
+            ),
         );
         {
             let mut current_run_id = self
@@ -482,7 +516,9 @@ impl SessionRuntime {
     }
 
     pub fn get_model_state(&self) -> Result<SessionModelState, String> {
-        let state = self.send_command(json!({ "id": format!("state-{}", Uuid::new_v4()), "type": "get_state" }))?;
+        let state = self.send_command(
+            json!({ "id": format!("state-{}", Uuid::new_v4()), "type": "get_state" }),
+        )?;
         let models = self.send_command(json!({
             "id": format!("models-{}", Uuid::new_v4()),
             "type": "get_available_models"
@@ -521,11 +557,17 @@ impl SessionRuntime {
     }
 
     fn current_run_id(&self) -> Option<String> {
-        self.current_run_id.lock().ok().and_then(|value| value.clone())
+        self.current_run_id
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
     }
 
     fn take_current_run_id(&self) -> Option<String> {
-        self.current_run_id.lock().ok().and_then(|mut value| value.take())
+        self.current_run_id
+            .lock()
+            .ok()
+            .and_then(|mut value| value.take())
     }
 
     fn close_if_idle(&self) {
@@ -642,7 +684,10 @@ fn parse_model_summary(value: &Value) -> Option<SessionModel> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        reasoning: value.get("reasoning").and_then(Value::as_bool).unwrap_or(false),
+        reasoning: value
+            .get("reasoning")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 

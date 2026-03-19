@@ -603,22 +603,39 @@ export async function sendSessionMessage(sessionId: string, message: string, run
       emitMockSessionStream({
         sessionId,
         runId,
-        event: "assistantStart",
+        event: "thinking_start",
         timestamp: nowIso(),
       });
+
+      window.setTimeout(() => {
+        emitMockSessionStream({
+          sessionId,
+          runId,
+          event: "text_start",
+          timestamp: nowIso(),
+        });
+      }, 80);
 
       chunks.forEach((chunk, index) => {
         window.setTimeout(() => {
           emitMockSessionStream({
             sessionId,
             runId,
-            event: "assistantDelta",
+            event: "text_delta",
             delta: chunk,
           });
-        }, 80 * (index + 1));
+        }, 80 * (index + 2));
       });
 
       window.setTimeout(() => {
+        emitMockSessionStream({
+          sessionId,
+          runId,
+          event: "turn_end",
+          timestamp: nowIso(),
+          message: assistantReply,
+        });
+
         const session = updateMockSession(sessionId, (current) => {
           const timestamp = nowIso();
           return {
@@ -652,10 +669,10 @@ export async function sendSessionMessage(sessionId: string, message: string, run
         emitMockSessionStream({
           sessionId,
           runId,
-          event: "sessionUpdated",
+          event: "session_updated",
           record: session,
         });
-      }, 80 * (chunks.length + 2));
+      }, 80 * (chunks.length + 3));
     }, 120);
 
     return queued;
