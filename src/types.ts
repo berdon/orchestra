@@ -57,6 +57,7 @@ export interface SessionRecord {
 
 export interface AgentSummary {
   id: string;
+  slug: string;
   name: string;
   thinkingLevel: string;
   archived: boolean;

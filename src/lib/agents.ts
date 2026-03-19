@@ -27,6 +27,7 @@ function seedMockAgents(): AgentSummary[] {
   return [
     {
       id: createId("agent"),
+      slug: "data",
       name: "Data",
       thinkingLevel: "medium",
       archived: false,
@@ -36,10 +37,29 @@ function seedMockAgents(): AgentSummary[] {
   ];
 }
 
+function slugifyAgentName(value: string) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "agent";
+}
+
 function ensureMockAgents() {
   const existing = getStoredAgents();
   if (existing) {
-    return existing;
+    const migrated = existing.map((agent) => ({
+      ...agent,
+      slug: agent.slug || slugifyAgentName(agent.name),
+    }));
+
+    if (JSON.stringify(migrated) !== JSON.stringify(existing)) {
+      saveStoredAgents(migrated);
+    }
+
+    return migrated;
   }
 
   const seeded = seedMockAgents();

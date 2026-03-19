@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentSummary,
   AppInfo,
   JsonValue,
   LogEntry,
   LogLevel,
   QueuedSessionMessage,
+  RoleSummary,
   SessionEvent,
   SessionModel,
   SessionModelState,
@@ -21,6 +23,8 @@ const LOG_STORAGE_KEY = "orchestra.mock.logs";
 const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
+const AGENT_STORAGE_KEY = "orchestra.mock.agents";
+const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 
 const MOCK_MODELS: SessionModel[] = [
   {
@@ -169,7 +173,7 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           name: "Implement",
           order: 1,
           assignedEntityType: "role",
-          assignedEntityId: "developer-role",
+          assignedEntityId: "developer",
           entryPromptTemplate: "Carry out the approved implementation plan.",
           successTransitionType: "lane",
           successTargetLaneId: reviewId,
@@ -216,10 +220,48 @@ function ensureMockSessions() {
   return seeded;
 }
 
+function getStoredMockAgents() {
+  return getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
+}
+
+function getStoredMockRoles() {
+  return getStoredValue<RoleSummary[]>(ROLE_STORAGE_KEY) ?? [];
+}
+
+function migrateMockWorkflowWorkerRefs(workflows: WorkflowDefinition[]) {
+  const agentRefs = new Map<string, string>(getStoredMockAgents().map((agent) => [agent.id, agent.slug]));
+  const roleRefs = new Map<string, string>(getStoredMockRoles().map((role) => [role.id, role.slug]));
+
+  return workflows.map((workflow) => ({
+    ...workflow,
+    lanes: workflow.lanes.map((lane): WorkflowLane => {
+      if (lane.assignedEntityType === "agent" && lane.assignedEntityId && agentRefs.has(lane.assignedEntityId)) {
+        return {
+          ...lane,
+          assignedEntityId: agentRefs.get(lane.assignedEntityId) ?? lane.assignedEntityId,
+        };
+      }
+
+      if (lane.assignedEntityType === "role" && lane.assignedEntityId && roleRefs.has(lane.assignedEntityId)) {
+        return {
+          ...lane,
+          assignedEntityId: roleRefs.get(lane.assignedEntityId) ?? lane.assignedEntityId,
+        };
+      }
+
+      return lane;
+    }),
+  }));
+}
+
 function ensureMockWorkflows() {
   const existing = getStoredValue<WorkflowDefinition[]>(WORKFLOW_STORAGE_KEY);
   if (existing) {
-    return existing;
+    const migrated = migrateMockWorkflowWorkerRefs(existing);
+    if (JSON.stringify(migrated) !== JSON.stringify(existing)) {
+      setStoredValue(WORKFLOW_STORAGE_KEY, migrated);
+    }
+    return migrated;
   }
 
   const seeded = seedMockWorkflows();
@@ -354,6 +396,42 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
         path: `${path}.assignedEntityId`,
         message: "User-owned lanes must not specify an assigned entity id.",
       });
+    }
+
+    if (lane.assignedEntityType === "agent") {
+      const agentRef = lane.assignedEntityId?.trim();
+      const agents = getStoredMockAgents();
+      if (!agentRef) {
+        errors.push({
+          code: "required",
+          path: `${path}.assignedEntityId`,
+          message: "This lane owner type requires an assigned entity id.",
+        });
+      } else if (agents.length > 0 && !agents.some((agent) => !agent.archived && agent.slug === agentRef)) {
+        errors.push({
+          code: "invalid_reference",
+          path: `${path}.assignedEntityId`,
+          message: "Assigned entity id does not reference an existing active worker.",
+        });
+      }
+    }
+
+    if (lane.assignedEntityType === "role") {
+      const roleRef = lane.assignedEntityId?.trim();
+      const roles = getStoredMockRoles();
+      if (!roleRef) {
+        errors.push({
+          code: "required",
+          path: `${path}.assignedEntityId`,
+          message: "This lane owner type requires an assigned entity id.",
+        });
+      } else if (roles.length > 0 && !roles.some((role) => !role.archived && role.slug === roleRef)) {
+        errors.push({
+          code: "invalid_reference",
+          path: `${path}.assignedEntityId`,
+          message: "Assigned entity id does not reference an existing active worker.",
+        });
+      }
     }
   });
 

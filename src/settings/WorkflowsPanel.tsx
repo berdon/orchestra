@@ -107,8 +107,8 @@ function describeFailure(lane: WorkflowLaneInput, laneOptions: Array<{ id: strin
   return "Ends workflow";
 }
 
-function buildOwnerOptions<T extends { id: string; name: string }>(entries: T[]) {
-  return entries.map((entry) => ({ value: entry.id, label: entry.name }));
+function buildOwnerOptions<T extends { slug: string; name: string }>(entries: T[]) {
+  return entries.map((entry) => ({ value: entry.slug, label: entry.name }));
 }
 
 function describeOwner(
@@ -484,7 +484,7 @@ export function WorkflowsPanel() {
               <button className="secondary-button" type="button" disabled={savingWorkflow || !selectedWorkflowSummary || loadedWorkflowArchived} onClick={() => void handleArchiveWorkflow()}>
                 Archive
               </button>
-              <button className="primary-button" type="button" disabled={savingWorkflow || loadingWorkflowDetail} onClick={() => void handleSaveWorkflow()}>
+              <button className="primary-button" data-role="save-workflow" type="button" disabled={savingWorkflow || loadingWorkflowDetail} onClick={() => void handleSaveWorkflow()}>
                 {savingWorkflow ? "Saving…" : loadedWorkflowId && !isCreatingWorkflow ? "Save changes" : "Create workflow"}
               </button>
             </div>
@@ -633,6 +633,7 @@ export function WorkflowsPanel() {
                     <span className="field-group__label">Owner type</span>
                     <select
                       className="select-input"
+                      data-role="lane-owner-type"
                       value={selectedLane.assignedEntityType}
                       onChange={(event) =>
                         updateWorkflowDraft((draft) => ({
@@ -683,6 +684,7 @@ export function WorkflowsPanel() {
                     ) : selectedLane.assignedEntityType === "agent" ? (
                       <select
                         className="select-input"
+                        data-role="lane-owner-reference"
                         value={selectedLane.assignedEntityId ?? ""}
                         onChange={(event) =>
                           updateWorkflowDraft((draft) => ({
@@ -706,6 +708,7 @@ export function WorkflowsPanel() {
                     ) : (
                       <select
                         className="select-input"
+                        data-role="lane-owner-reference"
                         value={selectedLane.assignedEntityId ?? ""}
                         onChange={(event) =>
                           updateWorkflowDraft((draft) => ({

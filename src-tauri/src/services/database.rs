@@ -50,7 +50,12 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL,
                 name TEXT NOT NULL,
+                description TEXT,
+                system_prompt TEXT,
+                provider TEXT,
+                model TEXT,
                 thinking_level TEXT NOT NULL DEFAULT 'off',
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -157,9 +162,12 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("Unable to initialize Orchestra database schema: {error}"))?;
 
     ensure_agents_table_columns(connection)?;
+    backfill_missing_agent_slugs(connection)?;
+    ensure_agents_slug_index(connection)?;
     ensure_roles_table_columns(connection)?;
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
+    migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
     Ok(())
@@ -168,15 +176,86 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
 fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
     let columns = table_columns(connection, "agents")?;
 
+    if !columns.contains("slug") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN slug TEXT", [])
+            .map_err(|error| format!("Unable to add slug column to agents table: {error}"))?;
+    }
+
+    if !columns.contains("description") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN description TEXT", [])
+            .map_err(|error| format!("Unable to add description column to agents table: {error}"))?;
+    }
+
+    if !columns.contains("system_prompt") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN system_prompt TEXT", [])
+            .map_err(|error| format!("Unable to add system_prompt column to agents table: {error}"))?;
+    }
+
+    if !columns.contains("provider") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN provider TEXT", [])
+            .map_err(|error| format!("Unable to add provider column to agents table: {error}"))?;
+    }
+
+    if !columns.contains("model") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN model TEXT", [])
+            .map_err(|error| format!("Unable to add model column to agents table: {error}"))?;
+    }
+
     if !columns.contains("thinking_level") {
         connection
             .execute(
                 "ALTER TABLE agents ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'off'",
                 [],
             )
-            .map_err(|error| format!("Unable to add thinking_level column to agents table: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to add thinking_level column to agents table: {error}")
+            })?;
     }
 
+    Ok(())
+}
+
+fn backfill_missing_agent_slugs(connection: &Connection) -> Result<(), String> {
+    let mut used_slugs = connection
+        .prepare("SELECT slug FROM agents WHERE slug IS NOT NULL AND trim(slug) != ''")
+        .map_err(|error| format!("Unable to prepare existing agent slug query: {error}"))?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to read existing agent slugs: {error}"))?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("Unable to collect existing agent slugs: {error}"))?;
+
+    let missing_slugs = connection
+        .prepare(
+            "SELECT id, name FROM agents WHERE slug IS NULL OR trim(slug) = '' ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|error| format!("Unable to prepare missing agent slug query: {error}"))?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|error| format!("Unable to query agents missing slugs: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect agents missing slugs: {error}"))?;
+
+    for (id, name) in missing_slugs {
+        let slug = next_available_agent_slug(&name, &mut used_slugs);
+        connection
+            .execute("UPDATE agents SET slug = ?2 WHERE id = ?1", params![id, slug])
+            .map_err(|error| format!("Unable to backfill agent slug for {id}: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn ensure_agents_slug_index(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_slug ON agents(slug)",
+            [],
+        )
+        .map_err(|error| format!("Unable to create unique agents slug index: {error}"))?;
     Ok(())
 }
 
@@ -258,10 +337,7 @@ fn backfill_missing_role_slugs(connection: &Connection) -> Result<(), String> {
     for (id, name) in missing_slugs {
         let slug = next_available_role_slug(&name, &mut used_slugs);
         connection
-            .execute(
-                "UPDATE roles SET slug = ?2 WHERE id = ?1",
-                params![id, slug],
-            )
+            .execute("UPDATE roles SET slug = ?2 WHERE id = ?1", params![id, slug])
             .map_err(|error| format!("Unable to backfill role slug for {id}: {error}"))?;
     }
 
@@ -275,6 +351,34 @@ fn ensure_roles_slug_index(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to create unique roles slug index: {error}"))?;
+    Ok(())
+}
+
+fn migrate_workflow_worker_references_to_slugs(connection: &Connection) -> Result<(), String> {
+    connection.execute_batch(
+        r#"
+        UPDATE workflow_lanes
+        SET assigned_entity_id = (
+                SELECT slug FROM agents WHERE agents.id = workflow_lanes.assigned_entity_id
+            )
+        WHERE assigned_entity_type = 'agent'
+          AND assigned_entity_id IS NOT NULL
+          AND EXISTS(
+                SELECT 1 FROM agents WHERE agents.id = workflow_lanes.assigned_entity_id
+            );
+
+        UPDATE workflow_lanes
+        SET assigned_entity_id = (
+                SELECT slug FROM roles WHERE roles.id = workflow_lanes.assigned_entity_id
+            )
+        WHERE assigned_entity_type = 'role'
+          AND assigned_entity_id IS NOT NULL
+          AND EXISTS(
+                SELECT 1 FROM roles WHERE roles.id = workflow_lanes.assigned_entity_id
+            );
+        "#,
+    ).map_err(|error| format!("Unable to migrate workflow worker references to slugs: {error}"))?;
+
     Ok(())
 }
 
@@ -338,6 +442,29 @@ fn table_columns(connection: &Connection, table_name: &str) -> Result<HashSet<St
         .map_err(|error| format!("Unable to collect {table_name} schema: {error}"))
 }
 
+fn next_available_agent_slug(name: &str, used_slugs: &mut HashSet<String>) -> String {
+    let base_slug = agent_slug_base(name);
+    let mut candidate = base_slug.clone();
+    let mut suffix = 2;
+
+    while used_slugs.contains(&candidate) {
+        candidate = format!("{base_slug}-{suffix}");
+        suffix += 1;
+    }
+
+    used_slugs.insert(candidate.clone());
+    candidate
+}
+
+fn agent_slug_base(name: &str) -> String {
+    let slug = sanitize_slug(name);
+    if slug == "project" {
+        "agent".into()
+    } else {
+        slug
+    }
+}
+
 fn next_available_role_slug(name: &str, used_slugs: &mut HashSet<String>) -> String {
     let base_slug = role_slug_base(name);
     let mut candidate = base_slug.clone();
@@ -397,6 +524,33 @@ mod tests {
                 .as_millis()
         );
         env::temp_dir().join(suffix).join("orchestra.db")
+    }
+
+    #[test]
+    fn initializes_agents_table_with_management_columns() {
+        let path = unique_temp_db("agents-schema");
+        initialize_database_at(&path).expect("database should initialize");
+        let connection = Connection::open(&path).expect("database should open");
+        let columns = table_columns(&connection, "agents").expect("agents columns should load");
+
+        for expected in [
+            "id",
+            "slug",
+            "name",
+            "description",
+            "system_prompt",
+            "provider",
+            "model",
+            "thinking_level",
+            "archived",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                columns.contains(expected),
+                "missing expected agents column: {expected}"
+            );
+        }
     }
 
     #[test]
@@ -478,6 +632,134 @@ mod tests {
                 "missing expected role_queue_entries column: {expected}"
             );
         }
+    }
+
+    #[test]
+    fn migrates_legacy_agents_table_and_backfills_unique_slugs_and_workflow_refs() {
+        let path = unique_temp_db("agents-migration");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE agents (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE roles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE workflows (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE workflow_lanes (
+                    id TEXT NOT NULL,
+                    workflow_id TEXT NOT NULL,
+                    lane_key TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    lane_order INTEGER NOT NULL,
+                    assigned_entity_type TEXT NOT NULL,
+                    assigned_entity_id TEXT,
+                    entry_prompt_template TEXT,
+                    success_transition_type TEXT NOT NULL DEFAULT 'end',
+                    success_target_lane_id TEXT,
+                    failure_transition_type TEXT NOT NULL DEFAULT 'end',
+                    failure_target_lane_id TEXT,
+                    user_intervention_target_lane_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (workflow_id, id)
+                );
+
+                INSERT INTO agents (id, name, archived, created_at, updated_at)
+                VALUES ('agent-1', 'Data', 0, '2026-03-18T00:00:00Z', '2026-03-18T00:00:00Z');
+
+                INSERT INTO roles (id, name, archived, created_at, updated_at)
+                VALUES ('role-1', 'Reviewer', 0, '2026-03-18T00:00:01Z', '2026-03-18T00:00:01Z');
+
+                INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at)
+                VALUES ('workflow-1', 'development', 'Development', NULL, 0, '2026-03-18T00:00:02Z', '2026-03-18T00:00:02Z');
+
+                INSERT INTO workflow_lanes (
+                    id,
+                    workflow_id,
+                    lane_key,
+                    name,
+                    description,
+                    lane_order,
+                    assigned_entity_type,
+                    assigned_entity_id,
+                    entry_prompt_template,
+                    success_transition_type,
+                    success_target_lane_id,
+                    failure_transition_type,
+                    failure_target_lane_id,
+                    user_intervention_target_lane_id,
+                    created_at,
+                    updated_at
+                ) VALUES
+                    ('lane-agent', 'workflow-1', 'implement', 'Implement', NULL, 0, 'agent', 'agent-1', NULL, 'end', NULL, 'end', NULL, NULL, '2026-03-18T00:00:03Z', '2026-03-18T00:00:03Z'),
+                    ('lane-role', 'workflow-1', 'review', 'Review', NULL, 1, 'role', 'role-1', NULL, 'end', NULL, 'end', NULL, NULL, '2026-03-18T00:00:03Z', '2026-03-18T00:00:03Z');
+                "#,
+            )
+            .expect("legacy tables should seed");
+        drop(connection);
+
+        initialize_database_at(&path).expect("database migration should succeed");
+        let connection = Connection::open(&path).expect("migrated database should open");
+
+        let agent_row = connection
+            .query_row(
+                "SELECT slug, thinking_level FROM agents WHERE id = 'agent-1'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("migrated agent should load");
+        assert_eq!(agent_row, ("data".into(), "off".into()));
+
+        let role_row = connection
+            .query_row(
+                "SELECT slug, thinking_level FROM roles WHERE id = 'role-1'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("migrated role should load");
+        assert_eq!(role_row, ("reviewer".into(), "off".into()));
+
+        let lane_refs = connection
+            .prepare("SELECT assigned_entity_type, assigned_entity_id FROM workflow_lanes ORDER BY lane_order ASC")
+            .expect("lane query should prepare")
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))
+            .expect("lane query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("lane refs should collect");
+
+        assert_eq!(
+            lane_refs,
+            vec![
+                ("agent".into(), Some("data".into())),
+                ("role".into(), Some("reviewer".into())),
+            ]
+        );
     }
 
     #[test]
