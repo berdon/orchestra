@@ -10,6 +10,7 @@ function createBlankRoleDraft(): RoleUpsertInput {
     systemPrompt: "",
     provider: "",
     model: "",
+    thinkingLevel: "off",
     capacity: 1,
   };
 }
@@ -21,6 +22,7 @@ function roleToDraft(role: RoleDefinition): RoleUpsertInput {
     systemPrompt: role.systemPrompt ?? "",
     provider: role.provider ?? "",
     model: role.model ?? "",
+    thinkingLevel: role.thinkingLevel,
     capacity: role.capacity,
   };
 }
@@ -224,6 +226,7 @@ export function RolesPanel() {
               }}
             >
               {role.name}
+              <span className="role-list-link__meta">{role.thinkingLevel}</span>
             </a>
           ))}
         </nav>
@@ -316,6 +319,24 @@ export function RolesPanel() {
                     onChange={(event) => updateRoleDraft((draft) => ({ ...draft, model: event.target.value }))}
                   />
                   {getRoleValidationForPath(roleValidation, "model").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Thinking</span>
+                  <select
+                    className="select-input"
+                    value={roleDraft.thinkingLevel ?? "off"}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, thinkingLevel: event.target.value }))}
+                  >
+                    <option value="off">Off</option>
+                    <option value="minimal">Minimal</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  {getRoleValidationForPath(roleValidation, "thinkingLevel").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
                 </label>

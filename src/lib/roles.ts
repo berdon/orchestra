@@ -40,6 +40,7 @@ function summarizeRole(role: RoleDefinition): RoleSummary {
     description: role.description,
     provider: role.provider,
     model: role.model,
+    thinkingLevel: role.thinkingLevel,
     capacity: role.capacity,
     archived: role.archived,
     createdAt: role.createdAt,
@@ -52,6 +53,7 @@ function buildMockRoleValidation(input: RoleUpsertInput): RoleValidationResult {
   const name = input.name.trim();
   const provider = input.provider?.trim() || "";
   const model = input.model?.trim() || "";
+  const thinkingLevel = input.thinkingLevel?.trim().toLowerCase() || "off";
 
   if (!name) {
     errors.push({ code: "required", path: "name", message: "Role name is required." });
@@ -69,6 +71,10 @@ function buildMockRoleValidation(input: RoleUpsertInput): RoleValidationResult {
     errors.push({ code: "required", path: "provider", message: "Select a provider when a model is configured." });
   }
 
+  if (!["off", "minimal", "low", "medium", "high"].includes(thinkingLevel)) {
+    errors.push({ code: "invalid", path: "thinkingLevel", message: "Thinking level must be one of: off, minimal, low, medium, high." });
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -81,6 +87,7 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
   const systemPrompt = input.systemPrompt?.trim() || null;
   const provider = input.provider?.trim() || null;
   const model = input.model?.trim() || null;
+  const thinkingLevel = input.thinkingLevel?.trim().toLowerCase() || "off";
   const timestamp = nowIso();
   const existingRoles = ensureMockRoles();
   const baseSlug = slugifyRoleName(name);
@@ -100,6 +107,7 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
     systemPrompt,
     provider,
     model,
+    thinkingLevel: ["off", "minimal", "low", "medium", "high"].includes(thinkingLevel) ? thinkingLevel : "off",
     capacity: Math.max(1, Math.floor(input.capacity || 0)),
     archived: existing?.archived ?? false,
     createdAt: existing?.createdAt ?? timestamp,
@@ -119,6 +127,7 @@ function seedMockRoles(): RoleDefinition[] {
       systemPrompt: "Implement the requested changes and keep the task moving.",
       provider: "anthropic",
       model: "claude-sonnet-4-20250514",
+      thinkingLevel: "medium",
       capacity: 2,
       archived: false,
       createdAt: timestamp,
@@ -132,6 +141,7 @@ function seedMockRoles(): RoleDefinition[] {
       systemPrompt: "Review the proposed work and identify concrete findings.",
       provider: "anthropic",
       model: "claude-sonnet-4-20250514",
+      thinkingLevel: "low",
       capacity: 1,
       archived: false,
       createdAt: timestamp,
