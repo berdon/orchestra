@@ -685,6 +685,13 @@ strong {
   overflow: auto;
 }
 
+.workflow-nav {
+  display: grid;
+  gap: 4px;
+  overflow: auto;
+  align-content: start;
+}
+
 .workforce-detail-stack {
   align-content: start;
 }
@@ -764,23 +771,25 @@ strong {
   word-break: break-word;
 }
 
-.workflow-list-link {
+.workflow-nav-link {
   display: block;
-  padding: 8px 4px;
-  color: var(--text);
+  padding: 10px 12px;
+  color: var(--text-muted);
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 1px solid rgba(234, 223, 215, 0.7);
+  border-radius: 12px;
 }
 
-.workflow-list-link:hover {
+.workflow-nav-link:hover {
   color: var(--accent);
+  background: var(--bg-subtle);
 }
 
-.workflow-list-link--active {
+.workflow-nav-link--active {
   color: var(--accent);
+  background: var(--accent-soft);
   font-weight: 650;
 }
 
