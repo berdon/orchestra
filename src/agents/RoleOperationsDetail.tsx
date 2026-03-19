@@ -1,0 +1,153 @@
+import { EnqueueRoleWorkForm } from "./EnqueueRoleWorkForm";
+import type { RoleOperationsDetail } from "../types";
+
+interface RoleOperationsDetailProps {
+  detail: RoleOperationsDetail;
+  busy?: boolean;
+  onDispatch: () => Promise<void>;
+  onEnqueue: (input: { title: string; summary: string; entryPrompt: string }) => Promise<void>;
+  onRelease: (instanceId: string, outcome: "success" | "failure" | "canceled") => Promise<void>;
+  onDispose: (instanceId: string) => Promise<void>;
+}
+
+function formatDateTime(timestamp?: string | null) {
+  if (!timestamp) {
+    return "—";
+  }
+
+  return new Date(timestamp).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRelease, onDispose }: RoleOperationsDetailProps) {
+  return (
+    <div className="workforce-detail-stack">
+      <section className="workflow-section workforce-role-summary">
+        <div className="workflow-section__header">
+          <div>
+            <p className="eyebrow">Role operations</p>
+            <h2>{detail.role.name}</h2>
+            <p>{detail.role.description ?? "No description yet."}</p>
+          </div>
+
+          <div className="action-cluster">
+            <span className="status-badge status-badge--accent">Capacity {detail.activeInstanceCount}/{detail.role.capacity}</span>
+            <button className="primary-button" type="button" disabled={busy || detail.queuedCount === 0} onClick={() => void onDispatch()}>
+              {busy ? "Dispatching…" : "Dispatch queue"}
+            </button>
+          </div>
+        </div>
+
+        <div className="workforce-metrics">
+          <article className="metric-card">
+            <span className="metric-card__label">Queued</span>
+            <strong>{detail.queuedCount}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-card__label">Assigned</span>
+            <strong>{detail.assignedCount}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-card__label">Active instances</span>
+            <strong>{detail.activeInstanceCount}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-card__label">Idle instances</span>
+            <strong>{detail.idleInstanceCount}</strong>
+          </article>
+        </div>
+      </section>
+
+      <EnqueueRoleWorkForm role={detail.role} busy={busy} onSubmit={onEnqueue} />
+
+      <section className="workflow-section">
+        <div>
+          <p className="eyebrow">Queue</p>
+          <h3>Queued and assigned work</h3>
+        </div>
+
+        {detail.queueEntries.length === 0 ? <p className="muted-copy">No queued work yet.</p> : null}
+
+        <div className="workforce-list">
+          {detail.queueEntries.map((entry) => (
+            <article className="workflow-lane-card" key={entry.id}>
+              <div className="workflow-section__header">
+                <div>
+                  <strong>{entry.title}</strong>
+                  <p>{entry.summary ?? "No summary provided."}</p>
+                </div>
+                <span className={`status-badge status-badge--${entry.status === "assigned" ? "success" : entry.status === "queued" ? "warning" : "neutral"}`}>
+                  {entry.status}
+                </span>
+              </div>
+              <div className="workforce-meta-grid muted-copy">
+                <span>Source: {entry.sourceType}</span>
+                <span>Assigned instance: {entry.assignedInstanceId ?? "—"}</span>
+                <span>Created: {formatDateTime(entry.createdAt)}</span>
+                <span>Started: {formatDateTime(entry.startedAt)}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="workflow-section">
+        <div>
+          <p className="eyebrow">Instances</p>
+          <h3>Runtime workers</h3>
+        </div>
+
+        {detail.instances.length === 0 ? <p className="muted-copy">Dispatch work to create the first instance.</p> : null}
+
+        <div className="workforce-list">
+          {detail.instances.map((instance) => (
+            <article className="workflow-lane-card" key={instance.id}>
+              <div className="workflow-section__header">
+                <div>
+                  <strong>{instance.displayName}</strong>
+                  <p>{instance.id}</p>
+                </div>
+                <span className={`status-badge status-badge--${instance.status === "running" ? "success" : instance.status === "failed" ? "error" : "neutral"}`}>
+                  {instance.status}
+                </span>
+              </div>
+
+              <div className="workforce-meta-grid muted-copy">
+                <span>Session: {instance.sessionId ?? "—"}</span>
+                <span>Current work: {instance.currentQueueEntryId ?? "—"}</span>
+                <span>Worktree: {instance.worktreePath ?? "—"}</span>
+                <span>Updated: {formatDateTime(instance.updatedAt)}</span>
+              </div>
+
+              {instance.lastError ? <p className="error-copy">{instance.lastError}</p> : null}
+
+              <div className="action-cluster">
+                {instance.currentQueueEntryId ? (
+                  <>
+                    <button className="secondary-button" type="button" disabled={busy} onClick={() => void onRelease(instance.id, "success")}>
+                      Mark success
+                    </button>
+                    <button className="secondary-button secondary-button--danger" type="button" disabled={busy} onClick={() => void onRelease(instance.id, "failure")}>
+                      Mark failed
+                    </button>
+                    <button className="secondary-button" type="button" disabled={busy} onClick={() => void onRelease(instance.id, "canceled")}>
+                      Cancel work
+                    </button>
+                  </>
+                ) : (
+                  <button className="secondary-button secondary-button--danger" type="button" disabled={busy} onClick={() => void onDispose(instance.id)}>
+                    Dispose instance
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}

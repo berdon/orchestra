@@ -15,6 +15,7 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
+import { AgentsPage } from "./agents/AgentsPage";
 import { RolesPanel } from "./settings/RolesPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
@@ -36,16 +37,11 @@ const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "settings", label: "Settings" },
 ];
 
-const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings">, { eyebrow: string; title: string; body: string }> = {
+const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings" | "agents">, { eyebrow: string; title: string; body: string }> = {
   tasks: {
     eyebrow: "Workflow operations",
     title: "Tasks",
     body: "Task and workflow management will land after the session-first slice is proven end to end.",
-  },
-  agents: {
-    eyebrow: "Workforce overview",
-    title: "Agents",
-    body: "Agents and roles will share an operational view focused on workload, queues, active sessions, and intervention pressure.",
   },
 };
 
@@ -1018,6 +1014,8 @@ export function App() {
               </section>
             )}
           </section>
+        ) : activePage === "agents" ? (
+          <AgentsPage />
         ) : activePage === "sessions" ? (
           <section className="panel-stack panel-stack--sessions">
             <section className="session-shell">

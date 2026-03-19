@@ -622,7 +622,8 @@ strong {
   min-width: min(300px, 100%);
 }
 
-.workflow-shell {
+.workflow-shell,
+.workforce-shell {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   gap: 18px;
@@ -631,30 +632,64 @@ strong {
 }
 
 .workflow-list-panel,
-.workflow-editor-panel {
+.workflow-editor-panel,
+.workforce-sidebar,
+.workforce-detail-panel {
   display: grid;
   gap: 18px;
   min-height: 0;
 }
 
-.workflow-list-panel {
+.workflow-list-panel,
+.workforce-sidebar {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
-.workflow-editor-panel {
+.workflow-editor-panel,
+.workforce-detail-panel {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: min(72vh, calc(100vh - 220px));
 }
 
 .workflow-list,
 .workflow-lane-list,
-.workflow-validation-list {
+.workflow-validation-list,
+.workforce-list,
+.workforce-detail-stack {
   display: grid;
   gap: 10px;
 }
 
-.workflow-list {
+.workflow-list,
+.workforce-list {
   overflow: auto;
+}
+
+.workforce-detail-stack {
+  align-content: start;
+}
+
+.workforce-metrics,
+.workforce-meta-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.workforce-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.workforce-meta-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.workforce-role-summary p,
+.workforce-role-summary h2 {
+  margin: 0;
+}
+
+.workforce-form {
+  align-content: start;
 }
 
 .workflow-board {
