@@ -1,0 +1,205 @@
+import type { ChangeEvent, FormEvent, KeyboardEvent, RefObject } from "react";
+import type { SessionEvent, SessionModelState, SessionRecord, SessionStatus } from "../types";
+
+interface SessionsPageProps {
+  sessions: SessionRecord[];
+  selectedSession: SessionRecord | null;
+  displayedEvents: SessionEvent[];
+  selectedSessionPending: boolean;
+  selectedSessionDisplayStatus: SessionStatus;
+  selectedModelState?: SessionModelState;
+  loadingSessions: boolean;
+  loadingModelSessionId: string | null;
+  changingModelSessionId: string | null;
+  draftMessage: string;
+  sessionActionError: string | null;
+  transcriptRef: RefObject<HTMLDivElement | null>;
+  formatDateTime: (timestamp: string) => string;
+  formatTimestamp: (timestamp: string) => string;
+  formatModelOptionLabel: (state: SessionModelState | undefined) => string;
+  getStatusTone: (status: SessionStatus) => string;
+  getEventTone: (kind: SessionEvent["kind"]) => string;
+  onSelectSession: (sessionId: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  onModelChange: (value: string) => void;
+  onDraftChange: (value: string) => void;
+  onSendMessage: () => void;
+}
+
+export function SessionsPage({
+  sessions,
+  selectedSession,
+  displayedEvents,
+  selectedSessionPending,
+  selectedSessionDisplayStatus,
+  selectedModelState,
+  loadingSessions,
+  loadingModelSessionId,
+  changingModelSessionId,
+  draftMessage,
+  sessionActionError,
+  transcriptRef,
+  formatDateTime,
+  formatTimestamp,
+  formatModelOptionLabel,
+  getStatusTone,
+  getEventTone,
+  onSelectSession,
+  onDeleteSession,
+  onModelChange,
+  onDraftChange,
+  onSendMessage,
+}: SessionsPageProps) {
+  function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSendMessage();
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      onSendMessage();
+    }
+  }
+
+  function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    onDraftChange(event.target.value);
+  }
+
+  return (
+    <section className="panel-stack panel-stack--sessions">
+      <section className="session-shell">
+        <aside className="session-list-panel">
+          {loadingSessions ? <p className="muted-copy">Loading sessions…</p> : null}
+          {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
+
+          <nav className="session-list" aria-label="Sessions">
+            {sessions.map((session) => (
+              <div
+                key={session.id}
+                className={session.id === selectedSession?.id ? "session-list-row session-list-row--active" : "session-list-row"}
+              >
+                <a
+                  data-role="session-link"
+                  data-session-id={session.id}
+                  className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
+                  href="#"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onSelectSession(session.id);
+                  }}
+                >
+                  {session.title}
+                </a>
+                <button
+                  className="session-delete-button"
+                  type="button"
+                  aria-label={`Delete ${session.title}`}
+                  onClick={() => onDeleteSession(session.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        <section className="panel session-detail-panel">
+          {selectedSession ? (
+            <>
+              <div className="panel__header panel__header--session-detail">
+                <h3 data-role="selected-session-title">{selectedSession.title}</h3>
+
+                <div className="action-cluster action-cluster--session-tools">
+                  <label className="field-group field-group--compact session-model-field">
+                    <span className="field-group__label">Model</span>
+                    <select
+                      className="select-input"
+                      value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
+                      disabled={
+                        loadingModelSessionId === selectedSession.id ||
+                        changingModelSessionId === selectedSession.id ||
+                        selectedSessionPending
+                      }
+                      onChange={(event) => onModelChange(event.target.value)}
+                    >
+                      {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
+                        <option value="">{formatModelOptionLabel(selectedModelState)}</option>
+                      ) : null}
+                      {selectedModelState?.availableModels.map((model) => (
+                        <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                          {model.name} · {model.provider}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
+                </div>
+              </div>
+
+              <div className="session-transcript" data-role="session-transcript" ref={transcriptRef} role="log" aria-live="polite">
+                {displayedEvents.map((event) => (
+                  <article
+                    className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
+                    key={event.id}
+                  >
+                    <div className="transcript-event__meta">
+                      <span>{event.kind}</span>
+                      <div className="transcript-event__meta-group">
+                        {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
+                        {event.pending ? <span className="pending-badge">Pending</span> : null}
+                        <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+                      </div>
+                    </div>
+                    <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
+                  </article>
+                ))}
+              </div>
+
+              <form className="composer" onSubmit={handleComposerSubmit}>
+                <label className="field-group field-group--composer">
+                  <span className="field-group__label">Send message</span>
+                  <textarea
+                    className="text-area"
+                    data-role="composer-input"
+                    rows={4}
+                    placeholder="Tell the session what to do next…"
+                    value={draftMessage}
+                    onChange={handleDraftChange}
+                    onKeyDown={handleComposerKeyDown}
+                  />
+                </label>
+                <div className="composer__footer">
+                  <div className="composer__meta">
+                    <p className="muted-copy">
+                      {selectedSessionPending ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
+                    </p>
+                    <div className="session-detail__meta session-detail__meta--footer">
+                      <span>Created {formatDateTime(selectedSession.createdAt)}</span>
+                      <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
+                    </div>
+                  </div>
+                  <button
+                    className="primary-button"
+                    data-role="send-message"
+                    type="submit"
+                    disabled={selectedSessionPending || draftMessage.trim().length === 0}
+                  >
+                    {selectedSessionPending ? "Sending…" : "Send message"}
+                  </button>
+                </div>
+              </form>
+            </>
+          ) : (
+            <div className="empty-state">
+              <p className="eyebrow">No session selected</p>
+              <h3>Create or select a session</h3>
+              <p>Use the session list to select an existing session or create a new one to begin the interaction flow.</p>
+            </div>
+          )}
+        </section>
+      </section>
+    </section>
+  );
+}
