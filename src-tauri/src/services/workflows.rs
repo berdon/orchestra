@@ -190,12 +190,10 @@ pub fn duplicate_workflow(
                 assigned_entity_type: lane.assigned_entity_type,
                 assigned_entity_id: lane.assigned_entity_id,
                 entry_prompt_template: lane.entry_prompt_template,
+                success_transition_type: lane.success_transition_type,
                 success_target_lane_id: remap_lane_target(&lane_id_map, lane.success_target_lane_id),
+                failure_transition_type: lane.failure_transition_type,
                 failure_target_lane_id: remap_lane_target(&lane_id_map, lane.failure_target_lane_id),
-                user_intervention_target_lane_id: remap_lane_target(
-                    &lane_id_map,
-                    lane.user_intervention_target_lane_id,
-                ),
             })
             .collect(),
     };
@@ -325,23 +323,21 @@ pub fn validate_workflow(
     }
 
     for (index, lane) in normalized.lanes.iter().enumerate() {
-        validate_transition_target(
+        validate_transition(
             &mut errors,
             &lane_ids,
+            lane.success_transition_type.as_str(),
             lane.success_target_lane_id.as_deref(),
+            &format!("lanes[{index}].successTransitionType"),
             &format!("lanes[{index}].successTargetLaneId"),
         );
-        validate_transition_target(
+        validate_transition(
             &mut errors,
             &lane_ids,
+            lane.failure_transition_type.as_str(),
             lane.failure_target_lane_id.as_deref(),
+            &format!("lanes[{index}].failureTransitionType"),
             &format!("lanes[{index}].failureTargetLaneId"),
-        );
-        validate_transition_target(
-            &mut errors,
-            &lane_ids,
-            lane.user_intervention_target_lane_id.as_deref(),
-            &format!("lanes[{index}].userInterventionTargetLaneId"),
         );
     }
 
@@ -351,20 +347,52 @@ pub fn validate_workflow(
     })
 }
 
-fn validate_transition_target(
+fn validate_transition(
     errors: &mut Vec<WorkflowValidationError>,
     lane_ids: &HashSet<String>,
+    transition_type: &str,
     target: Option<&str>,
-    path: &str,
+    type_path: &str,
+    target_path: &str,
 ) {
-    if let Some(target) = target.filter(|value| !value.trim().is_empty()) {
-        if !lane_ids.contains(target) {
-            errors.push(validation_error(
-                "invalid_reference",
-                path,
-                "Transition target must reference an existing lane id.",
-            ));
+    if !matches!(transition_type, "lane" | "user_intervention" | "end") {
+        errors.push(validation_error(
+            "invalid",
+            type_path,
+            "Transition type must be one of: lane, user_intervention, end.",
+        ));
+        return;
+    }
+
+    match transition_type {
+        "lane" => {
+            let Some(target) = target.filter(|value| !value.trim().is_empty()) else {
+                errors.push(validation_error(
+                    "required",
+                    target_path,
+                    "Lane transitions must reference a target lane.",
+                ));
+                return;
+            };
+
+            if !lane_ids.contains(target) {
+                errors.push(validation_error(
+                    "invalid_reference",
+                    target_path,
+                    "Transition target must reference an existing lane id.",
+                ));
+            }
         }
+        "user_intervention" | "end" => {
+            if target.is_some_and(|value| !value.trim().is_empty()) {
+                errors.push(validation_error(
+                    "invalid",
+                    target_path,
+                    "Only lane transitions may specify a target lane.",
+                ));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -469,9 +497,10 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 assigned_entity_type,
                 assigned_entity_id,
                 entry_prompt_template,
+                success_transition_type,
                 success_target_lane_id,
-                failure_target_lane_id,
-                user_intervention_target_lane_id
+                failure_transition_type,
+                failure_target_lane_id
             FROM workflow_lanes
             WHERE workflow_id = ?1
             ORDER BY lane_order ASC, created_at ASC
@@ -490,9 +519,10 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 assigned_entity_type: row.get(5)?,
                 assigned_entity_id: row.get(6)?,
                 entry_prompt_template: row.get(7)?,
-                success_target_lane_id: row.get(8)?,
-                failure_target_lane_id: row.get(9)?,
-                user_intervention_target_lane_id: row.get(10)?,
+                success_transition_type: row.get(8)?,
+                success_target_lane_id: row.get(9)?,
+                failure_transition_type: row.get(10)?,
+                failure_target_lane_id: row.get(11)?,
             })
         })
         .map_err(|error| format!("Unable to query workflow lanes for {workflow_id}: {error}"))?;
@@ -521,12 +551,14 @@ fn write_lanes(
                     assigned_entity_type,
                     assigned_entity_id,
                     entry_prompt_template,
+                    success_transition_type,
                     success_target_lane_id,
+                    failure_transition_type,
                     failure_target_lane_id,
                     user_intervention_target_lane_id,
                     created_at,
                     updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?14)
                 "#,
                 params![
                     lane.id,
@@ -538,9 +570,10 @@ fn write_lanes(
                     lane.assigned_entity_type,
                     lane.assigned_entity_id,
                     lane.entry_prompt_template,
+                    lane.success_transition_type,
                     lane.success_target_lane_id,
+                    lane.failure_transition_type,
                     lane.failure_target_lane_id,
-                    lane.user_intervention_target_lane_id,
                     now,
                 ],
             )
@@ -567,9 +600,10 @@ struct NormalizedLaneInput {
     assigned_entity_type: String,
     assigned_entity_id: Option<String>,
     entry_prompt_template: Option<String>,
+    success_transition_type: String,
     success_target_lane_id: Option<String>,
+    failure_transition_type: String,
     failure_target_lane_id: Option<String>,
-    user_intervention_target_lane_id: Option<String>,
 }
 
 fn remap_lane_target(
@@ -602,9 +636,10 @@ fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLane
         assigned_entity_type: lane.assigned_entity_type.trim().to_lowercase(),
         assigned_entity_id: normalized_optional_string(lane.assigned_entity_id),
         entry_prompt_template: normalized_optional_string(lane.entry_prompt_template),
-        success_target_lane_id: normalized_optional_string(lane.success_target_lane_id),
-        failure_target_lane_id: normalized_optional_string(lane.failure_target_lane_id),
-        user_intervention_target_lane_id: normalized_optional_string(lane.user_intervention_target_lane_id),
+        success_transition_type: normalize_transition_type(&lane.success_transition_type),
+        success_target_lane_id: normalize_transition_target(&lane.success_transition_type, lane.success_target_lane_id),
+        failure_transition_type: normalize_transition_type(&lane.failure_transition_type),
+        failure_target_lane_id: normalize_transition_target(&lane.failure_transition_type, lane.failure_target_lane_id),
     }
 }
 
@@ -617,6 +652,23 @@ fn normalized_optional_string(value: Option<String>) -> Option<String> {
             Some(trimmed)
         }
     })
+}
+
+fn normalize_transition_type(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    if matches!(normalized.as_str(), "lane" | "user_intervention" | "end") {
+        normalized
+    } else {
+        "end".into()
+    }
+}
+
+fn normalize_transition_target(transition_type: &str, target: Option<String>) -> Option<String> {
+    if transition_type.trim().eq_ignore_ascii_case("lane") {
+        normalized_optional_string(target)
+    } else {
+        None
+    }
 }
 
 fn slugify(value: &str) -> String {
@@ -722,9 +774,10 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: Some("Draft a plan".into()),
+                    success_transition_type: "lane".into(),
                     success_target_lane_id: Some("lane-build".into()),
+                    failure_transition_type: "user_intervention".into(),
                     failure_target_lane_id: None,
-                    user_intervention_target_lane_id: None,
                 },
                 WorkflowLaneInput {
                     id: Some("lane-build".into()),
@@ -735,9 +788,10 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    success_transition_type: "end".into(),
                     success_target_lane_id: None,
+                    failure_transition_type: "lane".into(),
                     failure_target_lane_id: Some("lane-plan".into()),
-                    user_intervention_target_lane_id: Some("lane-plan".into()),
                 },
             ],
         }
@@ -782,9 +836,10 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    success_transition_type: "end".into(),
                     success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
                     failure_target_lane_id: None,
-                    user_intervention_target_lane_id: None,
                 }],
             },
         )
@@ -826,9 +881,10 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    success_transition_type: "lane".into(),
                     success_target_lane_id: Some("missing-lane".into()),
+                    failure_transition_type: "end".into(),
                     failure_target_lane_id: None,
-                    user_intervention_target_lane_id: None,
                 }],
             },
         )
@@ -855,9 +911,10 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some("agent-missing".into()),
                     entry_prompt_template: None,
+                    success_transition_type: "end".into(),
                     success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
                     failure_target_lane_id: None,
-                    user_intervention_target_lane_id: None,
                 }],
             },
         )
@@ -886,9 +943,10 @@ mod tests {
                     assigned_entity_type: "role".into(),
                     assigned_entity_id: Some("role-reviewer".into()),
                     entry_prompt_template: None,
+                    success_transition_type: "end".into(),
                     success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
                     failure_target_lane_id: None,
-                    user_intervention_target_lane_id: None,
                 }],
             },
         )
@@ -915,9 +973,10 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: None,
+                        success_transition_type: "end".into(),
                         success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
                         failure_target_lane_id: None,
-                        user_intervention_target_lane_id: None,
                     },
                     WorkflowLaneInput {
                         id: Some("lane-b".into()),
@@ -928,9 +987,10 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: None,
+                        success_transition_type: "end".into(),
                         success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
                         failure_target_lane_id: None,
-                        user_intervention_target_lane_id: None,
                     },
                 ],
             },

@@ -69,7 +69,9 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 assigned_entity_type TEXT NOT NULL,
                 assigned_entity_id TEXT,
                 entry_prompt_template TEXT,
+                success_transition_type TEXT NOT NULL DEFAULT 'end',
                 success_target_lane_id TEXT,
+                failure_transition_type TEXT NOT NULL DEFAULT 'end',
                 failure_target_lane_id TEXT,
                 user_intervention_target_lane_id TEXT,
                 created_at TEXT NOT NULL,
@@ -85,7 +87,66 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 ON workflow_lanes(workflow_id, lane_order);
             "#,
         )
-        .map_err(|error| format!("Unable to initialize Orchestra database schema: {error}"))
+        .map_err(|error| format!("Unable to initialize Orchestra database schema: {error}"))?;
+
+    ensure_workflow_transition_columns(connection)?;
+    migrate_legacy_workflow_intervention_semantics(connection)?;
+    Ok(())
+}
+
+fn ensure_workflow_transition_columns(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(workflow_lanes)")
+        .map_err(|error| format!("Unable to inspect workflow_lanes schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("Unable to read workflow_lanes schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect workflow_lanes schema: {error}"))?;
+
+    if !columns.iter().any(|column| column == "success_transition_type") {
+        connection
+            .execute(
+                "ALTER TABLE workflow_lanes ADD COLUMN success_transition_type TEXT NOT NULL DEFAULT 'end'",
+                [],
+            )
+            .map_err(|error| format!("Unable to add success_transition_type column: {error}"))?;
+    }
+
+    if !columns.iter().any(|column| column == "failure_transition_type") {
+        connection
+            .execute(
+                "ALTER TABLE workflow_lanes ADD COLUMN failure_transition_type TEXT NOT NULL DEFAULT 'end'",
+                [],
+            )
+            .map_err(|error| format!("Unable to add failure_transition_type column: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn migrate_legacy_workflow_intervention_semantics(connection: &Connection) -> Result<(), String> {
+    connection.execute_batch(
+        r#"
+        UPDATE workflow_lanes
+        SET success_transition_type = CASE
+                WHEN success_target_lane_id IS NOT NULL AND trim(success_target_lane_id) != '' THEN 'lane'
+                ELSE 'end'
+            END
+        WHERE success_transition_type IS NULL OR trim(success_transition_type) = '' OR success_transition_type = 'end';
+
+        UPDATE workflow_lanes
+        SET failure_transition_type = CASE
+                WHEN user_intervention_target_lane_id IS NOT NULL AND trim(user_intervention_target_lane_id) != '' THEN 'user_intervention'
+                WHEN failure_target_lane_id IS NOT NULL AND trim(failure_target_lane_id) != '' THEN 'lane'
+                ELSE 'end'
+            END
+        WHERE failure_transition_type IS NULL OR trim(failure_transition_type) = '' OR failure_transition_type = 'end';
+        "#,
+    ).map_err(|error| format!("Unable to migrate legacy workflow transition semantics: {error}"))?;
+
+    Ok(())
 }
 
 #[cfg(test)]

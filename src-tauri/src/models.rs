@@ -114,9 +114,10 @@ pub struct WorkflowLane {
     pub assigned_entity_type: String,
     pub assigned_entity_id: Option<String>,
     pub entry_prompt_template: Option<String>,
+    pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
+    pub failure_transition_type: String,
     pub failure_target_lane_id: Option<String>,
-    pub user_intervention_target_lane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,9 +152,10 @@ pub struct WorkflowLaneInput {
     pub assigned_entity_type: String,
     pub assigned_entity_id: Option<String>,
     pub entry_prompt_template: Option<String>,
+    pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
+    pub failure_transition_type: String,
     pub failure_target_lane_id: Option<String>,
-    pub user_intervention_target_lane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
