@@ -9,15 +9,28 @@ use commands::{
         create_session, get_session_model_state, list_sessions, resume_session,
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
     },
+    workflows::{
+        archive_workflow, create_workflow, duplicate_workflow, get_workflow, list_workflows,
+        update_workflow, validate_workflow,
+    },
 };
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     services::logging::init_logging();
+    let database_path = services::database::initialize_database()
+        .expect("unable to initialize Orchestra SQLite database");
+
+    let app_state = AppState::new();
+    app_state.log(
+        "info",
+        "storage.sqlite",
+        &format!("Initialized Orchestra SQLite database at {}", database_path.display()),
+    );
 
     tauri::Builder::default()
-        .manage(AppState::new())
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             get_logs,
@@ -29,7 +42,14 @@ pub fn run() {
             unsubscribe_session,
             get_session_model_state,
             set_session_model,
-            send_session_message
+            send_session_message,
+            list_workflows,
+            get_workflow,
+            validate_workflow,
+            create_workflow,
+            update_workflow,
+            duplicate_workflow,
+            archive_workflow
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
