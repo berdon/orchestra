@@ -46,6 +46,10 @@ pub fn project_session_dir(root: &Path, project_slug: &str) -> PathBuf {
     project_root(root, project_slug).join("sessions")
 }
 
+pub fn project_settings_path(root: &Path, project_slug: &str) -> PathBuf {
+    project_root(root, project_slug).join("settings.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,6 +71,10 @@ mod tests {
         assert_eq!(
             project_session_dir(&root, "Orchestra App"),
             PathBuf::from("/tmp/home/.orchestra/projects/orchestra-app/sessions")
+        );
+        assert_eq!(
+            project_settings_path(&root, "Orchestra App"),
+            PathBuf::from("/tmp/home/.orchestra/projects/orchestra-app/settings.json")
         );
     }
 }

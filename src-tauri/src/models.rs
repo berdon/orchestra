@@ -172,6 +172,16 @@ pub struct AgentMemoryInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectWorkerOverlay {
+    pub project_slug: String,
+    pub worker_type: String,
+    pub worker_slug: String,
+    pub prompt: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleDefinition {
     pub id: String,
     pub slug: String,

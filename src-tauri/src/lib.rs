@@ -6,6 +6,7 @@ mod state;
 use commands::{
     agents::{archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent, validate_agent},
     app::{clear_logs, get_app_info, get_logs, get_session_storage_info, open_logs_window},
+    project_settings::{get_worker_overlay, update_worker_overlay},
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
@@ -51,6 +52,8 @@ pub fn run() {
             update_agent,
             archive_agent,
             get_agent_memory_info,
+            get_worker_overlay,
+            update_worker_overlay,
             list_sessions,
             create_session,
             delete_session,
