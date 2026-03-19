@@ -171,6 +171,27 @@ impl SessionRuntime {
                     "sessions.rpc.lifecycle",
                     &format!("Session {} received turn_end", self.session_id),
                 );
+
+                if let Some(run_id) = self.current_run_id() {
+                    let final_message = payload
+                        .get("message")
+                        .map(extract_message_text)
+                        .filter(|text| !text.trim().is_empty());
+                    self.app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.rpc.emit",
+                        &format!("Session {} emitting turnComplete", self.session_id),
+                    );
+                    self.emit_stream_event(SessionStreamEvent {
+                        session_id: self.session_id.clone(),
+                        run_id,
+                        event: "turnComplete".into(),
+                        timestamp: Some(crate::state::now_iso()),
+                        delta: None,
+                        message: final_message,
+                        record: None,
+                    });
+                }
             }
             Some("agent_end") => {
                 self.app.state::<crate::state::AppState>().log(
@@ -580,6 +601,31 @@ pub fn maybe_runtime(
         .ok()
         .and_then(|runtimes| runtimes.get(session_id).map(Arc::clone))
         .filter(|runtime| !runtime.is_closed())
+}
+
+fn extract_message_text(message: &Value) -> String {
+    let Some(content) = message.get("content") else {
+        return String::new();
+    };
+
+    if let Some(text) = content.as_str() {
+        return text.trim().to_string();
+    }
+
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| {
+            if block.get("type").and_then(Value::as_str) == Some("text") {
+                block.get("text").and_then(Value::as_str).map(str::trim)
+            } else {
+                None
+            }
+        })
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn parse_model_summary(value: &Value) -> Option<SessionModel> {

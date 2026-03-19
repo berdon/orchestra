@@ -61,7 +61,7 @@ export interface QueuedSessionMessage {
 export interface SessionStreamEvent {
   sessionId: string;
   runId: string;
-  event: "assistantStart" | "assistantDelta" | "sessionUpdated" | "error";
+  event: "assistantStart" | "assistantDelta" | "turnComplete" | "sessionUpdated" | "error";
   timestamp?: string;
   delta?: string;
   message?: string;

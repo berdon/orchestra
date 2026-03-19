@@ -269,6 +269,10 @@ export function App() {
         case "assistantStart": {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
+            userEvent: {
+              ...current.userEvent,
+              pending: false,
+            },
             assistantEvent: current.assistantEvent ?? {
               id: `pending-assistant-${payload.runId}`,
               kind: "assistant",
@@ -283,6 +287,10 @@ export function App() {
         case "assistantDelta": {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
+            userEvent: {
+              ...current.userEvent,
+              pending: false,
+            },
             assistantEvent: {
               id: current.assistantEvent?.id ?? `pending-assistant-${payload.runId}`,
               kind: "assistant",
@@ -291,6 +299,31 @@ export function App() {
               pending: true,
               runId: payload.runId,
             },
+          }));
+          break;
+        }
+        case "turnComplete": {
+          updatePendingRun(payload.sessionId, (current) => ({
+            ...current,
+            userEvent: {
+              ...current.userEvent,
+              pending: false,
+            },
+            assistantEvent: current.assistantEvent
+              ? {
+                  ...current.assistantEvent,
+                  message: payload.message ?? current.assistantEvent.message,
+                  pending: false,
+                  timestamp: payload.timestamp ?? current.assistantEvent.timestamp,
+                }
+              : {
+                  id: `pending-assistant-${payload.runId}`,
+                  kind: "assistant",
+                  message: payload.message ?? "",
+                  timestamp: payload.timestamp ?? nowIso(),
+                  pending: false,
+                  runId: payload.runId,
+                },
           }));
           break;
         }
