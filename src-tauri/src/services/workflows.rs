@@ -352,10 +352,10 @@ pub fn validate_workflow(
                 }
             }
             "agent" => {
-                validate_owner_reference(connection, "agents", lane, &path_prefix, &mut errors)?;
+                validate_owner_reference(connection, "agents", "slug", lane, &path_prefix, &mut errors)?;
             }
             "role" => {
-                validate_owner_reference(connection, "roles", lane, &path_prefix, &mut errors)?;
+                validate_owner_reference(connection, "roles", "slug", lane, &path_prefix, &mut errors)?;
             }
             _ => {}
         }
@@ -438,6 +438,7 @@ fn validate_transition(
 fn validate_owner_reference(
     connection: &Connection,
     table: &str,
+    reference_column: &str,
     lane: &NormalizedLaneInput,
     path_prefix: &str,
     errors: &mut Vec<WorkflowValidationError>,
@@ -453,7 +454,9 @@ fn validate_owner_reference(
 
     let exists = connection
         .query_row(
-            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1 AND archived = 0)"),
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM {table} WHERE {reference_column} = ?1 AND archived = 0)"
+            ),
             [entity_id],
             |row| row.get::<_, i64>(0),
         )
@@ -794,9 +797,17 @@ pub fn seed_worker(
             connection
                 .execute(
                     "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 1, 0, ?4, ?4)",
-                    params![id, id, name, now],
+                    params![id, slugify(name), name, now],
                 )
                 .map_err(|error| format!("Unable to seed role for tests: {error}"))?;
+        }
+        "agents" => {
+            connection
+                .execute(
+                    "INSERT INTO agents (id, slug, name, description, system_prompt, provider, model, thinking_level, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 0, ?4, ?4)",
+                    params![id, slugify(name), name, now],
+                )
+                .map_err(|error| format!("Unable to seed agent for tests: {error}"))?;
         }
         _ => {
             connection
@@ -1032,7 +1043,38 @@ mod tests {
                     description: None,
                     order: Some(0),
                     assigned_entity_type: "role".into(),
-                    assigned_entity_id: Some("role-reviewer".into()),
+                    assigned_entity_id: Some("reviewer".into()),
+                    entry_prompt_template: None,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("validation should run");
+
+        assert!(validation.valid);
+    }
+
+    #[test]
+    fn accepts_existing_agent_owner_references_by_slug() {
+        let connection = open_test_connection("workflow-validation-agent-owner-success");
+        seed_worker(&connection, "agents", "agent-data", "Data").expect("agent should seed");
+
+        let validation = validate_workflow(
+            &connection,
+            &WorkflowUpsertInput {
+                name: "Implementation flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-implement".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some("data".into()),
                     entry_prompt_template: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,

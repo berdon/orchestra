@@ -106,6 +106,7 @@ pub struct SessionRecord {
 #[serde(rename_all = "camelCase")]
 pub struct AgentSummary {
     pub id: String,
+    pub slug: String,
     pub name: String,
     pub thinking_level: String,
     pub archived: bool,
