@@ -562,16 +562,6 @@ export function App() {
           <section className="panel-stack panel-stack--sessions">
             <section className="session-shell">
               <aside className="panel session-list-panel">
-                <div className="panel__header panel__header--stacked">
-                  <div>
-                    <p className="eyebrow">Session inventory</p>
-                    <h3>Known sessions</h3>
-                  </div>
-                  <button className="secondary-button" type="button" onClick={() => void loadSessions()}>
-                    Refresh
-                  </button>
-                </div>
-
                 <form
                   className="session-create-form"
                   onSubmit={(event) => {
@@ -603,14 +593,17 @@ export function App() {
 
                 <div className="session-list" role="list">
                   {sessions.map((session) => (
-                    <button
+                    <a
                       key={session.id}
-                      className={session.id === selectedSession?.id ? "session-list-item session-list-item--active" : "session-list-item"}
-                      type="button"
-                      onClick={() => setSelectedSessionId(session.id)}
+                      className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
+                      href="#"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setSelectedSessionId(session.id);
+                      }}
                     >
-                      <strong>{session.title}</strong>
-                    </button>
+                      {session.title}
+                    </a>
                   ))}
                 </div>
               </aside>

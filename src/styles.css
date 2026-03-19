@@ -112,8 +112,7 @@ strong {
 .primary-button,
 .text-input,
 .text-area,
-.select-input,
-.session-list-item {
+.select-input {
   appearance: none;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -154,8 +153,7 @@ strong {
 .nav-item:hover,
 .project-switcher__button:hover,
 .secondary-button:hover,
-.primary-button:hover,
-.session-list-item:hover {
+.primary-button:hover {
   border-color: var(--border-strong);
   transform: translateY(-1px);
 }
@@ -378,18 +376,24 @@ strong {
   overflow: auto;
 }
 
-.session-list-item {
+.session-list-link {
   display: block;
-  text-align: left;
-  background: white;
+  padding: 8px 4px;
+  color: var(--text);
+  text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  border-bottom: 1px solid rgba(234, 223, 215, 0.7);
 }
 
-.session-list-item--active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(143, 79, 47, 0.14);
+.session-list-link:hover {
+  color: var(--accent);
+}
+
+.session-list-link--active {
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .session-create-form,
