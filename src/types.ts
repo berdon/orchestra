@@ -111,6 +111,14 @@ export interface AgentMemoryInfo {
   dailyMemoryDir: string;
 }
 
+export interface ProjectWorkerOverlay {
+  projectSlug: string;
+  workerType: string;
+  workerSlug: string;
+  prompt?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface QueuedSessionMessage {
   sessionId: string;
   runId: string;

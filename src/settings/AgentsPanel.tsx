@@ -9,12 +9,14 @@ import {
   updateAgent,
   validateAgent,
 } from "../lib/agents";
+import { getWorkerOverlay, updateWorkerOverlay } from "../lib/projectSettings";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationError,
+  ProjectWorkerOverlay,
 } from "../types";
 
 function createBlankAgentDraft(): AgentUpsertInput {
@@ -57,6 +59,9 @@ export function AgentsPanel() {
   const [loadedAgentId, setLoadedAgentId] = useState<string | null>(null);
   const [loadedAgentArchived, setLoadedAgentArchived] = useState(false);
   const [agentMemoryInfo, setAgentMemoryInfo] = useState<AgentMemoryInfo | null>(null);
+  const [projectOverlay, setProjectOverlay] = useState<ProjectWorkerOverlay | null>(null);
+  const [overlayDraft, setOverlayDraft] = useState("");
+  const [savingOverlay, setSavingOverlay] = useState(false);
 
   const selectedAgentSummary = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
@@ -95,9 +100,15 @@ export function AgentsPanel() {
     setAgentActionError(null);
 
     try {
-      const [agent, memoryInfo] = await Promise.all([getAgent(agentId), getAgentMemoryInfo(agentId)]);
+      const agent = await getAgent(agentId);
+      const [memoryInfo, overlay] = await Promise.all([
+        getAgentMemoryInfo(agentId),
+        getWorkerOverlay("agent", agent.slug),
+      ]);
       setAgentDraft(agentToDraft(agent));
       setAgentMemoryInfo(memoryInfo);
+      setProjectOverlay(overlay);
+      setOverlayDraft(overlay.prompt ?? "");
       setAgentValidation([]);
       setLoadedAgentId(agent.id);
       setLoadedAgentArchived(agent.archived);
@@ -151,6 +162,8 @@ export function AgentsPanel() {
     setAgentValidation([]);
     setAgentActionError(null);
     setAgentMemoryInfo(null);
+    setProjectOverlay(null);
+    setOverlayDraft("");
     setLoadedAgentId(null);
     setLoadedAgentArchived(false);
     setIsCreatingAgent(true);
@@ -177,11 +190,36 @@ export function AgentsPanel() {
       setAgentDraft(agentToDraft(saved));
       setAgentValidation([]);
       setIsCreatingAgent(false);
-      setAgentMemoryInfo(await getAgentMemoryInfo(saved.id));
+
+      const [memoryInfo, overlay] = await Promise.all([
+        getAgentMemoryInfo(saved.id),
+        getWorkerOverlay("agent", saved.slug),
+      ]);
+      setAgentMemoryInfo(memoryInfo);
+      setProjectOverlay(overlay);
+      setOverlayDraft(overlay.prompt ?? "");
     } catch (error) {
       setAgentActionError(error instanceof Error ? error.message : "Unable to save agent.");
     } finally {
       setSavingAgent(false);
+    }
+  }
+
+  async function handleSaveOverlay() {
+    if (!agentMemoryInfo) {
+      return;
+    }
+
+    setSavingOverlay(true);
+    setAgentActionError(null);
+    try {
+      const saved = await updateWorkerOverlay("agent", agentMemoryInfo.slug, overlayDraft);
+      setProjectOverlay(saved);
+      setOverlayDraft(saved.prompt ?? "");
+    } catch (error) {
+      setAgentActionError(error instanceof Error ? error.message : "Unable to save project overlay.");
+    } finally {
+      setSavingOverlay(false);
     }
   }
 
@@ -376,6 +414,31 @@ export function AgentsPanel() {
                   <li>TOOLS.md: {agentMemoryInfo.toolsPath}</li>
                   <li>Daily logs: {agentMemoryInfo.dailyMemoryDir}</li>
                 </ul>
+              </section>
+            ) : null}
+
+            {projectOverlay ? (
+              <section className="workflow-section">
+                <div className="workflow-section__header">
+                  <div>
+                    <p className="eyebrow">Project overlay</p>
+                    <h3>{projectOverlay.projectSlug}</h3>
+                  </div>
+                  <button className="primary-button" data-role="save-agent-overlay" type="button" onClick={() => void handleSaveOverlay()} disabled={savingOverlay}>
+                    {savingOverlay ? "Saving…" : "Save overlay"}
+                  </button>
+                </div>
+                <label className="field-group workflow-form-grid__full">
+                  <span className="field-group__label">Project prompt additions</span>
+                  <textarea
+                    className="text-area"
+                    data-role="agent-overlay-prompt"
+                    rows={5}
+                    value={overlayDraft}
+                    onChange={(event) => setOverlayDraft(event.target.value)}
+                  />
+                </label>
+                {projectOverlay.updatedAt ? <p className="muted-copy">Last updated {projectOverlay.updatedAt}</p> : null}
               </section>
             ) : null}
 
