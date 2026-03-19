@@ -121,6 +121,10 @@ pub fn get_session(session_dir: &Path, session_id: &str, subscribed: bool) -> Re
     resolve_session(session_dir, session_id, subscribed).map(|session| session.record)
 }
 
+pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf, String> {
+    resolve_session(session_dir, session_id, true).map(|session| session.path)
+}
+
 pub fn stream_prompt_session<F>(
     project_root: &Path,
     session_dir: &Path,

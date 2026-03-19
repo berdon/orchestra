@@ -1,13 +1,13 @@
-use std::thread;
-
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::{
-    models::{QueuedSessionMessage, SessionModelState, SessionRecord, SessionStreamEvent},
-    services::pi_sessions::{
-        create_session_file, detect_session_context, get_session,
-        get_session_model_state as load_session_model_state, list_sessions as list_real_sessions,
-        set_session_model as apply_session_model, stream_prompt_session,
+    models::{QueuedSessionMessage, SessionModelState, SessionRecord},
+    services::{
+        live_sessions::{ensure_runtime, maybe_runtime},
+        pi_sessions::{
+            create_session_file, detect_session_context, get_session, list_sessions as list_real_sessions,
+            set_session_model as apply_session_model,
+        },
     },
     state::AppState,
 };
@@ -20,7 +20,11 @@ pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, S
 }
 
 #[tauri::command]
-pub fn create_session(state: State<'_, AppState>, title: Option<String>) -> Result<SessionRecord, String> {
+pub fn create_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    title: Option<String>,
+) -> Result<SessionRecord, String> {
     let context = detect_session_context(None)?;
     let created = create_session_file(
         &context.project_root,
@@ -30,6 +34,13 @@ pub fn create_session(state: State<'_, AppState>, title: Option<String>) -> Resu
     )?;
 
     state.set_session_subscription(&created.record.id, true)?;
+    let _ = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root,
+        context.session_dir,
+        &created.record.id,
+    )?;
     state.log(
         "info",
         "sessions.create",
@@ -44,9 +55,16 @@ pub fn create_session(state: State<'_, AppState>, title: Option<String>) -> Resu
 }
 
 #[tauri::command]
-pub fn resume_session(state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
+pub fn resume_session(app: AppHandle, state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
     let context = detect_session_context(None)?;
     state.set_session_subscription(&session_id, true)?;
+    let _ = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root.clone(),
+        context.session_dir.clone(),
+        &session_id,
+    )?;
 
     let record = get_session(&context.session_dir, &session_id, true)?;
     state.log("info", "sessions.resume", &format!("Resumed pi session {}", record.id));
@@ -54,9 +72,21 @@ pub fn resume_session(state: State<'_, AppState>, session_id: String) -> Result<
 }
 
 #[tauri::command]
-pub fn subscribe_session(state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
+pub fn subscribe_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRecord, String> {
     let context = detect_session_context(None)?;
     state.set_session_subscription(&session_id, true)?;
+    let runtime = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root.clone(),
+        context.session_dir.clone(),
+        &session_id,
+    )?;
+    runtime.set_subscribed(true);
 
     let record = get_session(&context.session_dir, &session_id, true)?;
     state.log(
@@ -71,6 +101,9 @@ pub fn subscribe_session(state: State<'_, AppState>, session_id: String) -> Resu
 pub fn unsubscribe_session(state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
     let context = detect_session_context(None)?;
     state.set_session_subscription(&session_id, false)?;
+    if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+        runtime.set_subscribed(false);
+    }
 
     let record = get_session(&context.session_dir, &session_id, false)?;
     state.log(
@@ -83,27 +116,50 @@ pub fn unsubscribe_session(state: State<'_, AppState>, session_id: String) -> Re
 
 #[tauri::command]
 pub fn get_session_model_state(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionModelState, String> {
     let context = detect_session_context(None)?;
     state.set_session_subscription(&session_id, true)?;
-    load_session_model_state(&context.project_root, &context.session_dir, &session_id)
+
+    if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+        runtime.set_subscribed(true);
+        return runtime.get_model_state();
+    }
+
+    let runtime = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root,
+        context.session_dir,
+        &session_id,
+    )?;
+    runtime.get_model_state()
 }
 
 #[tauri::command]
 pub fn set_session_model(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     provider: String,
     model_id: String,
 ) -> Result<SessionModelState, String> {
-    if state.is_session_running(&session_id)? {
-        return Err("Wait for the current response to finish before changing models".into());
-    }
-
     let context = detect_session_context(None)?;
     state.set_session_subscription(&session_id, true)?;
+
+    if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+        runtime.set_subscribed(true);
+        let result = runtime.set_model(&provider, &model_id)?;
+        state.log(
+            "info",
+            "sessions.model",
+            &format!("Changed session {} to {}/{}", session_id, provider, model_id),
+        );
+        return Ok(result);
+    }
+
     let result = apply_session_model(
         &context.project_root,
         &context.session_dir,
@@ -111,7 +167,13 @@ pub fn set_session_model(
         &provider,
         &model_id,
     )?;
-
+    let _ = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root,
+        context.session_dir,
+        &session_id,
+    )?;
     state.log(
         "info",
         "sessions.model",
@@ -136,12 +198,15 @@ pub fn send_session_message(
 
     let context = detect_session_context(None)?;
     state.set_session_subscription(&session_id, true)?;
+    let runtime = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root,
+        context.session_dir,
+        &session_id,
+    )?;
+    runtime.set_subscribed(true);
     state.begin_session_run(&session_id, &run_id)?;
-    state.log(
-        "info",
-        "sessions.message.start",
-        &format!("Queueing background pi RPC turn for session {}", session_id),
-    );
 
     let queued = QueuedSessionMessage {
         session_id: session_id.clone(),
@@ -150,85 +215,18 @@ pub fn send_session_message(
         timestamp: crate::state::now_iso(),
     };
 
-    let project_root = context.project_root.clone();
-    let session_dir = context.session_dir.clone();
-    let app_handle = app.clone();
-
-    thread::spawn(move || {
-        let result = stream_prompt_session(
-            &project_root,
-            &session_dir,
-            &session_id,
-            &run_id,
-            &trimmed_message,
-            true,
-            |event| {
-                let _ = app_handle.emit("session-stream", event);
-            },
-        );
-
-        match result {
-            Ok(record) => {
-                emit_session_stream(
-                    &app_handle,
-                    SessionStreamEvent {
-                        session_id: record.id.clone(),
-                        run_id: run_id.clone(),
-                        event: "sessionUpdated".into(),
-                        timestamp: None,
-                        delta: None,
-                        message: None,
-                        record: Some(record.clone()),
-                    },
-                );
-                app_handle.state::<AppState>().log(
-                    "info",
-                    "sessions.message.end",
-                    &format!("Completed pi RPC turn for session {}", record.id),
-                );
-            }
-            Err(error) => {
-                if let Ok(record) = get_session(&session_dir, &session_id, true) {
-                    emit_session_stream(
-                        &app_handle,
-                        SessionStreamEvent {
-                            session_id: record.id.clone(),
-                            run_id: run_id.clone(),
-                            event: "sessionUpdated".into(),
-                            timestamp: None,
-                            delta: None,
-                            message: None,
-                            record: Some(record),
-                        },
-                    );
-                }
-
-                emit_session_stream(
-                    &app_handle,
-                    SessionStreamEvent {
-                        session_id: session_id.clone(),
-                        run_id: run_id.clone(),
-                        event: "error".into(),
-                        timestamp: None,
-                        delta: None,
-                        message: Some(error.clone()),
-                        record: None,
-                    },
-                );
-                app_handle.state::<AppState>().log(
-                    "error",
-                    "sessions.message.error",
-                    &format!("Session {} failed during pi RPC turn: {}", session_id, error),
-                );
-            }
+    match runtime.start_run(&run_id, &trimmed_message) {
+        Ok(()) => {
+            state.log(
+                "info",
+                "sessions.message.start",
+                &format!("Sent prompt to live pi RPC session {}", session_id),
+            );
+            Ok(queued)
         }
-
-        let _ = app_handle.state::<AppState>().end_session_run(&session_id, &run_id);
-    });
-
-    Ok(queued)
-}
-
-fn emit_session_stream(app: &AppHandle, payload: SessionStreamEvent) {
-    let _ = app.emit("session-stream", payload);
+        Err(error) => {
+            let _ = state.end_session_run(&session_id, &run_id);
+            Err(error)
+        }
+    }
 }

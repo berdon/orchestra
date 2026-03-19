@@ -196,6 +196,11 @@ strong {
   gap: 18px;
 }
 
+.panel-stack--sessions {
+  grid-template-rows: auto minmax(0, 1fr);
+  height: min(78vh, calc(100vh - 170px));
+}
+
 .panel {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -343,7 +348,8 @@ strong {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   gap: 18px;
-  min-height: min(72vh, calc(100vh - 220px));
+  min-height: 0;
+  height: 100%;
   align-items: stretch;
 }
 
@@ -360,7 +366,8 @@ strong {
 
 .session-detail-panel {
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: min(72vh, calc(100vh - 220px));
+  min-height: 0;
+  height: 100%;
 }
 
 .session-list {

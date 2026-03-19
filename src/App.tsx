@@ -535,7 +535,7 @@ export function App() {
             </section>
           </section>
         ) : activePage === "sessions" ? (
-          <section className="panel-stack">
+          <section className="panel-stack panel-stack--sessions">
             <section className="panel panel--hero panel--session-hero">
               <div>
                 <p className="eyebrow">First shipping vertical slice</p>

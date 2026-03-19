@@ -1,14 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
-use crate::models::LogEntry;
+use crate::{models::LogEntry, services::live_sessions::SessionRuntime};
 
 pub struct AppState {
     pub logs: Mutex<Vec<LogEntry>>,
     subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
+    pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
 }
 
 pub fn now_iso() -> String {
@@ -42,6 +43,7 @@ impl AppState {
             ]),
             subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
+            session_runtimes: Mutex::new(HashMap::new()),
         }
     }
 
