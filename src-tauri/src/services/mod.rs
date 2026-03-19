@@ -1,3 +1,4 @@
+pub mod agent_files;
 pub mod agents;
 pub mod database;
 pub mod git_worktrees;

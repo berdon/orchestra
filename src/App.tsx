@@ -19,6 +19,7 @@ import { AgentsPage } from "./agents/AgentsPage";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { SessionsPage } from "./pages/SessionsPage";
+import { AgentsPanel } from "./settings/AgentsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
@@ -49,6 +50,7 @@ const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings" | "agents">
 };
 
 const SETTINGS_TABS = [
+  { id: "agents", label: "Agents" },
   { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
   { id: "logs", label: "Logs" },
@@ -210,7 +212,7 @@ function hasVisibleAssistantText(event?: SessionEvent) {
 
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("roles");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("agents");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -931,7 +933,9 @@ export function App() {
         </header>
 
         {activePage === "settings" ? (
-          settingsTab === "roles" ? (
+          settingsTab === "agents" ? (
+            <AgentsPanel />
+          ) : settingsTab === "roles" ? (
             <RolesPanel />
           ) : settingsTab === "workflows" ? (
             <WorkflowsPanel />

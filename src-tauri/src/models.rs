@@ -116,6 +116,62 @@ pub struct AgentSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentDefinition {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub thinking_level: String,
+    pub archived: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUpsertInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub thinking_level: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentValidationResult {
+    pub valid: bool,
+    pub errors: Vec<AgentValidationError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentValidationError {
+    pub code: String,
+    pub path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMemoryInfo {
+    pub agent_id: String,
+    pub slug: String,
+    pub root_dir: String,
+    pub agents_path: String,
+    pub identity_path: String,
+    pub soul_path: String,
+    pub memory_path: String,
+    pub tools_path: String,
+    pub daily_memory_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleDefinition {
     pub id: String,
     pub slug: String,
