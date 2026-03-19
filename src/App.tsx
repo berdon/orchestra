@@ -931,60 +931,30 @@ export function App() {
         </header>
 
         {activePage === "settings" ? (
-          <section className="panel-stack">
-            <section className="panel panel--hero">
-              <div className="settings-hero">
-                <div>
-                  <p className="eyebrow">Configuration and visibility</p>
-                  <h2>Settings</h2>
-                  <p>
-                    Role and workflow configuration lives here so the operational editing surfaces can mature without disturbing the
-                    live session workspace.
-                  </p>
-                </div>
+          settingsTab === "roles" ? (
+            <RolesPanel />
+          ) : settingsTab === "workflows" ? (
+            <WorkflowsPanel />
+          ) : (
+            <section className="panel panel--split">
+              <div>
+                <p className="eyebrow">General</p>
+                <h3>Open runtime logs in a separate window</h3>
+                <p>
+                  Keep the log window open while testing sessions so backend/runtime events stay visible without covering the main UI.
+                </p>
+              </div>
 
-                <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-                  {SETTINGS_TABS.map((tab) => (
-                    <button
-                      key={tab.id}
-                      className={settingsTab === tab.id ? "nav-item nav-item--active" : "nav-item"}
-                      type="button"
-                      role="tab"
-                      aria-selected={settingsTab === tab.id}
-                      onClick={() => setSettingsTab(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+              <div className="settings-log-actions">
+                <button className="primary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
+                  Open logs window
+                </button>
+                <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleClearLogs()} disabled={clearingLogs}>
+                  {clearingLogs ? "Clearing…" : "Clear logs"}
+                </button>
               </div>
             </section>
-
-            {settingsTab === "roles" ? (
-              <RolesPanel />
-            ) : settingsTab === "workflows" ? (
-              <WorkflowsPanel />
-            ) : (
-              <section className="panel panel--split">
-                <div>
-                  <p className="eyebrow">General</p>
-                  <h3>Open runtime logs in a separate window</h3>
-                  <p>
-                    Keep the log window open while testing sessions so backend/runtime events stay visible without covering the main UI.
-                  </p>
-                </div>
-
-                <div className="settings-log-actions">
-                  <button className="primary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
-                    Open logs window
-                  </button>
-                  <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleClearLogs()} disabled={clearingLogs}>
-                    {clearingLogs ? "Clearing…" : "Clear logs"}
-                  </button>
-                </div>
-              </section>
-            )}
-          </section>
+          )
         ) : activePage === "agents" ? (
           <AgentsPage />
         ) : activePage === "sessions" ? (
