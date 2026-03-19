@@ -157,13 +157,20 @@ export function App() {
     ];
   }, [pendingRuns, selectedSession]);
 
-  const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
+  const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
     setSessions((current) => {
       const withoutOld = current.filter((session) => session.id !== updatedSession.id);
       return [updatedSession, ...withoutOld].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     });
-    setSelectedSessionId(updatedSession.id);
+
+    if (options?.select !== false) {
+      setSelectedSessionId(updatedSession.id);
+    }
   }, []);
+
+  const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
+    mergeSessionRecord(updatedSession);
+  }, [mergeSessionRecord]);
 
   const removePendingRun = useCallback((sessionId: string, runId?: string) => {
     setPendingRuns((current) => {
@@ -331,7 +338,7 @@ export function App() {
     if (previousViewedSessionId && previousViewedSessionId !== nextViewedSessionId) {
       void unsubscribeSession(previousViewedSessionId)
         .then((record) => {
-          applySessionUpdate(record);
+          mergeSessionRecord(record, { select: false });
         })
         .catch(() => {
           // Ignore auto-unsubscribe failures; explicit actions will surface errors.
@@ -385,7 +392,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate]);
+  }, [activePage, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate, mergeSessionRecord]);
 
   useEffect(() => {
     const node = transcriptRef.current;

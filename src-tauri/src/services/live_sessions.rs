@@ -68,6 +68,12 @@ impl SessionRuntime {
             .take()
             .ok_or_else(|| "Unable to open stderr for pi RPC process".to_string())?;
 
+        app.state::<crate::state::AppState>().log(
+            "info",
+            "sessions.runtime.spawn",
+            &format!("Spawning live pi RPC runtime for session {}", session_id),
+        );
+
         let runtime = Arc::new(Self {
             session_id,
             session_dir,
@@ -140,6 +146,11 @@ impl SessionRuntime {
                 if let Ok(mut pending) = self.pending.lock() {
                     if let Some(sender) = pending.remove(id) {
                         let success = payload.get("success").and_then(Value::as_bool) == Some(true);
+                        self.app.state::<crate::state::AppState>().log(
+                            "info",
+                            "sessions.rpc.response",
+                            &format!("Session {} received response {} success={}", self.session_id, id, success),
+                        );
                         let result = if success {
                             Ok(payload)
                         } else {
@@ -154,7 +165,30 @@ impl SessionRuntime {
 
         match payload.get("type").and_then(Value::as_str) {
             Some("message_update") => self.handle_message_update(&payload),
-            Some("turn_end") | Some("agent_end") => self.handle_agent_end(),
+            Some("turn_end") | Some("agent_end") => {
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.rpc.lifecycle",
+                    &format!(
+                        "Session {} received {}",
+                        self.session_id,
+                        payload.get("type").and_then(Value::as_str).unwrap_or("event")
+                    ),
+                );
+                self.handle_agent_end()
+            }
+            Some("response") => {
+                self.app.state::<crate::state::AppState>().log(
+                    "debug",
+                    "sessions.rpc.response",
+                    &format!(
+                        "Session {} received response {} success={} ",
+                        self.session_id,
+                        payload.get("id").and_then(Value::as_str).unwrap_or("(no id)"),
+                        payload.get("success").and_then(Value::as_bool).unwrap_or(false)
+                    ),
+                );
+            }
             _ => {}
         }
     }
@@ -167,6 +201,14 @@ impl SessionRuntime {
         let Some(event_type) = payload.pointer("/assistantMessageEvent/type").and_then(Value::as_str) else {
             return;
         };
+
+        if matches!(event_type, "text_start" | "text_delta" | "thinking_start" | "thinking_delta" | "error") {
+            self.app.state::<crate::state::AppState>().log(
+                "info",
+                "sessions.rpc.message_update",
+                &format!("Session {} message_update {}", self.session_id, event_type),
+            );
+        }
 
         match event_type {
             "text_start" | "thinking_start" => {
@@ -331,8 +373,19 @@ impl SessionRuntime {
 
         if let Err(error) = write_result {
             let _ = self.pending.lock().map(|mut pending| pending.remove(&request_id));
+            self.app.state::<crate::state::AppState>().log(
+                "error",
+                "sessions.rpc.send",
+                &format!("Session {} failed to send command {}: {}", self.session_id, request_id, error),
+            );
             return Err(error);
         }
+
+        self.app.state::<crate::state::AppState>().log(
+            "info",
+            "sessions.rpc.send",
+            &format!("Session {} sent command {}", self.session_id, request_id),
+        );
 
         receiver
             .recv_timeout(RPC_RESPONSE_TIMEOUT)
@@ -347,6 +400,11 @@ impl SessionRuntime {
     }
 
     pub fn start_run(&self, run_id: &str, message: &str) -> Result<(), String> {
+        self.app.state::<crate::state::AppState>().log(
+            "info",
+            "sessions.runtime.start_run",
+            &format!("Session {} starting run {} with {} chars", self.session_id, run_id, message.len()),
+        );
         {
             let mut current_run_id = self
                 .current_run_id
@@ -457,6 +515,11 @@ pub fn ensure_runtime(
     if let Ok(mut runtimes) = runtimes.lock() {
         if let Some(existing) = runtimes.get(session_id) {
             if !existing.is_closed() {
+                app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.runtime.reuse",
+                    &format!("Reusing live pi RPC runtime for session {}", session_id),
+                );
                 existing.set_subscribed(true);
                 return Ok(Arc::clone(existing));
             }
