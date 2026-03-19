@@ -65,6 +65,52 @@ export interface AgentSummary {
   updatedAt: string;
 }
 
+export interface AgentDefinition {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  systemPrompt?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  thinkingLevel: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentUpsertInput {
+  name: string;
+  description?: string | null;
+  systemPrompt?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
+}
+
+export interface AgentValidationError {
+  code: string;
+  path: string;
+  message: string;
+}
+
+export interface AgentValidationResult {
+  valid: boolean;
+  errors: AgentValidationError[];
+}
+
+export interface AgentMemoryInfo {
+  agentId: string;
+  slug: string;
+  rootDir: string;
+  agentsPath: string;
+  identityPath: string;
+  soulPath: string;
+  memoryPath: string;
+  toolsPath: string;
+  dailyMemoryDir: string;
+}
+
 export interface QueuedSessionMessage {
   sessionId: string;
   runId: string;

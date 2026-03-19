@@ -4,7 +4,7 @@ mod services;
 mod state;
 
 use commands::{
-    agents::list_agents,
+    agents::{archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent, validate_agent},
     app::{clear_logs, get_app_info, get_logs, get_session_storage_info, open_logs_window},
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
@@ -45,6 +45,12 @@ pub fn run() {
             open_logs_window,
             get_session_storage_info,
             list_agents,
+            get_agent,
+            validate_agent,
+            create_agent,
+            update_agent,
+            archive_agent,
+            get_agent_memory_info,
             list_sessions,
             create_session,
             delete_session,
