@@ -70,6 +70,50 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS role_instances (
+                id TEXT PRIMARY KEY,
+                role_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                current_queue_entry_id TEXT,
+                session_id TEXT,
+                worktree_path TEXT,
+                last_heartbeat_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS role_queue_entries (
+                id TEXT PRIMARY KEY,
+                role_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_task_id TEXT,
+                source_workflow_id TEXT,
+                source_lane_id TEXT,
+                title TEXT NOT NULL,
+                summary TEXT,
+                entry_prompt TEXT,
+                assigned_instance_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE,
+                FOREIGN KEY(assigned_instance_id) REFERENCES role_instances(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_role_instances_role_id
+                ON role_instances(role_id);
+
+            CREATE INDEX IF NOT EXISTS idx_role_queue_entries_role_id
+                ON role_queue_entries(role_id);
+
+            CREATE INDEX IF NOT EXISTS idx_role_queue_entries_status
+                ON role_queue_entries(status);
+
             CREATE TABLE IF NOT EXISTS workflows (
                 id TEXT PRIMARY KEY,
                 slug TEXT NOT NULL UNIQUE,
@@ -351,6 +395,59 @@ mod tests {
             assert!(
                 columns.contains(expected),
                 "missing expected roles column: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn initializes_role_runtime_tables() {
+        let path = unique_temp_db("role-runtime-schema");
+        initialize_database_at(&path).expect("database should initialize");
+        let connection = Connection::open(&path).expect("database should open");
+
+        let instance_columns = table_columns(&connection, "role_instances")
+            .expect("role_instances columns should load");
+        for expected in [
+            "id",
+            "role_id",
+            "display_name",
+            "status",
+            "current_queue_entry_id",
+            "session_id",
+            "worktree_path",
+            "last_heartbeat_at",
+            "last_error",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                instance_columns.contains(expected),
+                "missing expected role_instances column: {expected}"
+            );
+        }
+
+        let queue_columns = table_columns(&connection, "role_queue_entries")
+            .expect("role_queue_entries columns should load");
+        for expected in [
+            "id",
+            "role_id",
+            "status",
+            "source_type",
+            "source_task_id",
+            "source_workflow_id",
+            "source_lane_id",
+            "title",
+            "summary",
+            "entry_prompt",
+            "assigned_instance_id",
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+        ] {
+            assert!(
+                queue_columns.contains(expected),
+                "missing expected role_queue_entries column: {expected}"
             );
         }
     }

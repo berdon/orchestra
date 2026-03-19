@@ -6,6 +6,7 @@ mod state;
 use commands::{
     agents::list_agents,
     app::{clear_logs, get_app_info, get_logs, get_session_storage_info, open_logs_window},
+    role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
         create_session, get_session_model_state, list_sessions, resume_session,
@@ -57,6 +58,9 @@ pub fn run() {
             create_role,
             update_role,
             archive_role,
+            list_role_operations,
+            get_role_operations,
+            enqueue_role_work,
             list_workflows,
             get_workflow,
             validate_workflow,

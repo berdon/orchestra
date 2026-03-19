@@ -142,6 +142,79 @@ export interface RoleValidationResult {
   errors: RoleValidationError[];
 }
 
+export interface RoleQueueEntry {
+  id: string;
+  roleId: string;
+  status: string;
+  sourceType: string;
+  sourceTaskId?: string | null;
+  sourceWorkflowId?: string | null;
+  sourceLaneId?: string | null;
+  title: string;
+  summary?: string | null;
+  entryPrompt?: string | null;
+  assignedInstanceId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+export interface RoleQueueEntryInput {
+  roleId: string;
+  sourceType: string;
+  sourceTaskId?: string | null;
+  sourceWorkflowId?: string | null;
+  sourceLaneId?: string | null;
+  title: string;
+  summary?: string | null;
+  entryPrompt?: string | null;
+}
+
+export interface RoleInstance {
+  id: string;
+  roleId: string;
+  displayName: string;
+  status: string;
+  currentQueueEntryId?: string | null;
+  sessionId?: string | null;
+  worktreePath?: string | null;
+  lastHeartbeatAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoleInstanceInput {
+  roleId: string;
+  displayName?: string | null;
+  status?: string | null;
+  currentQueueEntryId?: string | null;
+  sessionId?: string | null;
+  worktreePath?: string | null;
+  lastHeartbeatAt?: string | null;
+  lastError?: string | null;
+}
+
+export interface RoleOperationsSnapshot {
+  role: RoleSummary;
+  queuedCount: number;
+  assignedCount: number;
+  activeInstanceCount: number;
+  idleInstanceCount: number;
+  latestError?: string | null;
+}
+
+export interface RoleOperationsDetail {
+  role: RoleDefinition;
+  queuedCount: number;
+  assignedCount: number;
+  activeInstanceCount: number;
+  idleInstanceCount: number;
+  queueEntries: RoleQueueEntry[];
+  instances: RoleInstance[];
+}
+
 export interface WorkflowDefinition {
   id: string;
   slug: string;

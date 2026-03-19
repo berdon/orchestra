@@ -157,6 +157,91 @@ pub struct RoleValidationError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleQueueEntry {
+    pub id: String,
+    pub role_id: String,
+    pub status: String,
+    pub source_type: String,
+    pub source_task_id: Option<String>,
+    pub source_workflow_id: Option<String>,
+    pub source_lane_id: Option<String>,
+    pub title: String,
+    pub summary: Option<String>,
+    pub entry_prompt: Option<String>,
+    pub assigned_instance_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleQueueEntryInput {
+    pub role_id: String,
+    pub source_type: String,
+    pub source_task_id: Option<String>,
+    pub source_workflow_id: Option<String>,
+    pub source_lane_id: Option<String>,
+    pub title: String,
+    pub summary: Option<String>,
+    pub entry_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleInstance {
+    pub id: String,
+    pub role_id: String,
+    pub display_name: String,
+    pub status: String,
+    pub current_queue_entry_id: Option<String>,
+    pub session_id: Option<String>,
+    pub worktree_path: Option<String>,
+    pub last_heartbeat_at: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleInstanceInput {
+    pub role_id: String,
+    pub display_name: Option<String>,
+    pub status: Option<String>,
+    pub current_queue_entry_id: Option<String>,
+    pub session_id: Option<String>,
+    pub worktree_path: Option<String>,
+    pub last_heartbeat_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleOperationsSnapshot {
+    pub role: RoleSummary,
+    pub queued_count: i64,
+    pub assigned_count: i64,
+    pub active_instance_count: i64,
+    pub idle_instance_count: i64,
+    pub latest_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleOperationsDetail {
+    pub role: RoleDefinition,
+    pub queued_count: i64,
+    pub assigned_count: i64,
+    pub active_instance_count: i64,
+    pub idle_instance_count: i64,
+    pub queue_entries: Vec<RoleQueueEntry>,
+    pub instances: Vec<RoleInstance>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowDefinition {
