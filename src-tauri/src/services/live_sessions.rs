@@ -9,7 +9,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
@@ -410,7 +410,38 @@ impl SessionRuntime {
     }
 
     fn emit_stream_event(&self, payload: SessionStreamEvent) {
-        let _ = self.app.emit("session-stream", payload);
+        let serialized = match serde_json::to_string(&payload) {
+            Ok(serialized) => serialized,
+            Err(error) => {
+                self.app.state::<crate::state::AppState>().log(
+                    "error",
+                    "sessions.rpc.emit_failed",
+                    &format!("Unable to serialize session stream event for {}: {error}", self.session_id),
+                );
+                return;
+            }
+        };
+
+        let script = format!(
+            "window.dispatchEvent(new CustomEvent('orchestra:session-stream', {{ detail: {serialized} }}));"
+        );
+
+        match self.app.get_webview_window("main") {
+            Some(main_window) => {
+                if let Err(error) = main_window.eval(&script) {
+                    self.app.state::<crate::state::AppState>().log(
+                        "error",
+                        "sessions.rpc.emit_failed",
+                        &format!("Unable to deliver session stream event for {}: {error}", self.session_id),
+                    );
+                }
+            }
+            None => self.app.state::<crate::state::AppState>().log(
+                "error",
+                "sessions.rpc.emit_failed",
+                &format!("Main webview window unavailable while emitting session stream for {}", self.session_id),
+            ),
+        }
     }
 
     fn send_command(&self, command: Value) -> Result<Value, String> {

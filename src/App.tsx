@@ -6,7 +6,6 @@ import {
   getLogs,
   getSessionModelState,
   isCurrentLogsWindow,
-  isTauriAvailable,
   listSessions,
   listenToSessionStream,
   openLogsWindow,
@@ -454,21 +453,18 @@ export function App() {
     }
 
     let unlisten: (() => void) | undefined;
-
-    if (!isTauriAvailable()) {
-      void listenToSessionStream(handleSessionStreamEvent).then((dispose) => {
-        unlisten = dispose;
-      });
-      return () => {
-        unlisten?.();
-      };
-    }
+    let cancelled = false;
 
     void listenToSessionStream(handleSessionStreamEvent).then((dispose) => {
+      if (cancelled) {
+        void dispose();
+        return;
+      }
       unlisten = dispose;
     });
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, [handleSessionStreamEvent, isLogsWindow]);
@@ -815,13 +811,14 @@ export function App() {
                     <span className="field-group__label">New session title</span>
                     <input
                       className="text-input"
+                      data-role="new-session-title"
                       type="text"
                       placeholder="e.g. Session-first spike"
                       value={newSessionTitle}
                       onChange={(event) => setNewSessionTitle(event.target.value)}
                     />
                   </label>
-                  <button className="primary-button" type="submit" disabled={isSubmitting}>
+                  <button className="primary-button" data-role="create-session" type="submit" disabled={isSubmitting}>
                     Create session
                   </button>
                 </form>
@@ -833,6 +830,8 @@ export function App() {
                   {sessions.map((session) => (
                     <a
                       key={session.id}
+                      data-role="session-link"
+                      data-session-id={session.id}
                       className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
                       href="#"
                       onClick={(event) => {
@@ -852,9 +851,9 @@ export function App() {
                     <div className="panel__header panel__header--session-detail">
                       <div>
                         <p className="eyebrow">Session detail</p>
-                        <h3>{selectedSession.title}</h3>
+                        <h3 data-role="selected-session-title">{selectedSession.title}</h3>
                         <div className="session-detail__meta">
-                          <span>{selectedSession.id}</span>
+                          <span data-role="selected-session-id">{selectedSession.id}</span>
                           <span>Created {formatDateTime(selectedSession.createdAt)}</span>
                           <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
                         </div>
@@ -911,7 +910,7 @@ export function App() {
                       </div>
                     </div>
 
-                    <div className="session-transcript" ref={transcriptRef} role="log" aria-live="polite">
+                    <div className="session-transcript" data-role="session-transcript" ref={transcriptRef} role="log" aria-live="polite">
                       {displayedEvents.map((event) => (
                         <article
                           className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
@@ -941,6 +940,7 @@ export function App() {
                         <span className="field-group__label">Send message</span>
                         <textarea
                           className="text-area"
+                          data-role="composer-input"
                           rows={4}
                           placeholder="Tell the session what to do next…"
                           value={draftMessage}
@@ -959,6 +959,7 @@ export function App() {
                         </p>
                         <button
                           className="primary-button"
+                          data-role="send-message"
                           type="submit"
                           disabled={Boolean(selectedSessionPendingRun) || draftMessage.trim().length === 0}
                         >

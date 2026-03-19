@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
@@ -45,8 +44,6 @@ const MOCK_MODELS: SessionModel[] = [
     reasoning: true,
   },
 ];
-
-const sessionStreamListeners = new Set<(event: SessionStreamEvent) => void>();
 
 export function isTauriAvailable() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -99,9 +96,7 @@ function setStoredValue<T>(key: string, value: T) {
 }
 
 function emitMockSessionStream(event: SessionStreamEvent) {
-  for (const listener of sessionStreamListeners) {
-    listener(event);
-  }
+  window.dispatchEvent(new CustomEvent("orchestra:session-stream", { detail: event }));
 }
 
 function seedMockLogs(): LogEntry[] {
@@ -431,15 +426,16 @@ function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow
 export async function listenToSessionStream(
   handler: (event: SessionStreamEvent) => void,
 ): Promise<() => void> {
-  if (!isTauriAvailable()) {
-    sessionStreamListeners.add(handler);
-    return () => {
-      sessionStreamListeners.delete(handler);
-    };
-  }
+  const listener = (event: Event) => {
+    if (event instanceof CustomEvent) {
+      handler(event.detail as SessionStreamEvent);
+    }
+  };
 
-  const unlisten = await listen<SessionStreamEvent>("session-stream", (event) => handler(event.payload));
-  return unlisten;
+  window.addEventListener("orchestra:session-stream", listener);
+  return () => {
+    window.removeEventListener("orchestra:session-stream", listener);
+  };
 }
 
 export async function getAppInfo(): Promise<AppInfo> {
