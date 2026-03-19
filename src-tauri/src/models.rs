@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,85 +88,4 @@ pub struct SessionRecord {
     pub updated_at: String,
     pub subscribed: bool,
     pub events: Vec<SessionEvent>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowDefinition {
-    pub id: String,
-    pub slug: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub archived: bool,
-    pub lanes: Vec<WorkflowLane>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowLane {
-    pub id: String,
-    pub key: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub order: i64,
-    pub assigned_entity_type: String,
-    pub assigned_entity_id: Option<String>,
-    pub entry_prompt_template: Option<String>,
-    pub success_target_lane_id: Option<String>,
-    pub failure_target_lane_id: Option<String>,
-    pub user_intervention_target_lane_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowSummary {
-    pub id: String,
-    pub slug: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub archived: bool,
-    pub lane_count: usize,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowUpsertInput {
-    pub name: String,
-    pub description: Option<String>,
-    pub lanes: Vec<WorkflowLaneInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowLaneInput {
-    pub id: Option<String>,
-    pub key: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub order: Option<i64>,
-    pub assigned_entity_type: String,
-    pub assigned_entity_id: Option<String>,
-    pub entry_prompt_template: Option<String>,
-    pub success_target_lane_id: Option<String>,
-    pub failure_target_lane_id: Option<String>,
-    pub user_intervention_target_lane_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowValidationResult {
-    pub valid: bool,
-    pub errors: Vec<WorkflowValidationError>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowValidationError {
-    pub code: String,
-    pub path: String,
-    pub message: String,
 }

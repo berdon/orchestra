@@ -34,10 +34,6 @@ pub fn default_orchestra_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "HOME is not set; unable to resolve Orchestra storage root".into())
 }
 
-pub fn orchestra_database_path(root: &Path) -> PathBuf {
-    root.join("orchestra.db")
-}
-
 pub fn project_root(root: &Path, project_slug: &str) -> PathBuf {
     root.join("projects").join(sanitize_slug(project_slug))
 }
@@ -60,10 +56,6 @@ mod tests {
     #[test]
     fn builds_project_session_dir_under_orchestra_root() {
         let root = PathBuf::from("/tmp/home/.orchestra");
-        assert_eq!(
-            orchestra_database_path(&root),
-            PathBuf::from("/tmp/home/.orchestra/orchestra.db")
-        );
         assert_eq!(
             project_session_dir(&root, "Orchestra App"),
             PathBuf::from("/tmp/home/.orchestra/projects/orchestra-app/sessions")

@@ -1,24 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  archiveWorkflow,
   createSession,
-  createWorkflow,
-  duplicateWorkflow,
   getAppInfo,
   getLogs,
   getSessionModelState,
-  getWorkflow,
   isTauriAvailable,
   listSessions,
-  listWorkflows,
   listenToSessionStream,
   resumeSession,
   sendSessionMessage,
   setSessionModel,
   subscribeSession,
   unsubscribeSession,
-  updateWorkflow,
-  validateWorkflow,
 } from "./lib/tauri";
 import type {
   AppInfo,
@@ -29,11 +22,6 @@ import type {
   SessionRecord,
   SessionStatus,
   SessionStreamEvent,
-  WorkflowDefinition,
-  WorkflowLaneInput,
-  WorkflowSummary,
-  WorkflowUpsertInput,
-  WorkflowValidationError,
 } from "./types";
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
@@ -55,13 +43,6 @@ const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings">, { eyebrow
     body: "Agents and roles will share an operational view focused on workload, queues, active sessions, and intervention pressure.",
   },
 };
-
-const SETTINGS_TABS = [
-  { id: "workflows", label: "Workflows" },
-  { id: "logs", label: "Logs" },
-] as const;
-
-type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
 
 interface PendingSessionRun {
   runId: string;
@@ -131,59 +112,8 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
   return "Choose a model";
 }
 
-function createEmptyLane(order: number): WorkflowLaneInput {
-  return {
-    id: `lane-${Math.random().toString(36).slice(2, 8)}`,
-    key: "",
-    name: "",
-    order,
-    assignedEntityType: "user",
-    assignedEntityId: null,
-    entryPromptTemplate: null,
-    successTargetLaneId: null,
-    failureTargetLaneId: null,
-    userInterventionTargetLaneId: null,
-  };
-}
-
-function createBlankWorkflowDraft(): WorkflowUpsertInput {
-  return {
-    name: "",
-    description: "",
-    lanes: [createEmptyLane(0)],
-  };
-}
-
-function workflowToDraft(workflow: WorkflowDefinition): WorkflowUpsertInput {
-  return {
-    name: workflow.name,
-    description: workflow.description ?? "",
-    lanes: workflow.lanes
-      .slice()
-      .sort((left, right) => left.order - right.order)
-      .map((lane, index) => ({
-        id: lane.id,
-        key: lane.key,
-        name: lane.name,
-        description: lane.description ?? "",
-        order: index,
-        assignedEntityType: lane.assignedEntityType,
-        assignedEntityId: lane.assignedEntityId ?? "",
-        entryPromptTemplate: lane.entryPromptTemplate ?? "",
-        successTargetLaneId: lane.successTargetLaneId ?? "",
-        failureTargetLaneId: lane.failureTargetLaneId ?? "",
-        userInterventionTargetLaneId: lane.userInterventionTargetLaneId ?? "",
-      })),
-  };
-}
-
-function getWorkflowValidationForPath(errors: WorkflowValidationError[], path: string) {
-  return errors.filter((error) => error.path === path);
-}
-
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("workflows");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -199,29 +129,12 @@ export function App() {
   const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
 
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
-  const [workflowDraft, setWorkflowDraft] = useState<WorkflowUpsertInput>(createBlankWorkflowDraft);
-  const [workflowValidation, setWorkflowValidation] = useState<WorkflowValidationError[]>([]);
-  const [workflowActionError, setWorkflowActionError] = useState<string | null>(null);
-  const [loadingWorkflows, setLoadingWorkflows] = useState(false);
-  const [loadingWorkflowDetail, setLoadingWorkflowDetail] = useState(false);
-  const [savingWorkflow, setSavingWorkflow] = useState(false);
-  const [includeArchivedWorkflows, setIncludeArchivedWorkflows] = useState(false);
-  const [isCreatingWorkflow, setIsCreatingWorkflow] = useState(false);
-  const [loadedWorkflowId, setLoadedWorkflowId] = useState<string | null>(null);
-  const [loadedWorkflowArchived, setLoadedWorkflowArchived] = useState(false);
-
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const viewedSessionIdRef = useRef<string | null>(null);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
     [selectedSessionId, sessions],
-  );
-
-  const selectedWorkflowSummary = useMemo(
-    () => workflows.find((workflow) => workflow.id === selectedWorkflowId) ?? workflows[0] ?? null,
-    [selectedWorkflowId, workflows],
   );
 
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
@@ -243,20 +156,6 @@ export function App() {
       ...(pendingRun.assistantEvent ? [pendingRun.assistantEvent] : []),
     ];
   }, [pendingRuns, selectedSession]);
-
-  const activeSessionCount = useMemo(() => {
-    const alreadyActive = new Set(sessions.filter((session) => session.status === "active").map((session) => session.id));
-    return sessions.filter((session) => session.status === "active").length + Object.keys(pendingRuns).filter((id) => !alreadyActive.has(id)).length;
-  }, [pendingRuns, sessions]);
-
-  const subscribedSessionCount = useMemo(() => sessions.filter((session) => session.subscribed).length, [sessions]);
-
-  const laneIdOptions = useMemo(
-    () => workflowDraft.lanes.map((lane) => ({ id: lane.id ?? "", label: lane.name.trim() || lane.key.trim() || lane.id || "Unnamed lane" })),
-    [workflowDraft.lanes],
-  );
-
-  const validationSummary = useMemo(() => workflowValidation.map((error) => `${error.path}: ${error.message}`), [workflowValidation]);
 
   const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
     setSessions((current) => {
@@ -320,49 +219,6 @@ export function App() {
       setSessionActionError(error instanceof Error ? error.message : "Unable to load sessions.");
     } finally {
       setLoadingSessions(false);
-    }
-  }
-
-  async function loadWorkflows() {
-    setLoadingWorkflows(true);
-    setWorkflowActionError(null);
-
-    try {
-      const nextWorkflows = await listWorkflows(includeArchivedWorkflows);
-      setWorkflows(nextWorkflows);
-      setSelectedWorkflowId((current) => {
-        if (isCreatingWorkflow) {
-          return current;
-        }
-
-        if (current && nextWorkflows.some((workflow) => workflow.id === current)) {
-          return current;
-        }
-
-        return nextWorkflows[0]?.id ?? null;
-      });
-    } catch (error) {
-      setWorkflowActionError(error instanceof Error ? error.message : "Unable to load workflows.");
-    } finally {
-      setLoadingWorkflows(false);
-    }
-  }
-
-  async function loadWorkflowDetail(workflowId: string) {
-    setLoadingWorkflowDetail(true);
-    setWorkflowActionError(null);
-
-    try {
-      const workflow = await getWorkflow(workflowId);
-      setWorkflowDraft(workflowToDraft(workflow));
-      setWorkflowValidation([]);
-      setLoadedWorkflowId(workflow.id);
-      setLoadedWorkflowArchived(workflow.archived);
-      setIsCreatingWorkflow(false);
-    } catch (error) {
-      setWorkflowActionError(error instanceof Error ? error.message : "Unable to load workflow.");
-    } finally {
-      setLoadingWorkflowDetail(false);
     }
   }
 
@@ -457,38 +313,51 @@ export function App() {
 
   useEffect(() => {
     if (activePage === "settings") {
-      if (settingsTab === "logs") {
-        void loadLogs();
-      } else {
-        void loadWorkflows();
-      }
+      void loadLogs();
       return;
     }
 
     if (activePage === "sessions") {
       void loadSessions();
     }
-  }, [activePage, settingsTab, includeArchivedWorkflows]);
+  }, [activePage]);
 
   useEffect(() => {
-    if (activePage !== "settings" || settingsTab !== "workflows" || isCreatingWorkflow) {
-      return;
+    const previousViewedSessionId = viewedSessionIdRef.current;
+    const nextViewedSessionId = activePage === "sessions" ? selectedSession?.id ?? null : null;
+
+    viewedSessionIdRef.current = nextViewedSessionId;
+
+    if (previousViewedSessionId && previousViewedSessionId !== nextViewedSessionId) {
+      void unsubscribeSession(previousViewedSessionId)
+        .then((record) => {
+          applySessionUpdate(record);
+        })
+        .catch(() => {
+          // Ignore auto-unsubscribe failures; explicit actions will surface errors.
+        });
     }
 
-    const workflowId = selectedWorkflowSummary?.id;
-    if (!workflowId || workflowId === loadedWorkflowId) {
-      return;
-    }
-
-    void loadWorkflowDetail(workflowId);
-  }, [activePage, settingsTab, selectedWorkflowSummary?.id, isCreatingWorkflow, loadedWorkflowId]);
-
-  useEffect(() => {
     if (activePage !== "sessions" || !selectedSession) {
       return;
     }
 
     let cancelled = false;
+
+    if (!selectedSession.subscribed) {
+      void subscribeSession(selectedSession.id)
+        .then((record) => {
+          if (!cancelled) {
+            applySessionUpdate(record);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setSessionActionError(error instanceof Error ? error.message : "Unable to subscribe to session.");
+          }
+        });
+    }
+
     setLoadingModelSessionId(selectedSession.id);
 
     void getSessionModelState(selectedSession.id)
@@ -516,7 +385,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, selectedSession?.id]);
+  }, [activePage, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate]);
 
   useEffect(() => {
     const node = transcriptRef.current;
@@ -596,103 +465,6 @@ export function App() {
     });
   }
 
-  async function refreshWorkflowValidation(nextDraft: WorkflowUpsertInput) {
-    try {
-      const validation = await validateWorkflow(nextDraft);
-      setWorkflowValidation(validation.errors);
-      return validation.errors;
-    } catch (error) {
-      setWorkflowActionError(error instanceof Error ? error.message : "Unable to validate workflow.");
-      return [];
-    }
-  }
-
-  function updateWorkflowDraft(updater: (draft: WorkflowUpsertInput) => WorkflowUpsertInput) {
-    setWorkflowDraft((current) => {
-      const next = updater(current);
-      void refreshWorkflowValidation(next);
-      return next;
-    });
-  }
-
-  function beginCreateWorkflow() {
-    setSelectedWorkflowId(null);
-    setWorkflowDraft(createBlankWorkflowDraft());
-    setWorkflowValidation([]);
-    setWorkflowActionError(null);
-    setLoadedWorkflowId(null);
-    setLoadedWorkflowArchived(false);
-    setIsCreatingWorkflow(true);
-  }
-
-  async function handleSaveWorkflow() {
-    setSavingWorkflow(true);
-    setWorkflowActionError(null);
-
-    try {
-      const validation = await validateWorkflow(workflowDraft);
-      setWorkflowValidation(validation.errors);
-      if (!validation.valid) {
-        setWorkflowActionError("Fix the workflow validation errors before saving.");
-        return;
-      }
-
-      const saved = loadedWorkflowId && !isCreatingWorkflow
-        ? await updateWorkflow(loadedWorkflowId, workflowDraft)
-        : await createWorkflow(workflowDraft);
-
-      await loadWorkflows();
-      setSelectedWorkflowId(saved.id);
-      setLoadedWorkflowId(saved.id);
-      setLoadedWorkflowArchived(saved.archived);
-      setWorkflowDraft(workflowToDraft(saved));
-      setWorkflowValidation([]);
-      setIsCreatingWorkflow(false);
-    } catch (error) {
-      setWorkflowActionError(error instanceof Error ? error.message : "Unable to save workflow.");
-    } finally {
-      setSavingWorkflow(false);
-    }
-  }
-
-  async function handleDuplicateWorkflow() {
-    if (!selectedWorkflowSummary) {
-      return;
-    }
-
-    setSavingWorkflow(true);
-    setWorkflowActionError(null);
-    try {
-      const duplicated = await duplicateWorkflow(selectedWorkflowSummary.id);
-      await loadWorkflows();
-      setSelectedWorkflowId(duplicated.id);
-      await loadWorkflowDetail(duplicated.id);
-    } catch (error) {
-      setWorkflowActionError(error instanceof Error ? error.message : "Unable to duplicate workflow.");
-    } finally {
-      setSavingWorkflow(false);
-    }
-  }
-
-  async function handleArchiveWorkflow() {
-    if (!selectedWorkflowSummary) {
-      return;
-    }
-
-    setSavingWorkflow(true);
-    setWorkflowActionError(null);
-    try {
-      const archived = await archiveWorkflow(selectedWorkflowSummary.id);
-      await loadWorkflows();
-      setSelectedWorkflowId(archived.id);
-      await loadWorkflowDetail(archived.id);
-    } catch (error) {
-      setWorkflowActionError(error instanceof Error ? error.message : "Unable to archive workflow.");
-    } finally {
-      setSavingWorkflow(false);
-    }
-  }
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -751,526 +523,45 @@ export function App() {
         {activePage === "settings" ? (
           <section className="panel-stack">
             <section className="panel panel--hero">
-              <div className="settings-hero">
-                <div>
-                  <p className="eyebrow">Configuration and visibility</p>
-                  <h2>Settings</h2>
-                  <p>
-                    Workflows live here first so they can be created, configured, and managed without turning the main app into a
-                    diagram editor too early.
-                  </p>
-                </div>
-
-                <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-                  {SETTINGS_TABS.map((tab) => (
-                    <button
-                      key={tab.id}
-                      className={settingsTab === tab.id ? "nav-item nav-item--active" : "nav-item"}
-                      type="button"
-                      role="tab"
-                      aria-selected={settingsTab === tab.id}
-                      onClick={() => setSettingsTab(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <p className="eyebrow">Development visibility</p>
+              <h2>Settings</h2>
+              <p>
+                The Settings view keeps backend and session activity visible while the orchestration model is still being built.
+                The session-first slice writes lifecycle activity here so failures stay diagnosable.
+              </p>
             </section>
 
-            {settingsTab === "logs" ? (
-              <section className="panel">
-                <div className="panel__header">
-                  <div>
-                    <p className="eyebrow">Application logs</p>
-                    <h3>Runtime log</h3>
-                  </div>
-                  <button className="secondary-button" type="button" onClick={() => void loadLogs()}>
-                    Refresh
-                  </button>
+            <section className="panel">
+              <div className="panel__header">
+                <div>
+                  <p className="eyebrow">Application logs</p>
+                  <h3>Runtime log</h3>
                 </div>
+                <button className="secondary-button" type="button" onClick={() => void loadLogs()}>
+                  Refresh
+                </button>
+              </div>
 
-                {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
+              {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
 
-                <div className="log-list" role="log" aria-live="polite">
-                  {logs.map((entry) => (
-                    <article className="log-entry" key={entry.id}>
-                      <div className="log-entry__meta">
-                        <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
-                        <span>{entry.target}</span>
-                        <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
-                      </div>
-                      <p>{entry.message}</p>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            ) : (
-              <section className="workflow-shell">
-                <aside className="panel workflow-list-panel">
-                  <div className="panel__header panel__header--stacked">
-                    <div>
-                      <p className="eyebrow">Workflow library</p>
-                      <h3>Workflows</h3>
+              <div className="log-list" role="log" aria-live="polite">
+                {logs.map((entry) => (
+                  <article className="log-entry" key={entry.id}>
+                    <div className="log-entry__meta">
+                      <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
+                      <span>{entry.target}</span>
+                      <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
                     </div>
-                    <div className="action-cluster">
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={includeArchivedWorkflows}
-                          onChange={(event) => setIncludeArchivedWorkflows(event.target.checked)}
-                        />
-                        Show archived
-                      </label>
-                      <button className="secondary-button" type="button" onClick={() => void loadWorkflows()}>
-                        Refresh
-                      </button>
-                    </div>
-                  </div>
-
-                  <button className="primary-button" type="button" onClick={beginCreateWorkflow}>
-                    New workflow
-                  </button>
-
-                  {loadingWorkflows ? <p className="muted-copy">Loading workflows…</p> : null}
-                  {workflowActionError ? <p className="error-copy">{workflowActionError}</p> : null}
-
-                  <div className="workflow-list" role="list">
-                    {workflows.map((workflow) => (
-                      <button
-                        key={workflow.id}
-                        className={workflow.id === selectedWorkflowId && !isCreatingWorkflow ? "workflow-list-item workflow-list-item--active" : "workflow-list-item"}
-                        type="button"
-                        onClick={() => {
-                          setSelectedWorkflowId(workflow.id);
-                          setIsCreatingWorkflow(false);
-                        }}
-                      >
-                        <div className="workflow-list-item__header">
-                          <strong>{workflow.name}</strong>
-                          <span className={`status-badge status-badge--${workflow.archived ? "neutral" : "accent"}`}>
-                            {workflow.archived ? "Archived" : "Active"}
-                          </span>
-                        </div>
-                        <div className="workflow-list-item__meta">
-                          <span>{workflow.slug}</span>
-                          <span>{workflow.laneCount} lanes</span>
-                        </div>
-                        <div className="workflow-list-item__footer">
-                          <span>{workflow.description || "No description"}</span>
-                          <span>{formatDateTime(workflow.updatedAt)}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                <section className="panel workflow-editor-panel">
-                  <div className="panel__header panel__header--session-detail">
-                    <div>
-                      <p className="eyebrow">Workflow editor</p>
-                      <h3>{isCreatingWorkflow ? "New workflow" : selectedWorkflowSummary?.name ?? "Select a workflow"}</h3>
-                      <div className="session-detail__meta">
-                        {!isCreatingWorkflow && selectedWorkflowSummary ? (
-                          <>
-                            <span>{selectedWorkflowSummary.slug}</span>
-                            <span>{selectedWorkflowSummary.laneCount} lanes</span>
-                            <span>{loadedWorkflowArchived ? "Archived" : "Editable"}</span>
-                          </>
-                        ) : (
-                          <span>Structured workflow editor</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="action-cluster">
-                      <button className="secondary-button" type="button" disabled={savingWorkflow || !selectedWorkflowSummary} onClick={() => void handleDuplicateWorkflow()}>
-                        Duplicate
-                      </button>
-                      <button className="secondary-button" type="button" disabled={savingWorkflow || !selectedWorkflowSummary || loadedWorkflowArchived} onClick={() => void handleArchiveWorkflow()}>
-                        Archive
-                      </button>
-                      <button className="primary-button" type="button" disabled={savingWorkflow || loadingWorkflowDetail} onClick={() => void handleSaveWorkflow()}>
-                        {savingWorkflow ? "Saving…" : loadedWorkflowId && !isCreatingWorkflow ? "Save changes" : "Create workflow"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {loadingWorkflowDetail ? <p className="muted-copy">Loading workflow…</p> : null}
-
-                  <div className="workflow-editor-grid">
-                    <section className="workflow-section">
-                      <div className="workflow-section__header">
-                        <div>
-                          <p className="eyebrow">Workflow metadata</p>
-                          <h4>Basics</h4>
-                        </div>
-                      </div>
-
-                      <div className="workflow-form-grid">
-                        <label className="field-group">
-                          <span className="field-group__label">Workflow name</span>
-                          <input
-                            className="text-input"
-                            type="text"
-                            value={workflowDraft.name}
-                            onChange={(event) => updateWorkflowDraft((draft) => ({ ...draft, name: event.target.value }))}
-                          />
-                          {getWorkflowValidationForPath(workflowValidation, "name").map((error) => (
-                            <span className="field-error" key={error.message}>{error.message}</span>
-                          ))}
-                        </label>
-
-                        <label className="field-group workflow-form-grid__full">
-                          <span className="field-group__label">Description</span>
-                          <textarea
-                            className="text-area"
-                            rows={3}
-                            value={workflowDraft.description ?? ""}
-                            onChange={(event) => updateWorkflowDraft((draft) => ({ ...draft, description: event.target.value }))}
-                          />
-                        </label>
-                      </div>
-                    </section>
-
-                    <section className="workflow-section">
-                      <div className="workflow-section__header">
-                        <div>
-                          <p className="eyebrow">Ordered lanes</p>
-                          <h4>Lane setup</h4>
-                        </div>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          onClick={() =>
-                            updateWorkflowDraft((draft) => ({
-                              ...draft,
-                              lanes: [...draft.lanes, createEmptyLane(draft.lanes.length)].map((lane, index) => ({ ...lane, order: index })),
-                            }))
-                          }
-                        >
-                          Add lane
-                        </button>
-                      </div>
-
-                      {getWorkflowValidationForPath(workflowValidation, "lanes").map((error) => (
-                        <p className="field-error" key={error.message}>{error.message}</p>
-                      ))}
-
-                      <div className="workflow-lane-list">
-                        {workflowDraft.lanes.map((lane, index) => (
-                          <article className="workflow-lane-card" key={lane.id ?? `lane-${index}`}>
-                            <div className="workflow-lane-card__header">
-                              <div>
-                                <p className="eyebrow">Lane {index + 1}</p>
-                                <h4>{lane.name.trim() || lane.key.trim() || "Untitled lane"}</h4>
-                              </div>
-                              <div className="action-cluster">
-                                <button
-                                  className="secondary-button"
-                                  type="button"
-                                  disabled={index === 0}
-                                  onClick={() =>
-                                    updateWorkflowDraft((draft) => {
-                                      const lanes = [...draft.lanes];
-                                      [lanes[index - 1], lanes[index]] = [lanes[index]!, lanes[index - 1]!];
-                                      return { ...draft, lanes: lanes.map((entry, order) => ({ ...entry, order })) };
-                                    })
-                                  }
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  className="secondary-button"
-                                  type="button"
-                                  disabled={index === workflowDraft.lanes.length - 1}
-                                  onClick={() =>
-                                    updateWorkflowDraft((draft) => {
-                                      const lanes = [...draft.lanes];
-                                      [lanes[index], lanes[index + 1]] = [lanes[index + 1]!, lanes[index]!];
-                                      return { ...draft, lanes: lanes.map((entry, order) => ({ ...entry, order })) };
-                                    })
-                                  }
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  className="secondary-button"
-                                  type="button"
-                                  disabled={workflowDraft.lanes.length <= 1}
-                                  onClick={() =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.filter((_, laneIndex) => laneIndex !== index).map((entry, order) => ({ ...entry, order })),
-                                    }))
-                                  }
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="workflow-form-grid">
-                              <label className="field-group">
-                                <span className="field-group__label">Lane name</span>
-                                <input
-                                  className="text-input"
-                                  type="text"
-                                  value={lane.name}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, name: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                />
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].name`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-
-                              <label className="field-group">
-                                <span className="field-group__label">Lane key</span>
-                                <input
-                                  className="text-input"
-                                  type="text"
-                                  value={lane.key}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, key: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                />
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].key`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-
-                              <label className="field-group">
-                                <span className="field-group__label">Owner type</span>
-                                <select
-                                  className="select-input"
-                                  value={lane.assignedEntityType}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index
-                                          ? {
-                                              ...entry,
-                                              assignedEntityType: event.target.value,
-                                              assignedEntityId: event.target.value === "user" ? "" : entry.assignedEntityId,
-                                            }
-                                          : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  <option value="user">User</option>
-                                  <option value="agent">Agent</option>
-                                  <option value="role">Role</option>
-                                </select>
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].assignedEntityType`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-
-                              <label className="field-group">
-                                <span className="field-group__label">Owner reference</span>
-                                <input
-                                  className="text-input"
-                                  type="text"
-                                  placeholder={lane.assignedEntityType === "user" ? "Not used for user lanes" : "e.g. reviewer-role"}
-                                  value={lane.assignedEntityId ?? ""}
-                                  disabled={lane.assignedEntityType === "user"}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, assignedEntityId: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                />
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].assignedEntityId`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-
-                              <label className="field-group workflow-form-grid__full">
-                                <span className="field-group__label">Entry prompt template</span>
-                                <textarea
-                                  className="text-area"
-                                  rows={3}
-                                  value={lane.entryPromptTemplate ?? ""}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, entryPromptTemplate: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                />
-                              </label>
-
-                              <label className="field-group">
-                                <span className="field-group__label">On success</span>
-                                <select
-                                  className="select-input"
-                                  value={lane.successTargetLaneId ?? ""}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, successTargetLaneId: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  <option value="">End workflow</option>
-                                  {laneIdOptions
-                                    .filter((option) => option.id !== lane.id)
-                                    .map((option) => (
-                                      <option key={option.id} value={option.id}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                </select>
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].successTargetLaneId`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-
-                              <label className="field-group">
-                                <span className="field-group__label">On failure</span>
-                                <select
-                                  className="select-input"
-                                  value={lane.failureTargetLaneId ?? ""}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, failureTargetLaneId: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  <option value="">End workflow</option>
-                                  {laneIdOptions
-                                    .filter((option) => option.id !== lane.id)
-                                    .map((option) => (
-                                      <option key={option.id} value={option.id}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                </select>
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].failureTargetLaneId`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-
-                              <label className="field-group">
-                                <span className="field-group__label">Needs user intervention</span>
-                                <select
-                                  className="select-input"
-                                  value={lane.userInterventionTargetLaneId ?? ""}
-                                  onChange={(event) =>
-                                    updateWorkflowDraft((draft) => ({
-                                      ...draft,
-                                      lanes: draft.lanes.map((entry, laneIndex) =>
-                                        laneIndex === index ? { ...entry, userInterventionTargetLaneId: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  <option value="">End workflow</option>
-                                  {laneIdOptions
-                                    .filter((option) => option.id !== lane.id)
-                                    .map((option) => (
-                                      <option key={option.id} value={option.id}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                </select>
-                                {getWorkflowValidationForPath(workflowValidation, `lanes[${index}].userInterventionTargetLaneId`).map((error) => (
-                                  <span className="field-error" key={error.message}>{error.message}</span>
-                                ))}
-                              </label>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-
-                    <section className="workflow-section">
-                      <div className="workflow-section__header">
-                        <div>
-                          <p className="eyebrow">Validation</p>
-                          <h4>Save readiness</h4>
-                        </div>
-                      </div>
-
-                      {validationSummary.length ? (
-                        <ul className="workflow-validation-list">
-                          {validationSummary.map((message) => (
-                            <li key={message}>{message}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="muted-copy">No validation issues right now.</p>
-                      )}
-                    </section>
-                  </div>
-                </section>
-              </section>
-            )}
+                    <p>{entry.message}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
           </section>
         ) : activePage === "sessions" ? (
-          <section className="panel-stack">
-            <section className="panel panel--hero panel--session-hero">
-              <div>
-                <p className="eyebrow">First shipping vertical slice</p>
-                <h2>Sessions</h2>
-                <p>
-                  Create, resume, subscribe to, and interact with sessions directly from the app. This is the first real product
-                  surface for Orchestra.
-                </p>
-              </div>
-
-              <div className="session-hero__stats">
-                <div className="metric-card">
-                  <span className="metric-card__label">Known sessions</span>
-                  <strong>{sessions.length}</strong>
-                </div>
-                <div className="metric-card">
-                  <span className="metric-card__label">Active</span>
-                  <strong>{activeSessionCount}</strong>
-                </div>
-                <div className="metric-card">
-                  <span className="metric-card__label">Subscribed</span>
-                  <strong>{subscribedSessionCount}</strong>
-                </div>
-              </div>
-            </section>
-
+          <section className="panel-stack panel-stack--sessions">
             <section className="session-shell">
               <aside className="panel session-list-panel">
-                <div className="panel__header panel__header--stacked">
-                  <div>
-                    <p className="eyebrow">Session inventory</p>
-                    <h3>Known sessions</h3>
-                  </div>
-                  <button className="secondary-button" type="button" onClick={() => void loadSessions()}>
-                    Refresh
-                  </button>
-                </div>
-
                 <form
                   className="session-create-form"
                   onSubmit={(event) => {
@@ -1301,30 +592,19 @@ export function App() {
                 {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
 
                 <div className="session-list" role="list">
-                  {sessions.map((session) => {
-                    const displayStatus = pendingRuns[session.id] ? "streaming" : session.status;
-                    return (
-                      <button
-                        key={session.id}
-                        className={session.id === selectedSession?.id ? "session-list-item session-list-item--active" : "session-list-item"}
-                        type="button"
-                        onClick={() => setSelectedSessionId(session.id)}
-                      >
-                        <div className="session-list-item__header">
-                          <strong>{session.title}</strong>
-                          <span className={`status-badge status-badge--${getStatusTone(displayStatus)}`}>{displayStatus}</span>
-                        </div>
-                        <div className="session-list-item__meta">
-                          <span>{session.id}</span>
-                          <span>{formatDateTime(session.updatedAt)}</span>
-                        </div>
-                        <div className="session-list-item__footer">
-                          <span>{session.events.length} events</span>
-                          <span>{session.subscribed ? "Subscribed" : "Unsubscribed"}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {sessions.map((session) => (
+                    <a
+                      key={session.id}
+                      className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
+                      href="#"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setSelectedSessionId(session.id);
+                      }}
+                    >
+                      {session.title}
+                    </a>
+                  ))}
                 </div>
               </aside>
 

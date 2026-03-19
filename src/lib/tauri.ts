@@ -10,17 +10,11 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionStreamEvent,
-  WorkflowDefinition,
-  WorkflowLane,
-  WorkflowSummary,
-  WorkflowUpsertInput,
-  WorkflowValidationResult,
 } from "../types";
 
 const LOG_STORAGE_KEY = "orchestra.mock.logs";
 const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
-const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 
 const MOCK_MODELS: SessionModel[] = [
   {
@@ -58,16 +52,6 @@ function createId(prefix: string) {
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function slugify(value: string) {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return normalized || "workflow";
 }
 
 function createLogEntry(level: LogLevel, target: string, message: string): LogEntry {
@@ -129,34 +113,6 @@ function seedMockSessions(): SessionRecord[] {
   ];
 }
 
-function seedMockWorkflows(): WorkflowDefinition[] {
-  const timestamp = nowIso();
-  return [
-    {
-      id: createId("workflow"),
-      slug: "development",
-      name: "Development",
-      description: "Plan, implement, validate, and review work in a lightweight flow.",
-      archived: false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      lanes: [
-        {
-          id: createId("lane"),
-          key: "plan",
-          name: "Plan",
-          order: 0,
-          assignedEntityType: "user",
-          entryPromptTemplate: "Define the approach before implementation begins.",
-          successTargetLaneId: null,
-          failureTargetLaneId: null,
-          userInterventionTargetLaneId: null,
-        },
-      ],
-    },
-  ];
-}
-
 function ensureMockLogs() {
   const existing = getStoredValue<LogEntry[]>(LOG_STORAGE_KEY);
   if (existing) {
@@ -177,21 +133,6 @@ function ensureMockSessions() {
   const seeded = seedMockSessions();
   setStoredValue(SESSION_STORAGE_KEY, seeded);
   return seeded;
-}
-
-function ensureMockWorkflows() {
-  const existing = getStoredValue<WorkflowDefinition[]>(WORKFLOW_STORAGE_KEY);
-  if (existing) {
-    return existing;
-  }
-
-  const seeded = seedMockWorkflows();
-  setStoredValue(WORKFLOW_STORAGE_KEY, seeded);
-  return seeded;
-}
-
-function saveMockWorkflows(workflows: WorkflowDefinition[]) {
-  setStoredValue(WORKFLOW_STORAGE_KEY, workflows);
 }
 
 function getMockSessionModels() {
@@ -241,140 +182,6 @@ function buildMockModelState(sessionId: string): SessionModelState {
     sessionId,
     currentModel: ensureMockSessionModel(sessionId),
     availableModels: MOCK_MODELS,
-  };
-}
-
-function summarizeWorkflow(workflow: WorkflowDefinition): WorkflowSummary {
-  return {
-    id: workflow.id,
-    slug: workflow.slug,
-    name: workflow.name,
-    description: workflow.description,
-    archived: workflow.archived,
-    laneCount: workflow.lanes.length,
-    createdAt: workflow.createdAt,
-    updatedAt: workflow.updatedAt,
-  };
-}
-
-function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow?: WorkflowDefinition): WorkflowDefinition {
-  const timestamp = nowIso();
-  const laneIdMap = new Map<string, string>();
-
-  const lanes: WorkflowLane[] = input.lanes.map((lane, index) => {
-    const id = lane.id?.trim() || createId("lane");
-    laneIdMap.set(lane.id?.trim() || id, id);
-    return {
-      id,
-      key: slugify(lane.key),
-      name: lane.name.trim(),
-      description: lane.description?.trim() || null,
-      order: lane.order ?? index,
-      assignedEntityType: lane.assignedEntityType,
-      assignedEntityId: lane.assignedEntityId?.trim() || null,
-      entryPromptTemplate: lane.entryPromptTemplate?.trim() || null,
-      successTargetLaneId: lane.successTargetLaneId?.trim() || null,
-      failureTargetLaneId: lane.failureTargetLaneId?.trim() || null,
-      userInterventionTargetLaneId: lane.userInterventionTargetLaneId?.trim() || null,
-    };
-  });
-
-  return {
-    id: existingWorkflow?.id ?? createId("workflow"),
-    slug: existingWorkflow?.slug ?? slugify(input.name),
-    name: input.name.trim(),
-    description: input.description?.trim() || null,
-    archived: existingWorkflow?.archived ?? false,
-    lanes,
-    createdAt: existingWorkflow?.createdAt ?? timestamp,
-    updatedAt: timestamp,
-  };
-}
-
-function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidationResult {
-  const errors: WorkflowValidationResult["errors"] = [];
-
-  if (!input.name.trim()) {
-    errors.push({ code: "required", path: "name", message: "Workflow name is required." });
-  }
-
-  if (!input.lanes.length) {
-    errors.push({ code: "required", path: "lanes", message: "A workflow must contain at least one lane." });
-  }
-
-  const laneIds = new Set<string>();
-  const laneKeys = new Set<string>();
-  const laneOrders = new Set<number>();
-  const normalizedIds = input.lanes.map((lane, index) => lane.id?.trim() || `lane-${index}`);
-
-  input.lanes.forEach((lane, index) => {
-    const laneId = normalizedIds[index]!;
-    const laneKey = slugify(lane.key);
-    const laneOrder = lane.order ?? index;
-    const path = `lanes[${index}]`;
-
-    if (!lane.name.trim()) {
-      errors.push({ code: "required", path: `${path}.name`, message: "Lane name is required." });
-    }
-
-    if (!lane.key.trim()) {
-      errors.push({ code: "required", path: `${path}.key`, message: "Lane key is required." });
-    }
-
-    if (laneIds.has(laneId)) {
-      errors.push({ code: "duplicate", path: `${path}.id`, message: "Lane ids must be unique within a workflow." });
-    }
-    laneIds.add(laneId);
-
-    if (laneKeys.has(laneKey)) {
-      errors.push({ code: "duplicate", path: `${path}.key`, message: "Lane keys must be unique within a workflow." });
-    }
-    laneKeys.add(laneKey);
-
-    if (laneOrders.has(laneOrder)) {
-      errors.push({ code: "duplicate", path: `${path}.order`, message: "Lane order values must be unique within a workflow." });
-    }
-    laneOrders.add(laneOrder);
-
-    if (!["user", "agent", "role"].includes(lane.assignedEntityType)) {
-      errors.push({
-        code: "invalid",
-        path: `${path}.assignedEntityType`,
-        message: "Lane owner type must be one of: user, agent, role.",
-      });
-    }
-
-    if (lane.assignedEntityType === "user" && lane.assignedEntityId?.trim()) {
-      errors.push({
-        code: "invalid",
-        path: `${path}.assignedEntityId`,
-        message: "User-owned lanes must not specify an assigned entity id.",
-      });
-    }
-  });
-
-  const validTargets = new Set(normalizedIds);
-  input.lanes.forEach((lane, index) => {
-    const transitions = [
-      [lane.successTargetLaneId, "successTargetLaneId"],
-      [lane.failureTargetLaneId, "failureTargetLaneId"],
-      [lane.userInterventionTargetLaneId, "userInterventionTargetLaneId"],
-    ] as const;
-
-    transitions.forEach(([target, key]) => {
-      if (target?.trim() && !validTargets.has(target.trim())) {
-        errors.push({
-          code: "invalid_reference",
-          path: `lanes[${index}].${key}`,
-          message: "Transition target must reference an existing lane id.",
-        });
-      }
-    });
-  });
-
-  return {
-    valid: errors.length === 0,
-    errors,
   };
 }
 
@@ -612,115 +419,4 @@ export async function sendSessionMessage(sessionId: string, message: string, run
   }
 
   return invoke<QueuedSessionMessage>("send_session_message", { sessionId, message: trimmedMessage, runId });
-}
-
-export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {
-  if (!isTauriAvailable()) {
-    return ensureMockWorkflows().filter((workflow) => includeArchived || !workflow.archived).map(summarizeWorkflow);
-  }
-
-  return invoke<WorkflowSummary[]>("list_workflows", { includeArchived });
-}
-
-export async function getWorkflow(workflowId: string): Promise<WorkflowDefinition> {
-  if (!isTauriAvailable()) {
-    const workflow = ensureMockWorkflows().find((entry) => entry.id === workflowId);
-    if (!workflow) {
-      throw new Error(`Workflow ${workflowId} was not found`);
-    }
-    return workflow;
-  }
-
-  return invoke<WorkflowDefinition>("get_workflow", { workflowId });
-}
-
-export async function validateWorkflow(input: WorkflowUpsertInput): Promise<WorkflowValidationResult> {
-  if (!isTauriAvailable()) {
-    return validateMockWorkflowInput(input);
-  }
-
-  return invoke<WorkflowValidationResult>("validate_workflow", { input });
-}
-
-export async function createWorkflow(input: WorkflowUpsertInput): Promise<WorkflowDefinition> {
-  if (!isTauriAvailable()) {
-    const validation = validateMockWorkflowInput(input);
-    if (!validation.valid) {
-      throw new Error(validation.errors.map((error) => `${error.path}: ${error.message}`).join("; "));
-    }
-
-    const workflow = normalizeMockWorkflowInput(input);
-    saveMockWorkflows([workflow, ...ensureMockWorkflows()]);
-    appendMockLog("info", "workflow.created", `Created workflow ${workflow.id}`);
-    return workflow;
-  }
-
-  return invoke<WorkflowDefinition>("create_workflow", { input });
-}
-
-export async function updateWorkflow(workflowId: string, input: WorkflowUpsertInput): Promise<WorkflowDefinition> {
-  if (!isTauriAvailable()) {
-    const validation = validateMockWorkflowInput(input);
-    if (!validation.valid) {
-      throw new Error(validation.errors.map((error) => `${error.path}: ${error.message}`).join("; "));
-    }
-
-    const workflows = ensureMockWorkflows();
-    const existing = workflows.find((workflow) => workflow.id === workflowId);
-    if (!existing) {
-      throw new Error(`Workflow ${workflowId} was not found`);
-    }
-
-    const updated = normalizeMockWorkflowInput(input, existing);
-    saveMockWorkflows(workflows.map((workflow) => (workflow.id === workflowId ? updated : workflow)));
-    appendMockLog("info", "workflow.updated", `Updated workflow ${workflowId}`);
-    return updated;
-  }
-
-  return invoke<WorkflowDefinition>("update_workflow", { workflowId, input });
-}
-
-export async function duplicateWorkflow(workflowId: string, newName?: string): Promise<WorkflowDefinition> {
-  if (!isTauriAvailable()) {
-    const workflow = await getWorkflow(workflowId);
-    const duplicatedInput: WorkflowUpsertInput = {
-      name: newName?.trim() || `${workflow.name} Copy`,
-      description: workflow.description,
-      lanes: workflow.lanes.map((lane, index) => ({
-        key: lane.key,
-        name: lane.name,
-        description: lane.description,
-        order: index,
-        assignedEntityType: lane.assignedEntityType,
-        assignedEntityId: lane.assignedEntityId,
-        entryPromptTemplate: lane.entryPromptTemplate,
-      })),
-    };
-
-    return createWorkflow(duplicatedInput);
-  }
-
-  return invoke<WorkflowDefinition>("duplicate_workflow", { workflowId, newName });
-}
-
-export async function archiveWorkflow(workflowId: string): Promise<WorkflowDefinition> {
-  if (!isTauriAvailable()) {
-    const workflows = ensureMockWorkflows();
-    const workflow = workflows.find((entry) => entry.id === workflowId);
-    if (!workflow) {
-      throw new Error(`Workflow ${workflowId} was not found`);
-    }
-
-    const archived = {
-      ...workflow,
-      archived: true,
-      updatedAt: nowIso(),
-    };
-
-    saveMockWorkflows(workflows.map((entry) => (entry.id === workflowId ? archived : entry)));
-    appendMockLog("info", "workflow.archived", `Archived workflow ${workflowId}`);
-    return archived;
-  }
-
-  return invoke<WorkflowDefinition>("archive_workflow", { workflowId });
 }
