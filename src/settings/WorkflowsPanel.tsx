@@ -413,7 +413,7 @@ export function WorkflowsPanel() {
       </section>
 
       <section className="workflow-shell">
-        <aside className="panel workflow-list-panel">
+        <aside className="workflow-list-panel">
           <div className="panel__header panel__header--stacked">
             <div>
               <p className="eyebrow">Workflow library</p>
@@ -441,11 +441,11 @@ export function WorkflowsPanel() {
           {loadingWorkflows ? <p className="muted-copy">Loading workflows…</p> : null}
           {workflowActionError ? <p className="error-copy">{workflowActionError}</p> : null}
 
-          <div className="workflow-list" role="list">
+          <nav className="workflow-nav" aria-label="Workflows">
             {workflows.map((workflow) => (
               <a
                 key={workflow.id}
-                className={workflow.id === selectedWorkflowId && !isCreatingWorkflow ? "workflow-list-link workflow-list-link--active" : "workflow-list-link"}
+                className={workflow.id === selectedWorkflowId && !isCreatingWorkflow ? "workflow-nav-link workflow-nav-link--active" : "workflow-nav-link"}
                 href="#"
                 onClick={(event) => {
                   event.preventDefault();
@@ -456,7 +456,7 @@ export function WorkflowsPanel() {
                 {workflow.name}
               </a>
             ))}
-          </div>
+          </nav>
         </aside>
 
         <section className="panel workflow-editor-panel">
