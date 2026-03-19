@@ -609,15 +609,33 @@ export function WorkflowsPanel() {
                       onChange={(event) =>
                         updateWorkflowDraft((draft) => ({
                           ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id
-                              ? {
-                                  ...entry,
-                                  assignedEntityType: event.target.value,
-                                  assignedEntityId: event.target.value === "user" ? "" : entry.assignedEntityId,
-                                }
-                              : entry,
-                          ),
+                          lanes: draft.lanes.map((entry) => {
+                            if (entry.id !== selectedLane.id) {
+                              return entry;
+                            }
+
+                            if (event.target.value === "user") {
+                              return {
+                                ...entry,
+                                assignedEntityType: "user",
+                                assignedEntityId: "",
+                              };
+                            }
+
+                            if (event.target.value === "agent") {
+                              return {
+                                ...entry,
+                                assignedEntityType: "agent",
+                                assignedEntityId: entry.assignedEntityType === "agent" ? entry.assignedEntityId : (agentOptions[0]?.value ?? ""),
+                              };
+                            }
+
+                            return {
+                              ...entry,
+                              assignedEntityType: "role",
+                              assignedEntityId: entry.assignedEntityType === "role" ? entry.assignedEntityId : (roleOptions[0]?.value ?? ""),
+                            };
+                          }),
                         }))
                       }
                     >
@@ -632,21 +650,61 @@ export function WorkflowsPanel() {
 
                   <label className="field-group">
                     <span className="field-group__label">Owner reference</span>
-                    <input
-                      className="text-input"
-                      type="text"
-                      placeholder={selectedLane.assignedEntityType === "user" ? "Not used for user lanes" : "e.g. reviewer-role"}
-                      value={selectedLane.assignedEntityId ?? ""}
-                      disabled={selectedLane.assignedEntityType === "user"}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
-                          ),
-                        }))
-                      }
-                    />
+                    {selectedLane.assignedEntityType === "user" ? (
+                      <input className="text-input" type="text" placeholder="Not used for user lanes" value="" disabled />
+                    ) : selectedLane.assignedEntityType === "agent" ? (
+                      <select
+                        className="select-input"
+                        value={selectedLane.assignedEntityId ?? ""}
+                        onChange={(event) =>
+                          updateWorkflowDraft((draft) => ({
+                            ...draft,
+                            lanes: draft.lanes.map((entry) =>
+                              entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
+                            ),
+                          }))
+                        }
+                      >
+                        <option value="">{agentOptions.length === 0 ? "No active agents available" : "Select an agent"}</option>
+                        {agentOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                        {selectedLane.assignedEntityId && !agentOptions.some((option) => option.value === selectedLane.assignedEntityId) ? (
+                          <option value={selectedLane.assignedEntityId}>Missing agent: {selectedLane.assignedEntityId}</option>
+                        ) : null}
+                      </select>
+                    ) : (
+                      <select
+                        className="select-input"
+                        value={selectedLane.assignedEntityId ?? ""}
+                        onChange={(event) =>
+                          updateWorkflowDraft((draft) => ({
+                            ...draft,
+                            lanes: draft.lanes.map((entry) =>
+                              entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
+                            ),
+                          }))
+                        }
+                      >
+                        <option value="">{roleOptions.length === 0 ? "No active roles available" : "Select a role"}</option>
+                        {roleOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                        {selectedLane.assignedEntityId && !roleOptions.some((option) => option.value === selectedLane.assignedEntityId) ? (
+                          <option value={selectedLane.assignedEntityId}>Missing role: {selectedLane.assignedEntityId}</option>
+                        ) : null}
+                      </select>
+                    )}
+                    {selectedLane.assignedEntityType === "role" && roleOptions.length === 0 ? (
+                      <span className="muted-copy">Create a role in Settings → Roles before assigning this lane.</span>
+                    ) : null}
+                    {selectedLane.assignedEntityType === "agent" && agentOptions.length === 0 ? (
+                      <span className="muted-copy">No active agents are available to own this lane yet.</span>
+                    ) : null}
                     {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].assignedEntityId`).map((error) => (
                       <span className="field-error" key={error.message}>{error.message}</span>
                     ))}
