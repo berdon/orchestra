@@ -7,10 +7,11 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
 
   await page.goto("/");
 
-  await page.locator('[data-role="new-session-title"]').fill("Playwright session");
+  const previousSessionCount = await page.locator('[data-role="session-link"]').count();
   await page.locator('[data-role="create-session"]').click();
 
-  await expect(page.locator('[data-role="selected-session-title"]')).toHaveText("Playwright session");
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(previousSessionCount + 1);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
 
   await page.locator('[data-role="composer-input"]').fill("Hello from Playwright");
   await page.locator('[data-role="send-message"]').click();

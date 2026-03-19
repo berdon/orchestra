@@ -15,6 +15,9 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
+import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
+import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { SessionsPage } from "./pages/SessionsPage";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AppInfo,
@@ -54,14 +57,6 @@ const SETTINGS_TABS = [
 ] as const;
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
-
-interface RuntimeLogPanelProps {
-  logs: LogEntry[];
-  loadingLogs: boolean;
-  clearingLogs: boolean;
-  onRefresh: () => void;
-  onClear: () => void;
-}
 
 interface PendingSessionRun {
   runId: string;
@@ -215,44 +210,6 @@ function hasVisibleAssistantText(event?: SessionEvent) {
   return Boolean(event?.message.trim() && event.message.trim() !== "Running tools…");
 }
 
-function RuntimeLogPanel({ logs, loadingLogs, clearingLogs, onRefresh, onClear }: RuntimeLogPanelProps) {
-  return (
-    <section className="panel log-panel">
-      <div className="panel__header">
-        <div>
-          <p className="eyebrow">Application logs</p>
-          <h3>Runtime log</h3>
-        </div>
-
-        <div className="action-cluster">
-          <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingLogs || clearingLogs}>
-            Refresh
-          </button>
-          <button className="secondary-button secondary-button--danger" type="button" onClick={onClear} disabled={clearingLogs}>
-            {clearingLogs ? "Clearing…" : "Clear logs"}
-          </button>
-        </div>
-      </div>
-
-      {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
-      {!loadingLogs && logs.length === 0 ? <p className="muted-copy">No logs yet.</p> : null}
-
-      <div className="log-list" role="log" aria-live="polite">
-        {logs.map((entry) => (
-          <article className="log-entry" key={entry.id}>
-            <div className="log-entry__meta">
-              <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
-              <span>{entry.target}</span>
-              <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
-            </div>
-            <p>{entry.message}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("workflows");
@@ -265,7 +222,6 @@ export function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
-  const [newSessionTitle, setNewSessionTitle] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingSessionRun>>({});
@@ -946,6 +902,21 @@ export function App() {
 
       <main className="content">
         <header className="page-header page-header--compact">
+          <div>
+            {activePage === "sessions" ? (
+              <button
+                className="primary-button"
+                data-role="create-session"
+                type="button"
+                disabled={isSubmitting}
+                onClick={() =>
+                  void runSessionAction(async () => createSession())
+                }
+              >
+                Create session
+              </button>
+            ) : null}
+          </div>
           <div className="status-cluster">
             <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
               Open logs
@@ -987,207 +958,36 @@ export function App() {
             )}
           </section>
         ) : activePage === "sessions" ? (
-          <section className="panel-stack panel-stack--sessions">
-            <section className="session-shell">
-              <aside className="session-list-panel">
-                <form
-                  className="session-create-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void runSessionAction(async () => {
-                      const session = await createSession(newSessionTitle);
-                      setNewSessionTitle("");
-                      return session;
-                    });
-                  }}
-                >
-                  <input
-                    className="text-input"
-                    data-role="new-session-title"
-                    type="text"
-                    placeholder="New session title"
-                    value={newSessionTitle}
-                    onChange={(event) => setNewSessionTitle(event.target.value)}
-                  />
-                  <button className="primary-button" data-role="create-session" type="submit" disabled={isSubmitting}>
-                    Create session
-                  </button>
-                </form>
-
-                {loadingSessions ? <p className="muted-copy">Loading sessions…</p> : null}
-                {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
-
-                <nav className="session-list" aria-label="Sessions">
-                  {sessions.map((session) => (
-                    <div
-                      key={session.id}
-                      className={session.id === selectedSession?.id ? "session-list-row session-list-row--active" : "session-list-row"}
-                    >
-                      <a
-                        data-role="session-link"
-                        data-session-id={session.id}
-                        className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
-                        href="#"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          setSelectedSessionId(session.id);
-                        }}
-                      >
-                        {session.title}
-                      </a>
-                      <button
-                        className="session-delete-button"
-                        type="button"
-                        aria-label={`Delete ${session.title}`}
-                        onClick={() => void handleDeleteSession(session.id)}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </nav>
-              </aside>
-
-              <section className="panel session-detail-panel">
-                {selectedSession ? (
-                  <>
-                    <div className="panel__header panel__header--session-detail">
-                      <h3 data-role="selected-session-title">{selectedSession.title}</h3>
-
-                      <div className="action-cluster action-cluster--session-tools">
-                        <label className="field-group field-group--compact session-model-field">
-                          <span className="field-group__label">Model</span>
-                          <select
-                            className="select-input"
-                            value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
-                            disabled={
-                              loadingModelSessionId === selectedSession.id ||
-                              changingModelSessionId === selectedSession.id ||
-                              Boolean(selectedSessionPendingRun)
-                            }
-                            onChange={(event) => void handleModelChange(event.target.value)}
-                          >
-                            {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
-                              <option value="">{formatModelOptionLabel(selectedModelState)}</option>
-                            ) : null}
-                            {selectedModelState?.availableModels.map((model) => (
-                              <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-                                {model.name} · {model.provider}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
-                      </div>
-                    </div>
-
-                    <div className="session-transcript" data-role="session-transcript" ref={transcriptRef} role="log" aria-live="polite">
-                      {displayedEvents.map((event) => (
-                        <article
-                          className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
-                          key={event.id}
-                        >
-                          <div className="transcript-event__meta">
-                            <span>{event.kind}</span>
-                            <div className="transcript-event__meta-group">
-                              {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
-                              {event.pending ? <span className="pending-badge">Pending</span> : null}
-                              <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
-                            </div>
-                          </div>
-                          <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
-                        </article>
-                      ))}
-                    </div>
-
-                    <form
-                      className="composer"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        handleSendMessage();
-                      }}
-                    >
-                      <label className="field-group field-group--composer">
-                        <span className="field-group__label">Send message</span>
-                        <textarea
-                          className="text-area"
-                          data-role="composer-input"
-                          rows={4}
-                          placeholder="Tell the session what to do next…"
-                          value={draftMessage}
-                          onChange={(event) => setDraftMessage(event.target.value)}
-                          onKeyDown={(event) => {
-                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                              event.preventDefault();
-                              handleSendMessage();
-                            }
-                          }}
-                        />
-                      </label>
-                      <div className="composer__footer">
-                        <div className="composer__meta">
-                          <p className="muted-copy">
-                            {selectedSessionPendingRun ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
-                          </p>
-                          <div className="session-detail__meta session-detail__meta--footer">
-                            <span>Created {formatDateTime(selectedSession.createdAt)}</span>
-                            <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
-                          </div>
-                        </div>
-                        <button
-                          className="primary-button"
-                          data-role="send-message"
-                          type="submit"
-                          disabled={Boolean(selectedSessionPendingRun) || draftMessage.trim().length === 0}
-                        >
-                          {selectedSessionPendingRun ? "Sending…" : "Send message"}
-                        </button>
-                      </div>
-                    </form>
-                  </>
-                ) : (
-                  <div className="empty-state">
-                    <p className="eyebrow">No session selected</p>
-                    <h3>Create or select a session</h3>
-                    <p>Use the session list to select an existing session or create a new one to begin the interaction flow.</p>
-                  </div>
-                )}
-              </section>
-            </section>
-          </section>
+          <SessionsPage
+            sessions={sessions}
+            selectedSession={selectedSession}
+            displayedEvents={displayedEvents}
+            selectedSessionPending={Boolean(selectedSessionPendingRun)}
+            selectedSessionDisplayStatus={selectedSessionDisplayStatus}
+            selectedModelState={selectedModelState}
+            loadingSessions={loadingSessions}
+            loadingModelSessionId={loadingModelSessionId}
+            changingModelSessionId={changingModelSessionId}
+            draftMessage={draftMessage}
+            sessionActionError={sessionActionError}
+            transcriptRef={transcriptRef}
+            formatDateTime={formatDateTime}
+            formatTimestamp={formatTimestamp}
+            formatModelOptionLabel={formatModelOptionLabel}
+            getStatusTone={getStatusTone}
+            getEventTone={getEventTone}
+            onSelectSession={setSelectedSessionId}
+            onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
+            onModelChange={(value) => void handleModelChange(value)}
+            onDraftChange={setDraftMessage}
+            onSendMessage={handleSendMessage}
+          />
         ) : (
-          <section className="panel-stack">
-            <section className="panel panel--hero">
-              <p className="eyebrow">{PAGE_COPY[activePage].eyebrow}</p>
-              <h2>{PAGE_COPY[activePage].title}</h2>
-              <p>{PAGE_COPY[activePage].body}</p>
-            </section>
-
-            <section className="panel panel--split">
-              <div>
-                <p className="eyebrow">Foundation</p>
-                <h3>Session workspace</h3>
-                <ul className="bullet-list">
-                  <li>Project switcher placeholder and stable left navigation</li>
-                  <li>Live transcript that stays pinned to the newest message</li>
-                  <li>Keyboard-first composer with optimistic pending states</li>
-                  <li>Per-session model selection from the app</li>
-                </ul>
-              </div>
-
-              <div>
-                <p className="eyebrow">Next orchestration layers</p>
-                <h3>After sessions</h3>
-                <ul className="bullet-list">
-                  <li>Projects and repositories</li>
-                  <li>Task workflow lanes and lane history</li>
-                  <li>Agents, roles, queues, and interruption semantics</li>
-                  <li>Multi-session orchestration and richer runtime controls</li>
-                </ul>
-              </div>
-            </section>
-          </section>
+          <PlaceholderPage
+            eyebrow={PAGE_COPY[activePage].eyebrow}
+            title={PAGE_COPY[activePage].title}
+            body={PAGE_COPY[activePage].body}
+          />
         )}
       </main>
     </div>
