@@ -9,7 +9,7 @@ use commands::{
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
-        create_session, get_session_model_state, list_sessions, resume_session,
+        create_session, delete_session, get_session_model_state, list_sessions, resume_session,
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
     },
     workflows::{
@@ -46,6 +46,7 @@ pub fn run() {
             list_agents,
             list_sessions,
             create_session,
+            delete_session,
             resume_session,
             subscribe_session,
             unsubscribe_session,

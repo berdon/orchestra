@@ -209,6 +209,11 @@ strong {
   margin-bottom: 24px;
 }
 
+.page-header--compact {
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
 .page-header h1,
 .panel h2,
 .panel h3 {
@@ -247,7 +252,8 @@ strong {
 .status-cluster,
 .log-entry__meta,
 .transcript-event__meta,
-.composer__footer {
+.composer__footer,
+.composer__meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -260,7 +266,6 @@ strong {
 
 .panel__header--session-detail {
   align-items: flex-start;
-  flex-wrap: wrap;
 }
 
 .status-cluster,
@@ -382,7 +387,7 @@ strong {
 
 .session-shell {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: 18px;
   min-height: 0;
   height: 100%;
@@ -392,13 +397,14 @@ strong {
 .session-list-panel,
 .session-detail-panel {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   min-height: 0;
 }
 
 .session-list-panel {
   grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
+  align-content: start;
 }
 
 .session-detail-panel {
@@ -406,32 +412,69 @@ strong {
   min-height: 0;
   height: 100%;
   min-width: 0;
+  padding: 20px;
 }
 
 .session-list {
   display: grid;
-  gap: 10px;
+  gap: 4px;
   overflow: auto;
+  align-content: start;
+}
+
+.session-list-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .session-list-link {
+  flex: 1 1 auto;
   display: block;
-  padding: 8px 4px;
-  color: var(--text);
+  padding: 10px 12px;
+  color: var(--text-muted);
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 1px solid rgba(234, 223, 215, 0.7);
+  border-radius: 12px;
 }
 
 .session-list-link:hover {
   color: var(--accent);
+  background: var(--bg-subtle);
 }
 
 .session-list-link--active {
   color: var(--accent);
+  background: var(--accent-soft);
   font-weight: 650;
+}
+
+.session-delete-button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+.session-list-row:hover .session-delete-button,
+.session-delete-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-delete-button:hover,
+.session-delete-button:focus-visible {
+  background: var(--danger-soft);
 }
 
 .session-create-form,
@@ -469,7 +512,7 @@ strong {
   gap: 12px;
   min-height: 0;
   overflow: auto;
-  padding-right: 4px;
+  padding: 0 4px 18px 0;
   align-content: start;
 }
 
@@ -559,11 +602,24 @@ strong {
 }
 
 .action-cluster--session-tools {
-  align-items: flex-end;
+  align-items: flex-start;
+}
+
+.composer__meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.session-detail__meta--footer {
+  gap: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.82rem;
 }
 
 .session-model-field {
-  min-width: min(320px, 100%);
+  min-width: min(300px, 100%);
 }
 
 .workflow-shell {

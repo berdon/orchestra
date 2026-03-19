@@ -122,4 +122,23 @@ impl AppState {
             .map(|active_runs| active_runs.contains_key(session_id))
             .map_err(|_| "Unable to access active session run state".to_string())
     }
+
+    pub fn clear_session_tracking(&self, session_id: &str) -> Result<(), String> {
+        self.subscribed_sessions
+            .lock()
+            .map_err(|_| "Unable to access session subscription state".to_string())?
+            .remove(session_id);
+        self.active_session_runs
+            .lock()
+            .map_err(|_| "Unable to access active session run state".to_string())?
+            .remove(session_id);
+        Ok(())
+    }
+
+    pub fn remove_session_runtime(&self, session_id: &str) -> Result<Option<Arc<SessionRuntime>>, String> {
+        self.session_runtimes
+            .lock()
+            .map_err(|_| "Unable to access session runtime state".to_string())
+            .map(|mut runtimes| runtimes.remove(session_id))
+    }
 }

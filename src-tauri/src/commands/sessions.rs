@@ -5,8 +5,8 @@ use crate::{
     services::{
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{
-            create_session_file, detect_session_context, get_session, list_sessions as list_real_sessions,
-            set_session_model as apply_session_model,
+            create_session_file, delete_session_file, detect_session_context, get_session,
+            list_sessions as list_real_sessions, set_session_model as apply_session_model,
         },
     },
     state::AppState,
@@ -52,6 +52,18 @@ pub fn create_session(
     );
 
     Ok(created.record)
+}
+
+#[tauri::command]
+pub fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let context = detect_session_context(None)?;
+    if let Some(runtime) = state.remove_session_runtime(&session_id)? {
+        runtime.shutdown();
+    }
+    state.clear_session_tracking(&session_id)?;
+    delete_session_file(&context.session_dir, &session_id)?;
+    state.log("info", "sessions.delete", &format!("Deleted pi session {}", session_id));
+    Ok(())
 }
 
 #[tauri::command]
