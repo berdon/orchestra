@@ -9,7 +9,10 @@ use crate::models::{
     WorkflowValidationError, WorkflowValidationResult,
 };
 
-pub fn list_workflows(connection: &Connection, include_archived: bool) -> Result<Vec<WorkflowSummary>, String> {
+pub fn list_workflows(
+    connection: &Connection,
+    include_archived: bool,
+) -> Result<Vec<WorkflowSummary>, String> {
     let mut statement = connection
         .prepare(
             r#"
@@ -50,7 +53,10 @@ pub fn list_workflows(connection: &Connection, include_archived: bool) -> Result
         .map_err(|error| format!("Unable to read workflow rows: {error}"))
 }
 
-pub fn get_workflow(connection: &Connection, workflow_id: &str) -> Result<WorkflowDefinition, String> {
+pub fn get_workflow(
+    connection: &Connection,
+    workflow_id: &str,
+) -> Result<WorkflowDefinition, String> {
     let mut workflow = connection
         .query_row(
             r#"
@@ -80,7 +86,10 @@ pub fn get_workflow(connection: &Connection, workflow_id: &str) -> Result<Workfl
     Ok(workflow)
 }
 
-pub fn create_workflow(connection: &mut Connection, input: WorkflowUpsertInput) -> Result<WorkflowDefinition, String> {
+pub fn create_workflow(
+    connection: &mut Connection,
+    input: WorkflowUpsertInput,
+) -> Result<WorkflowDefinition, String> {
     let validation = validate_workflow(connection, &input)?;
     if !validation.valid {
         return Err(format_validation_errors(&validation.errors));
@@ -99,7 +108,13 @@ pub fn create_workflow(connection: &mut Connection, input: WorkflowUpsertInput) 
         INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at)
         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)
         "#,
-        params![workflow_id, slug, normalized.name, normalized.description, now],
+        params![
+            workflow_id,
+            slug,
+            normalized.name,
+            normalized.description,
+            now
+        ],
     )
     .map_err(|error| format!("Unable to create workflow: {error}"))?;
 
@@ -125,11 +140,17 @@ pub fn update_workflow(
     }
 
     let existing_slug: String = connection
-        .query_row("SELECT slug FROM workflows WHERE id = ?1", [workflow_id], |row| row.get(0))
+        .query_row(
+            "SELECT slug FROM workflows WHERE id = ?1",
+            [workflow_id],
+            |row| row.get(0),
+        )
         .map_err(|error| format!("Unable to load workflow {workflow_id} for update: {error}"))?;
 
     let normalized = normalize_input(input);
-    let next_slug = if slugify(&normalized.name) == slugify(&workflow_name_for_slug(connection, workflow_id)?) {
+    let next_slug = if slugify(&normalized.name)
+        == slugify(&workflow_name_for_slug(connection, workflow_id)?)
+    {
         existing_slug
     } else {
         unique_slug(connection, &normalized.name, Some(workflow_id))?
@@ -145,12 +166,21 @@ pub fn update_workflow(
         SET slug = ?2, name = ?3, description = ?4, updated_at = ?5
         WHERE id = ?1
         "#,
-        params![workflow_id, next_slug, normalized.name, normalized.description, now],
+        params![
+            workflow_id,
+            next_slug,
+            normalized.name,
+            normalized.description,
+            now
+        ],
     )
     .map_err(|error| format!("Unable to update workflow {workflow_id}: {error}"))?;
 
-    tx.execute("DELETE FROM workflow_lanes WHERE workflow_id = ?1", [workflow_id])
-        .map_err(|error| format!("Unable to replace workflow lanes for {workflow_id}: {error}"))?;
+    tx.execute(
+        "DELETE FROM workflow_lanes WHERE workflow_id = ?1",
+        [workflow_id],
+    )
+    .map_err(|error| format!("Unable to replace workflow lanes for {workflow_id}: {error}"))?;
     write_lanes(&tx, workflow_id, &normalized.lanes, &now)?;
 
     tx.commit()
@@ -191,9 +221,15 @@ pub fn duplicate_workflow(
                 assigned_entity_id: lane.assigned_entity_id,
                 entry_prompt_template: lane.entry_prompt_template,
                 success_transition_type: lane.success_transition_type,
-                success_target_lane_id: remap_lane_target(&lane_id_map, lane.success_target_lane_id),
+                success_target_lane_id: remap_lane_target(
+                    &lane_id_map,
+                    lane.success_target_lane_id,
+                ),
                 failure_transition_type: lane.failure_transition_type,
-                failure_target_lane_id: remap_lane_target(&lane_id_map, lane.failure_target_lane_id),
+                failure_target_lane_id: remap_lane_target(
+                    &lane_id_map,
+                    lane.failure_target_lane_id,
+                ),
             })
             .collect(),
     };
@@ -201,7 +237,10 @@ pub fn duplicate_workflow(
     create_workflow(connection, input)
 }
 
-pub fn archive_workflow(connection: &Connection, workflow_id: &str) -> Result<WorkflowDefinition, String> {
+pub fn archive_workflow(
+    connection: &Connection,
+    workflow_id: &str,
+) -> Result<WorkflowDefinition, String> {
     let updated = connection
         .execute(
             "UPDATE workflows SET archived = 1, updated_at = ?2 WHERE id = ?1",
@@ -445,11 +484,19 @@ fn workflow_exists(connection: &Connection, workflow_id: &str) -> Result<bool, S
 
 fn workflow_name_for_slug(connection: &Connection, workflow_id: &str) -> Result<String, String> {
     connection
-        .query_row("SELECT name FROM workflows WHERE id = ?1", [workflow_id], |row| row.get(0))
+        .query_row(
+            "SELECT name FROM workflows WHERE id = ?1",
+            [workflow_id],
+            |row| row.get(0),
+        )
         .map_err(|error| format!("Unable to load workflow name for {workflow_id}: {error}"))
 }
 
-fn unique_slug(connection: &Connection, name: &str, exclude_workflow_id: Option<&str>) -> Result<String, String> {
+fn unique_slug(
+    connection: &Connection,
+    name: &str,
+    exclude_workflow_id: Option<&str>,
+) -> Result<String, String> {
     let base_slug = slugify(name);
     let mut suffix = 0usize;
 
@@ -506,7 +553,9 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
             ORDER BY lane_order ASC, created_at ASC
             "#,
         )
-        .map_err(|error| format!("Unable to prepare lane query for workflow {workflow_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to prepare lane query for workflow {workflow_id}: {error}")
+        })?;
 
     let rows = statement
         .query_map([workflow_id], |row| {
@@ -628,7 +677,10 @@ fn normalize_input(input: WorkflowUpsertInput) -> NormalizedWorkflowInput {
 
 fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLaneInput {
     NormalizedLaneInput {
-        id: lane.id.and_then(|value| normalized_optional_string(Some(value))).unwrap_or_else(lane_id),
+        id: lane
+            .id
+            .and_then(|value| normalized_optional_string(Some(value)))
+            .unwrap_or_else(lane_id),
         key: slugify(&lane.key),
         name: lane.name.trim().to_string(),
         description: normalized_optional_string(lane.description),
@@ -637,9 +689,15 @@ fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLane
         assigned_entity_id: normalized_optional_string(lane.assigned_entity_id),
         entry_prompt_template: normalized_optional_string(lane.entry_prompt_template),
         success_transition_type: normalize_transition_type(&lane.success_transition_type),
-        success_target_lane_id: normalize_transition_target(&lane.success_transition_type, lane.success_target_lane_id),
+        success_target_lane_id: normalize_transition_target(
+            &lane.success_transition_type,
+            lane.success_target_lane_id,
+        ),
         failure_transition_type: normalize_transition_type(&lane.failure_transition_type),
-        failure_target_lane_id: normalize_transition_target(&lane.failure_transition_type, lane.failure_target_lane_id),
+        failure_target_lane_id: normalize_transition_target(
+            &lane.failure_transition_type,
+            lane.failure_target_lane_id,
+        ),
     }
 }
 
@@ -723,15 +781,35 @@ fn format_validation_errors(errors: &[WorkflowValidationError]) -> String {
 }
 
 #[cfg(test)]
-pub fn seed_worker(connection: &Connection, table: &str, id: &str, name: &str) -> Result<(), String> {
-    connection
-        .execute(
-            &format!(
-                "INSERT INTO {table} (id, name, archived, created_at, updated_at) VALUES (?1, ?2, 0, ?3, ?3)"
-            ),
-            params![id, name, now_iso()],
-        )
-        .map_err(|error| format!("Unable to seed worker for tests: {error}"))?;
+pub fn seed_worker(
+    connection: &Connection,
+    table: &str,
+    id: &str,
+    name: &str,
+) -> Result<(), String> {
+    let now = now_iso();
+
+    match table {
+        "roles" => {
+            connection
+                .execute(
+                    "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, capacity, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 1, 0, ?4, ?4)",
+                    params![id, id, name, now],
+                )
+                .map_err(|error| format!("Unable to seed role for tests: {error}"))?;
+        }
+        _ => {
+            connection
+                .execute(
+                    &format!(
+                        "INSERT INTO {table} (id, name, archived, created_at, updated_at) VALUES (?1, ?2, 0, ?3, ?3)"
+                    ),
+                    params![id, name, now],
+                )
+                .map_err(|error| format!("Unable to seed worker for tests: {error}"))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -739,7 +817,11 @@ pub fn seed_worker(connection: &Connection, table: &str, id: &str, name: &str) -
 mod tests {
     use super::*;
     use crate::services::database::initialize_database_at;
-    use std::{env, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        env,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn unique_temp_db(label: &str) -> PathBuf {
         let suffix = format!(
@@ -801,7 +883,8 @@ mod tests {
     fn creates_lists_and_loads_workflows() {
         let mut connection = open_test_connection("workflow-crud");
 
-        let created = create_workflow(&mut connection, sample_workflow_input()).expect("workflow should create");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
         assert_eq!(created.name, "Development");
         assert_eq!(created.lanes.len(), 2);
         assert_eq!(created.slug, "development");
@@ -819,7 +902,8 @@ mod tests {
     #[test]
     fn updates_duplicates_and_archives_workflows() {
         let mut connection = open_test_connection("workflow-update");
-        let created = create_workflow(&mut connection, sample_workflow_input()).expect("workflow should create");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
 
         let updated = update_workflow(
             &mut connection,
@@ -849,7 +933,8 @@ mod tests {
         assert_eq!(updated.slug, "development-revised");
         assert_eq!(updated.lanes.len(), 1);
 
-        let duplicated = duplicate_workflow(&mut connection, &updated.id, None).expect("workflow should duplicate");
+        let duplicated = duplicate_workflow(&mut connection, &updated.id, None)
+            .expect("workflow should duplicate");
         assert_eq!(duplicated.name, "Development Revised Copy");
         assert_ne!(duplicated.id, updated.id);
 
@@ -891,7 +976,10 @@ mod tests {
         .expect("validation should run");
 
         assert!(!validation.valid);
-        assert!(validation.errors.iter().any(|error| error.path == "lanes[0].successTargetLaneId"));
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "lanes[0].successTargetLaneId"));
     }
 
     #[test]
@@ -921,7 +1009,10 @@ mod tests {
         .expect("validation should run");
 
         assert!(!validation.valid);
-        assert!(validation.errors.iter().any(|error| error.path == "lanes[0].assignedEntityId"));
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "lanes[0].assignedEntityId"));
     }
 
     #[test]
@@ -998,15 +1089,23 @@ mod tests {
         .expect("validation should run");
 
         assert!(!validation.valid);
-        assert!(validation.errors.iter().any(|error| error.path == "lanes[1].key"));
-        assert!(validation.errors.iter().any(|error| error.path == "lanes[1].order"));
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "lanes[1].key"));
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "lanes[1].order"));
     }
 
     #[test]
     fn generates_unique_slugs_for_duplicate_names() {
         let mut connection = open_test_connection("workflow-slugs");
-        let first = create_workflow(&mut connection, sample_workflow_input()).expect("first workflow should create");
-        let second = create_workflow(&mut connection, sample_workflow_input()).expect("second workflow should create");
+        let first = create_workflow(&mut connection, sample_workflow_input())
+            .expect("first workflow should create");
+        let second = create_workflow(&mut connection, sample_workflow_input())
+            .expect("second workflow should create");
 
         assert_eq!(first.slug, "development");
         assert_eq!(second.slug, "development-2");

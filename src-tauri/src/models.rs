@@ -90,6 +90,73 @@ pub struct SessionRecord {
     pub events: Vec<SessionEvent>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSummary {
+    pub id: String,
+    pub name: String,
+    pub archived: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleDefinition {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub capacity: i64,
+    pub archived: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleSummary {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub capacity: i64,
+    pub archived: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleUpsertInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub capacity: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleValidationResult {
+    pub valid: bool,
+    pub errors: Vec<RoleValidationError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleValidationError {
+    pub code: String,
+    pub path: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowDefinition {

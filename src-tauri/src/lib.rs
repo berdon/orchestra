@@ -4,7 +4,9 @@ mod services;
 mod state;
 
 use commands::{
+    agents::list_agents,
     app::{clear_logs, get_app_info, get_logs, get_session_storage_info, open_logs_window},
+    roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
         create_session, get_session_model_state, list_sessions, resume_session,
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
@@ -40,6 +42,7 @@ pub fn run() {
             clear_logs,
             open_logs_window,
             get_session_storage_info,
+            list_agents,
             list_sessions,
             create_session,
             resume_session,
@@ -48,6 +51,12 @@ pub fn run() {
             get_session_model_state,
             set_session_model,
             send_session_message,
+            list_roles,
+            get_role,
+            validate_role,
+            create_role,
+            update_role,
+            archive_role,
             list_workflows,
             get_workflow,
             validate_workflow,

@@ -1,0 +1,391 @@
+import { useEffect, useMemo, useState } from "react";
+
+import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
+import type { RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError } from "../types";
+
+function createBlankRoleDraft(): RoleUpsertInput {
+  return {
+    name: "",
+    description: "",
+    systemPrompt: "",
+    provider: "",
+    model: "",
+    capacity: 1,
+  };
+}
+
+function roleToDraft(role: RoleDefinition): RoleUpsertInput {
+  return {
+    name: role.name,
+    description: role.description ?? "",
+    systemPrompt: role.systemPrompt ?? "",
+    provider: role.provider ?? "",
+    model: role.model ?? "",
+    capacity: role.capacity,
+  };
+}
+
+function getRoleValidationForPath(errors: RoleValidationError[], path: string) {
+  return errors.filter((error) => error.path === path);
+}
+
+function formatDateTime(timestamp: string) {
+  return new Date(timestamp).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function RolesPanel() {
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [roleDraft, setRoleDraft] = useState<RoleUpsertInput>(createBlankRoleDraft);
+  const [roleValidation, setRoleValidation] = useState<RoleValidationError[]>([]);
+  const [roleActionError, setRoleActionError] = useState<string | null>(null);
+  const [loadingRoles, setLoadingRoles] = useState(false);
+  const [loadingRoleDetail, setLoadingRoleDetail] = useState(false);
+  const [savingRole, setSavingRole] = useState(false);
+  const [includeArchivedRoles, setIncludeArchivedRoles] = useState(false);
+  const [isCreatingRole, setIsCreatingRole] = useState(false);
+  const [loadedRoleId, setLoadedRoleId] = useState<string | null>(null);
+  const [loadedRoleArchived, setLoadedRoleArchived] = useState(false);
+
+  const selectedRoleSummary = useMemo(
+    () => roles.find((role) => role.id === selectedRoleId) ?? roles[0] ?? null,
+    [selectedRoleId, roles],
+  );
+
+  const validationSummary = useMemo(() => roleValidation.map((error) => `${error.path}: ${error.message}`), [roleValidation]);
+
+  async function loadRoles() {
+    setLoadingRoles(true);
+    setRoleActionError(null);
+
+    try {
+      const nextRoles = await listRoles(includeArchivedRoles);
+      setRoles(nextRoles);
+      setSelectedRoleId((current) => {
+        if (isCreatingRole) {
+          return current;
+        }
+
+        if (current && nextRoles.some((role) => role.id === current)) {
+          return current;
+        }
+
+        return nextRoles[0]?.id ?? null;
+      });
+    } catch (error) {
+      setRoleActionError(error instanceof Error ? error.message : "Unable to load roles.");
+    } finally {
+      setLoadingRoles(false);
+    }
+  }
+
+  async function loadRoleDetail(roleId: string) {
+    setLoadingRoleDetail(true);
+    setRoleActionError(null);
+
+    try {
+      const role = await getRole(roleId);
+      setRoleDraft(roleToDraft(role));
+      setRoleValidation([]);
+      setLoadedRoleId(role.id);
+      setLoadedRoleArchived(role.archived);
+      setIsCreatingRole(false);
+    } catch (error) {
+      setRoleActionError(error instanceof Error ? error.message : "Unable to load role.");
+    } finally {
+      setLoadingRoleDetail(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadRoles();
+  }, [includeArchivedRoles]);
+
+  useEffect(() => {
+    if (isCreatingRole) {
+      return;
+    }
+
+    const roleId = selectedRoleSummary?.id;
+    if (!roleId || roleId === loadedRoleId) {
+      return;
+    }
+
+    void loadRoleDetail(roleId);
+  }, [selectedRoleSummary?.id, isCreatingRole, loadedRoleId]);
+
+  async function refreshRoleValidation(nextDraft: RoleUpsertInput) {
+    try {
+      const validation = await validateRole(nextDraft);
+      setRoleValidation(validation.errors);
+      return validation.errors;
+    } catch (error) {
+      setRoleActionError(error instanceof Error ? error.message : "Unable to validate role.");
+      return [];
+    }
+  }
+
+  function updateRoleDraft(updater: (draft: RoleUpsertInput) => RoleUpsertInput) {
+    setRoleDraft((current) => {
+      const next = updater(current);
+      void refreshRoleValidation(next);
+      return next;
+    });
+  }
+
+  function beginCreateRole() {
+    setSelectedRoleId(null);
+    setRoleDraft(createBlankRoleDraft());
+    setRoleValidation([]);
+    setRoleActionError(null);
+    setLoadedRoleId(null);
+    setLoadedRoleArchived(false);
+    setIsCreatingRole(true);
+  }
+
+  async function handleSaveRole() {
+    setSavingRole(true);
+    setRoleActionError(null);
+
+    try {
+      const validation = await validateRole(roleDraft);
+      setRoleValidation(validation.errors);
+      if (!validation.valid) {
+        setRoleActionError("Fix the role validation errors before saving.");
+        return;
+      }
+
+      const saved = loadedRoleId && !isCreatingRole ? await updateRole(loadedRoleId, roleDraft) : await createRole(roleDraft);
+
+      await loadRoles();
+      setSelectedRoleId(saved.id);
+      setLoadedRoleId(saved.id);
+      setLoadedRoleArchived(saved.archived);
+      setRoleDraft(roleToDraft(saved));
+      setRoleValidation([]);
+      setIsCreatingRole(false);
+    } catch (error) {
+      setRoleActionError(error instanceof Error ? error.message : "Unable to save role.");
+    } finally {
+      setSavingRole(false);
+    }
+  }
+
+  async function handleArchiveRole() {
+    if (!selectedRoleSummary) {
+      return;
+    }
+
+    setSavingRole(true);
+    setRoleActionError(null);
+    try {
+      const archived = await archiveRole(selectedRoleSummary.id);
+      await loadRoles();
+      setSelectedRoleId(archived.id);
+      await loadRoleDetail(archived.id);
+    } catch (error) {
+      setRoleActionError(error instanceof Error ? error.message : "Unable to archive role.");
+    } finally {
+      setSavingRole(false);
+    }
+  }
+
+  return (
+    <section className="workflow-shell">
+      <aside className="panel workflow-list-panel">
+        <div className="panel__header panel__header--stacked">
+          <div>
+            <p className="eyebrow">Role library</p>
+            <h3>Roles</h3>
+          </div>
+          <div className="action-cluster">
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={includeArchivedRoles}
+                onChange={(event) => setIncludeArchivedRoles(event.target.checked)}
+              />
+              Show archived
+            </label>
+            <button className="primary-button" type="button" onClick={beginCreateRole}>
+              New role
+            </button>
+          </div>
+        </div>
+
+        {loadingRoles ? <p className="muted-copy">Loading roles…</p> : null}
+        {roleActionError ? <p className="error-copy">{roleActionError}</p> : null}
+
+        <div className="workflow-list" role="list">
+          {roles.map((role) => (
+            <button
+              key={role.id}
+              className={role.id === selectedRoleSummary?.id && !isCreatingRole ? "workflow-list-item workflow-list-item--active" : "workflow-list-item"}
+              type="button"
+              onClick={() => setSelectedRoleId(role.id)}
+            >
+              <div className="workflow-list-item__header">
+                <div>
+                  <strong>{role.name}</strong>
+                  <div className="workflow-list-item__meta">
+                    <span>{role.provider ?? "No provider"}</span>
+                    <span>{role.model ?? "No model"}</span>
+                  </div>
+                </div>
+                <span className={`status-badge status-badge--${role.archived ? "neutral" : "accent"}`}>
+                  {role.archived ? "Archived" : `Capacity ${role.capacity}`}
+                </span>
+              </div>
+              <p>{role.description ?? "No description yet."}</p>
+              <div className="workflow-list-item__footer">
+                <span>{role.slug}</span>
+                <span>Updated {formatDateTime(role.updatedAt)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      <section className="panel workflow-editor-panel">
+        {selectedRoleSummary || isCreatingRole ? (
+          <div className="workflow-editor-grid">
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Role definition</p>
+                <h3>{isCreatingRole ? "Create role" : roleDraft.name.trim() || "Untitled role"}</h3>
+              </div>
+              <div className="action-cluster">
+                {loadedRoleArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
+                {!isCreatingRole && loadedRoleId ? (
+                  <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveRole()} disabled={savingRole || loadedRoleArchived}>
+                    Archive role
+                  </button>
+                ) : null}
+                <button className="primary-button" type="button" onClick={() => void handleSaveRole()} disabled={savingRole || loadingRoleDetail}>
+                  {savingRole ? "Saving…" : isCreatingRole ? "Create role" : "Save changes"}
+                </button>
+              </div>
+            </div>
+
+            {loadingRoleDetail ? <p className="muted-copy">Loading role…</p> : null}
+
+            <section className="workflow-section">
+              <div>
+                <p className="eyebrow">Execution defaults</p>
+                <h3>Configuration</h3>
+              </div>
+
+              <div className="workflow-form-grid">
+                <label className="field-group">
+                  <span className="field-group__label">Role name</span>
+                  <input
+                    className="text-input"
+                    type="text"
+                    value={roleDraft.name}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, name: event.target.value }))}
+                  />
+                  {getRoleValidationForPath(roleValidation, "name").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Capacity</span>
+                  <input
+                    className="text-input"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={roleDraft.capacity}
+                    onChange={(event) =>
+                      updateRoleDraft((draft) => ({
+                        ...draft,
+                        capacity: Number.parseInt(event.target.value, 10) || 0,
+                      }))
+                    }
+                  />
+                  {getRoleValidationForPath(roleValidation, "capacity").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Provider</span>
+                  <input
+                    className="text-input"
+                    type="text"
+                    placeholder="e.g. anthropic"
+                    value={roleDraft.provider ?? ""}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, provider: event.target.value }))}
+                  />
+                  {getRoleValidationForPath(roleValidation, "provider").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Model</span>
+                  <input
+                    className="text-input"
+                    type="text"
+                    placeholder="e.g. claude-sonnet-4-20250514"
+                    value={roleDraft.model ?? ""}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, model: event.target.value }))}
+                  />
+                  {getRoleValidationForPath(roleValidation, "model").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group workflow-form-grid__full">
+                  <span className="field-group__label">Description</span>
+                  <textarea
+                    className="text-area"
+                    rows={3}
+                    value={roleDraft.description ?? ""}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, description: event.target.value }))}
+                  />
+                </label>
+
+                <label className="field-group workflow-form-grid__full">
+                  <span className="field-group__label">System prompt</span>
+                  <textarea
+                    className="text-area"
+                    rows={8}
+                    value={roleDraft.systemPrompt ?? ""}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, systemPrompt: event.target.value }))}
+                  />
+                </label>
+              </div>
+            </section>
+
+            {validationSummary.length > 0 ? (
+              <section className="workflow-section">
+                <div>
+                  <p className="eyebrow">Validation</p>
+                  <h3>Resolve these issues before saving</h3>
+                </div>
+                <ul className="workflow-validation-list">
+                  {validationSummary.map((entry) => (
+                    <li key={entry}>{entry}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p className="eyebrow">No role selected</p>
+            <h3>Create or select a role</h3>
+            <p>Use the role list to inspect an existing definition or create a new role for workflow ownership.</p>
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}

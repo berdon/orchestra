@@ -15,6 +15,7 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
+import { RolesPanel } from "./settings/RolesPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AppInfo,
@@ -48,6 +49,7 @@ const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings">, { eyebrow
 };
 
 const SETTINGS_TABS = [
+  { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
   { id: "logs", label: "Logs" },
 ] as const;
@@ -183,7 +185,7 @@ function RuntimeLogPanel({ logs, loadingLogs, clearingLogs, onRefresh, onClear }
 
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("workflows");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("roles");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -760,7 +762,37 @@ export function App() {
 
         {activePage === "settings" ? (
           <section className="panel-stack">
-            {settingsTab === "workflows" ? (
+            <section className="panel panel--hero">
+              <div className="settings-hero">
+                <div>
+                  <p className="eyebrow">Configuration and visibility</p>
+                  <h2>Settings</h2>
+                  <p>
+                    Role and workflow configuration lives here so the operational editing surfaces can mature without disturbing the
+                    live session workspace.
+                  </p>
+                </div>
+
+                <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+                  {SETTINGS_TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      className={settingsTab === tab.id ? "nav-item nav-item--active" : "nav-item"}
+                      type="button"
+                      role="tab"
+                      aria-selected={settingsTab === tab.id}
+                      onClick={() => setSettingsTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {settingsTab === "roles" ? (
+              <RolesPanel />
+            ) : settingsTab === "workflows" ? (
               <WorkflowsPanel />
             ) : (
               <section className="panel panel--split">

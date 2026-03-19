@@ -52,6 +52,14 @@ export interface SessionRecord {
   events: SessionEvent[];
 }
 
+export interface AgentSummary {
+  id: string;
+  name: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface QueuedSessionMessage {
   sessionId: string;
   runId: string;
@@ -85,6 +93,53 @@ export interface WorkflowLane {
   successTargetLaneId?: string | null;
   failureTransitionType: WorkflowTransitionType | string;
   failureTargetLaneId?: string | null;
+}
+
+export interface RoleDefinition {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  systemPrompt?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  capacity: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoleSummary {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  capacity: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoleUpsertInput {
+  name: string;
+  description?: string | null;
+  systemPrompt?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  capacity: number;
+}
+
+export interface RoleValidationError {
+  code: string;
+  path: string;
+  message: string;
+}
+
+export interface RoleValidationResult {
+  valid: boolean;
+  errors: RoleValidationError[];
 }
 
 export interface WorkflowDefinition {
