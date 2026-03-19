@@ -4,7 +4,7 @@ mod services;
 mod state;
 
 use commands::{
-    app::{get_app_info, get_logs, get_session_storage_info},
+    app::{clear_logs, get_app_info, get_logs, get_session_storage_info},
     sessions::{
         create_session, get_session_model_state, list_sessions, resume_session,
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
@@ -26,7 +26,10 @@ pub fn run() {
     app_state.log(
         "info",
         "storage.sqlite",
-        &format!("Initialized Orchestra SQLite database at {}", database_path.display()),
+        &format!(
+            "Initialized Orchestra SQLite database at {}",
+            database_path.display()
+        ),
     );
 
     tauri::Builder::default()
@@ -34,6 +37,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             get_logs,
+            clear_logs,
             get_session_storage_info,
             list_sessions,
             create_session,

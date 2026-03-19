@@ -54,7 +54,17 @@ impl AppState {
         }
     }
 
-    pub fn set_session_subscription(&self, session_id: &str, subscribed: bool) -> Result<(), String> {
+    pub fn clear_logs(&self) {
+        if let Ok(mut logs) = self.logs.lock() {
+            logs.clear();
+        }
+    }
+
+    pub fn set_session_subscription(
+        &self,
+        session_id: &str,
+        subscribed: bool,
+    ) -> Result<(), String> {
         let mut sessions = self
             .subscribed_sessions
             .lock()
@@ -96,7 +106,10 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access active session run state".to_string())?;
 
-        if active_runs.get(session_id).is_some_and(|current| current == run_id) {
+        if active_runs
+            .get(session_id)
+            .is_some_and(|current| current == run_id)
+        {
             active_runs.remove(session_id);
         }
 

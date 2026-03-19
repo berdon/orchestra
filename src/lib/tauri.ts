@@ -462,6 +462,46 @@ export async function getLogs(): Promise<LogEntry[]> {
   return invoke<LogEntry[]>("get_logs");
 }
 
+export async function clearLogs(): Promise<void> {
+  if (!isTauriAvailable()) {
+    setStoredValue(LOG_STORAGE_KEY, [] satisfies LogEntry[]);
+    return;
+  }
+
+  await invoke("clear_logs");
+}
+
+export async function openLogsWindow(): Promise<void> {
+  const logsUrl = new URL(window.location.href);
+  logsUrl.searchParams.set("view", "logs");
+
+  if (!isTauriAvailable()) {
+    window.open(logsUrl.toString(), "orchestra-logs", "popup=yes,width=980,height=760,resizable=yes,scrollbars=yes");
+    return;
+  }
+
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const existing = await WebviewWindow.getByLabel("logs");
+  if (existing) {
+    await existing.show();
+    await existing.setFocus();
+    return;
+  }
+
+  const logsWindow = new WebviewWindow("logs", {
+    title: "Orchestra Logs",
+    url: logsUrl.toString(),
+    width: 980,
+    height: 760,
+    resizable: true,
+    focus: true,
+  });
+
+  logsWindow.once("tauri://error", (error) => {
+    console.error("Unable to open Orchestra logs window", error);
+  });
+}
+
 export async function listSessions(): Promise<SessionRecord[]> {
   if (!isTauriAvailable()) {
     return sortSessions(ensureMockSessions());

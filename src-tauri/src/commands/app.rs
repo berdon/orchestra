@@ -25,7 +25,14 @@ pub fn get_logs(state: State<'_, AppState>) -> Vec<LogEntry> {
 }
 
 #[tauri::command]
-pub fn get_session_storage_info(project_slug: Option<String>) -> Result<SessionStorageInfo, String> {
+pub fn clear_logs(state: State<'_, AppState>) {
+    state.clear_logs();
+}
+
+#[tauri::command]
+pub fn get_session_storage_info(
+    project_slug: Option<String>,
+) -> Result<SessionStorageInfo, String> {
     let context = detect_session_context(project_slug.as_deref())?;
 
     Ok(SessionStorageInfo {

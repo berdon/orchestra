@@ -142,6 +142,16 @@ strong {
   background: var(--bg-elevated);
 }
 
+.secondary-button--danger {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  color: var(--danger);
+}
+
+.secondary-button--danger:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger-soft) 72%, white);
+}
+
 .nav-item {
   width: 100%;
   border-color: transparent;
@@ -173,6 +183,22 @@ strong {
   min-width: 0;
   padding: 32px;
   overflow: auto;
+}
+
+.logs-window-shell {
+  min-height: 100%;
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  background: var(--bg);
+}
+
+.logs-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
 }
 
 .page-header {
@@ -283,6 +309,18 @@ strong {
   display: grid;
   gap: 12px;
   margin-top: 18px;
+}
+
+.log-panel {
+  min-height: 0;
+}
+
+.settings-log-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .log-entry,
@@ -666,7 +704,8 @@ strong {
   .workflow-shell,
   .panel--split,
   .panel--session-hero,
-  .settings-hero {
+  .settings-hero,
+  .logs-window-header {
     grid-template-columns: 1fr;
     flex-direction: column;
   }

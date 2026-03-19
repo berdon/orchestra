@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  clearLogs,
   createSession,
   getAppInfo,
   getLogs,
@@ -7,6 +8,7 @@ import {
   isTauriAvailable,
   listSessions,
   listenToSessionStream,
+  openLogsWindow,
   resumeSession,
   sendSessionMessage,
   setSessionModel,
@@ -51,6 +53,14 @@ const SETTINGS_TABS = [
 ] as const;
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
+
+interface RuntimeLogPanelProps {
+  logs: LogEntry[];
+  loadingLogs: boolean;
+  clearingLogs: boolean;
+  onRefresh: () => void;
+  onClear: () => void;
+}
 
 interface PendingSessionRun {
   runId: string;
@@ -133,12 +143,51 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
   return "Choose a model";
 }
 
+function RuntimeLogPanel({ logs, loadingLogs, clearingLogs, onRefresh, onClear }: RuntimeLogPanelProps) {
+  return (
+    <section className="panel log-panel">
+      <div className="panel__header">
+        <div>
+          <p className="eyebrow">Application logs</p>
+          <h3>Runtime log</h3>
+        </div>
+
+        <div className="action-cluster">
+          <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingLogs || clearingLogs}>
+            Refresh
+          </button>
+          <button className="secondary-button secondary-button--danger" type="button" onClick={onClear} disabled={clearingLogs}>
+            {clearingLogs ? "Clearing…" : "Clear logs"}
+          </button>
+        </div>
+      </div>
+
+      {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
+      {!loadingLogs && logs.length === 0 ? <p className="muted-copy">No logs yet.</p> : null}
+
+      <div className="log-list" role="log" aria-live="polite">
+        {logs.map((entry) => (
+          <article className="log-entry" key={entry.id}>
+            <div className="log-entry__meta">
+              <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
+              <span>{entry.target}</span>
+              <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
+            </div>
+            <p>{entry.message}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("workflows");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -153,6 +202,7 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
+  const isLogsWindow = useMemo(() => new URLSearchParams(window.location.search).get("view") === "logs", []);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
@@ -239,6 +289,20 @@ export function App() {
     } finally {
       setLoadingLogs(false);
     }
+  }
+
+  async function handleClearLogs() {
+    setClearingLogs(true);
+    try {
+      await clearLogs();
+      setLogs([]);
+    } finally {
+      setClearingLogs(false);
+    }
+  }
+
+  async function handleOpenLogsWindow() {
+    await openLogsWindow();
   }
 
   async function loadSessions() {
@@ -383,6 +447,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (isLogsWindow) {
+      return;
+    }
+
     let unlisten: (() => void) | undefined;
 
     if (!isTauriAvailable()) {
@@ -401,22 +469,29 @@ export function App() {
     return () => {
       unlisten?.();
     };
-  }, [handleSessionStreamEvent]);
+  }, [handleSessionStreamEvent, isLogsWindow]);
 
   useEffect(() => {
-    if (activePage === "settings") {
-      if (settingsTab === "logs") {
+    if (isLogsWindow) {
+      void loadLogs();
+      const intervalId = window.setInterval(() => {
         void loadLogs();
-      }
-      return;
+      }, 1000);
+      return () => {
+        window.clearInterval(intervalId);
+      };
     }
 
     if (activePage === "sessions") {
       void loadSessions();
     }
-  }, [activePage, settingsTab]);
+  }, [activePage, isLogsWindow]);
 
   useEffect(() => {
+    if (isLogsWindow) {
+      return;
+    }
+
     const previousViewedSessionId = viewedSessionIdRef.current;
     const nextViewedSessionId = activePage === "sessions" ? selectedSession?.id ?? null : null;
 
@@ -479,16 +554,20 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate, mergeSessionRecord]);
+  }, [activePage, isLogsWindow, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate, mergeSessionRecord]);
 
   useEffect(() => {
+    if (isLogsWindow) {
+      return;
+    }
+
     const node = transcriptRef.current;
     if (!node) {
       return;
     }
 
     node.scrollTop = node.scrollHeight;
-  }, [displayedEvents, selectedSession?.id]);
+  }, [displayedEvents, isLogsWindow, selectedSession?.id]);
 
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun ? "streaming" : selectedSession?.status ?? "idle";
@@ -572,6 +651,38 @@ export function App() {
     });
   }
 
+  if (isLogsWindow) {
+    return (
+      <main className="logs-window-shell">
+        <header className="logs-window-header">
+          <div>
+            <p className="eyebrow">Orchestra diagnostics</p>
+            <h1>Logs</h1>
+          </div>
+
+          <div className="status-cluster">
+            <div className="status-pill">
+              <span className="status-pill__label">Environment</span>
+              <strong>{appInfo?.environment ?? "loading"}</strong>
+            </div>
+            <div className="status-pill">
+              <span className="status-pill__label">Backend</span>
+              <strong>{appInfo?.backendStatus ?? "loading"}</strong>
+            </div>
+          </div>
+        </header>
+
+        <RuntimeLogPanel
+          logs={logs}
+          loadingLogs={loadingLogs}
+          clearingLogs={clearingLogs}
+          onRefresh={() => void loadLogs()}
+          onClear={() => void handleClearLogs()}
+        />
+      </main>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -616,6 +727,9 @@ export function App() {
           </div>
 
           <div className="status-cluster">
+            <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
+              Open logs
+            </button>
             <div className="status-pill">
               <span className="status-pill__label">Environment</span>
               <strong>{appInfo?.environment ?? "loading"}</strong>
@@ -660,30 +774,22 @@ export function App() {
             {settingsTab === "workflows" ? (
               <WorkflowsPanel />
             ) : (
-              <section className="panel">
-                <div className="panel__header">
-                  <div>
-                    <p className="eyebrow">Application logs</p>
-                    <h3>Runtime log</h3>
-                  </div>
-                  <button className="secondary-button" type="button" onClick={() => void loadLogs()}>
-                    Refresh
-                  </button>
+              <section className="panel panel--split">
+                <div>
+                  <p className="eyebrow">Application logs</p>
+                  <h3>Open runtime logs in a separate window</h3>
+                  <p>
+                    Keep the log window open while testing sessions so backend/runtime events stay visible without covering the main UI.
+                  </p>
                 </div>
 
-                {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
-
-                <div className="log-list" role="log" aria-live="polite">
-                  {logs.map((entry) => (
-                    <article className="log-entry" key={entry.id}>
-                      <div className="log-entry__meta">
-                        <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
-                        <span>{entry.target}</span>
-                        <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
-                      </div>
-                      <p>{entry.message}</p>
-                    </article>
-                  ))}
+                <div className="settings-log-actions">
+                  <button className="primary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
+                    Open logs window
+                  </button>
+                  <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleClearLogs()} disabled={clearingLogs}>
+                    {clearingLogs ? "Clearing…" : "Clear logs"}
+                  </button>
                 </div>
               </section>
             )}
