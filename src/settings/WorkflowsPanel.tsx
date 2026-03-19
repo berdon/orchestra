@@ -413,7 +413,7 @@ export function WorkflowsPanel() {
       </section>
 
       <section className="workflow-shell">
-        <aside className="workflow-list-panel">
+        <aside className="workflow-nav-panel">
           <div className="panel__header panel__header--stacked">
             <div>
               <p className="eyebrow">Workflow library</p>
@@ -459,7 +459,7 @@ export function WorkflowsPanel() {
           </nav>
         </aside>
 
-        <section className="panel workflow-editor-panel">
+        <section className="panel workflow-detail-panel">
           <div className="panel__header panel__header--session-detail">
             <div>
               <p className="eyebrow">Workflow editor</p>

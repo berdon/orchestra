@@ -423,7 +423,10 @@ strong {
   align-content: start;
 }
 
-.role-list {
+.role-list,
+.workflow-nav,
+.workforce-role-nav,
+.workforce-agent-nav {
   display: grid;
   gap: 4px;
   overflow-x: hidden;
@@ -464,7 +467,10 @@ strong {
   font-weight: 650;
 }
 
-.role-list-link {
+.role-list-link,
+.workflow-nav-link,
+.workforce-role-link,
+.workforce-agent-link {
   min-width: 0;
   width: 100%;
   display: block;
@@ -477,15 +483,23 @@ strong {
   border-radius: 12px;
 }
 
-.role-list-link:hover {
+.role-list-link:hover,
+.workflow-nav-link:hover,
+.workforce-role-link:hover {
   color: var(--accent);
   background: var(--bg-subtle);
 }
 
-.role-list-link--active {
+.role-list-link--active,
+.workflow-nav-link--active,
+.workforce-role-link--active {
   color: var(--accent);
   background: var(--accent-soft);
   font-weight: 650;
+}
+
+.workforce-agent-link {
+  background: transparent;
 }
 
 .session-delete-button {
@@ -669,10 +683,11 @@ strong {
   gap: 18px;
 }
 
+.role-shell,
 .workflow-shell,
 .workforce-shell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: 18px;
   min-height: min(72vh, calc(100vh - 220px));
   align-items: stretch;
@@ -683,45 +698,39 @@ strong {
   gap: 18px;
 }
 
-.workflow-list-panel,
-.workflow-editor-panel,
-.workforce-sidebar,
+.role-nav-panel,
+.role-detail-panel,
+.workflow-nav-panel,
+.workflow-detail-panel,
+.workforce-nav-panel,
 .workforce-detail-panel {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   min-height: 0;
 }
 
-.workflow-list-panel,
-.workforce-sidebar {
+.role-nav-panel,
+.workflow-nav-panel,
+.workforce-nav-panel {
   grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
+  align-content: start;
 }
 
-.workflow-editor-panel,
+.role-detail-panel,
+.workflow-detail-panel,
 .workforce-detail-panel {
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: min(72vh, calc(100vh - 220px));
+  min-height: 0;
+  min-width: 0;
+  padding: 20px;
 }
 
-.workflow-list,
 .workflow-lane-list,
 .workflow-validation-list,
-.workforce-list,
 .workforce-detail-stack {
   display: grid;
   gap: 10px;
-}
-
-.workflow-list,
-.workforce-list {
-  overflow: auto;
-}
-
-.workflow-nav {
-  display: grid;
-  gap: 4px;
-  overflow: auto;
-  align-content: start;
 }
 
 .workforce-detail-stack {
@@ -747,8 +756,14 @@ strong {
   margin: 0;
 }
 
-.workforce-form {
+.workforce-form,
+.workforce-agent-group {
   align-content: start;
+}
+
+.workforce-agent-group {
+  display: grid;
+  gap: 14px;
 }
 
 .workflow-board {
@@ -801,28 +816,6 @@ strong {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
-}
-
-.workflow-nav-link {
-  display: block;
-  padding: 10px 12px;
-  color: var(--text-muted);
-  text-decoration: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-radius: 12px;
-}
-
-.workflow-nav-link:hover {
-  color: var(--accent);
-  background: var(--bg-subtle);
-}
-
-.workflow-nav-link--active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-weight: 650;
 }
 
 .workflow-editor-grid,

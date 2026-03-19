@@ -187,8 +187,8 @@ export function RolesPanel() {
   }
 
   return (
-    <section className="workflow-shell">
-      <aside className="panel workflow-list-panel">
+    <section className="role-shell">
+      <aside className="role-nav-panel">
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Role library</p>
@@ -229,7 +229,7 @@ export function RolesPanel() {
         </nav>
       </aside>
 
-      <section className="panel workflow-editor-panel">
+      <section className="panel role-detail-panel">
         {selectedRoleSummary || isCreatingRole ? (
           <div className="workflow-editor-grid">
             <div className="panel__header panel__header--stacked">
