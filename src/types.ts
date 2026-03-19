@@ -59,7 +59,12 @@ export interface AgentSummary {
   id: string;
   slug: string;
   name: string;
+  roleId?: string | null;
   thinkingLevel: string;
+  policyIds?: string[];
+  directPermissions?: string[];
+  system?: boolean;
+  immutable?: boolean;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -73,7 +78,12 @@ export interface AgentDefinition {
   systemPrompt?: string | null;
   provider?: string | null;
   model?: string | null;
+  roleId?: string | null;
   thinkingLevel: string;
+  policyIds?: string[];
+  directPermissions?: string[];
+  system?: boolean;
+  immutable?: boolean;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -85,7 +95,10 @@ export interface AgentUpsertInput {
   systemPrompt?: string | null;
   provider?: string | null;
   model?: string | null;
+  roleId?: string | null;
   thinkingLevel?: string | null;
+  policyIds?: string[];
+  directPermissions?: string[];
 }
 
 export interface AgentValidationError {
@@ -117,6 +130,29 @@ export interface ProjectWorkerOverlay {
   workerSlug: string;
   prompt?: string | null;
   updatedAt?: string | null;
+}
+
+export interface PolicyDefinition {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  permissions: string[];
+  system: boolean;
+  immutable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PolicySummary {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  system: boolean;
+  immutable: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface QueuedSessionMessage {
@@ -175,6 +211,8 @@ export interface RoleSummary {
   model?: string | null;
   thinkingLevel: string;
   capacity: number;
+  policyIds?: string[];
+  directPermissions?: string[];
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -188,6 +226,8 @@ export interface RoleUpsertInput {
   model?: string | null;
   thinkingLevel?: string | null;
   capacity: number;
+  policyIds?: string[];
+  directPermissions?: string[];
 }
 
 export interface RoleValidationError {

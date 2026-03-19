@@ -40,7 +40,13 @@ pub fn update_worker_overlay(
     prompt: Option<String>,
 ) -> Result<ProjectWorkerOverlay, String> {
     let orchestra_root = default_orchestra_root()?;
-    update_worker_overlay_in(&orchestra_root, project_slug, worker_type, worker_slug, prompt)
+    update_worker_overlay_in(
+        &orchestra_root,
+        project_slug,
+        worker_type,
+        worker_slug,
+        prompt,
+    )
 }
 
 pub fn get_worker_overlay_in(
@@ -83,7 +89,8 @@ pub fn update_worker_overlay_in(
         updated_at: Some(Utc::now().to_rfc3339()),
     };
 
-    overlay_map_mut(&mut settings, &normalized_worker_type).insert(normalized_worker_slug.clone(), overlay.clone());
+    overlay_map_mut(&mut settings, &normalized_worker_type)
+        .insert(normalized_worker_slug.clone(), overlay.clone());
     save_project_settings(orchestra_root, &normalized_project_slug, &settings)?;
 
     Ok(ProjectWorkerOverlay {
@@ -104,10 +111,18 @@ fn load_project_settings(
         return Ok(StoredProjectSettings::default());
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|error| format!("Unable to read project settings {}: {error}", path.display()))?;
-    serde_json::from_str(&content)
-        .map_err(|error| format!("Unable to parse project settings {}: {error}", path.display()))
+    let content = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "Unable to read project settings {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::from_str(&content).map_err(|error| {
+        format!(
+            "Unable to parse project settings {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn save_project_settings(
@@ -117,14 +132,22 @@ fn save_project_settings(
 ) -> Result<(), String> {
     let path = project_settings_path(orchestra_root, project_slug);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Unable to create project settings directory {}: {error}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Unable to create project settings directory {}: {error}",
+                parent.display()
+            )
+        })?;
     }
 
     let content = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("Unable to serialize project settings: {error}"))?;
-    fs::write(&path, content)
-        .map_err(|error| format!("Unable to write project settings {}: {error}", path.display()))
+    fs::write(&path, content).map_err(|error| {
+        format!(
+            "Unable to write project settings {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn overlay_map<'a>(
@@ -172,7 +195,11 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        env,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         let suffix = format!(
@@ -191,22 +218,43 @@ mod tests {
     fn stores_and_loads_agent_and_role_overlays() {
         let root = unique_temp_dir("project-settings");
 
-        let agent = update_worker_overlay_in(&root, "Orchestra", "agent", "Data", Some("Use td and keep commits small.".into()))
-            .expect("agent overlay should save");
+        let agent = update_worker_overlay_in(
+            &root,
+            "Orchestra",
+            "agent",
+            "Data",
+            Some("Use td and keep commits small.".into()),
+        )
+        .expect("agent overlay should save");
         assert_eq!(agent.project_slug, "orchestra");
         assert_eq!(agent.worker_slug, "data");
-        assert_eq!(agent.prompt.as_deref(), Some("Use td and keep commits small."));
+        assert_eq!(
+            agent.prompt.as_deref(),
+            Some("Use td and keep commits small.")
+        );
 
-        let role = update_worker_overlay_in(&root, "Orchestra", "role", "Reviewer", Some("Prefer concise findings.".into()))
-            .expect("role overlay should save");
+        let role = update_worker_overlay_in(
+            &root,
+            "Orchestra",
+            "role",
+            "Reviewer",
+            Some("Prefer concise findings.".into()),
+        )
+        .expect("role overlay should save");
         assert_eq!(role.worker_slug, "reviewer");
 
         let loaded_agent = get_worker_overlay_in(&root, "Orchestra", "agent", "Data")
             .expect("agent overlay should load");
-        assert_eq!(loaded_agent.prompt.as_deref(), Some("Use td and keep commits small."));
+        assert_eq!(
+            loaded_agent.prompt.as_deref(),
+            Some("Use td and keep commits small.")
+        );
 
         let loaded_role = get_worker_overlay_in(&root, "Orchestra", "role", "Reviewer")
             .expect("role overlay should load");
-        assert_eq!(loaded_role.prompt.as_deref(), Some("Prefer concise findings."));
+        assert_eq!(
+            loaded_role.prompt.as_deref(),
+            Some("Prefer concise findings.")
+        );
     }
 }

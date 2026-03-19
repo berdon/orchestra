@@ -6,6 +6,7 @@ pub mod live_sessions;
 pub mod logging;
 pub mod orchestra_paths;
 pub mod pi_sessions;
+pub mod policies;
 pub mod project_settings;
 pub mod role_dispatch;
 pub mod role_runtime;

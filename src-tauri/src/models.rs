@@ -108,7 +108,12 @@ pub struct AgentSummary {
     pub id: String,
     pub slug: String,
     pub name: String,
+    pub role_id: Option<String>,
     pub thinking_level: String,
+    pub policy_ids: Vec<String>,
+    pub direct_permissions: Vec<String>,
+    pub system: bool,
+    pub immutable: bool,
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -124,7 +129,12 @@ pub struct AgentDefinition {
     pub system_prompt: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub role_id: Option<String>,
     pub thinking_level: String,
+    pub policy_ids: Vec<String>,
+    pub direct_permissions: Vec<String>,
+    pub system: bool,
+    pub immutable: bool,
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -138,7 +148,12 @@ pub struct AgentUpsertInput {
     pub system_prompt: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub role_id: Option<String>,
     pub thinking_level: Option<String>,
+    #[serde(default)]
+    pub policy_ids: Vec<String>,
+    #[serde(default)]
+    pub direct_permissions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,6 +207,8 @@ pub struct RoleDefinition {
     pub model: Option<String>,
     pub thinking_level: String,
     pub capacity: i64,
+    pub policy_ids: Vec<String>,
+    pub direct_permissions: Vec<String>,
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -208,6 +225,8 @@ pub struct RoleSummary {
     pub model: Option<String>,
     pub thinking_level: String,
     pub capacity: i64,
+    pub policy_ids: Vec<String>,
+    pub direct_permissions: Vec<String>,
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -223,6 +242,37 @@ pub struct RoleUpsertInput {
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub capacity: i64,
+    #[serde(default)]
+    pub policy_ids: Vec<String>,
+    #[serde(default)]
+    pub direct_permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyDefinition {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub permissions: Vec<String>,
+    pub system: bool,
+    pub immutable: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicySummary {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub system: bool,
+    pub immutable: bool,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

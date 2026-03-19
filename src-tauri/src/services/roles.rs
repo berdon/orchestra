@@ -6,7 +6,7 @@ use crate::{
     models::{
         RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError, RoleValidationResult,
     },
-    services::orchestra_paths::sanitize_slug,
+    services::{orchestra_paths::sanitize_slug, policies},
 };
 
 pub fn list_roles(
@@ -16,7 +16,7 @@ pub fn list_roles(
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, slug, name, description, provider, model, thinking_level, capacity, archived, created_at, updated_at
+            SELECT id, slug, name, description, provider, model, thinking_level, capacity, direct_permissions, archived, created_at, updated_at
             FROM roles
             WHERE (?1 = 1 OR archived = 0)
             ORDER BY archived ASC, updated_at DESC, name ASC
@@ -26,59 +26,97 @@ pub fn list_roles(
 
     let rows = statement
         .query_map([if include_archived { 1 } else { 0 }], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to query roles: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read role rows: {error}"))?;
+
+    rows.into_iter()
+        .map(|row| {
             Ok(RoleSummary {
-                id: row.get(0)?,
-                slug: row.get(1)?,
-                name: row.get(2)?,
-                description: row.get(3)?,
-                provider: row.get(4)?,
-                model: row.get(5)?,
-                thinking_level: row.get(6)?,
-                capacity: row.get(7)?,
-                archived: row.get::<_, i64>(8)? != 0,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
+                id: row.0.clone(),
+                slug: row.1,
+                name: row.2,
+                description: row.3,
+                provider: row.4,
+                model: row.5,
+                thinking_level: row.6,
+                capacity: row.7,
+                policy_ids: policies::load_role_policy_ids(connection, &row.0)?,
+                direct_permissions: policies::decode_string_list(row.8)?,
+                archived: row.9 != 0,
+                created_at: row.10,
+                updated_at: row.11,
             })
         })
-        .map_err(|error| format!("Unable to query roles: {error}"))?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read role rows: {error}"))
+        .collect()
 }
 
 pub fn get_role(connection: &Connection, role_id: &str) -> Result<RoleDefinition, String> {
-    connection
+    let row = connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, archived, created_at, updated_at
+            SELECT id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, direct_permissions, archived, created_at, updated_at
             FROM roles
             WHERE id = ?1
             "#,
             [role_id],
             |row| {
-                Ok(RoleDefinition {
-                    id: row.get(0)?,
-                    slug: row.get(1)?,
-                    name: row.get(2)?,
-                    description: row.get(3)?,
-                    system_prompt: row.get(4)?,
-                    provider: row.get(5)?,
-                    model: row.get(6)?,
-                    thinking_level: row.get(7)?,
-                    capacity: row.get(8)?,
-                    archived: row.get::<_, i64>(9)? != 0,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                })
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, i64>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
+                ))
             },
         )
         .optional()
         .map_err(|error| format!("Unable to query role {role_id}: {error}"))?
-        .ok_or_else(|| format!("Role {role_id} was not found"))
+        .ok_or_else(|| format!("Role {role_id} was not found"))?;
+
+    Ok(RoleDefinition {
+        id: row.0.clone(),
+        slug: row.1,
+        name: row.2,
+        description: row.3,
+        system_prompt: row.4,
+        provider: row.5,
+        model: row.6,
+        thinking_level: row.7,
+        capacity: row.8,
+        policy_ids: policies::load_role_policy_ids(connection, &row.0)?,
+        direct_permissions: policies::decode_string_list(row.9)?,
+        archived: row.10 != 0,
+        created_at: row.11,
+        updated_at: row.12,
+    })
 }
 
 pub fn validate_role(
-    _connection: &Connection,
+    connection: &Connection,
     input: &RoleUpsertInput,
 ) -> Result<RoleValidationResult, String> {
     let normalized = normalize_input(input.clone());
@@ -122,6 +160,27 @@ pub fn validate_role(
         ));
     }
 
+    for (index, policy_id) in normalized.policy_ids.iter().enumerate() {
+        let exists = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM policies WHERE id = ?1)",
+                [policy_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| {
+                format!("Unable to validate role policy reference {policy_id}: {error}")
+            })?
+            != 0;
+
+        if !exists {
+            errors.push(validation_error(
+                "invalid_reference",
+                &format!("policyIds[{index}]"),
+                "Policy id does not reference an existing policy.",
+            ));
+        }
+    }
+
     Ok(RoleValidationResult {
         valid: errors.is_empty(),
         errors,
@@ -138,6 +197,7 @@ pub fn create_role(
     }
 
     let normalized = normalize_input(input);
+    let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let now = now_iso();
     let role_id = role_id();
     let slug = unique_slug(connection, &normalized.name, None)?;
@@ -157,11 +217,12 @@ pub fn create_role(
             model,
             thinking_level,
             capacity,
+            direct_permissions,
             archived,
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?10)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?11)
         "#,
         params![
             role_id,
@@ -171,12 +232,18 @@ pub fn create_role(
             normalized.system_prompt,
             normalized.provider,
             normalized.model,
-            normalized.thinking_level.clone().unwrap_or_else(|| "off".into()),
+            normalized
+                .thinking_level
+                .clone()
+                .unwrap_or_else(|| "off".into()),
             normalized.capacity,
+            direct_permissions,
             now,
         ],
     )
     .map_err(|error| format!("Unable to create role: {error}"))?;
+
+    policies::sync_role_policy_ids(&tx, &role_id, &normalized.policy_ids, &now)?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit role creation: {error}"))?;
@@ -196,6 +263,7 @@ pub fn update_role(
     }
 
     let normalized = normalize_input(input);
+    let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let next_slug = if role_slug(&normalized.name) == role_slug(&existing.name) {
         existing.slug
     } else {
@@ -217,7 +285,8 @@ pub fn update_role(
             model = ?7,
             thinking_level = ?8,
             capacity = ?9,
-            updated_at = ?10
+            direct_permissions = ?10,
+            updated_at = ?11
         WHERE id = ?1
         "#,
         params![
@@ -228,12 +297,18 @@ pub fn update_role(
             normalized.system_prompt,
             normalized.provider,
             normalized.model,
-            normalized.thinking_level.clone().unwrap_or_else(|| "off".into()),
+            normalized
+                .thinking_level
+                .clone()
+                .unwrap_or_else(|| "off".into()),
             normalized.capacity,
+            direct_permissions,
             now,
         ],
     )
     .map_err(|error| format!("Unable to update role {role_id}: {error}"))?;
+
+    policies::sync_role_policy_ids(&tx, role_id, &normalized.policy_ids, &now)?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit role update: {error}"))?;
@@ -306,8 +381,11 @@ fn normalize_input(input: RoleUpsertInput) -> RoleUpsertInput {
         system_prompt: normalized_optional_string(input.system_prompt),
         provider: normalized_optional_string(input.provider),
         model: normalized_optional_string(input.model),
-        thinking_level: normalized_optional_string(input.thinking_level).map(|value| value.to_lowercase()),
+        thinking_level: normalized_optional_string(input.thinking_level)
+            .map(|value| value.to_lowercase()),
         capacity: input.capacity,
+        policy_ids: policies::normalize_string_list(input.policy_ids),
+        direct_permissions: policies::normalize_string_list(input.direct_permissions),
     }
 }
 
@@ -354,7 +432,7 @@ fn format_validation_errors(errors: &[RoleValidationError]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::database::initialize_database_at;
+    use crate::services::{database::initialize_database_at, policies::create_policy};
     use std::{
         env,
         path::PathBuf,
@@ -389,6 +467,8 @@ mod tests {
             model: Some("claude-sonnet-4-20250514".into()),
             thinking_level: Some("medium".into()),
             capacity: 2,
+            policy_ids: Vec::new(),
+            direct_permissions: vec!["tasks.read".into(), "tasks.comment".into()],
         }
     }
 
@@ -405,6 +485,8 @@ mod tests {
                 model: None,
                 thinking_level: Some("turbo".into()),
                 capacity: 0,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
             },
         )
         .expect("validation should run");
@@ -412,7 +494,10 @@ mod tests {
         assert!(!validation.valid);
         assert!(validation.errors.iter().any(|error| error.path == "name"));
         assert!(validation.errors.iter().any(|error| error.path == "model"));
-        assert!(validation.errors.iter().any(|error| error.path == "thinkingLevel"));
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "thinkingLevel"));
         assert!(validation
             .errors
             .iter()
@@ -424,6 +509,17 @@ mod tests {
         let mut connection = open_test_connection("roles-crud");
         let created =
             create_role(&mut connection, sample_role_input()).expect("role should create");
+
+        let supervisor_policy = create_policy(
+            &mut connection,
+            "supervisor",
+            "Supervisor",
+            None,
+            &["*".into()],
+            true,
+            true,
+        )
+        .expect("policy should create");
 
         assert_eq!(created.slug, "reviewer");
         assert_eq!(
@@ -444,6 +540,8 @@ mod tests {
                 model: created.model.clone(),
                 thinking_level: Some("high".into()),
                 capacity: 3,
+                policy_ids: vec![supervisor_policy.id.clone(), supervisor_policy.id.clone()],
+                direct_permissions: vec!["tasks.transition".into(), "tasks.transition".into()],
             },
         )
         .expect("role should update");
@@ -451,6 +549,11 @@ mod tests {
         assert_eq!(updated.slug, "lead-reviewer");
         assert_eq!(updated.thinking_level, "high");
         assert_eq!(updated.capacity, 3);
+        assert_eq!(updated.policy_ids, vec![supervisor_policy.id]);
+        assert_eq!(
+            updated.direct_permissions,
+            vec!["tasks.transition".to_string()]
+        );
 
         let archived = archive_role(&connection, &created.id).expect("role should archive");
         assert!(archived.archived);

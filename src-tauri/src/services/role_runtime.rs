@@ -622,6 +622,8 @@ mod tests {
                 model: None,
                 thinking_level: Some("off".into()),
                 capacity,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
             },
         )
         .expect("role should create")

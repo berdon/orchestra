@@ -4,8 +4,12 @@ mod services;
 mod state;
 
 use commands::{
-    agents::{archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent, validate_agent},
+    agents::{
+        archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent,
+        validate_agent,
+    },
     app::{clear_logs, get_app_info, get_logs, get_session_storage_info, open_logs_window},
+    policies::{get_policy, list_policies},
     project_settings::{get_worker_overlay, update_worker_overlay},
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
@@ -52,6 +56,8 @@ pub fn run() {
             update_agent,
             archive_agent,
             get_agent_memory_info,
+            list_policies,
+            get_policy,
             get_worker_overlay,
             update_worker_overlay,
             list_sessions,

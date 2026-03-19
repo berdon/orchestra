@@ -352,10 +352,24 @@ pub fn validate_workflow(
                 }
             }
             "agent" => {
-                validate_owner_reference(connection, "agents", "slug", lane, &path_prefix, &mut errors)?;
+                validate_owner_reference(
+                    connection,
+                    "agents",
+                    "slug",
+                    lane,
+                    &path_prefix,
+                    &mut errors,
+                )?;
             }
             "role" => {
-                validate_owner_reference(connection, "roles", "slug", lane, &path_prefix, &mut errors)?;
+                validate_owner_reference(
+                    connection,
+                    "roles",
+                    "slug",
+                    lane,
+                    &path_prefix,
+                    &mut errors,
+                )?;
             }
             _ => {}
         }
@@ -796,7 +810,7 @@ pub fn seed_worker(
         "roles" => {
             connection
                 .execute(
-                    "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 1, 0, ?4, ?4)",
+                    "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, direct_permissions, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 1, '[]', 0, ?4, ?4)",
                     params![id, slugify(name), name, now],
                 )
                 .map_err(|error| format!("Unable to seed role for tests: {error}"))?;
@@ -804,7 +818,7 @@ pub fn seed_worker(
         "agents" => {
             connection
                 .execute(
-                    "INSERT INTO agents (id, slug, name, description, system_prompt, provider, model, thinking_level, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 0, ?4, ?4)",
+                    "INSERT INTO agents (id, slug, name, description, system_prompt, provider, model, role_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, 'off', '[]', 0, 0, 0, ?4, ?4)",
                     params![id, slugify(name), name, now],
                 )
                 .map_err(|error| format!("Unable to seed agent for tests: {error}"))?;
@@ -813,7 +827,7 @@ pub fn seed_worker(
             connection
                 .execute(
                     &format!(
-                        "INSERT INTO {table} (id, name, thinking_level, archived, created_at, updated_at) VALUES (?1, ?2, 'off', 0, ?3, ?3)"
+                        "INSERT INTO {table} (id, name, role_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES (?1, ?2, NULL, 'off', '[]', 0, 0, 0, ?3, ?3)"
                     ),
                     params![id, name, now],
                 )

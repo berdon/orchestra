@@ -118,7 +118,10 @@ impl SessionRuntime {
                                 runtime.app.state::<crate::state::AppState>().log(
                                     "error",
                                     "sessions.rpc.parse",
-                                    &format!("Unable to parse pi RPC output for {}: {error}", runtime.session_id),
+                                    &format!(
+                                        "Unable to parse pi RPC output for {}: {error}",
+                                        runtime.session_id
+                                    ),
                                 );
                                 runtime.emit_stream_event(json!({
                                     "type": "error",
@@ -242,7 +245,10 @@ impl SessionRuntime {
                 self.app.state::<crate::state::AppState>().log(
                     "error",
                     "sessions.rpc.emit_failed",
-                    &format!("Unable to serialize session stream event for {}: {error}", self.session_id),
+                    &format!(
+                        "Unable to serialize session stream event for {}: {error}",
+                        self.session_id
+                    ),
                 );
                 return;
             }
@@ -258,14 +264,20 @@ impl SessionRuntime {
                     self.app.state::<crate::state::AppState>().log(
                         "error",
                         "sessions.rpc.emit_failed",
-                        &format!("Unable to deliver session stream event for {}: {error}", self.session_id),
+                        &format!(
+                            "Unable to deliver session stream event for {}: {error}",
+                            self.session_id
+                        ),
                     );
                 }
             }
             None => self.app.state::<crate::state::AppState>().log(
                 "error",
                 "sessions.rpc.emit_failed",
-                &format!("Main webview window unavailable while emitting session stream for {}", self.session_id),
+                &format!(
+                    "Main webview window unavailable while emitting session stream for {}",
+                    self.session_id
+                ),
             ),
         }
     }
