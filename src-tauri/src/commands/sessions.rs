@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{QueuedSessionMessage, SessionModelState, SessionRecord},
@@ -13,32 +13,42 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
-    let context = detect_session_context(None)?;
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
-    list_real_sessions(&context.session_dir, &subscribed)
+    spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        list_real_sessions(&context.session_dir, &subscribed)
+    })
+    .await
+    .map_err(|error| format!("Unable to join list_sessions task: {error}"))?
 }
 
 #[tauri::command]
-pub fn create_session(
+pub async fn create_session(
     app: AppHandle,
     state: State<'_, AppState>,
     title: Option<String>,
 ) -> Result<SessionRecord, String> {
-    let context = detect_session_context(None)?;
-    let created = create_session_file(
-        &context.project_root,
-        &context.session_dir,
-        title.as_deref(),
-        true,
-    )?;
+    let title_for_task = title.clone();
+    let (project_root, session_dir, created) = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        let created = create_session_file(
+            &context.project_root,
+            &context.session_dir,
+            title_for_task.as_deref(),
+            true,
+        )?;
+        Ok::<_, String>((context.project_root, context.session_dir, created))
+    })
+    .await
+    .map_err(|error| format!("Unable to join create_session task: {error}"))??;
 
     state.set_session_subscription(&created.record.id, true)?;
     let _ = ensure_runtime(
         &state.session_runtimes,
         app,
-        context.project_root,
-        context.session_dir,
+        project_root,
+        session_dir,
         &created.record.id,
     )?;
     state.log(
@@ -55,52 +65,75 @@ pub fn create_session(
 }
 
 #[tauri::command]
-pub fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let context = detect_session_context(None)?;
+pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     if let Some(runtime) = state.remove_session_runtime(&session_id)? {
         runtime.shutdown();
     }
     state.clear_session_tracking(&session_id)?;
-    delete_session_file(&context.session_dir, &session_id)?;
+    let session_id_for_task = session_id.clone();
+    spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        delete_session_file(&context.session_dir, &session_id_for_task)
+    })
+    .await
+    .map_err(|error| format!("Unable to join delete_session task: {error}"))??;
     state.log("info", "sessions.delete", &format!("Deleted pi session {}", session_id));
     Ok(())
 }
 
 #[tauri::command]
-pub fn resume_session(app: AppHandle, state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
-    let context = detect_session_context(None)?;
+pub async fn resume_session(app: AppHandle, state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
+    let (project_root, session_dir) = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        Ok::<_, String>((context.project_root, context.session_dir))
+    })
+    .await
+    .map_err(|error| format!("Unable to join resume_session context task: {error}"))??;
+
     state.set_session_subscription(&session_id, true)?;
     let _ = ensure_runtime(
         &state.session_runtimes,
         app,
-        context.project_root.clone(),
-        context.session_dir.clone(),
+        project_root,
+        session_dir.clone(),
         &session_id,
     )?;
 
-    let record = get_session(&context.session_dir, &session_id, true)?;
+    let session_id_for_task = session_id.clone();
+    let record = spawn_blocking(move || get_session(&session_dir, &session_id_for_task, true))
+        .await
+        .map_err(|error| format!("Unable to join resume_session record task: {error}"))??;
     state.log("info", "sessions.resume", &format!("Resumed pi session {}", record.id));
     Ok(record)
 }
 
 #[tauri::command]
-pub fn subscribe_session(
+pub async fn subscribe_session(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
-    let context = detect_session_context(None)?;
+    let (project_root, session_dir) = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        Ok::<_, String>((context.project_root, context.session_dir))
+    })
+    .await
+    .map_err(|error| format!("Unable to join subscribe_session context task: {error}"))??;
+
     state.set_session_subscription(&session_id, true)?;
     let runtime = ensure_runtime(
         &state.session_runtimes,
         app,
-        context.project_root.clone(),
-        context.session_dir.clone(),
+        project_root,
+        session_dir.clone(),
         &session_id,
     )?;
     runtime.set_subscribed(true);
 
-    let record = get_session(&context.session_dir, &session_id, true)?;
+    let session_id_for_task = session_id.clone();
+    let record = spawn_blocking(move || get_session(&session_dir, &session_id_for_task, true))
+        .await
+        .map_err(|error| format!("Unable to join subscribe_session record task: {error}"))??;
     state.log(
         "info",
         "sessions.subscribe",
@@ -110,14 +143,19 @@ pub fn subscribe_session(
 }
 
 #[tauri::command]
-pub fn unsubscribe_session(state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
-    let context = detect_session_context(None)?;
+pub async fn unsubscribe_session(state: State<'_, AppState>, session_id: String) -> Result<SessionRecord, String> {
     state.set_session_subscription(&session_id, false)?;
     if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
         runtime.set_subscribed(false);
     }
 
-    let record = get_session(&context.session_dir, &session_id, false)?;
+    let session_id_for_task = session_id.clone();
+    let record = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        get_session(&context.session_dir, &session_id_for_task, false)
+    })
+    .await
+    .map_err(|error| format!("Unable to join unsubscribe_session task: {error}"))??;
     state.log(
         "info",
         "sessions.unsubscribe",
@@ -127,65 +165,89 @@ pub fn unsubscribe_session(state: State<'_, AppState>, session_id: String) -> Re
 }
 
 #[tauri::command]
-pub fn get_session_model_state(
+pub async fn get_session_model_state(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionModelState, String> {
-    let context = detect_session_context(None)?;
+    let (project_root, session_dir) = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        Ok::<_, String>((context.project_root, context.session_dir))
+    })
+    .await
+    .map_err(|error| format!("Unable to join get_session_model_state context task: {error}"))??;
+
     state.set_session_subscription(&session_id, true)?;
 
-    if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+    let runtime = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
         runtime.set_subscribed(true);
-        return runtime.get_model_state();
-    }
+        runtime
+    } else {
+        ensure_runtime(
+            &state.session_runtimes,
+            app,
+            project_root,
+            session_dir,
+            &session_id,
+        )?
+    };
 
-    let runtime = ensure_runtime(
-        &state.session_runtimes,
-        app,
-        context.project_root,
-        context.session_dir,
-        &session_id,
-    )?;
-    runtime.get_model_state()
+    spawn_blocking(move || runtime.get_model_state())
+        .await
+        .map_err(|error| format!("Unable to join get_session_model_state runtime task: {error}"))?
 }
 
 #[tauri::command]
-pub fn set_session_model(
+pub async fn set_session_model(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     provider: String,
     model_id: String,
 ) -> Result<SessionModelState, String> {
-    let context = detect_session_context(None)?;
+    let (project_root, session_dir) = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        Ok::<_, String>((context.project_root, context.session_dir))
+    })
+    .await
+    .map_err(|error| format!("Unable to join set_session_model context task: {error}"))??;
+
     state.set_session_subscription(&session_id, true)?;
 
-    if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+    let result = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
         runtime.set_subscribed(true);
-        let result = runtime.set_model(&provider, &model_id)?;
-        state.log(
-            "info",
-            "sessions.model",
-            &format!("Changed session {} to {}/{}", session_id, provider, model_id),
-        );
-        return Ok(result);
-    }
+        let provider_for_task = provider.clone();
+        let model_id_for_task = model_id.clone();
+        spawn_blocking(move || runtime.set_model(&provider_for_task, &model_id_for_task))
+            .await
+            .map_err(|error| format!("Unable to join set_session_model runtime task: {error}"))??
+    } else {
+        let project_root_for_task = project_root.clone();
+        let session_dir_for_task = session_dir.clone();
+        let session_id_for_task = session_id.clone();
+        let provider_for_task = provider.clone();
+        let model_id_for_task = model_id.clone();
+        let result = spawn_blocking(move || {
+            apply_session_model(
+                &project_root_for_task,
+                &session_dir_for_task,
+                &session_id_for_task,
+                &provider_for_task,
+                &model_id_for_task,
+            )
+        })
+        .await
+        .map_err(|error| format!("Unable to join set_session_model file task: {error}"))??;
+        let _ = ensure_runtime(
+            &state.session_runtimes,
+            app,
+            project_root,
+            session_dir,
+            &session_id,
+        )?;
+        result
+    };
 
-    let result = apply_session_model(
-        &context.project_root,
-        &context.session_dir,
-        &session_id,
-        &provider,
-        &model_id,
-    )?;
-    let _ = ensure_runtime(
-        &state.session_runtimes,
-        app,
-        context.project_root,
-        context.session_dir,
-        &session_id,
-    )?;
     state.log(
         "info",
         "sessions.model",
@@ -196,7 +258,7 @@ pub fn set_session_model(
 }
 
 #[tauri::command]
-pub fn send_session_message(
+pub async fn send_session_message(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -208,13 +270,19 @@ pub fn send_session_message(
         return Err("Message cannot be empty".into());
     }
 
-    let context = detect_session_context(None)?;
+    let (project_root, session_dir) = spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        Ok::<_, String>((context.project_root, context.session_dir))
+    })
+    .await
+    .map_err(|error| format!("Unable to join send_session_message context task: {error}"))??;
+
     state.set_session_subscription(&session_id, true)?;
     let runtime = ensure_runtime(
         &state.session_runtimes,
         app,
-        context.project_root,
-        context.session_dir,
+        project_root,
+        session_dir,
         &session_id,
     )?;
     runtime.set_subscribed(true);
@@ -227,7 +295,12 @@ pub fn send_session_message(
         timestamp: crate::state::now_iso(),
     };
 
-    match runtime.start_run(&run_id, &trimmed_message) {
+    let run_id_for_task = run_id.clone();
+    let message_for_task = trimmed_message.clone();
+    match spawn_blocking(move || runtime.start_run(&run_id_for_task, &message_for_task))
+        .await
+        .map_err(|error| format!("Unable to join send_session_message runtime task: {error}"))?
+    {
         Ok(()) => {
             state.log(
                 "info",
