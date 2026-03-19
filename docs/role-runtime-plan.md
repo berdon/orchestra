@@ -17,9 +17,14 @@ Role definitions remain reusable templates with:
 - name/slug/description
 - provider/model/system prompt defaults
 - concurrency capacity
+- attached policy ids and direct permissions for spawned role instances
 - archived state
 
 Static roles are managed in **Settings > Roles**.
+
+Important boundary:
+- roles remain workforce templates, not authorization policies
+- Orchestra's protected `supervisor` actor is a system agent with the immutable `supervisor` policy, not a workforce role
 
 ### Runtime role state
 
@@ -79,6 +84,7 @@ Suggested fields:
 Notes:
 - An idle instance can be reused for the next queue entry for the same role.
 - The instance owns the runtime session/worktree association.
+- Effective permissions for the instance should be resolved from the role's attached policies plus direct permissions.
 
 ## Dispatch model
 

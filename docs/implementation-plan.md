@@ -168,14 +168,16 @@ Only after the session-first slice is working should the rest of the orchestrati
 - comments
 - agents
 - roles
+- policies and permission resolution
 
 ### Initial implementation order after sessions
 1. projects + repositories
 2. tasks + workflows + lane history
 3. comments with interrupt checkbox behavior
-4. agents + queues
-5. roles + FIFO queues + manual reorder UI later
-6. disposable role worktrees
+4. policies, direct permissions, and permission-gated Orchestra tools
+5. agents + queues
+6. roles + FIFO queues + manual reorder UI later
+7. disposable role worktrees
 
 ## Concrete task breakdown
 
@@ -206,6 +208,13 @@ Only after the session-first slice is working should the rest of the orchestrati
 3. verify behavior when no frontend is subscribed
 4. validate logs are sufficient for debugging
 
+### Track E: Authorization and privileged orchestration
+1. persist policies plus direct permissions on roles and agents
+2. seed the immutable `supervisor` policy and protected system `supervisor` agent
+3. resolve effective permissions for agents and role instances
+4. gate Orchestra tools and backend commands by permission
+5. log privileged orchestration actions with actor identity and target context
+
 ## Out of scope for the first build slice
 
 Do not block the initial prototype on:
@@ -213,6 +222,8 @@ Do not block the initial prototype on:
 - agent queueing
 - role spawning
 - drag/drop role queue ordering
+- custom policy-management UI
+- deny rules or complex precedence resolution
 - durable event sourcing
 - advanced worktree lifecycle management
 
@@ -225,4 +236,5 @@ The immediate implementation strategy is:
 - make the Sessions page and session backend the first real feature
 - prove create/resume/subscribe/message flows quickly
 - use logs in Settings for visibility while the system is still young
-- only then expand into tasks, agents, roles, workflows, and worktrees
+- add a permission model with direct grants plus a protected built-in `supervisor` agent
+- only then expand into tasks, agents, roles, workflows, policies, and worktrees
