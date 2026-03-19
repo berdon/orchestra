@@ -157,13 +157,6 @@ export function App() {
     ];
   }, [pendingRuns, selectedSession]);
 
-  const activeSessionCount = useMemo(() => {
-    const alreadyActive = new Set(sessions.filter((session) => session.status === "active").map((session) => session.id));
-    return sessions.filter((session) => session.status === "active").length + Object.keys(pendingRuns).filter((id) => !alreadyActive.has(id)).length;
-  }, [pendingRuns, sessions]);
-
-  const subscribedSessionCount = useMemo(() => sessions.filter((session) => session.subscribed).length, [sessions]);
-
   const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
     setSessions((current) => {
       const withoutOld = current.filter((session) => session.id !== updatedSession.id);
@@ -567,32 +560,6 @@ export function App() {
           </section>
         ) : activePage === "sessions" ? (
           <section className="panel-stack panel-stack--sessions">
-            <section className="panel panel--hero panel--session-hero">
-              <div>
-                <p className="eyebrow">First shipping vertical slice</p>
-                <h2>Sessions</h2>
-                <p>
-                  Create, resume, subscribe to, and interact with sessions directly from the app. This is the first real product
-                  surface for Orchestra.
-                </p>
-              </div>
-
-              <div className="session-hero__stats">
-                <div className="metric-card">
-                  <span className="metric-card__label">Known sessions</span>
-                  <strong>{sessions.length}</strong>
-                </div>
-                <div className="metric-card">
-                  <span className="metric-card__label">Active</span>
-                  <strong>{activeSessionCount}</strong>
-                </div>
-                <div className="metric-card">
-                  <span className="metric-card__label">Subscribed</span>
-                  <strong>{subscribedSessionCount}</strong>
-                </div>
-              </div>
-            </section>
-
             <section className="session-shell">
               <aside className="panel session-list-panel">
                 <div className="panel__header panel__header--stacked">
@@ -635,30 +602,16 @@ export function App() {
                 {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
 
                 <div className="session-list" role="list">
-                  {sessions.map((session) => {
-                    const displayStatus = pendingRuns[session.id] ? "streaming" : session.status;
-                    return (
-                      <button
-                        key={session.id}
-                        className={session.id === selectedSession?.id ? "session-list-item session-list-item--active" : "session-list-item"}
-                        type="button"
-                        onClick={() => setSelectedSessionId(session.id)}
-                      >
-                        <div className="session-list-item__header">
-                          <strong>{session.title}</strong>
-                          <span className={`status-badge status-badge--${getStatusTone(displayStatus)}`}>{displayStatus}</span>
-                        </div>
-                        <div className="session-list-item__meta">
-                          <span>{session.id}</span>
-                          <span>{formatDateTime(session.updatedAt)}</span>
-                        </div>
-                        <div className="session-list-item__footer">
-                          <span>{session.events.length} events</span>
-                          <span>{session.subscribed ? "Subscribed" : "Unsubscribed"}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {sessions.map((session) => (
+                    <button
+                      key={session.id}
+                      className={session.id === selectedSession?.id ? "session-list-item session-list-item--active" : "session-list-item"}
+                      type="button"
+                      onClick={() => setSelectedSessionId(session.id)}
+                    >
+                      <strong>{session.title}</strong>
+                    </button>
+                  ))}
                 </div>
               </aside>
 

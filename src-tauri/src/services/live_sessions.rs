@@ -154,7 +154,7 @@ impl SessionRuntime {
 
         match payload.get("type").and_then(Value::as_str) {
             Some("message_update") => self.handle_message_update(&payload),
-            Some("agent_end") => self.handle_agent_end(),
+            Some("turn_end") | Some("agent_end") => self.handle_agent_end(),
             _ => {}
         }
     }
@@ -169,7 +169,7 @@ impl SessionRuntime {
         };
 
         match event_type {
-            "text_start" => {
+            "text_start" | "thinking_start" => {
                 if self.is_subscribed() {
                     self.emit_stream_event(SessionStreamEvent {
                         session_id: self.session_id.clone(),
@@ -193,6 +193,22 @@ impl SessionRuntime {
                             .pointer("/assistantMessageEvent/delta")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned),
+                        message: None,
+                        record: None,
+                    });
+                }
+            }
+            "thinking_delta" => {
+                if self.is_subscribed() {
+                    self.emit_stream_event(SessionStreamEvent {
+                        session_id: self.session_id.clone(),
+                        run_id,
+                        event: "assistantDelta".into(),
+                        timestamp: None,
+                        delta: payload
+                            .pointer("/assistantMessageEvent/delta")
+                            .and_then(Value::as_str)
+                            .map(|value| format!("{value}")),
                         message: None,
                         record: None,
                     });

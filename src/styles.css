@@ -197,8 +197,8 @@ strong {
 }
 
 .panel-stack--sessions {
-  grid-template-rows: auto minmax(0, 1fr);
-  height: min(78vh, calc(100vh - 170px));
+  grid-template-rows: minmax(0, 1fr);
+  height: min(84vh, calc(100vh - 150px));
 }
 
 .panel {
@@ -346,7 +346,7 @@ strong {
 
 .session-shell {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: 240px minmax(0, 1fr);
   gap: 18px;
   min-height: 0;
   height: 100%;
@@ -362,12 +362,14 @@ strong {
 
 .session-list-panel {
   grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
 }
 
 .session-detail-panel {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   height: 100%;
+  min-width: 0;
 }
 
 .session-list {
@@ -377,10 +379,12 @@ strong {
 }
 
 .session-list-item {
-  display: grid;
-  gap: 10px;
+  display: block;
   text-align: left;
   background: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-list-item--active {
