@@ -683,6 +683,14 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
   return invoke<SessionRecord>("unsubscribe_session", { sessionId });
 }
 
+export async function listPiModels(): Promise<SessionModel[]> {
+  if (!isTauriAvailable()) {
+    return MOCK_MODELS;
+  }
+
+  return invoke<SessionModel[]>("list_pi_models");
+}
+
 export async function getSessionModelState(sessionId: string): Promise<SessionModelState> {
   if (!isTauriAvailable()) {
     return buildMockModelState(sessionId);

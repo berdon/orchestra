@@ -172,7 +172,7 @@ pub fn validate_agent(
         errors.push(validation_error(
             "invalid",
             "thinkingLevel",
-            "Thinking level must be one of: off, minimal, low, medium, high.",
+            "Thinking level must be one of: off, minimal, low, medium, high, xhigh.",
         ));
     }
 
@@ -463,7 +463,7 @@ fn normalized_optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn is_valid_thinking_level(value: &str) -> bool {
-    matches!(value, "off" | "minimal" | "low" | "medium" | "high")
+    matches!(value, "off" | "minimal" | "low" | "medium" | "high" | "xhigh")
 }
 
 fn agent_id() -> String {

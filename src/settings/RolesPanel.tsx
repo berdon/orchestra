@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { listPiModels } from "../lib/tauri";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
-import type { RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError } from "../types";
+import type { RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError, SessionModel } from "../types";
 
 function createBlankRoleDraft(): RoleUpsertInput {
   return {
@@ -44,6 +45,8 @@ export function RolesPanel() {
   const [isCreatingRole, setIsCreatingRole] = useState(false);
   const [loadedRoleId, setLoadedRoleId] = useState<string | null>(null);
   const [loadedRoleArchived, setLoadedRoleArchived] = useState(false);
+  const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
+  const [loadingModelOptions, setLoadingModelOptions] = useState(false);
 
   const selectedRoleSummary = useMemo(
     () => roles.find((role) => role.id === selectedRoleId) ?? roles[0] ?? null,
@@ -51,6 +54,14 @@ export function RolesPanel() {
   );
 
   const validationSummary = useMemo(() => roleValidation.map((error) => `${error.path}: ${error.message}`), [roleValidation]);
+  const providerOptions = useMemo(
+    () => Array.from(new Set(availableModels.map((model) => model.provider))).sort(),
+    [availableModels],
+  );
+  const filteredModelOptions = useMemo(
+    () => availableModels.filter((model) => !roleDraft.provider || model.provider === roleDraft.provider),
+    [availableModels, roleDraft.provider],
+  );
 
   async function loadRoles() {
     setLoadingRoles(true);
@@ -98,6 +109,31 @@ export function RolesPanel() {
   useEffect(() => {
     void loadRoles();
   }, [includeArchivedRoles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingModelOptions(true);
+    void listPiModels()
+      .then((models) => {
+        if (!cancelled) {
+          setAvailableModels(models);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRoleActionError(error instanceof Error ? error.message : "Unable to load PI models.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingModelOptions(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (isCreatingRole) {
@@ -226,7 +262,6 @@ export function RolesPanel() {
               }}
             >
               {role.name}
-              <span className="role-list-link__meta">{role.thinkingLevel}</span>
             </a>
           ))}
         </nav>
@@ -297,13 +332,25 @@ export function RolesPanel() {
 
                 <label className="field-group">
                   <span className="field-group__label">Provider</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    placeholder="e.g. anthropic"
+                  <select
+                    className="select-input"
                     value={roleDraft.provider ?? ""}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, provider: event.target.value }))}
-                  />
+                    disabled={loadingModelOptions}
+                    onChange={(event) =>
+                      updateRoleDraft((draft) => ({
+                        ...draft,
+                        provider: event.target.value,
+                        model: draft.provider === event.target.value ? draft.model : "",
+                      }))
+                    }
+                  >
+                    <option value="">{loadingModelOptions ? "Loading providers…" : "Select a provider"}</option>
+                    {providerOptions.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {provider}
+                      </option>
+                    ))}
+                  </select>
                   {getRoleValidationForPath(roleValidation, "provider").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
@@ -311,13 +358,21 @@ export function RolesPanel() {
 
                 <label className="field-group">
                   <span className="field-group__label">Model</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    placeholder="e.g. claude-sonnet-4-20250514"
+                  <select
+                    className="select-input"
                     value={roleDraft.model ?? ""}
+                    disabled={loadingModelOptions || !(roleDraft.provider ?? "")}
                     onChange={(event) => updateRoleDraft((draft) => ({ ...draft, model: event.target.value }))}
-                  />
+                  >
+                    <option value="">
+                      {loadingModelOptions ? "Loading models…" : roleDraft.provider ? "Select a model" : "Select a provider first"}
+                    </option>
+                    {filteredModelOptions.map((model) => (
+                      <option key={`${model.provider}/${model.id}`} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
                   {getRoleValidationForPath(roleValidation, "model").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
@@ -335,6 +390,7 @@ export function RolesPanel() {
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
+                    <option value="xhigh">XHigh</option>
                   </select>
                   {getRoleValidationForPath(roleValidation, "thinkingLevel").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>

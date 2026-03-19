@@ -229,6 +229,10 @@ pub fn set_session_thinking_level(
     )
 }
 
+pub fn list_available_models() -> Result<Vec<SessionModel>, String> {
+    list_available_models_with_executable(Path::new("pi"))
+}
+
 fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
 where
     F: FnMut(SessionStreamEvent),
@@ -820,6 +824,41 @@ fn set_session_thinking_level_with_executable(
         current_thinking_level,
         available_models,
     })
+}
+
+fn list_available_models_with_executable(executable: &Path) -> Result<Vec<SessionModel>, String> {
+    let temp_root = std::env::temp_dir().join(format!("orchestra-models-{}", Uuid::new_v4()));
+    fs::create_dir_all(&temp_root)
+        .map_err(|error| format!("Unable to create temporary model query directory: {error}"))?;
+    let project_root = temp_root.join("project");
+    let session_dir = temp_root.join("sessions");
+    fs::create_dir_all(&project_root)
+        .map_err(|error| format!("Unable to create temporary model query project directory: {error}"))?;
+    fs::create_dir_all(&session_dir)
+        .map_err(|error| format!("Unable to create temporary model query session directory: {error}"))?;
+
+    let created = create_session_file(&project_root, &session_dir, Some("Model query"), false)?;
+    let payloads = run_rpc_process(
+        executable,
+        &project_root,
+        &session_dir,
+        &created.path,
+        &[json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" })],
+        |_| {},
+    )?;
+
+    let models_payload =
+        require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
+    let models = models_payload
+        .pointer("/data/models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_model_summary)
+        .collect();
+
+    let _ = fs::remove_dir_all(&temp_root);
+    Ok(models)
 }
 
 fn run_rpc_process<F>(

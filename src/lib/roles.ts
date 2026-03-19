@@ -71,8 +71,8 @@ function buildMockRoleValidation(input: RoleUpsertInput): RoleValidationResult {
     errors.push({ code: "required", path: "provider", message: "Select a provider when a model is configured." });
   }
 
-  if (!["off", "minimal", "low", "medium", "high"].includes(thinkingLevel)) {
-    errors.push({ code: "invalid", path: "thinkingLevel", message: "Thinking level must be one of: off, minimal, low, medium, high." });
+  if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel)) {
+    errors.push({ code: "invalid", path: "thinkingLevel", message: "Thinking level must be one of: off, minimal, low, medium, high, xhigh." });
   }
 
   return {
@@ -107,7 +107,7 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
     systemPrompt,
     provider,
     model,
-    thinkingLevel: ["off", "minimal", "low", "medium", "high"].includes(thinkingLevel) ? thinkingLevel : "off",
+    thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
     capacity: Math.max(1, Math.floor(input.capacity || 0)),
     archived: existing?.archived ?? false,
     createdAt: existing?.createdAt ?? timestamp,

@@ -70,8 +70,8 @@ function buildMockAgentValidation(input: AgentUpsertInput): AgentValidationResul
     errors.push({ code: "required", path: "provider", message: "Select a provider when a model is configured." });
   }
 
-  if (!["off", "minimal", "low", "medium", "high"].includes(thinkingLevel)) {
-    errors.push({ code: "invalid", path: "thinkingLevel", message: "Thinking level must be one of: off, minimal, low, medium, high." });
+  if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel)) {
+    errors.push({ code: "invalid", path: "thinkingLevel", message: "Thinking level must be one of: off, minimal, low, medium, high, xhigh." });
   }
 
   return {
@@ -121,7 +121,7 @@ function normalizeMockAgentInput(input: AgentUpsertInput, existing?: AgentDefini
     systemPrompt,
     provider,
     model,
-    thinkingLevel: ["off", "minimal", "low", "medium", "high"].includes(thinkingLevel) ? thinkingLevel : "off",
+    thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
     archived: existing?.archived ?? false,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
