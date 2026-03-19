@@ -94,7 +94,7 @@ export function AgentsPage() {
 
   return (
     <section className="workforce-shell">
-      <aside className="panel workforce-sidebar">
+      <aside className="workforce-nav-panel">
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Workforce</p>
@@ -108,50 +108,37 @@ export function AgentsPage() {
         {error ? <p className="error-copy">{error}</p> : null}
         {loading ? <p className="muted-copy">Loading workforce…</p> : null}
 
-        <div className="workforce-list" role="list">
+        <nav className="workforce-role-nav" aria-label="Role operations">
           {roleSnapshots.map((snapshot) => (
-            <button
+            <a
               key={snapshot.role.id}
-              className={snapshot.role.id === selectedSnapshot?.role.id ? "workflow-list-item workflow-list-item--active" : "workflow-list-item"}
-              type="button"
-              onClick={() => setSelectedRoleId(snapshot.role.id)}
+              className={snapshot.role.id === selectedSnapshot?.role.id ? "workforce-role-link workforce-role-link--active" : "workforce-role-link"}
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
+                setSelectedRoleId(snapshot.role.id);
+              }}
             >
-              <div className="workflow-list-item__header">
-                <strong>{snapshot.role.name}</strong>
-                <span className="status-badge status-badge--accent">{snapshot.activeInstanceCount}/{snapshot.role.capacity}</span>
-              </div>
-              <div className="workforce-meta-grid muted-copy">
-                <span>Queued {snapshot.queuedCount}</span>
-                <span>Assigned {snapshot.assignedCount}</span>
-                <span>Idle {snapshot.idleInstanceCount}</span>
-                <span>{snapshot.role.provider ?? "No provider"}</span>
-              </div>
-              {snapshot.latestError ? <p className="error-copy">{snapshot.latestError}</p> : null}
-            </button>
+              {snapshot.role.name}
+            </a>
           ))}
-        </div>
+        </nav>
 
-        <section className="workflow-section">
+        <div className="workforce-agent-group">
           <div>
             <p className="eyebrow">Named agents</p>
             <h3>Persistent collaborators</h3>
           </div>
 
           {agents.length === 0 ? <p className="muted-copy">No agents yet.</p> : null}
-          <div className="workforce-list">
+          <nav className="workforce-agent-nav" aria-label="Named agents">
             {agents.map((agent) => (
-              <article className="workflow-lane-card" key={agent.id}>
-                <div className="workflow-section__header">
-                  <strong>{agent.name}</strong>
-                  <span className={`status-badge status-badge--${agent.archived ? "neutral" : "success"}`}>
-                    {agent.archived ? "Archived" : "Available"}
-                  </span>
-                </div>
-                <p className="muted-copy">Persistent agents will appear here alongside runtime role operations.</p>
-              </article>
+              <span className="workforce-agent-link" key={agent.id}>
+                {agent.name}
+              </span>
             ))}
-          </div>
-        </section>
+          </nav>
+        </div>
       </aside>
 
       <section className="panel workforce-detail-panel">
