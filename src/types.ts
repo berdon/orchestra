@@ -67,3 +67,72 @@ export interface SessionStreamEvent {
   message?: string;
   record?: SessionRecord;
 }
+
+export type WorkflowOwnerType = "user" | "agent" | "role";
+
+export interface WorkflowLane {
+  id: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  order: number;
+  assignedEntityType: WorkflowOwnerType | string;
+  assignedEntityId?: string | null;
+  entryPromptTemplate?: string | null;
+  successTargetLaneId?: string | null;
+  failureTargetLaneId?: string | null;
+  userInterventionTargetLaneId?: string | null;
+}
+
+export interface WorkflowDefinition {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  archived: boolean;
+  lanes: WorkflowLane[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowSummary {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  archived: boolean;
+  laneCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowLaneInput {
+  id?: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  order?: number;
+  assignedEntityType: WorkflowOwnerType | string;
+  assignedEntityId?: string | null;
+  entryPromptTemplate?: string | null;
+  successTargetLaneId?: string | null;
+  failureTargetLaneId?: string | null;
+  userInterventionTargetLaneId?: string | null;
+}
+
+export interface WorkflowUpsertInput {
+  name: string;
+  description?: string | null;
+  lanes: WorkflowLaneInput[];
+}
+
+export interface WorkflowValidationError {
+  code: string;
+  path: string;
+  message: string;
+}
+
+export interface WorkflowValidationResult {
+  valid: boolean;
+  errors: WorkflowValidationError[];
+}

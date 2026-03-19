@@ -2,6 +2,7 @@ import { basename, join } from "node:path";
 
 export interface OrchestraSessionStorageInfo {
   orchestraRoot: string;
+  databasePath: string;
   projectRoot: string;
   sessionDir: string;
   projectSlug: string;
@@ -25,6 +26,10 @@ export function getOrchestraRoot(homeDir: string) {
   return join(homeDir, ".orchestra");
 }
 
+export function getOrchestraDatabasePath(homeDir: string) {
+  return join(getOrchestraRoot(homeDir), "orchestra.db");
+}
+
 export function getProjectRoot(homeDir: string, projectSlug: string) {
   return join(getOrchestraRoot(homeDir), "projects", sanitizeSlug(projectSlug));
 }
@@ -36,6 +41,7 @@ export function getProjectSessionDir(homeDir: string, projectSlug: string) {
 export function buildSessionStorageInfo(homeDir: string, projectSlug: string): OrchestraSessionStorageInfo {
   return {
     orchestraRoot: getOrchestraRoot(homeDir),
+    databasePath: getOrchestraDatabasePath(homeDir),
     projectRoot: getProjectRoot(homeDir, projectSlug),
     sessionDir: getProjectSessionDir(homeDir, projectSlug),
     projectSlug: sanitizeSlug(projectSlug),

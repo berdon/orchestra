@@ -13,6 +13,7 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
+import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AppInfo,
   LogEntry,
@@ -43,6 +44,13 @@ const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings">, { eyebrow
     body: "Agents and roles will share an operational view focused on workload, queues, active sessions, and intervention pressure.",
   },
 };
+
+const SETTINGS_TABS = [
+  { id: "workflows", label: "Workflows" },
+  { id: "logs", label: "Logs" },
+] as const;
+
+type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
 
 interface PendingSessionRun {
   runId: string;
@@ -114,6 +122,7 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
 
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("workflows");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -320,14 +329,16 @@ export function App() {
 
   useEffect(() => {
     if (activePage === "settings") {
-      void loadLogs();
+      if (settingsTab === "logs") {
+        void loadLogs();
+      }
       return;
     }
 
     if (activePage === "sessions") {
       void loadSessions();
     }
-  }, [activePage]);
+  }, [activePage, settingsTab]);
 
   useEffect(() => {
     const previousViewedSessionId = viewedSessionIdRef.current;
@@ -530,40 +541,63 @@ export function App() {
         {activePage === "settings" ? (
           <section className="panel-stack">
             <section className="panel panel--hero">
-              <p className="eyebrow">Development visibility</p>
-              <h2>Settings</h2>
-              <p>
-                The Settings view keeps backend and session activity visible while the orchestration model is still being built.
-                The session-first slice writes lifecycle activity here so failures stay diagnosable.
-              </p>
-            </section>
-
-            <section className="panel">
-              <div className="panel__header">
+              <div className="settings-hero">
                 <div>
-                  <p className="eyebrow">Application logs</p>
-                  <h3>Runtime log</h3>
+                  <p className="eyebrow">Configuration and visibility</p>
+                  <h2>Settings</h2>
+                  <p>
+                    Workflow management lives here first so it can evolve into a strong operational editor without disturbing the
+                    session workspace.
+                  </p>
                 </div>
-                <button className="secondary-button" type="button" onClick={() => void loadLogs()}>
-                  Refresh
-                </button>
-              </div>
 
-              {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
-
-              <div className="log-list" role="log" aria-live="polite">
-                {logs.map((entry) => (
-                  <article className="log-entry" key={entry.id}>
-                    <div className="log-entry__meta">
-                      <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
-                      <span>{entry.target}</span>
-                      <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
-                    </div>
-                    <p>{entry.message}</p>
-                  </article>
-                ))}
+                <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+                  {SETTINGS_TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      className={settingsTab === tab.id ? "nav-item nav-item--active" : "nav-item"}
+                      type="button"
+                      role="tab"
+                      aria-selected={settingsTab === tab.id}
+                      onClick={() => setSettingsTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </section>
+
+            {settingsTab === "workflows" ? (
+              <WorkflowsPanel />
+            ) : (
+              <section className="panel">
+                <div className="panel__header">
+                  <div>
+                    <p className="eyebrow">Application logs</p>
+                    <h3>Runtime log</h3>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => void loadLogs()}>
+                    Refresh
+                  </button>
+                </div>
+
+                {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
+
+                <div className="log-list" role="log" aria-live="polite">
+                  {logs.map((entry) => (
+                    <article className="log-entry" key={entry.id}>
+                      <div className="log-entry__meta">
+                        <span className={`log-level log-level--${entry.level}`}>{entry.level}</span>
+                        <span>{entry.target}</span>
+                        <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
+                      </div>
+                      <p>{entry.message}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
           </section>
         ) : activePage === "sessions" ? (
           <section className="panel-stack panel-stack--sessions">
