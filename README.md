@@ -9,6 +9,8 @@ Agent orchestration framework focused on getting project work done.
 - [Design draft](docs/design.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Session storage](docs/session-storage.md)
+- [Role runtime plan](docs/role-runtime-plan.md)
+- [Agent runtime plan](docs/agent-runtime-plan.md)
 
 ## App scaffold
 

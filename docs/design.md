@@ -8,7 +8,7 @@ Orchestra is an agent orchestration framework focused on getting project work do
 
 - Tauri
 - TypeScript
-- `pi-agent-core` from `pi-mono`
+- `pi-agent-core` / `pi`
 
 ## Product goals
 
@@ -21,11 +21,11 @@ Orchestra is an agent orchestration framework focused on getting project work do
 ## Core design principles
 
 1. **Project-centered orchestration**  
-   Everything happens in the context of a project.
+   Everything executes in the context of a project, even when definitions are shared globally.
 2. **Sessions are execution, not identity**  
    Sessions come and go; agents and roles define the working context.
-3. **Workflows own task progression**  
-   Tasks move through lanes with explicit success/failure transitions.
+3. **Global definitions, project-scoped execution**  
+   Agents, roles, and workflows should be reusable across projects, but their runtime state belongs to the active project.
 4. **Repositories must be safe for concurrent work**  
    Worktrees isolate agent and role activity.
 5. **The UI should optimize for situational awareness**  
@@ -35,14 +35,14 @@ Orchestra is an agent orchestration framework focused on getting project work do
 
 ### Projects
 
-Projects are the top-level entity.
+Projects are the top-level execution context.
 
 A project owns:
 - repositories
 - sessions
-- agents
-- roles
 - tasks
+- project-local runtime state for agents and roles
+- project settings and prompt overlays
 - the default model/provider
 - the default workflow for new tasks
 
@@ -63,10 +63,18 @@ Suggested filesystem layout:
 ```text
 ~/.orchestra/projects/{project-slug}/
   project.json
+  settings.json
+  sessions/
   repositories/{repo-slug}/
     repository/              # primary git clone
-    worktrees/{worktree-slug}/
+    worktrees/
+      agents/{agent-slug}/
+      roles/{role-instance-slug}/
 ```
+
+Notes:
+- `defaultWorkflowId` references a global workflow definition.
+- project settings can add project-specific behavior for shared agents/roles without changing the global definition.
 
 ### Repositories
 
@@ -90,10 +98,10 @@ Rationale:
 
 ### Sessions
 
-Sessions correspond to active `pi` sessions managed by `pi-agent-core`.
+Sessions correspond to active `pi` sessions managed by Orchestra.
 
 A session may optionally be associated with:
-- an agent
+- an agent runtime binding
 - a role instance
 - a task
 - a workflow lane
@@ -124,20 +132,26 @@ Agents are named persistent workers with configured context and memory.
 Characteristics:
 - persistent identity
 - persistent memory
-- their own project/repo worktrees
-- many sessions, but only one main session
+- reusable across projects
+- project-scoped execution state
+- project/repo worktrees
+- many sessions over time, but one main session per project/repository binding
 - a queue of deferred work when the main session is busy
 
-Suggested filesystem layout:
+Suggested global filesystem layout:
 
 ```text
 ~/.orchestra/agents/{agent-slug}/
   agent.json
+  AGENTS.md
+  IDENTITY.md
+  SOUL.md
+  MEMORY.md
+  TOOLS.md
   memory/
-  worktrees/{project-slug}/{repo-slug}/
 ```
 
-Suggested agent fields:
+Suggested global agent fields:
 - `id`
 - `slug`
 - `name`
@@ -145,17 +159,33 @@ Suggested agent fields:
 - `systemPrompt`
 - `provider`
 - `model`
-- `mainSessionId?`
-- `queuePolicy`
+- `thinkingLevel`
+- `archived`
 - `createdAt`
 - `updatedAt`
 
+Suggested project-scoped agent runtime fields:
+- `agentId`
+- `projectId`
+- `repositorySlug`
+- `mainSessionId?`
+- `status`
+- `currentQueueEntryId?`
+- `worktreePath?`
+- `lastHeartbeatAt?`
+- `lastError?`
+- `createdAt`
+- `updatedAt`
+
+Project settings may also attach prompt additions or operating constraints for a global agent.
+
 ### Roles
 
-Roles are templates for transient workers.
+Roles are reusable templates for transient workers.
 
 Characteristics:
-- configured but not memory-bearing
+- globally defined
+- not memory-bearing in the same way agents are
 - spin up role instances on demand
 - operate under a concurrency limit
 - use disposable project-scoped worktrees rather than agent-owned persistent worktrees
@@ -166,7 +196,7 @@ Examples:
 - Planner
 - Reviewer
 
-Suggested role fields:
+Suggested global role fields:
 - `id`
 - `slug`
 - `name`
@@ -174,11 +204,12 @@ Suggested role fields:
 - `systemPrompt`
 - `provider`
 - `model`
+- `thinkingLevel`
 - `capacity`
 - `createdAt`
 - `updatedAt`
 
-Suggested role instance fields:
+Suggested project-scoped role instance fields:
 - `id`
 - `roleId`
 - `projectId`
@@ -224,7 +255,7 @@ Suggested lane run model:
 
 ### Workflows
 
-Workflows are reusable definitions outside any single project.
+Workflows are reusable global definitions.
 
 A workflow contains ordered lanes. Each lane defines:
 - who works the lane
@@ -245,7 +276,7 @@ Suggested lane fields:
 - `id`
 - `name`
 - `assignedEntityType` (`user`, `agent`, `role`)
-- `assignedEntityId`
+- `assignedEntityId`  # should evolve toward stable global worker refs/slugs, not fragile row ids
 - `entryPromptTemplate?`
 - `successTargetLaneId?`
 - `failureTargetLaneId?`
@@ -268,7 +299,7 @@ This is one of the most important parts of the system.
 
 ### Agent queues
 
-When an agent has an active main session:
+When an agent has an active project-scoped main session:
 - new task assignments should enqueue work
 - new comments should enqueue notifications or messages
 - the comment composer should include an explicit `Interrupt agent` checkbox
@@ -283,6 +314,17 @@ For roles:
 - if capacity is exhausted, the task waits in the role queue
 - queue processing is FIFO by default
 - the UI should eventually allow manual reordering via drag-and-drop without changing the default dispatch policy
+
+### Periodic dispatch
+
+Orchestra should run a periodic dispatcher tick while the app is open.
+
+It should:
+- scan queued agent work
+- scan queued role work
+- detect workers that have become dispatchable
+- deliver eligible work without requiring manual refresh
+- log all dispatch decisions
 
 ## Tooling model
 
@@ -311,7 +353,7 @@ Suggested tool set:
 
 ## Backend design
 
-The backend should use `pi-agent-core` to create and manage sessions and expose an application API to the frontend.
+The backend should manage sessions and expose an application API to the frontend.
 
 ### Initial commands
 
@@ -330,6 +372,7 @@ Entity management:
 - list agent queues
 - list roles
 - list role queues
+- create/update/delete workflow
 
 ### Suggested backend refinement
 
@@ -341,11 +384,11 @@ Split the backend into clear service areas:
 - `AgentService`
 - `RoleService`
 - `SessionService`
-- `DispatchService` for queueing and assignment
+- `DispatchService`
 
-This will likely reduce coupling versus putting workflow advancement logic directly inside session management.
+This should reduce coupling versus putting workflow advancement logic directly inside session management.
 
-### Event model
+## Event model
 
 For the initial implementation, prefer straightforward application logging over a durable event system.
 
@@ -366,6 +409,8 @@ Examples of things worth logging:
 - `session.message.received`
 - `agent.queue.updated`
 - `role.queue.updated`
+- `dispatcher.tick.started`
+- `dispatcher.tick.completed`
 - `role.worktree.created`
 - `role.worktree.disposed`
 
@@ -393,6 +438,7 @@ Primary nav:
 Refinement:
 - roles can likely live under Agents as a paired workforce view instead of a top-level nav item
 - workflows belong in Settings unless they become heavily used day-to-day
+- global definitions (agents, roles, workflows) may still be edited from Settings while project-scoped runtime state is inspected from project views
 
 ### Page concepts
 
@@ -405,10 +451,11 @@ Refinement:
 - secondary nav lists agents and roles
 - roles should be visually distinct from agents
 - detail pane shows:
-  - idle/busy status
+  - idle/busy status in the current project
   - current task
   - queue
   - active sessions
+  - project-specific runtime info
   - ability to subscribe/chat with an active session
 
 #### Sessions
@@ -420,6 +467,7 @@ Refinement:
 
 #### Settings
 - workflow management
+- agent and role definition management
 - application log viewer for backend/session logs during early development
 
 ## Visual design direction
@@ -444,7 +492,7 @@ Question:
 - what must survive app restarts?
 
 Suggestion:
-- persist projects, repos, agents, roles, workflows, tasks, comments, lane runs, and queue state
+- persist projects, repos, agents, roles, workflows, tasks, comments, lane runs, queue state, and project-scoped runtime state
 - treat frontend subscriptions as ephemeral
 
 ### 2. Agent vs role overlap
@@ -460,7 +508,7 @@ Suggestion:
 
 Decision:
 - store canonical repo clones under projects
-- let agents have durable worktrees for continuity
+- let agents have durable project worktrees for continuity
 - let role instances use disposable project-scoped worktrees
 
 ### 4. Session resumption policy
@@ -497,11 +545,10 @@ Suggestion:
 ### Milestone 1: App scaffolding
 - scaffold the Tauri + TypeScript application structure
 - establish frontend routing, layout shell, and shared UI primitives
-- establish the Rust backend command structure and service boundaries
+- establish the backend command structure and service boundaries
 - add a Settings page with a visible application log panel
 
 ### Milestone 2: Session-first vertical slice
-- integrate `pi-agent-core`
 - implement create/resume/list sessions through backend commands
 - implement session event subscription and unsubscription
 - implement a Sessions UI that can create a session, resume a session, view output, and send messages back into the session
@@ -517,6 +564,7 @@ Suggestion:
 - add persistent agents with queues
 - add role definitions and capped role instance spawning
 - implement FIFO role queues with future manual reorder support
+- implement the periodic dispatcher
 - implement disposable role worktree lifecycle
 - attach tasks and lanes to resumed sessions
 
@@ -527,11 +575,12 @@ Suggestion:
 
 ## Summary
 
-Orchestra has a strong conceptual foundation: projects own the work context, workflows define progression, sessions execute work, agents provide continuity, and roles provide scalable transient labor.
+Orchestra has a strong conceptual foundation: projects own execution context, workflows define progression, sessions execute work, agents provide continuity, and roles provide scalable transient labor.
 
 The biggest design opportunities are:
 - modeling repositories explicitly
 - clarifying queue/dispatch behavior
 - defining resumption rules for sessions and lanes
+- separating global definitions from project-scoped runtime state
 - keeping workflow state transitions centralized and auditable
 - focusing the UI on operational visibility rather than generic dashboards

@@ -4,8 +4,8 @@ This plan covers the runtime half of Orchestra roles: how role-owned workflow la
 
 ## Goals
 
-- Keep **role definitions** focused on reusable configuration.
-- Make **runtime state** durable enough to survive app restarts.
+- Keep **role definitions** focused on reusable global configuration.
+- Make **project-scoped runtime state** durable enough to survive app restarts.
 - Keep dispatch logic centralized and auditable.
 - Support a useful first-pass workforce UI before full task management lands.
 
@@ -13,24 +13,25 @@ This plan covers the runtime half of Orchestra roles: how role-owned workflow la
 
 ### Static role definitions
 
-Role definitions remain reusable templates with:
+Role definitions are global templates managed in **Settings > Roles**.
+
+They own:
 - name/slug/description
 - provider/model/system prompt defaults
+- thinking level defaults
 - concurrency capacity
 - archived state
 
-Static roles are managed in **Settings > Roles**.
-
 ### Runtime role state
 
-Runtime state is separate and ephemeral-but-persisted:
-- queue entries waiting for a role
+Runtime state is separate and project-scoped:
+- queue entries waiting for a role in a project
 - active/paused/completed role instances
 - linked sessions
 - linked worktree paths
 - timestamps, status, and lightweight operator notes
 
-Runtime role state belongs to the **Agents / workforce** area.
+Runtime role state belongs to the **Agents / workforce** area for the current project.
 
 ## Runtime data model
 
@@ -40,6 +41,7 @@ Represents a unit of work assigned to a role-owned workflow lane.
 
 Suggested fields:
 - `id`
+- `projectId`
 - `roleId`
 - `status` (`queued`, `assigned`, `completed`, `canceled`)
 - `sourceType` (`workflow_lane`, `manual`)
@@ -57,14 +59,15 @@ Suggested fields:
 
 Notes:
 - `manual` source type is useful for exercising the runtime before full task/lane integration exists.
-- The queue entry is the durable record of work waiting on a role.
+- The queue entry is the durable record of work waiting on a role inside a project.
 
 ### Role instance
 
-Represents a transient worker spawned from a role definition.
+Represents a transient worker spawned from a global role definition inside a project.
 
 Suggested fields:
 - `id`
+- `projectId`
 - `roleId`
 - `displayName`
 - `status` (`idle`, `running`, `waiting`, `completed`, `failed`, `canceled`)
@@ -77,7 +80,7 @@ Suggested fields:
 - `updatedAt`
 
 Notes:
-- An idle instance can be reused for the next queue entry for the same role.
+- An idle instance can be reused for the next queue entry for the same role within the same project.
 - The instance owns the runtime session/worktree association.
 
 ## Dispatch model
@@ -85,14 +88,14 @@ Notes:
 ### Queueing
 
 When work enters a role-owned lane:
-1. create a queue entry for the target role
+1. create a queue entry for the target role in the active project
 2. log `role.queue.updated`
 3. attempt dispatch
 
 ### Dispatch rules
 
-When dispatch runs for a role:
-1. count non-terminal instances for the role
+When dispatch runs for a role in a project:
+1. count non-terminal instances for the role in that project
 2. if active instance count is below `role.capacity`, create or reuse an available instance
 3. assign the oldest queued entry (FIFO)
 4. provision a disposable worktree if needed
@@ -128,10 +131,16 @@ When real workflow tasks arrive:
 
 ### First pass
 
-- Disposable role worktrees live under the project `worktrees/` directory.
+- Disposable role worktrees live under the project repository worktrees directory.
 - Use a deterministic prefix such as `runtime-<role-slug>-<instance-short-id>`.
 - Provision via `git worktree add --detach` from the current project main branch.
 - Store the created path on the role instance.
+
+Suggested location:
+
+```text
+~/.orchestra/projects/{project-slug}/repositories/{repo-slug}/worktrees/roles/{instance-slug}/
+```
 
 ### Disposal
 
@@ -158,18 +167,20 @@ Recommended runtime services:
   - release/dispose flows
 - `git_worktrees.rs`
   - focused helper for creating/removing disposable worktrees
+- `dispatcher.rs`
+  - periodic poll loop for queued agent and role work
 
 This avoids monolithic orchestration code and keeps side-effectful logic isolated.
 
 ## Initial command surface
 
 ### Runtime inspection
-- `list_role_operations()`
-- `get_role_operations(roleId)`
+- `list_role_operations(projectId)`
+- `get_role_operations(projectId, roleId)`
 
 ### Runtime control
 - `enqueue_role_work(input)`
-- `dispatch_role_queue(roleId?)`
+- `dispatch_role_queue(projectId, roleId?)`
 - `release_role_instance(instanceId, outcome)`
 - `dispose_role_instance(instanceId)`
 
@@ -182,7 +193,7 @@ The Agents area should show roles as operational workers, not config records.
 For each role show:
 - name
 - capacity used / total
-- queue depth
+- queue depth in the current project
 - active instance count
 - latest assignment
 - latest failure
@@ -214,11 +225,13 @@ Log these runtime events at minimum:
 - `role.worktree.disposed`
 - `role.session.created`
 - `role.session.reused`
+- `dispatcher.tick.started`
+- `dispatcher.tick.completed`
 
 ## Delivery order
 
 1. **Persistence foundation**
-   - runtime tables
+   - project-scoped runtime tables
    - snapshots/queries
    - tests
 2. **Dispatch + side effects**
@@ -240,6 +253,6 @@ Do not block first runtime delivery on:
 - automatic task creation flows
 - comment interruption semantics
 - advanced queue reordering
-- multi-project dispatch
 - durable event sourcing
 - sophisticated worker health monitoring
+- cross-project runtime sharing for one live role instance

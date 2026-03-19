@@ -89,6 +89,8 @@ Orchestra should clearly separate two kinds of workers:
 - **Agents** are named long-lived collaborators with memory and continuity
 - **Roles** are transient, disposable workers created from a shared template
 
+Agents, roles, and workflows can be shared definitions across projects, but their runtime execution should still be legible in the current project context.
+
 This distinction should remain obvious in the data model and UI.
 
 ### Workflow-driven task movement
