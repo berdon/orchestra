@@ -1,9 +1,11 @@
 pub mod agents;
 pub mod database;
+pub mod git_worktrees;
 pub mod live_sessions;
 pub mod logging;
 pub mod orchestra_paths;
 pub mod pi_sessions;
+pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;
 pub mod workflows;
