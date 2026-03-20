@@ -17,7 +17,6 @@ interface TasksOverviewPageProps {
   agents: AgentSummary[];
   roles: RoleSummary[];
   onOpenTask: (taskId: string) => void;
-  onCreateTask: () => void;
 }
 
 export function TasksOverviewPage({
@@ -31,7 +30,6 @@ export function TasksOverviewPage({
   agents,
   roles,
   onOpenTask,
-  onCreateTask,
 }: TasksOverviewPageProps) {
   const filterCounts = {
     all: allTasks.length,
@@ -44,44 +42,34 @@ export function TasksOverviewPage({
 
   return (
     <section className="tasks-overview-page">
-      <header className="tasks-page-header panel">
-        <div>
-          <p className="eyebrow">Workflow operations</p>
-          <h2>Tasks</h2>
-          <p className="muted-copy">Scan draft work and workflow progress at a glance, then open a task for details.</p>
-        </div>
-        <div className="tasks-toolbar">
-          <label className="checkbox-row">
+      <section className="tasks-overview-stack">
+        <div className="task-overview-controls">
+          <div className="task-nav-filters task-nav-filters--horizontal" data-role="task-nav-filters">
+            {([
+              ["all", "All", filterCounts.all],
+              ["attention", "Attention", filterCounts.attention],
+              ["review", "Needs review", filterCounts.review],
+              ["blocked", "Blocked", filterCounts.blocked],
+              ["active", "Active", filterCounts.active],
+              ["epics", "Epics", filterCounts.epics],
+            ] as Array<[TaskBoardFilter, string, number]>).map(([key, label, count]) => (
+              <button
+                key={key}
+                className={filter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
+                data-role={`task-filter-${key}`}
+                type="button"
+                onClick={() => onFilterChange(key)}
+              >
+                <span>{label}</span>
+                <span>{count}</span>
+              </button>
+            ))}
+          </div>
+
+          <label className="checkbox-row task-overview-controls__archived-toggle">
             <input type="checkbox" checked={includeArchived} onChange={(event) => onIncludeArchivedChange(event.target.checked)} />
             Show archived
           </label>
-          <button className="primary-button" data-role="new-task" type="button" onClick={onCreateTask}>
-            New task
-          </button>
-        </div>
-      </header>
-
-      <section className="tasks-overview-stack">
-        <div className="task-nav-filters task-nav-filters--horizontal" data-role="task-nav-filters">
-          {([
-            ["all", "All", filterCounts.all],
-            ["attention", "Attention", filterCounts.attention],
-            ["review", "Needs review", filterCounts.review],
-            ["blocked", "Blocked", filterCounts.blocked],
-            ["active", "Active", filterCounts.active],
-            ["epics", "Epics", filterCounts.epics],
-          ] as Array<[TaskBoardFilter, string, number]>).map(([key, label, count]) => (
-            <button
-              key={key}
-              className={filter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
-              data-role={`task-filter-${key}`}
-              type="button"
-              onClick={() => onFilterChange(key)}
-            >
-              <span>{label}</span>
-              <span>{count}</span>
-            </button>
-          ))}
         </div>
 
         <section className="task-board-section" data-role="draft-task-section">

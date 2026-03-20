@@ -239,6 +239,7 @@ export function App() {
   const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
   const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
+  const [tasksCreateToken, setTasksCreateToken] = useState(0);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
@@ -1059,6 +1060,15 @@ export function App() {
               >
                 Create session
               </button>
+            ) : activePage === "tasks" ? (
+              <button
+                className="primary-button"
+                data-role="new-task"
+                type="button"
+                onClick={() => setTasksCreateToken((current) => current + 1)}
+              >
+                New task
+              </button>
             ) : null}
           </div>
           <div className="status-cluster">
@@ -1133,7 +1143,7 @@ export function App() {
             onSendMessage={handleSendMessage}
           />
         ) : (
-          <TasksPage key={activeProject?.id ?? "default"} />
+          <TasksPage createTaskToken={tasksCreateToken} key={activeProject?.id ?? "default"} />
         )}
       </main>
     </div>
