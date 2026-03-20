@@ -124,6 +124,63 @@ export interface AgentMemoryInfo {
   dailyMemoryDir: string;
 }
 
+export interface AgentRuntimeState {
+  projectId: string;
+  agentId: string;
+  status: string;
+  mainSessionId?: string | null;
+  runtimeCwd?: string | null;
+  currentQueueEntryId?: string | null;
+  lastDispatchAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentQueueEntry {
+  id: string;
+  projectId: string;
+  agentId: string;
+  status: string;
+  sourceType: string;
+  sourceTaskId?: string | null;
+  sourceWorkflowId?: string | null;
+  sourceLaneId?: string | null;
+  deliveryMode: string;
+  title: string;
+  message: string;
+  sessionId?: string | null;
+  runId?: string | null;
+  dispatchedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentQueueEntryInput {
+  agentId: string;
+  sourceType: string;
+  sourceTaskId?: string | null;
+  sourceWorkflowId?: string | null;
+  sourceLaneId?: string | null;
+  deliveryMode: "prompt" | "follow_up" | "steer" | string;
+  title: string;
+  message: string;
+}
+
+export interface AgentOperationsSnapshot {
+  agent: AgentDefinition;
+  runtimeState: AgentRuntimeState;
+  queuedCount: number;
+  dispatchedCount: number;
+}
+
+export interface AgentOperationsDetail {
+  agent: AgentDefinition;
+  runtimeState: AgentRuntimeState;
+  queueEntries: AgentQueueEntry[];
+}
+
 export interface ProjectWorkerOverlay {
   projectSlug: string;
   workerType: string;
