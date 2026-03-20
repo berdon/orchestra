@@ -1141,14 +1141,35 @@ fn apply_agent_session_defaults(
 
 fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &WorkflowLane) -> String {
     let mut sections = vec![
-        format!("You are working task {} — {}.", task.number, task.title),
+        format!("You are an agent working inside Orchestra on task {} — {}.", task.number, task.title),
+        "Orchestra is the project orchestration system. It tracks tasks, workflows, worker ownership, runtime sessions, comments, attachments, and transitions between steps of work. You are operating as a worker inside that system, so your job is not just to do good work — it is to keep Orchestra's state accurate as you work.".into(),
+        [
+            "Orchestra concepts you need to understand:",
+            "- Task: the tracked unit of work you are responsible for right now. Tasks can have descriptions, comments, attachments, subtasks, dependencies, and workflow history.",
+            "- Workflow: the overall process definition attached to a task. A workflow contains ordered lanes and transition rules.",
+            "- Lane: the current step of the workflow. Each lane has an owner type (user, role, or agent) and defines what should happen on success or failure.",
+            "- Session: the running conversation/runtime for a worker. This session is the place where you reason, inspect task context, and decide how to move the task forward.",
+            "- Transition: the explicit tool call that moves the task out of the current lane. You must always end your work by choosing the correct transition tool.",
+        ]
+        .join("\n"),
         format!("Workflow: {}", workflow.name),
         format!("Current lane: {}", lane.name),
+        format!("Lane owner type: {}", lane.assigned_entity_type),
         format!("Task status: {}", task.status),
     ];
 
     if let Some(description) = task.description.as_deref().filter(|value| !value.trim().is_empty()) {
         sections.push(format!("Task description:\n{}", description.trim()));
+    }
+
+    if !task.blocked_by.is_empty() {
+        let blocked_lines = task
+            .blocked_by
+            .iter()
+            .map(|dependency| format!("- {} — {}", dependency.blocker.number, dependency.blocker.title))
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!("Blocking tasks:\n{}", blocked_lines));
     }
 
     if !task.attachments.is_empty() {
@@ -1175,25 +1196,49 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
     }
 
     if let Some(entry_prompt) = lane.entry_prompt_template.as_deref().filter(|value| !value.trim().is_empty()) {
-        sections.push(format!("Lane entry prompt:\n{}", entry_prompt.trim()));
+        sections.push(format!("Lane-specific instruction:\n{}", entry_prompt.trim()));
     }
 
     sections.push(
         [
-            "Available Orchestra task tools:",
-            "- get_task_context: Fetch the latest full task context, including hierarchy, dependencies, attachments, comments, lane runs, and active assignment state.",
-            "- comment_on_task: Add a task comment with guidance, findings, or status updates. Use this to leave useful context behind.",
-            "- create_subtask: Create a child task when the work should be split into smaller tracked units.",
-            "- add_task_dependency / remove_task_dependency: Manage blocking relationships between tasks when other work must finish first or a dependency is no longer needed.",
-            "- add_task_attachment / remove_task_attachment: Attach or remove supporting files and artifacts that matter for execution or review.",
-            "- complete_lane_as_success: Finish the current lane successfully and advance the workflow through its success transition.",
-            "- complete_lane_as_failure: Finish the current lane as failed so the workflow follows its failure transition.",
-            "- request_user_intervention: Stop and hand the task back to the human when you are blocked, uncertain, missing permissions, or any required transition/completion step fails.",
-            "",
-            "You must use either complete_lane_as_success, complete_lane_as_failure, or request_user_intervention to finish this task lane.",
-            "You are not done and cannot stop until you have used one of those tools.",
-            "If any completion or transition step fails, you must request user intervention instead of stopping.",
-            "Do not stop until you have finished the task lane and transitioned it.",
+            "How to work effectively in this session:",
+            "1. Start by understanding the task in Orchestra terms, not just the latest message.",
+            "2. If anything is unclear or may have changed, call get_task_context first to refresh the live task state.",
+            "3. Do the reasoning/work needed for the lane.",
+            "4. Record important findings or status updates with comment_on_task so the next worker or human can understand what happened.",
+            "5. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
+            "6. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
+            "7. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
+            "8. When the lane is finished, explicitly transition it with the correct completion tool.",
+        ]
+        .join("\n"),
+    );
+
+    sections.push(
+        [
+            "Available Orchestra task tools and exactly how to use them:",
+            "- get_task_context(task_id): Call this when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
+            "- comment_on_task(task_id, input): Use this to leave a durable note in Orchestra. Write comments for findings, progress updates, reviewer notes, handoff details, blockers, or decisions another worker must see later.",
+            "- create_subtask(parent_task_id, input): Use this when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
+            "- add_task_dependency(blocker_task_id, blocked_task_id): Use this when another task must be completed before the current one can proceed safely.",
+            "- remove_task_dependency(dependency_id): Use this only when an existing blocking relationship is no longer true.",
+            "- add_task_attachment(task_id, input): Use this for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs.",
+            "- remove_task_attachment(attachment_id): Use this only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
+            "- complete_lane_as_success(task_id, notes?): Use this when you finished the lane's goal and the task should follow the workflow's success transition.",
+            "- complete_lane_as_failure(task_id, notes?): Use this when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition.",
+            "- request_user_intervention(task_id, notes?): Use this when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding.",
+        ]
+        .join("\n"),
+    );
+
+    sections.push(
+        [
+            "Critical completion rules:",
+            "- You must end this lane by calling exactly one of: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
+            "- You are not done and cannot stop until you have used one of those tools.",
+            "- If any completion or transition step fails, call request_user_intervention instead of silently stopping.",
+            "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment if useful, and then choose the correct transition deliberately.",
+            "- Do not just summarize what you would do. Actually use the Orchestra tools to update the task state.",
         ]
         .join("\n"),
     );
@@ -1437,14 +1482,19 @@ mod tests {
             .expect("implement lane should exist");
 
         let prompt = build_lane_prompt(&task, &workflow, &lane);
-        assert!(prompt.contains("Available Orchestra task tools:"));
-        assert!(prompt.contains("- complete_lane_as_success:"));
-        assert!(prompt.contains("- complete_lane_as_failure:"));
-        assert!(prompt.contains("- request_user_intervention:"));
-        assert!(prompt.contains("You must use either complete_lane_as_success, complete_lane_as_failure, or request_user_intervention to finish this task lane."));
-        assert!(prompt.contains("You are not done and cannot stop until you have used one of those tools."));
-        assert!(prompt.contains("If any completion or transition step fails, you must request user intervention instead of stopping."));
-        assert!(prompt.contains("Do not stop until you have finished the task lane and transitioned it."));
+        assert!(prompt.contains("You are an agent working inside Orchestra"));
+        assert!(prompt.contains("- Workflow: the overall process definition attached to a task."));
+        assert!(prompt.contains("- Lane: the current step of the workflow."));
+        assert!(prompt.contains("How to work effectively in this session:"));
+        assert!(prompt.contains("2. If anything is unclear or may have changed, call get_task_context first"));
+        assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
+        assert!(prompt.contains("- get_task_context(task_id):"));
+        assert!(prompt.contains("- comment_on_task(task_id, input):"));
+        assert!(prompt.contains("- complete_lane_as_success(task_id, notes?):"));
+        assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?):"));
+        assert!(prompt.contains("- request_user_intervention(task_id, notes?):"));
+        assert!(prompt.contains("You must end this lane by calling exactly one of: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention."));
+        assert!(prompt.contains("Do not just summarize what you would do. Actually use the Orchestra tools to update the task state."));
     }
 
     #[test]

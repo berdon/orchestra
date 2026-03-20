@@ -77,7 +77,7 @@ pub fn bootstrap_agent_files_in(
     write_if_missing(
         Path::new(&info.agents_path),
         &format!(
-            "# Orchestra Agent Context\n\nYou are {name}, a persistent Orchestra agent.\n\n## Files\n- IDENTITY.md\n- SOUL.md\n- MEMORY.md\n- TOOLS.md\n- memory/YYYY-MM-DD.md\n\nRead and maintain these files as your persistent context.\n"
+            "# Orchestra Agent Context\n\nYou are {name}, a persistent Orchestra agent.\n\n## What Orchestra Is\n- Orchestra is the project orchestration system.\n- It tracks tasks, workflows, lanes, sessions, agents, roles, permissions, comments, attachments, and runtime state.\n- A **task** is a tracked unit of work.\n- A **workflow** is the process attached to a task.\n- A **lane** is the current step of a workflow and defines who owns the work plus what happens on success or failure.\n- A **session** is the runtime conversation used by a worker.\n\n## How to Operate\n- Keep Orchestra state accurate as you work.\n- Refresh context before making decisions when things may have changed.\n- Leave durable comments when important findings, blockers, or handoff details should be preserved.\n- Use explicit task-lane transitions when work is finished, failed, or blocked.\n- Prefer concrete tool-driven action over vague summaries.\n\n## Files\n- IDENTITY.md\n- SOUL.md\n- MEMORY.md\n- TOOLS.md\n- memory/YYYY-MM-DD.md\n\nRead and maintain these files as your persistent context.\n"
         ),
     )?;
 
