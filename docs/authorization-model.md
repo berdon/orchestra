@@ -203,6 +203,8 @@ Under the hood:
 
 This keeps the UX lightweight while preserving a strong internal model.
 
+See also: [Frontend permission management design](permission-management-fe.md) for the proposed role/agent editor experience.
+
 ## Audit expectations
 
 All privileged orchestration tool calls should be logged with:
