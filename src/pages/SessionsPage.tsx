@@ -184,9 +184,9 @@ export function SessionsPage({
                     className="primary-button"
                     data-role="send-message"
                     type="submit"
-                    disabled={selectedSessionPending || draftMessage.trim().length === 0}
+                    disabled={draftMessage.trim().length === 0}
                   >
-                    {selectedSessionPending ? "Sending…" : "Send message"}
+                    Send message
                   </button>
                 </div>
               </form>
