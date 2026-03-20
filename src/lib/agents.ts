@@ -4,6 +4,11 @@ import { isTauriAvailable } from "./tauri";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
+  AgentOperationsDetail,
+  AgentOperationsSnapshot,
+  AgentQueueEntry,
+  AgentQueueEntryInput,
+  AgentRuntimeState,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationError,
@@ -11,6 +16,9 @@ import type {
 } from "../types";
 
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
+const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
+const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
+const DEFAULT_PROJECT_ID = "orchestra";
 
 function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
@@ -37,6 +45,24 @@ function getStoredAgents() {
 
 function saveStoredAgents(agents: AgentDefinition[]) {
   window.localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(agents));
+}
+
+function getStoredAgentRuntimes() {
+  const value = window.localStorage.getItem(AGENT_RUNTIME_STORAGE_KEY);
+  return value ? (JSON.parse(value) as AgentRuntimeState[]) : [];
+}
+
+function saveStoredAgentRuntimes(runtimes: AgentRuntimeState[]) {
+  window.localStorage.setItem(AGENT_RUNTIME_STORAGE_KEY, JSON.stringify(runtimes));
+}
+
+function getStoredAgentQueue() {
+  const value = window.localStorage.getItem(AGENT_QUEUE_STORAGE_KEY);
+  return value ? (JSON.parse(value) as AgentQueueEntry[]) : [];
+}
+
+function saveStoredAgentQueue(entries: AgentQueueEntry[]) {
+  window.localStorage.setItem(AGENT_QUEUE_STORAGE_KEY, JSON.stringify(entries));
 }
 
 function summarizeAgent(agent: AgentDefinition): AgentSummary {
@@ -192,6 +218,40 @@ function ensureMockAgents() {
   return seeded;
 }
 
+function ensureMockAgentRuntime(agentId: string) {
+  const runtimes = getStoredAgentRuntimes();
+  const existing = runtimes.find((runtime) => runtime.agentId === agentId && runtime.projectId === DEFAULT_PROJECT_ID);
+  if (existing) {
+    return existing;
+  }
+
+  const created: AgentRuntimeState = {
+    projectId: DEFAULT_PROJECT_ID,
+    agentId,
+    status: "idle",
+    mainSessionId: null,
+    runtimeCwd: null,
+    currentQueueEntryId: null,
+    lastDispatchAt: null,
+    lastError: null,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  saveStoredAgentRuntimes([...runtimes, created]);
+  return created;
+}
+
+function summarizeAgentOperations(agent: AgentDefinition): AgentOperationsSnapshot {
+  const runtimeState = ensureMockAgentRuntime(agent.id);
+  const queueEntries = getStoredAgentQueue().filter((entry) => entry.agentId === agent.id && ["queued", "dispatched"].includes(entry.status));
+  return {
+    agent,
+    runtimeState,
+    queuedCount: queueEntries.filter((entry) => entry.status === "queued").length,
+    dispatchedCount: queueEntries.filter((entry) => entry.status === "dispatched").length,
+  };
+}
+
 export async function listAgents(includeArchived = false): Promise<AgentSummary[]> {
   if (!isTauriAvailable()) {
     return ensureMockAgents().filter((agent) => includeArchived || !agent.archived).map(summarizeAgent);
@@ -210,6 +270,60 @@ export async function getAgent(agentId: string): Promise<AgentDefinition> {
   }
 
   return invoke<AgentDefinition>("get_agent", { agentId });
+}
+
+export async function listAgentOperations(includeArchived = false): Promise<AgentOperationsSnapshot[]> {
+  if (!isTauriAvailable()) {
+    return ensureMockAgents()
+      .filter((agent) => includeArchived || !agent.archived)
+      .map((agent) => summarizeAgentOperations(agent));
+  }
+
+  return invoke<AgentOperationsSnapshot[]>("list_agent_operations", { includeArchived });
+}
+
+export async function getAgentOperations(agentId: string): Promise<AgentOperationsDetail> {
+  if (!isTauriAvailable()) {
+    const agent = await getAgent(agentId);
+    const runtimeState = ensureMockAgentRuntime(agentId);
+    const queueEntries = getStoredAgentQueue().filter((entry) => entry.agentId === agentId);
+    return {
+      agent,
+      runtimeState,
+      queueEntries,
+    };
+  }
+
+  return invoke<AgentOperationsDetail>("get_agent_operations", { agentId });
+}
+
+export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry> {
+  if (!isTauriAvailable()) {
+    const normalized: AgentQueueEntry = {
+      id: createId("agent-queue"),
+      projectId: DEFAULT_PROJECT_ID,
+      agentId: input.agentId,
+      status: "queued",
+      sourceType: input.sourceType,
+      sourceTaskId: input.sourceTaskId ?? null,
+      sourceWorkflowId: input.sourceWorkflowId ?? null,
+      sourceLaneId: input.sourceLaneId ?? null,
+      deliveryMode: input.deliveryMode,
+      title: input.title,
+      message: input.message,
+      sessionId: null,
+      runId: null,
+      dispatchedAt: null,
+      completedAt: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    saveStoredAgentQueue([...getStoredAgentQueue(), normalized]);
+    ensureMockAgentRuntime(input.agentId);
+    return normalized;
+  }
+
+  return invoke<AgentQueueEntry>("enqueue_agent_work", { input });
 }
 
 export async function validateAgent(input: AgentUpsertInput): Promise<AgentValidationResult> {

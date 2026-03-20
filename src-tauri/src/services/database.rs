@@ -162,6 +162,54 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_agent_policy_assignments_policy_id
                 ON agent_policy_assignments(policy_id);
 
+            CREATE TABLE IF NOT EXISTS agent_runtime_states (
+                project_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                main_session_id TEXT,
+                runtime_cwd TEXT,
+                current_queue_entry_id TEXT,
+                last_dispatch_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, agent_id),
+                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_queue_entries (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_task_id TEXT,
+                source_workflow_id TEXT,
+                source_lane_id TEXT,
+                delivery_mode TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                session_id TEXT,
+                run_id TEXT,
+                dispatched_at TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_runtime_status
+                ON agent_runtime_states(status, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status
+                ON agent_queue_entries(project_id, agent_id, status, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_queue_status
+                ON agent_queue_entries(status, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_queue_session
+                ON agent_queue_entries(session_id);
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

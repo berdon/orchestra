@@ -4,6 +4,7 @@ mod services;
 mod state;
 
 use commands::{
+    agent_runtime::{enqueue_agent_work, get_agent_operations, list_agent_operations},
     agents::{
         archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent,
         validate_agent,
@@ -86,6 +87,9 @@ pub fn run() {
             get_session_storage_info,
             list_pi_models,
             list_agents,
+            get_agent_operations,
+            list_agent_operations,
+            enqueue_agent_work,
             get_agent,
             validate_agent,
             create_agent,

@@ -10,7 +10,8 @@ use crate::{
         TaskLaneAssignment, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agents, live_sessions, pi_sessions, role_dispatch, role_runtime, tasks, workflows,
+        agent_runtime, agents, live_sessions, pi_sessions, role_dispatch, role_runtime, tasks,
+        workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -428,6 +429,38 @@ fn dispatch_agent_lane(
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
     ensure_lane_run(connection, task.id.as_str(), lane.id.as_str(), &session_id, now)?;
 
+    let runtime_cwd = project_root.display().to_string();
+    let queue_entry = agent_runtime::enqueue_agent_work(
+        connection,
+        crate::models::AgentQueueEntryInput {
+            agent_id: agent.id.clone(),
+            source_type: "workflow_lane".into(),
+            source_task_id: Some(task.id.clone()),
+            source_workflow_id: Some(workflow.id.clone()),
+            source_lane_id: Some(lane.id.clone()),
+            delivery_mode: "prompt".into(),
+            title: format!("{} · {}", task.number, task.title),
+            message: prompt.to_string(),
+        },
+    )?;
+    let run_id = generate_id("agent-queue-run");
+    let queue_entry = agent_runtime::mark_agent_queue_entry_dispatched(
+        connection,
+        &queue_entry.id,
+        &session_id,
+        &run_id,
+    )?
+    .ok_or_else(|| format!("Unable to mark agent queue entry {} dispatched", queue_entry.id))?;
+    let _ = agent_runtime::update_agent_runtime_dispatch_state(
+        connection,
+        &agent.id,
+        Some(&session_id),
+        Some(&runtime_cwd),
+        Some(&queue_entry.id),
+        "running",
+        None,
+    )?;
+
     let assignment = TaskLaneAssignment {
         id: assignment_id.to_string(),
         task_id: task.id.clone(),
@@ -436,8 +469,8 @@ fn dispatch_agent_lane(
         worker_type: "agent".into(),
         worker_id: Some(agent.id.clone()),
         status: ASSIGNMENT_STATUS_ACTIVE.into(),
-        session_id: Some(session_id),
-        runtime_cwd: Some(project_root.display().to_string()),
+        session_id: Some(session_id.clone()),
+        runtime_cwd: Some(runtime_cwd.clone()),
         role_queue_entry_id: None,
         role_instance_id: None,
         prompt: Some(prompt.to_string()),
@@ -447,7 +480,10 @@ fn dispatch_agent_lane(
         updated_at: now.to_string(),
     };
     insert_assignment(connection, &assignment)?;
-    Ok(assignment)
+    Ok(TaskLaneAssignment {
+        session_id: Some(session_id),
+        ..assignment
+    })
 }
 
 fn complete_lane(
@@ -507,6 +543,29 @@ fn complete_lane(
                 release_outcome,
                 if outcome == "failure" { normalized_notes.clone() } else { None },
             )?;
+        }
+
+        if assignment.worker_type == "agent" {
+            if let Some(agent_id) = assignment.worker_id.as_deref() {
+                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state(connection, agent_id)? {
+                    if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
+                        if outcome == "failure" {
+                            agent_runtime::mark_agent_queue_entry_failed(connection, queue_entry_id)?;
+                        } else {
+                            agent_runtime::mark_agent_queue_entry_completed(connection, queue_entry_id)?;
+                        }
+                    }
+                    let _ = agent_runtime::update_agent_runtime_dispatch_state(
+                        connection,
+                        agent_id,
+                        assignment.session_id.as_deref(),
+                        assignment.runtime_cwd.as_deref(),
+                        None,
+                        if outcome == "failure" { "needs_attention" } else { "idle" },
+                        if outcome == "failure" { normalized_notes.as_deref() } else { None },
+                    )?;
+                }
+            }
         }
 
         let assignment_status = match outcome {

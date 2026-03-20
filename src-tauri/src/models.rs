@@ -187,6 +187,73 @@ pub struct AgentMemoryInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentRuntimeState {
+    pub project_id: String,
+    pub agent_id: String,
+    pub status: String,
+    pub main_session_id: Option<String>,
+    pub runtime_cwd: Option<String>,
+    pub current_queue_entry_id: Option<String>,
+    pub last_dispatch_at: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentQueueEntry {
+    pub id: String,
+    pub project_id: String,
+    pub agent_id: String,
+    pub status: String,
+    pub source_type: String,
+    pub source_task_id: Option<String>,
+    pub source_workflow_id: Option<String>,
+    pub source_lane_id: Option<String>,
+    pub delivery_mode: String,
+    pub title: String,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub run_id: Option<String>,
+    pub dispatched_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentQueueEntryInput {
+    pub agent_id: String,
+    pub source_type: String,
+    pub source_task_id: Option<String>,
+    pub source_workflow_id: Option<String>,
+    pub source_lane_id: Option<String>,
+    pub delivery_mode: String,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentOperationsSnapshot {
+    pub agent: AgentDefinition,
+    pub runtime_state: AgentRuntimeState,
+    pub queued_count: i64,
+    pub dispatched_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentOperationsDetail {
+    pub agent: AgentDefinition,
+    pub runtime_state: AgentRuntimeState,
+    pub queue_entries: Vec<AgentQueueEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectWorkerOverlay {
     pub project_slug: String,
     pub worker_type: String,
