@@ -262,18 +262,23 @@ Important boundary:
 
 ### Tasks
 
-Tasks are workflow-driven work items.
+Tasks are workflow-driven work items, but they also need to model planning structure and execution constraints.
 
 Suggested task fields:
 - `id`
 - `projectId`
+- `number`  # project-local human-readable id such as `ORC-42`
 - `title`
 - `description`
-- `workflowId`
-- `status`
-- `currentLaneId`
+- `type` (`task`, `bug`, `feature`, `chore`, `epic`)
+- `status` (`draft`, `ready`, `in_progress`, `blocked`, `in_review`, `completed`, `canceled`)
+- `priority` (`P0`-`P4`)
+- `workflowId?`
+- `currentLaneId?`
 - `assigneeType` (`user`, `agent`, `role`, `unassigned`)
 - `assigneeId?`
+- `repositoryId?`
+- `parentTaskId?`
 - `comments[]`
 - `laneRuns[]`
 - `createdAt`
@@ -284,14 +289,42 @@ Important behavior:
 - the comment UI should offer an `Interrupt agent` checkbox so the user can choose whether a new comment should interrupt the currently active session immediately
 - each lane run should record which session worked that lane
 - when a task re-enters a lane, Orchestra should always resume the previously recorded session for that lane
+- hierarchy and dependency must remain separate concepts: parent tasks/epics group work, while dependency edges block work
+- epics should act as planning containers and progress rollups in the first pass, while child tasks own workflow execution
+- dependency-blocked tasks should remain visible but must not be dispatchable until their blockers complete
+- tasks should support project-scoped attachments that can be surfaced to both humans and agents
 
 Suggested lane run model:
+- `id`
+- `taskId`
 - `laneId`
 - `sessionId`
 - `startedAt`
 - `completedAt?`
 - `result` (`success`, `failure`, `needs_user`, `canceled`)
 - `notes?`
+
+Suggested task dependency model:
+- `id`
+- `projectId`
+- `blockerTaskId`
+- `blockedTaskId`
+- `kind` (`blocks`)
+- `createdAt`
+
+Suggested task attachment model:
+- `id`
+- `projectId`
+- `taskId`
+- `commentId?`
+- `fileName`
+- `originalPath?`
+- `storedPath`
+- `mediaType`
+- `byteSize`
+- `sha256?`
+- `caption?`
+- `createdAt`
 
 ### Workflows
 
@@ -393,15 +426,25 @@ Recommended refinement:
 Suggested tool set:
 - `create_task`
 - `update_task`
-- `comment_on_task`
 - `list_project_tasks`
 - `get_task_context`
+- `comment_on_task`
+- `create_subtask`
+- `add_task_dependency`
+- `remove_task_dependency`
+- `add_task_attachment`
+- `list_task_attachments`
 - `complete_lane_as_success`
 - `complete_lane_as_failure`
 - `request_user_intervention`
 - `dispatch_role_queue`
 - `create_session`
 - `send_session_message`
+
+Task-specific expectations:
+- `get_task_context` should return workflow state, lineage, dependency summaries, recent comments, and an attachment manifest with absolute stored paths for agent-readable files
+- `add_task_attachment` should import a local file into Orchestra-managed project storage rather than reference arbitrary mutable paths in place
+- task tools should be permission-gated with explicit grants such as `tasks.create`, `tasks.comment`, `tasks.attachments.write`, and `tasks.transition`
 
 ## Backend design
 
@@ -419,6 +462,10 @@ Session management:
 Entity management:
 - create/update/delete project
 - create/update/delete task
+- create subtask / set task parent
+- add/remove task dependency
+- add/remove task attachment
+- get task context
 - create/update/delete agent
 - list agents
 - list agent queues
@@ -435,6 +482,8 @@ Split the backend into clear service areas:
 - `RepositoryService`
 - `WorkflowService`
 - `TaskService`
+- `TaskGraphService`
+- `TaskAttachmentService`
 - `AgentService`
 - `RoleService`
 - `PolicyService`
@@ -442,7 +491,7 @@ Split the backend into clear service areas:
 - `SessionService`
 - `DispatchService`
 
-This should reduce coupling versus putting workflow advancement logic directly inside session management, and keeps permission resolution separate from workforce/runtime behavior.
+This should reduce coupling versus putting workflow advancement logic directly inside session management, keeps permission resolution separate from workforce/runtime behavior, and prevents task hierarchy/dependency/attachment logic from collapsing into one monolithic task module.
 
 ## Event model
 
@@ -455,8 +504,15 @@ Initial approach:
 
 Examples of things worth logging:
 - `task.created`
+- `task.updated`
 - `task.commented`
 - `task.comment.interrupt_requested`
+- `task.dependency.added`
+- `task.dependency.removed`
+- `task.blocked`
+- `task.unblocked`
+- `task.attachment.added`
+- `task.attachment.removed`
 - `task.lane.entered`
 - `task.lane.completed`
 - `session.created`
@@ -500,8 +556,10 @@ Refinement:
 
 #### Tasks
 - kanban or lane-centric workflow view
-- task detail panel with comments, lane history, and current assignee
-- clear controls for advancing, retrying, or requesting user intervention
+- explicit scan filters such as ready, blocked, in review, and epics
+- task detail panel with comments, lane history, current assignee, lineage, dependencies, and attachments
+- clear controls for advancing, retrying, requesting user intervention, creating subtasks, and attaching files
+- blocked-by state should be visible in both the scan surface and the task detail pane
 
 #### Agents
 - secondary nav lists agents and roles
@@ -622,11 +680,13 @@ Suggestion:
 - prioritize this milestone so session creation and interaction can be tested as early as possible
 
 ### Milestone 3: Core project/task data
-- define persisted models for projects, repositories, tasks, workflows, agents, roles, policies, and lane runs
+- define persisted models for projects, repositories, tasks, task dependencies, task attachments, workflows, agents, roles, policies, and lane runs
 - implement project/repository/task/workflow CRUD
+- implement task hierarchy, dependency validation, and attachment import/storage
 - implement policy persistence, permission resolution, and direct permission attachment on agents and roles
 - implement lane transitions and lane run history
 - wire task comments, including interrupt-vs-queue behavior
+- expose a task tool/API surface centered on `get_task_context`
 
 ### Milestone 4: Agent and role dispatch
 - add persistent agents with queues
@@ -637,7 +697,8 @@ Suggestion:
 - attach tasks and lanes to resumed sessions
 
 ### Milestone 5: Operational UX
-- build task workflow UI
+- build task workflow UI with blocked, ready, and review-focused scan surfaces
+- build task detail flows for lineage, dependencies, comments, and attachments
 - build agent/role workload views
 - build intervention inbox and queue health indicators
 
