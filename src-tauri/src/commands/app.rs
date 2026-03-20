@@ -68,6 +68,8 @@ pub fn get_session_storage_info(
 }
 
 #[tauri::command]
-pub fn list_pi_models() -> Result<Vec<SessionModel>, String> {
-    list_available_models()
+pub async fn list_pi_models() -> Result<Vec<SessionModel>, String> {
+    tauri::async_runtime::spawn_blocking(list_available_models)
+        .await
+        .map_err(|error| format!("Unable to join PI model discovery task: {error}"))?
 }
