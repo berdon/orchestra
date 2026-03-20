@@ -99,13 +99,26 @@ pub async fn comment_on_task(
     let mut connection = database::open_connection()?;
     let comment = tasks::add_task_comment(&mut connection, &task_id, input)?;
     if let Some(active_assignment) = task_runtime::get_active_lane_assignment(&connection, &task_id)? {
-        task_runtime::maybe_interrupt_with_comment(
-            app,
-            &state,
-            context.session_dir.clone(),
-            &active_assignment,
-            &comment,
-        )?;
+        task_runtime::queue_comment_delivery(&connection, &active_assignment, &comment)?;
+        if active_assignment.worker_type == "agent" {
+            if let Some(agent_id) = active_assignment.worker_id.as_deref() {
+                let _ = crate::services::agent_dispatch::dispatch_agent_queue(
+                    app.clone(),
+                    &state,
+                    &context.project_root,
+                    &context.session_dir,
+                    agent_id,
+                )?;
+            }
+        } else {
+            task_runtime::maybe_interrupt_with_comment(
+                app,
+                &state,
+                context.session_dir.clone(),
+                &active_assignment,
+                &comment,
+            )?;
+        }
     }
     state.log("info", "task.commented", &format!("Added comment {} to task {}", comment.id, task_id));
     state.log_authorized_action(

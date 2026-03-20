@@ -94,6 +94,101 @@ pub fn get_active_assignment_for_session(
         .map_err(|error| format!("Unable to query assignment for session {session_id}: {error}"))
 }
 
+pub fn activate_queued_role_assignments(
+    connection: &Connection,
+) -> Result<Vec<TaskLaneAssignment>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                tla.id,
+                tla.task_id,
+                tla.workflow_id,
+                tla.lane_id,
+                tla.worker_type,
+                tla.worker_id,
+                tla.status,
+                tla.session_id,
+                tla.runtime_cwd,
+                tla.role_queue_entry_id,
+                tla.role_instance_id,
+                tla.prompt,
+                tla.started_at,
+                tla.completed_at,
+                tla.created_at,
+                tla.updated_at,
+                rqe.assigned_instance_id,
+                ri.session_id,
+                ri.worktree_path
+            FROM task_lane_assignments tla
+            JOIN role_queue_entries rqe ON rqe.id = tla.role_queue_entry_id
+            LEFT JOIN role_instances ri ON ri.id = rqe.assigned_instance_id
+            WHERE tla.worker_type = 'role'
+              AND tla.status = 'queued'
+              AND rqe.status = 'assigned'
+              AND rqe.assigned_instance_id IS NOT NULL
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare queued role assignment activation query: {error}"))?;
+
+    let candidates = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(17)?,
+                row.get::<_, String>(18)?,
+                row.get::<_, String>(16)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to query queued role assignment activation candidates: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect role assignment activation candidates: {error}"))?;
+
+    let mut activated = Vec::new();
+    for (assignment_id, session_id, runtime_cwd, instance_id) in candidates {
+        let now = now_iso();
+        connection
+            .execute(
+                "UPDATE task_lane_assignments SET status = 'active', session_id = ?2, runtime_cwd = ?3, role_instance_id = ?4, updated_at = ?5 WHERE id = ?1 AND status = 'queued'",
+                params![assignment_id, session_id, runtime_cwd, instance_id, now],
+            )
+            .map_err(|error| format!("Unable to activate queued role assignment {assignment_id}: {error}"))?;
+        if let Some(assignment) = connection
+            .query_row(
+                r#"
+                SELECT
+                    id,
+                    task_id,
+                    workflow_id,
+                    lane_id,
+                    worker_type,
+                    worker_id,
+                    status,
+                    session_id,
+                    runtime_cwd,
+                    role_queue_entry_id,
+                    role_instance_id,
+                    prompt,
+                    started_at,
+                    completed_at,
+                    created_at,
+                    updated_at
+                FROM task_lane_assignments
+                WHERE id = ?1
+                "#,
+                [assignment_id.as_str()],
+                read_assignment,
+            )
+            .optional()
+            .map_err(|error| format!("Unable to reload activated role assignment {}: {error}", assignment_id))?
+        {
+            activated.push(assignment);
+        }
+    }
+
+    Ok(activated)
+}
+
 pub fn dispatch_task_lane(
     connection: &mut Connection,
     project_root: &Path,
@@ -222,6 +317,56 @@ pub fn start_assignment_run(
     }
 }
 
+pub fn queue_comment_delivery(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+    comment: &TaskComment,
+) -> Result<(), String> {
+    let message = format!("Task comment from {}:\n\n{}", comment.author, comment.message);
+
+    match assignment.worker_type.as_str() {
+        "agent" => {
+            let Some(agent_id) = assignment.worker_id.as_deref() else {
+                return Err("Agent assignment is missing an agent id".into());
+            };
+            let _ = agent_runtime::enqueue_agent_work(
+                connection,
+                crate::models::AgentQueueEntryInput {
+                    agent_id: agent_id.to_string(),
+                    source_type: "task_comment".into(),
+                    source_task_id: Some(assignment.task_id.clone()),
+                    source_workflow_id: Some(assignment.workflow_id.clone()),
+                    source_lane_id: Some(assignment.lane_id.clone()),
+                    delivery_mode: if comment.interrupt_agent { "steer".into() } else { "follow_up".into() },
+                    title: format!("Comment for task {}", assignment.task_id),
+                    message,
+                },
+            )?;
+            Ok(())
+        }
+        "role" => {
+            let Some(role_id) = assignment.worker_id.as_deref() else {
+                return Err("Role assignment is missing a role id".into());
+            };
+            let _ = role_runtime::enqueue_role_work(
+                &mut crate::services::database::open_connection()?,
+                crate::models::RoleQueueEntryInput {
+                    role_id: role_id.to_string(),
+                    source_type: "task_comment".into(),
+                    source_task_id: Some(assignment.task_id.clone()),
+                    source_workflow_id: Some(assignment.workflow_id.clone()),
+                    source_lane_id: Some(assignment.lane_id.clone()),
+                    title: format!("Comment for task {}", assignment.task_id),
+                    summary: Some(comment.author.clone()),
+                    entry_prompt: Some(message),
+                },
+            )?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 pub fn maybe_interrupt_with_comment(
     app: AppHandle,
     state: &AppState,
@@ -229,6 +374,9 @@ pub fn maybe_interrupt_with_comment(
     assignment: &TaskLaneAssignment,
     comment: &TaskComment,
 ) -> Result<(), String> {
+    if assignment.worker_type == "agent" {
+        return Ok(());
+    }
     if !comment.interrupt_agent || assignment.status != ASSIGNMENT_STATUS_ACTIVE {
         return Ok(());
     }
@@ -1268,6 +1416,60 @@ mod tests {
         assert_eq!(updated.assignee_type, "agent");
         assert_eq!(updated.assignee_id.as_deref(), Some(agent.slug.as_str()));
         assert!(updated.active_lane_assignment.is_none());
+    }
+
+    #[test]
+    fn queues_non_interrupting_agent_comments_in_agent_queue() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Responder".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let assignment = TaskLaneAssignment {
+            id: "assignment-1".into(),
+            task_id: "task-1".into(),
+            workflow_id: "workflow-1".into(),
+            lane_id: "lane-1".into(),
+            worker_type: "agent".into(),
+            worker_id: Some(agent.id.clone()),
+            status: ASSIGNMENT_STATUS_ACTIVE.into(),
+            session_id: Some("session-1".into()),
+            runtime_cwd: Some("/tmp/runtime".into()),
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: Some("Prompt".into()),
+            started_at: now_iso(),
+            completed_at: None,
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+        let comment = crate::models::TaskComment {
+            id: "comment-1".into(),
+            task_id: "task-1".into(),
+            author: "User".into(),
+            message: "Please follow up later.".into(),
+            interrupt_agent: false,
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        queue_comment_delivery(&connection, &assignment, &comment).expect("queue comment delivery");
+        let queue_entries = crate::services::agent_runtime::list_agent_queue_entries(&connection, Some(&agent.id), true)
+            .expect("agent queue entries");
+        assert_eq!(queue_entries.len(), 1);
+        assert_eq!(queue_entries[0].delivery_mode, "follow_up");
+        assert_eq!(queue_entries[0].source_type, "task_comment");
     }
 
     #[test]

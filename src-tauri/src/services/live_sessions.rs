@@ -225,6 +225,10 @@ impl SessionRuntime {
                     .app
                     .state::<crate::state::AppState>()
                     .end_session_run(&self.session_id, &run_id);
+                let _ = crate::services::agent_dispatch::complete_agent_run(
+                    &self.session_id,
+                    Some(&run_id),
+                );
             }
             self.close_if_idle();
         }
@@ -244,6 +248,11 @@ impl SessionRuntime {
                 .app
                 .state::<crate::state::AppState>()
                 .end_session_run(&self.session_id, &run_id);
+            let _ = crate::services::agent_dispatch::fail_agent_run(
+                &self.session_id,
+                Some(&run_id),
+                &error_message,
+            );
             self.emit_stream_event(json!({
                 "type": "error",
                 "message": error_message,
@@ -386,35 +395,45 @@ impl SessionRuntime {
     }
 
     pub fn start_run(&self, run_id: &str, message: &str) -> Result<(), String> {
+        self.start_delivery(run_id, "prompt", message)
+    }
+
+    pub fn start_delivery(&self, run_id: &str, delivery_type: &str, message: &str) -> Result<(), String> {
         self.app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.start_run",
             &format!(
-                "Session {} starting run {} with {} chars",
+                "Session {} starting {} delivery {} with {} chars",
                 self.session_id,
+                delivery_type,
                 run_id,
                 message.len()
             ),
         );
-        {
-            let mut current_run_id = self
-                .current_run_id
-                .lock()
-                .map_err(|_| "Unable to access current session run state".to_string())?;
-            if current_run_id.is_some() {
-                return Err("This session is already processing a message".into());
+
+        let command_id = format!("{}-{}", delivery_type, run_id);
+        let command = match delivery_type {
+            "prompt" => {
+                let mut current_run_id = self
+                    .current_run_id
+                    .lock()
+                    .map_err(|_| "Unable to access current session run state".to_string())?;
+                if current_run_id.is_some() {
+                    return Err("This session is already processing a message".into());
+                }
+                *current_run_id = Some(run_id.to_string());
+                json!({ "id": command_id, "type": "prompt", "message": message })
             }
-            *current_run_id = Some(run_id.to_string());
-        }
+            "steer" => json!({ "id": command_id, "type": "steer", "message": message }),
+            "follow_up" => json!({ "id": command_id, "type": "follow_up", "message": message }),
+            other => return Err(format!("Unsupported session delivery type: {other}")),
+        };
 
-        let result = self.send_command(json!({
-            "id": format!("prompt-{run_id}"),
-            "type": "prompt",
-            "message": message,
-        }));
-
+        let result = self.send_command(command);
         if let Err(error) = result {
-            let _ = self.take_current_run_id();
+            if delivery_type == "prompt" {
+                let _ = self.take_current_run_id();
+            }
             return Err(error);
         }
 

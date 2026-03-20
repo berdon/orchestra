@@ -13,6 +13,7 @@ use commands::{
         clear_logs, get_app_info, get_logs, get_session_storage_info, list_pi_models,
         open_logs_window,
     },
+    dispatcher::run_dispatcher_tick,
     policies::{
         get_agent_permissions, get_policy, get_role_instance_permissions, get_role_permissions,
         list_orchestra_tools, list_policies,
@@ -53,6 +54,8 @@ pub fn run() {
             None,
         )
         .expect("unable to seed Orchestra supervisor authorization state");
+    services::agent_runtime::reconcile_agent_runtime_states(&bootstrap_connection)
+        .expect("unable to reconcile Orchestra agent runtime state");
 
     let app_state = AppState::new(tool_bridge.clone());
     app_state.log(
@@ -79,11 +82,16 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .setup(|app| {
+            services::dispatcher::start_dispatcher_loop(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             get_logs,
             clear_logs,
             open_logs_window,
+            run_dispatcher_tick,
             get_session_storage_info,
             list_pi_models,
             list_agents,
