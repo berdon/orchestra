@@ -70,7 +70,10 @@ function summarizeAgent(agent: AgentDefinition): AgentSummary {
     id: agent.id,
     slug: agent.slug,
     name: agent.name,
+    roleId: agent.roleId,
     thinkingLevel: agent.thinkingLevel,
+    policyIds: agent.policyIds ?? [],
+    directPermissions: agent.directPermissions ?? [],
     system: agent.system,
     immutable: agent.immutable,
     archived: agent.archived,
@@ -149,7 +152,12 @@ function normalizeMockAgentInput(input: AgentUpsertInput, existing?: AgentDefini
     systemPrompt,
     provider,
     model,
+    roleId: input.roleId ?? existing?.roleId ?? null,
     thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
+    policyIds: Array.from(new Set(input.policyIds ?? existing?.policyIds ?? [])).sort(),
+    directPermissions: Array.from(new Set(input.directPermissions ?? existing?.directPermissions ?? [])).sort(),
+    system: existing?.system ?? false,
+    immutable: existing?.immutable ?? false,
     archived: existing?.archived ?? false,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
@@ -204,6 +212,11 @@ function ensureMockAgents() {
     const migrated = existing.map((agent) => ({
       ...agent,
       slug: agent.slug || slugifyAgentName(agent.name),
+      roleId: agent.roleId ?? null,
+      policyIds: agent.policyIds ?? [],
+      directPermissions: agent.directPermissions ?? [],
+      system: agent.system ?? false,
+      immutable: agent.immutable ?? false,
     }));
 
     if (JSON.stringify(migrated) !== JSON.stringify(existing)) {

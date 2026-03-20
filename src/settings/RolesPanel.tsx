@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { listPiModels } from "../lib/tauri";
+import { AccessEditor } from "../components/access/AccessEditor";
+import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
+import { getPolicy, listPolicies } from "../lib/policies";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
-import type { RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError, SessionModel } from "../types";
+import { listPiModels } from "../lib/tauri";
+import type {
+  PolicyDefinition,
+  RoleDefinition,
+  RoleSummary,
+  RoleUpsertInput,
+  RoleValidationError,
+  SessionModel,
+} from "../types";
 
 function createBlankRoleDraft(): RoleUpsertInput {
   return {
@@ -13,6 +23,8 @@ function createBlankRoleDraft(): RoleUpsertInput {
     model: "",
     thinkingLevel: "off",
     capacity: 1,
+    policyIds: [],
+    directPermissions: [],
   };
 }
 
@@ -25,6 +37,8 @@ function roleToDraft(role: RoleDefinition): RoleUpsertInput {
     model: role.model ?? "",
     thinkingLevel: role.thinkingLevel,
     capacity: role.capacity,
+    policyIds: role.policyIds ?? [],
+    directPermissions: role.directPermissions ?? [],
   };
 }
 
@@ -47,6 +61,7 @@ export function RolesPanel() {
   const [loadedRoleArchived, setLoadedRoleArchived] = useState(false);
   const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
   const [loadingModelOptions, setLoadingModelOptions] = useState(false);
+  const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
 
   const selectedRoleSummary = useMemo(
     () => roles.find((role) => role.id === selectedRoleId) ?? roles[0] ?? null,
@@ -62,6 +77,15 @@ export function RolesPanel() {
     () => availableModels.filter((model) => !roleDraft.provider || model.provider === roleDraft.provider),
     [availableModels, roleDraft.provider],
   );
+  const attachedPolicies = useMemo(
+    () => policyDefinitions.filter((policy) => roleDraft.policyIds?.includes(policy.id)),
+    [policyDefinitions, roleDraft.policyIds],
+  );
+  const effectiveAccess = useMemo(
+    () => buildEffectivePermissions({ attachedPolicies, directPermissions: roleDraft.directPermissions }),
+    [attachedPolicies, roleDraft.directPermissions],
+  );
+  const attachedPolicyNames = useMemo(() => attachedPolicies.map((policy) => getPolicyLabel(policy)), [attachedPolicies]);
 
   async function loadRoles() {
     setLoadingRoles(true);
@@ -127,6 +151,26 @@ export function RolesPanel() {
       .finally(() => {
         if (!cancelled) {
           setLoadingModelOptions(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listPolicies()
+      .then((summaries) => Promise.all(summaries.map((summary) => getPolicy(summary.id))))
+      .then((definitions) => {
+        if (!cancelled) {
+          setPolicyDefinitions(definitions);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRoleActionError(error instanceof Error ? error.message : "Unable to load policy definitions.");
         }
       });
 
@@ -241,7 +285,7 @@ export function RolesPanel() {
               />
               Show archived
             </label>
-            <button className="primary-button" type="button" onClick={beginCreateRole}>
+            <button className="primary-button" data-role="new-role" type="button" onClick={beginCreateRole}>
               New role
             </button>
           </div>
@@ -262,6 +306,7 @@ export function RolesPanel() {
               }}
             >
               {role.name}
+              <span className="role-list-link__meta">{role.thinkingLevel}</span>
             </a>
           ))}
         </nav>
@@ -277,12 +322,17 @@ export function RolesPanel() {
               </div>
               <div className="action-cluster">
                 {loadedRoleArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
+                {attachedPolicyNames.map((name) => (
+                  <span className="status-badge status-badge--accent" key={name}>
+                    {name}
+                  </span>
+                ))}
                 {!isCreatingRole && loadedRoleId ? (
                   <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveRole()} disabled={savingRole || loadedRoleArchived}>
                     Archive role
                   </button>
                 ) : null}
-                <button className="primary-button" type="button" onClick={() => void handleSaveRole()} disabled={savingRole || loadingRoleDetail}>
+                <button className="primary-button" data-role="save-role" type="button" onClick={() => void handleSaveRole()} disabled={savingRole || loadingRoleDetail}>
                   {savingRole ? "Saving…" : isCreatingRole ? "Create role" : "Save changes"}
                 </button>
               </div>
@@ -301,6 +351,7 @@ export function RolesPanel() {
                   <span className="field-group__label">Role name</span>
                   <input
                     className="text-input"
+                    data-role="role-name"
                     type="text"
                     value={roleDraft.name}
                     onChange={(event) => updateRoleDraft((draft) => ({ ...draft, name: event.target.value }))}
@@ -418,6 +469,20 @@ export function RolesPanel() {
                 </label>
               </div>
             </section>
+
+            <AccessEditor
+              actorLabel="role"
+              dataRolePrefix="role"
+              policyIds={roleDraft.policyIds ?? []}
+              directPermissions={roleDraft.directPermissions ?? []}
+              attachedPolicies={attachedPolicies}
+              effectivePermissions={effectiveAccess.permissions}
+              grantsFullAccess={effectiveAccess.grantsFullAccess}
+              onPolicyIdsChange={(policyIds) => updateRoleDraft((draft) => ({ ...draft, policyIds }))}
+              onDirectPermissionsChange={(directPermissions) => updateRoleDraft((draft) => ({ ...draft, directPermissions }))}
+            />
+
+            <p className="muted-copy">Permissions assigned here are inherited by role instances spawned from this role.</p>
 
             {validationSummary.length > 0 ? (
               <section className="workflow-section">

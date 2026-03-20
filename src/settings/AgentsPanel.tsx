@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { AccessEditor } from "../components/access/AccessEditor";
+import type { InheritedAccessSummary } from "../components/access/AccessSummary";
+import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import {
   archiveAgent,
   createAgent,
@@ -9,15 +12,19 @@ import {
   updateAgent,
   validateAgent,
 } from "../lib/agents";
-import { listPiModels } from "../lib/tauri";
+import { getPolicy, listPolicies } from "../lib/policies";
 import { getWorkerOverlay, updateWorkerOverlay } from "../lib/projectSettings";
+import { listRoles } from "../lib/roles";
+import { listPiModels } from "../lib/tauri";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationError,
+  PolicyDefinition,
   ProjectWorkerOverlay,
+  RoleSummary,
   SessionModel,
 } from "../types";
 
@@ -29,6 +36,9 @@ function createBlankAgentDraft(): AgentUpsertInput {
     provider: "",
     model: "",
     thinkingLevel: "off",
+    roleId: null,
+    policyIds: [],
+    directPermissions: [],
   };
 }
 
@@ -39,7 +49,10 @@ function agentToDraft(agent: AgentDefinition): AgentUpsertInput {
     systemPrompt: agent.systemPrompt ?? "",
     provider: agent.provider ?? "",
     model: agent.model ?? "",
+    roleId: agent.roleId ?? null,
     thinkingLevel: agent.thinkingLevel,
+    policyIds: agent.policyIds ?? [],
+    directPermissions: agent.directPermissions ?? [],
   };
 }
 
@@ -49,6 +62,7 @@ function getAgentValidationForPath(errors: AgentValidationError[], path: string)
 
 export function AgentsPanel() {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentDraft, setAgentDraft] = useState<AgentUpsertInput>(createBlankAgentDraft);
   const [agentValidation, setAgentValidation] = useState<AgentValidationError[]>([]);
@@ -67,6 +81,7 @@ export function AgentsPanel() {
   const [projectOverlay, setProjectOverlay] = useState<ProjectWorkerOverlay | null>(null);
   const [overlayDraft, setOverlayDraft] = useState("");
   const [savingOverlay, setSavingOverlay] = useState(false);
+  const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
 
   const selectedAgentSummary = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
@@ -81,6 +96,49 @@ export function AgentsPanel() {
   const filteredModelOptions = useMemo(
     () => availableModels.filter((model) => !agentDraft.provider || model.provider === agentDraft.provider),
     [availableModels, agentDraft.provider],
+  );
+  const attachedPolicies = useMemo(
+    () => policyDefinitions.filter((policy) => agentDraft.policyIds?.includes(policy.id)),
+    [policyDefinitions, agentDraft.policyIds],
+  );
+  const inheritedRole = useMemo(
+    () => roles.find((role) => role.id === agentDraft.roleId) ?? null,
+    [roles, agentDraft.roleId],
+  );
+  const inheritedPolicies = useMemo(
+    () => policyDefinitions.filter((policy) => inheritedRole?.policyIds?.includes(policy.id)),
+    [policyDefinitions, inheritedRole?.policyIds],
+  );
+  const inheritedEffective = useMemo(
+    () =>
+      inheritedRole
+        ? buildEffectivePermissions({
+            attachedPolicies: inheritedPolicies,
+            directPermissions: inheritedRole.directPermissions,
+          })
+        : { permissions: [], grantsFullAccess: false },
+    [inheritedPolicies, inheritedRole],
+  );
+  const inheritedAccess = useMemo<InheritedAccessSummary | null>(() => {
+    if (!inheritedRole) {
+      return null;
+    }
+
+    return {
+      sourceLabel: inheritedRole.name,
+      permissions: inheritedEffective.permissions,
+      policyNames: inheritedPolicies.map((policy) => getPolicyLabel(policy)),
+      grantsFullAccess: inheritedEffective.grantsFullAccess,
+    };
+  }, [inheritedEffective.grantsFullAccess, inheritedEffective.permissions, inheritedPolicies, inheritedRole]);
+  const effectiveAccess = useMemo(
+    () =>
+      buildEffectivePermissions({
+        inheritedPermissions: inheritedEffective.permissions,
+        attachedPolicies,
+        directPermissions: agentDraft.directPermissions,
+      }),
+    [agentDraft.directPermissions, attachedPolicies, inheritedEffective.permissions],
   );
 
   async function loadAgents() {
@@ -122,10 +180,7 @@ export function AgentsPanel() {
       setIsCreatingAgent(false);
       setLoadingAgentDetail(false);
 
-      void Promise.all([
-        getAgentMemoryInfo(agentId),
-        getWorkerOverlay("agent", agent.slug),
-      ])
+      void Promise.all([getAgentMemoryInfo(agentId), getWorkerOverlay("agent", agent.slug)])
         .then(([memoryInfo, overlay]) => {
           setAgentMemoryInfo(memoryInfo);
           setProjectOverlay(overlay);
@@ -163,6 +218,45 @@ export function AgentsPanel() {
       .finally(() => {
         if (!cancelled) {
           setLoadingModelOptions(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listPolicies()
+      .then((summaries) => Promise.all(summaries.map((summary) => getPolicy(summary.id))))
+      .then((definitions) => {
+        if (!cancelled) {
+          setPolicyDefinitions(definitions);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAgentActionError(error instanceof Error ? error.message : "Unable to load policy definitions.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listRoles(true)
+      .then((nextRoles) => {
+        if (!cancelled) {
+          setRoles(nextRoles);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAgentActionError(error instanceof Error ? error.message : "Unable to load roles for inherited access.");
         }
       });
 
@@ -240,10 +334,7 @@ export function AgentsPanel() {
       setAgentValidation([]);
       setIsCreatingAgent(false);
 
-      void Promise.all([
-        getAgentMemoryInfo(saved.id),
-        getWorkerOverlay("agent", saved.slug),
-      ])
+      void Promise.all([getAgentMemoryInfo(saved.id), getWorkerOverlay("agent", saved.slug)])
         .then(([memoryInfo, overlay]) => {
           setAgentMemoryInfo(memoryInfo);
           setProjectOverlay(overlay);
@@ -334,6 +425,7 @@ export function AgentsPanel() {
               }}
             >
               {agent.name}
+              <span className="role-list-link__meta">{agent.system ? "System agent" : agent.slug}</span>
             </a>
           ))}
         </nav>
@@ -349,6 +441,7 @@ export function AgentsPanel() {
               </div>
               <div className="action-cluster">
                 {agentMemoryInfo ? <span className="status-badge status-badge--accent">{agentMemoryInfo.slug}</span> : null}
+                {loadedAgentProtected ? <span className="status-badge status-badge--warning" data-role="agent-protected-badge">Protected</span> : null}
                 {loadedAgentArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
                 {!isCreatingAgent && loadedAgentId && !loadedAgentProtected ? (
                   <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveAgent()} disabled={savingAgent || loadedAgentArchived}>
@@ -478,6 +571,20 @@ export function AgentsPanel() {
               </div>
             </section>
 
+            <AccessEditor
+              actorLabel="agent"
+              dataRolePrefix="agent"
+              policyIds={agentDraft.policyIds ?? []}
+              directPermissions={agentDraft.directPermissions ?? []}
+              attachedPolicies={attachedPolicies}
+              effectivePermissions={effectiveAccess.permissions}
+              grantsFullAccess={effectiveAccess.grantsFullAccess}
+              inheritedAccess={inheritedAccess}
+              locked={loadedAgentProtected && !isCreatingAgent}
+              onPolicyIdsChange={(policyIds) => updateAgentDraft((draft) => ({ ...draft, policyIds }))}
+              onDirectPermissionsChange={(directPermissions) => updateAgentDraft((draft) => ({ ...draft, directPermissions }))}
+            />
+
             {agentMemoryInfo ? (
               <section className="workflow-section">
                 <div>
@@ -547,5 +654,3 @@ export function AgentsPanel() {
     </section>
   );
 }
-
-
