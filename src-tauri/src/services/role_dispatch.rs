@@ -50,24 +50,34 @@ pub fn dispatch_role_queue(
             )?
         };
 
-        let worktree_path =
-            ensure_instance_worktree(connection, project_root, &role.slug, &instance)?;
-        let session_id = ensure_instance_session(
-            connection,
-            &worktree_path,
-            session_dir,
-            &role,
-            &queue_entry,
-            &instance,
-        )?;
+        if !claim_queue_entry_for_instance(connection, &queue_entry.id, &instance.id)? {
+            continue;
+        }
 
-        assign_queue_entry_to_instance(
-            connection,
-            &queue_entry.id,
-            &instance.id,
-            &session_id,
-            worktree_path.to_string_lossy().as_ref(),
-        )?;
+        let setup_result = (|| -> Result<(), String> {
+            let worktree_path =
+                ensure_instance_worktree(connection, project_root, &role.slug, &instance)?;
+            let session_id = ensure_instance_session(
+                connection,
+                &worktree_path,
+                session_dir,
+                &role,
+                &queue_entry,
+                &instance,
+            )?;
+
+            finalize_queue_entry_assignment(
+                connection,
+                &instance.id,
+                &session_id,
+                worktree_path.to_string_lossy().as_ref(),
+            )
+        })();
+
+        if let Err(error) = setup_result {
+            let _ = release_claimed_queue_entry(connection, &queue_entry.id, &instance.id);
+            return Err(error);
+        }
     }
 
     role_runtime::get_role_operations(connection, role_id)
@@ -341,9 +351,49 @@ fn apply_role_session_defaults(
     Ok(())
 }
 
-fn assign_queue_entry_to_instance(
+fn claim_queue_entry_for_instance(
     connection: &Connection,
     queue_entry_id: &str,
+    instance_id: &str,
+) -> Result<bool, String> {
+    let now = crate::state::now_iso();
+
+    let claimed = connection
+        .execute(
+            r#"
+            UPDATE role_queue_entries
+            SET status = 'assigned',
+                assigned_instance_id = ?2,
+                started_at = COALESCE(started_at, ?3),
+                updated_at = ?3
+            WHERE id = ?1 AND status = 'queued'
+            "#,
+            params![queue_entry_id, instance_id, now],
+        )
+        .map_err(|error| format!("Unable to claim role queue entry {queue_entry_id}: {error}"))?;
+
+    if claimed == 0 {
+        return Ok(false);
+    }
+
+    connection
+        .execute(
+            r#"
+            UPDATE role_instances
+            SET status = 'running',
+                current_queue_entry_id = ?2,
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+            params![instance_id, queue_entry_id, now],
+        )
+        .map_err(|error| format!("Unable to claim role instance {instance_id}: {error}"))?;
+
+    Ok(true)
+}
+
+fn finalize_queue_entry_assignment(
+    connection: &Connection,
     instance_id: &str,
     session_id: &str,
     worktree_path: &str,
@@ -353,31 +403,53 @@ fn assign_queue_entry_to_instance(
     connection
         .execute(
             r#"
-            UPDATE role_queue_entries
-            SET status = 'assigned',
-                assigned_instance_id = ?2,
-                started_at = COALESCE(started_at, ?3),
-                updated_at = ?3
+            UPDATE role_instances
+            SET status = 'running',
+                session_id = ?2,
+                worktree_path = ?3,
+                updated_at = ?4
             WHERE id = ?1
             "#,
-            params![queue_entry_id, instance_id, now],
+            params![instance_id, session_id, worktree_path, now],
         )
-        .map_err(|error| format!("Unable to assign role queue entry {queue_entry_id}: {error}"))?;
+        .map_err(|error| format!("Unable to finalize role instance {instance_id}: {error}"))?;
+
+    Ok(())
+}
+
+fn release_claimed_queue_entry(
+    connection: &Connection,
+    queue_entry_id: &str,
+    instance_id: &str,
+) -> Result<(), String> {
+    let now = crate::state::now_iso();
+
+    connection
+        .execute(
+            r#"
+            UPDATE role_queue_entries
+            SET status = 'queued',
+                assigned_instance_id = NULL,
+                started_at = NULL,
+                updated_at = ?2
+            WHERE id = ?1
+            "#,
+            params![queue_entry_id, now],
+        )
+        .map_err(|error| format!("Unable to release claimed role queue entry {queue_entry_id}: {error}"))?;
 
     connection
         .execute(
             r#"
             UPDATE role_instances
-            SET status = 'running',
-                current_queue_entry_id = ?2,
-                session_id = ?3,
-                worktree_path = ?4,
-                updated_at = ?5
+            SET status = 'idle',
+                current_queue_entry_id = NULL,
+                updated_at = ?2
             WHERE id = ?1
             "#,
-            params![instance_id, queue_entry_id, session_id, worktree_path, now],
+            params![instance_id, now],
         )
-        .map_err(|error| format!("Unable to assign role instance {instance_id}: {error}"))?;
+        .map_err(|error| format!("Unable to release claimed role instance {instance_id}: {error}"))?;
 
     Ok(())
 }
@@ -509,6 +581,60 @@ mod tests {
             },
         )
         .expect("role should create")
+    }
+
+    #[test]
+    fn claim_queue_entry_only_succeeds_once() {
+        let mut connection = open_test_connection("role-dispatch-claim-once");
+        let role = create_role(&mut connection, "Planner", 1);
+        let first_instance = role_runtime::create_role_instance(
+            &mut connection,
+            RoleInstanceInput {
+                role_id: role.id.clone(),
+                display_name: None,
+                status: Some("idle".into()),
+                current_queue_entry_id: None,
+                session_id: None,
+                worktree_path: None,
+                last_heartbeat_at: None,
+                last_error: None,
+            },
+        )
+        .expect("first instance should create");
+        let second_instance = role_runtime::create_role_instance(
+            &mut connection,
+            RoleInstanceInput {
+                role_id: role.id.clone(),
+                display_name: None,
+                status: Some("idle".into()),
+                current_queue_entry_id: None,
+                session_id: None,
+                worktree_path: None,
+                last_heartbeat_at: None,
+                last_error: None,
+            },
+        )
+        .expect("second instance should create");
+
+        let queue_entry = role_runtime::enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                title: "Plan runtime slice".into(),
+                summary: None,
+                entry_prompt: Some("Plan the next step".into()),
+            },
+        )
+        .expect("queue work should succeed");
+
+        assert!(claim_queue_entry_for_instance(&connection, &queue_entry.id, &first_instance.id)
+            .expect("first claim should succeed"));
+        assert!(!claim_queue_entry_for_instance(&connection, &queue_entry.id, &second_instance.id)
+            .expect("second claim should be rejected"));
     }
 
     #[test]

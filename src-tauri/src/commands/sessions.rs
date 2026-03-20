@@ -381,7 +381,30 @@ pub async fn send_session_message(
         &session_id,
     )?;
     runtime.set_subscribed(true);
-    state.begin_session_run(&session_id, &run_id)?;
+
+    let mut delivery_mode = "prompt";
+    let mut owns_prompt_run = false;
+
+    match state.begin_session_run(&session_id, &run_id) {
+        Ok(()) => {
+            if runtime.has_active_prompt() {
+                let _ = state.end_session_run(&session_id, &run_id);
+                delivery_mode = "follow_up";
+            } else {
+                owns_prompt_run = true;
+            }
+        }
+        Err(error) if error == "This session is already processing a message" => {
+            if runtime.has_active_prompt() {
+                delivery_mode = "follow_up";
+            } else {
+                state.clear_active_session_run(&session_id)?;
+                state.begin_session_run(&session_id, &run_id)?;
+                owns_prompt_run = true;
+            }
+        }
+        Err(error) => return Err(error),
+    }
 
     let queued = QueuedSessionMessage {
         session_id: session_id.clone(),
@@ -392,16 +415,23 @@ pub async fn send_session_message(
 
     let run_id_for_task = run_id.clone();
     let message_for_task = trimmed_message.clone();
-    match spawn_blocking(move || runtime.start_run(&run_id_for_task, &message_for_task))
+    let delivery_mode_for_task = delivery_mode.to_string();
+    match spawn_blocking(move || runtime.start_delivery(&run_id_for_task, &delivery_mode_for_task, &message_for_task))
         .await
         .map_err(|error| format!("Unable to join send_session_message runtime task: {error}"))?
     {
         Ok(()) => {
-            state.log(
-                "info",
-                "sessions.message.start",
-                &format!("Sent prompt to live pi RPC session {}", session_id),
-            );
+            let log_target = if delivery_mode == "prompt" {
+                "sessions.message.start"
+            } else {
+                "sessions.message.follow_up"
+            };
+            let log_message = if delivery_mode == "prompt" {
+                format!("Sent prompt to live pi RPC session {}", session_id)
+            } else {
+                format!("Queued follow-up message for live pi RPC session {}", session_id)
+            };
+            state.log("info", log_target, &log_message);
             state.log_authorized_action(
                 "auth.audit",
                 "send_session_message",
@@ -413,7 +443,9 @@ pub async fn send_session_message(
             Ok(queued)
         }
         Err(error) => {
-            let _ = state.end_session_run(&session_id, &run_id);
+            if owns_prompt_run {
+                let _ = state.end_session_run(&session_id, &run_id);
+            }
             Err(error)
         }
     }

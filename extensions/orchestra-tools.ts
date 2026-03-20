@@ -26,29 +26,57 @@ export function getBridgeConfig() {
   return { bridgeUrl, token, allowedCommands, authorization } satisfies BridgeConfig;
 }
 
+function isTransientBridgeFetchError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("fetch failed") || message.includes("econnrefused") || message.includes("econnreset");
+}
+
+async function delay(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function invokeBridge(command: string, payload: Record<string, unknown>) {
   const config = getBridgeConfig();
   if (!config) {
     throw new Error("Orchestra bridge is not configured for this session.");
   }
 
-  const response = await fetch(`${config.bridgeUrl}/invoke`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      token: config.token,
-      command,
-      authorization: config.authorization,
-      payload,
-    }),
-  });
+  let lastError: unknown = null;
 
-  const body = (await response.json()) as { success: boolean; data?: unknown; error?: string };
-  if (!body.success) {
-    throw new Error(body.error ?? `Orchestra bridge command failed: ${command}`);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(`${config.bridgeUrl}/invoke`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          token: config.token,
+          command,
+          authorization: config.authorization,
+          payload,
+        }),
+      });
+
+      const body = (await response.json()) as { success: boolean; data?: unknown; error?: string };
+      if (!body.success) {
+        throw new Error(body.error ?? `Orchestra bridge command failed: ${command}`);
+      }
+
+      return body.data;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 3 || !isTransientBridgeFetchError(error)) {
+        break;
+      }
+      await delay(100 * attempt);
+    }
   }
 
-  return body.data;
+  const message = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+  throw new Error(`Orchestra bridge request failed for ${command}: ${message}`);
 }
 
 function buildAllowedCommandHelp(allowedCommands: OrchestraToolDefinition[]) {

@@ -146,6 +146,14 @@ impl AppState {
         Ok(())
     }
 
+    pub fn clear_active_session_run(&self, session_id: &str) -> Result<(), String> {
+        self.active_session_runs
+            .lock()
+            .map_err(|_| "Unable to access active session run state".to_string())?
+            .remove(session_id);
+        Ok(())
+    }
+
     pub fn is_session_running(&self, session_id: &str) -> Result<bool, String> {
         self.active_session_runs
             .lock()
