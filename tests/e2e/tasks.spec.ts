@@ -264,3 +264,28 @@ test("tasks page dispatches an agent-owned lane and completes the workflow", asy
   expect(storedState?.status).toBe("completed");
   expect(storedState?.activeLaneAssignment).toBeNull();
 });
+
+test("tasks page exposes a review inbox filter and attention queue", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Review me");
+  await page.locator('[data-role="task-status"]').selectOption("in_review");
+  await page.locator('[data-role="save-task"]').click();
+
+  await expect(page.locator('[data-role="task-attention-queue"]')).toContainText("Review me");
+  await page.locator('[data-role="task-filter-attention"]').click();
+  await expect(page.locator('.task-list')).toContainText("Review me");
+  await expect(page.locator('.task-list')).toContainText("Plan hierarchy rollups");
+
+  await page.locator('[data-role="task-filter-review"]').click();
+  await expect(page.locator('.task-list')).toContainText("Review me");
+  await expect(page.locator('.task-list')).not.toContainText("Plan hierarchy rollups");
+
+  await page.locator('[data-role="task-filter-blocked"]').click();
+  await expect(page.locator('.task-list')).toContainText("Plan hierarchy rollups");
+});

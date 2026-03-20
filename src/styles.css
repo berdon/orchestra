@@ -884,12 +884,36 @@ strong {
   gap: 8px;
 }
 
+.task-nav-filters,
 .task-detail-sections,
 .task-section,
 .workflow-section,
 .workflow-lane-card {
   display: grid;
   gap: 16px;
+}
+
+.task-nav-filters {
+  gap: 8px;
+}
+
+.task-nav-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  color: var(--text-muted);
+}
+
+.task-nav-filter--active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
 }
 
 .task-section,
@@ -1041,6 +1065,7 @@ strong {
   overflow-wrap: anywhere;
 }
 
+.task-section--compact,
 .workflow-section--compact {
   gap: 12px;
   padding: 14px 16px;
