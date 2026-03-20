@@ -450,8 +450,23 @@ pub struct TaskSummary {
     pub completed_child_count: i64,
     pub in_progress_child_count: i64,
     pub blocked_child_count: i64,
+    pub blocked_by_count: i64,
+    pub blocking_count: i64,
+    pub dependency_blocked: bool,
+    pub ready_for_dispatch: bool,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDependency {
+    pub id: String,
+    pub blocker_task_id: String,
+    pub blocked_task_id: String,
+    pub blocker: TaskSummary,
+    pub blocked: TaskSummary,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,9 +494,15 @@ pub struct TaskDetail {
     pub completed_child_count: i64,
     pub in_progress_child_count: i64,
     pub blocked_child_count: i64,
+    pub blocked_by_count: i64,
+    pub blocking_count: i64,
+    pub dependency_blocked: bool,
+    pub ready_for_dispatch: bool,
     pub parent: Option<TaskSummary>,
     pub lineage: Vec<TaskSummary>,
     pub children: Vec<TaskSummary>,
+    pub blocked_by: Vec<TaskDependency>,
+    pub blocking: Vec<TaskDependency>,
     pub comments: Vec<TaskComment>,
     pub lane_runs: Vec<TaskLaneRun>,
     pub created_at: String,

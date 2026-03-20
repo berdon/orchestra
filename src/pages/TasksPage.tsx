@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { createTask, getTask, listTasks, listWorkflows, updateTask } from "../lib/tauri";
+import { addTaskDependency, createTask, getTask, listTasks, listWorkflows, removeTaskDependency, updateTask } from "../lib/tauri";
 import type { TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
@@ -73,6 +73,7 @@ export function TasksPage() {
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState<string>("");
 
   const selectedTaskSummary = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null,
@@ -82,6 +83,11 @@ export function TasksPage() {
   const workflowLabelMap = useMemo(
     () => new Map(workflows.map((workflow) => [workflow.id, workflow.name])),
     [workflows],
+  );
+
+  const dependencyCandidates = useMemo(
+    () => tasks.filter((task) => task.id !== selectedTaskSummary?.id),
+    [selectedTaskSummary?.id, tasks],
   );
 
   async function loadTasks() {
@@ -174,6 +180,37 @@ export function TasksPage() {
     }
   }
 
+  async function handleAddDependency() {
+    if (!selectedTaskSummary || !selectedBlockerTaskId) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      await addTaskDependency(selectedBlockerTaskId, selectedTaskSummary.id);
+      setSelectedBlockerTaskId("");
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to add dependency.");
+    }
+  }
+
+  async function handleRemoveDependency(dependencyId: string) {
+    if (!selectedTaskSummary) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      await removeTaskDependency(dependencyId);
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to remove dependency.");
+    }
+  }
+
   useEffect(() => {
     void loadTasks();
   }, [includeArchivedTasks]);
@@ -233,6 +270,7 @@ export function TasksPage() {
                 <span>{task.priority}</span>
                 <span>{task.type}</span>
                 {task.childCount ? <span>{task.childCount} children</span> : null}
+                {task.dependencyBlocked ? <span>dependency blocked</span> : null}
               </span>
             </a>
           ))}
@@ -253,6 +291,8 @@ export function TasksPage() {
                     <span>{selectedTaskSummary.commentCount} comments</span>
                     <span>{selectedTaskSummary.laneRunCount} lane runs</span>
                     {selectedTaskSummary.childCount ? <span>{selectedTaskSummary.childCount} children</span> : null}
+                    {selectedTaskSummary.blockedByCount ? <span>{selectedTaskSummary.blockedByCount} blockers</span> : null}
+                    <span>{selectedTaskSummary.readyForDispatch ? "Dispatchable" : "Not dispatchable"}</span>
                   </div>
                 ) : (
                   <div className="session-detail__meta">
@@ -267,6 +307,7 @@ export function TasksPage() {
                     <button className="secondary-button" data-role="new-subtask" type="button" onClick={beginCreateSubtask}>
                       New subtask
                     </button>
+                    {selectedTaskSummary.dependencyBlocked ? <span className="status-badge status-badge--error">Dependency blocked</span> : null}
                     <span className={`status-badge status-badge--${getStatusTone(selectedTaskSummary.status)}`}>{formatStatusLabel(selectedTaskSummary.status)}</span>
                   </>
                 ) : null}
@@ -478,6 +519,75 @@ export function TasksPage() {
                 ) : (
                   <p className="muted-copy">No child tasks yet. Use “New subtask” to break work down under this task.</p>
                 )}
+              </section>
+
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Dependencies</p>
+                    <h4>Blocked by and blocking</h4>
+                  </div>
+                  {!isCreatingTask && selectedTaskSummary ? (
+                    <div className="task-dependency-actions">
+                      <select className="select-input" data-role="dependency-blocker-select" value={selectedBlockerTaskId} onChange={(event) => setSelectedBlockerTaskId(event.target.value)}>
+                        <option value="">Select blocker task…</option>
+                        {dependencyCandidates.map((task) => (
+                          <option key={task.id} value={task.id}>
+                            {task.number} · {task.title}
+                          </option>
+                        ))}
+                      </select>
+                      <button className="secondary-button" data-role="add-dependency" type="button" disabled={!selectedBlockerTaskId} onClick={() => void handleAddDependency()}>
+                        Add dependency
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {taskDetail?.dependencyBlocked ? <p className="error-copy">This task is currently blocked by unresolved dependencies and is not dispatchable.</p> : null}
+
+                <div className="task-dependency-grid">
+                  <div className="task-dependency-column">
+                    <p className="eyebrow">Blocked by</p>
+                    {taskDetail?.blockedBy.length ? (
+                      <div className="task-section-list" data-role="task-blocked-by">
+                        {taskDetail.blockedBy.map((dependency) => (
+                          <article className="task-history-card" key={dependency.id}>
+                            <div className="workflow-section__header">
+                              <strong>{dependency.blocker.number} · {dependency.blocker.title}</strong>
+                              <span className={`status-badge status-badge--${getStatusTone(dependency.blocker.status)}`}>{formatStatusLabel(dependency.blocker.status)}</span>
+                            </div>
+                            <p className="muted-copy">{dependency.blocker.priority} · {dependency.blocker.type}</p>
+                            <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleRemoveDependency(dependency.id)}>
+                              Remove dependency
+                            </button>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted-copy">No blockers. This task can proceed unless workflow state says otherwise.</p>
+                    )}
+                  </div>
+
+                  <div className="task-dependency-column">
+                    <p className="eyebrow">Blocking</p>
+                    {taskDetail?.blocking.length ? (
+                      <div className="task-section-list" data-role="task-blocking">
+                        {taskDetail.blocking.map((dependency) => (
+                          <article className="task-history-card" key={dependency.id}>
+                            <div className="workflow-section__header">
+                              <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
+                              <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
+                            </div>
+                            <p className="muted-copy">This task will stay blocked until the current task is resolved.</p>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted-copy">No downstream blocked tasks yet.</p>
+                    )}
+                  </div>
+                </div>
               </section>
 
               <section className="task-section">

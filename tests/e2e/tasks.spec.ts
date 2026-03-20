@@ -71,3 +71,41 @@ test("tasks page creates subtasks and updates epic rollups", async ({ page }) =>
   expect(storedState.created?.parentTaskId).toBe(storedState.epic?.id ?? null);
   expect(storedState.epic?.children?.length).toBeGreaterThanOrEqual(1);
 });
+
+test("tasks page adds dependencies and shows unblock flow", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Dependency target");
+  await page.locator('[data-role="task-type"]').selectOption("task");
+  await page.locator('[data-role="task-status"]').selectOption("ready");
+  await page.locator('[data-role="task-priority"]').selectOption("P2");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="dependency-blocker-select"]').selectOption({ label: "ORC-2 · Implement task foundation shell" });
+  await page.locator('[data-role="add-dependency"]').click();
+
+  await expect(page.locator('[data-role="task-blocked-by"]')).toContainText("ORC-2");
+  await expect(page.getByText("Not dispatchable", { exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: /Implement task foundation shell/i }).click();
+  await page.locator('[data-role="task-status"]').selectOption("completed");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.getByRole("link", { name: /Dependency target/i }).click();
+  await expect(page.getByText(/Dispatchable/i)).toBeVisible();
+
+  const storedState = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    const target = tasks.find((task: { title: string }) => task.title === "Dependency target") ?? null;
+    return target;
+  });
+
+  expect(storedState?.blockedBy?.length).toBe(1);
+  expect(storedState?.dependencyBlocked).toBe(false);
+});

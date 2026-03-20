@@ -929,10 +929,21 @@ strong {
   font-size: 0.88rem;
 }
 
-.task-rollup-grid {
+.task-rollup-grid,
+.task-dependency-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
+}
+
+.task-dependency-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-dependency-column,
+.task-dependency-actions {
+  display: grid;
+  gap: 10px;
 }
 
 .status-card {
@@ -1055,6 +1066,7 @@ strong {
   }
 
   .task-editor-grid,
+  .task-dependency-grid,
   .workflow-form-grid,
   .workflow-form-grid--compact {
     grid-template-columns: 1fr;

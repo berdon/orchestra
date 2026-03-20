@@ -2,7 +2,9 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
-use crate::models::{TaskComment, TaskDetail, TaskLaneRun, TaskSummary, TaskUpsertInput};
+use crate::models::{
+    TaskComment, TaskDependency, TaskDetail, TaskLaneRun, TaskSummary, TaskUpsertInput,
+};
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
 const VALID_TASK_TYPES: &[&str] = &["task", "bug", "feature", "chore", "epic"];
@@ -17,6 +19,7 @@ const VALID_TASK_STATUSES: &[&str] = &[
 ];
 const VALID_TASK_PRIORITIES: &[&str] = &["P0", "P1", "P2", "P3", "P4"];
 const VALID_ASSIGNEE_TYPES: &[&str] = &["user", "agent", "role", "unassigned"];
+const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "canceled"];
 
 pub fn list_tasks(connection: &Connection, include_archived: bool) -> Result<Vec<TaskSummary>, String> {
     let mut statement = connection
@@ -76,14 +79,20 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     completed_child_count: row.get(17)?,
                     in_progress_child_count: row.get(18)?,
                     blocked_child_count: row.get(19)?,
-                    repository_id: row.get(22)?,
+                    blocked_by_count: row.get(20)?,
+                    blocking_count: row.get(21)?,
+                    dependency_blocked: row.get::<_, i64>(22)? != 0,
+                    ready_for_dispatch: row.get::<_, i64>(23)? != 0,
+                    repository_id: row.get(26)?,
                     parent: None,
                     lineage: Vec::new(),
                     children: Vec::new(),
+                    blocked_by: Vec::new(),
+                    blocking: Vec::new(),
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
-                    created_at: row.get(20)?,
-                    updated_at: row.get(21)?,
+                    created_at: row.get(24)?,
+                    updated_at: row.get(25)?,
                 })
             },
         )
@@ -94,6 +103,8 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.parent = load_parent_summary(connection, task.parent_task_id.as_deref())?;
     task.lineage = load_lineage(connection, task.parent_task_id.clone())?;
     task.children = load_child_tasks(connection, task_id)?;
+    task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
+    task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
     Ok(task)
@@ -221,6 +232,51 @@ pub fn update_task(
     get_task(connection, task_id)
 }
 
+pub fn add_task_dependency(
+    connection: &mut Connection,
+    blocker_task_id: &str,
+    blocked_task_id: &str,
+) -> Result<TaskDependency, String> {
+    validate_dependency_edge(connection, blocker_task_id, blocked_task_id)?;
+
+    let project_id = task_project_id(connection, blocker_task_id)?;
+    let dependency_id = dependency_id();
+    let now = now_iso();
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start dependency transaction: {error}"))?;
+
+    tx.execute(
+        r#"
+        INSERT INTO task_dependencies (id, project_id, blocker_task_id, blocked_task_id, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5)
+        "#,
+        params![dependency_id, project_id, blocker_task_id, blocked_task_id, now],
+    )
+    .map_err(|error| format!("Unable to add task dependency: {error}"))?;
+
+    tx.commit()
+        .map_err(|error| format!("Unable to commit task dependency: {error}"))?;
+
+    load_dependency(connection, &dependency_id)
+}
+
+pub fn remove_task_dependency(
+    connection: &Connection,
+    dependency_id: &str,
+) -> Result<TaskDependency, String> {
+    let dependency = load_dependency(connection, dependency_id)?;
+    let deleted = connection
+        .execute("DELETE FROM task_dependencies WHERE id = ?1", [dependency_id])
+        .map_err(|error| format!("Unable to remove task dependency {dependency_id}: {error}"))?;
+
+    if deleted == 0 {
+        return Err(format!("Task dependency {dependency_id} was not found"));
+    }
+
+    Ok(dependency)
+}
+
 fn validate_task_input(
     connection: &Connection,
     input: &TaskUpsertInput,
@@ -289,6 +345,40 @@ fn validate_task_input(
     } else {
         Err(errors.join(" "))
     }
+}
+
+fn validate_dependency_edge(
+    connection: &Connection,
+    blocker_task_id: &str,
+    blocked_task_id: &str,
+) -> Result<(), String> {
+    if blocker_task_id == blocked_task_id {
+        return Err("A task cannot depend on itself.".to_string());
+    }
+
+    if !task_exists(connection, blocker_task_id)? {
+        return Err(format!("Blocker task {blocker_task_id} was not found"));
+    }
+
+    if !task_exists(connection, blocked_task_id)? {
+        return Err(format!("Blocked task {blocked_task_id} was not found"));
+    }
+
+    let blocker_project = task_project_id(connection, blocker_task_id)?;
+    let blocked_project = task_project_id(connection, blocked_task_id)?;
+    if blocker_project != blocked_project {
+        return Err("Task dependencies must stay within a single project.".to_string());
+    }
+
+    if dependency_exists(connection, blocker_task_id, blocked_task_id)? {
+        return Err("That dependency already exists.".to_string());
+    }
+
+    if would_create_dependency_cycle(connection, blocker_task_id, blocked_task_id)? {
+        return Err("That dependency would create a cycle.".to_string());
+    }
+
+    Ok(())
 }
 
 fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<TaskComment>, String> {
@@ -415,6 +505,122 @@ fn load_task_summary(connection: &Connection, task_id: &str) -> Result<TaskSumma
         .map_err(|error| format!("Unable to load task summary {task_id}: {error}"))
 }
 
+fn load_dependency(connection: &Connection, dependency_id: &str) -> Result<TaskDependency, String> {
+    let dependency = connection
+        .query_row(
+            r#"
+            SELECT id, blocker_task_id, blocked_task_id, created_at
+            FROM task_dependencies
+            WHERE id = ?1
+            "#,
+            [dependency_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load task dependency {dependency_id}: {error}"))?
+        .ok_or_else(|| format!("Task dependency {dependency_id} was not found"))?;
+
+    Ok(TaskDependency {
+        id: dependency.0,
+        blocker: load_task_summary(connection, &dependency.1)?,
+        blocked: load_task_summary(connection, &dependency.2)?,
+        blocker_task_id: dependency.1,
+        blocked_task_id: dependency.2,
+        created_at: dependency.3,
+    })
+}
+
+fn load_blocked_by_dependencies(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<TaskDependency>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, blocker_task_id, blocked_task_id, created_at
+            FROM task_dependencies
+            WHERE blocked_task_id = ?1
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare blocked-by dependency query: {error}"))?;
+
+    let rows = statement
+        .query_map([task_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to query blocked-by dependencies for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect blocked-by dependencies for {task_id}: {error}"))?
+        .into_iter()
+        .map(|(id, blocker_task_id, blocked_task_id, created_at)| {
+            Ok(TaskDependency {
+                id,
+                blocker: load_task_summary(connection, &blocker_task_id)?,
+                blocked: load_task_summary(connection, &blocked_task_id)?,
+                blocker_task_id,
+                blocked_task_id,
+                created_at,
+            })
+        })
+        .collect()
+}
+
+fn load_blocking_dependencies(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<TaskDependency>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, blocker_task_id, blocked_task_id, created_at
+            FROM task_dependencies
+            WHERE blocker_task_id = ?1
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare blocking dependency query: {error}"))?;
+
+    let rows = statement
+        .query_map([task_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to query blocking dependencies for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect blocking dependencies for {task_id}: {error}"))?
+        .into_iter()
+        .map(|(id, blocker_task_id, blocked_task_id, created_at)| {
+            Ok(TaskDependency {
+                id,
+                blocker: load_task_summary(connection, &blocker_task_id)?,
+                blocked: load_task_summary(connection, &blocked_task_id)?,
+                blocker_task_id,
+                blocked_task_id,
+                created_at,
+            })
+        })
+        .collect()
+}
+
 fn next_task_sequence_number(connection: &Connection, project_id: &str) -> Result<i64, String> {
     connection
         .query_row(
@@ -435,6 +641,16 @@ fn task_exists(connection: &Connection, task_id: &str) -> Result<bool, String> {
         .optional()
         .map_err(|error| format!("Unable to look up task {task_id}: {error}"))?;
     Ok(exists.is_some())
+}
+
+fn task_project_id(connection: &Connection, task_id: &str) -> Result<String, String> {
+    connection
+        .query_row(
+            "SELECT project_id FROM tasks WHERE id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Unable to read project for task {task_id}: {error}"))
 }
 
 fn workflow_exists(connection: &Connection, workflow_id: &str) -> Result<bool, String> {
@@ -465,6 +681,38 @@ fn lane_exists_for_workflow(
     Ok(exists.is_some())
 }
 
+fn dependency_exists(
+    connection: &Connection,
+    blocker_task_id: &str,
+    blocked_task_id: &str,
+) -> Result<bool, String> {
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM task_dependencies WHERE blocker_task_id = ?1 AND blocked_task_id = ?2 LIMIT 1",
+            params![blocker_task_id, blocked_task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query task dependency edge: {error}"))?;
+    Ok(exists.is_some())
+}
+
+fn unresolved_blocker_count(connection: &Connection, task_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM task_dependencies d
+            JOIN tasks blocker ON blocker.id = d.blocker_task_id
+            WHERE d.blocked_task_id = ?1
+              AND blocker.status NOT IN ('completed', 'canceled')
+            "#,
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Unable to compute unresolved blockers for {task_id}: {error}"))
+}
+
 fn would_create_parent_cycle(
     connection: &Connection,
     task_id: &str,
@@ -486,6 +734,38 @@ fn would_create_parent_cycle(
             .optional()
             .map_err(|error| format!("Unable to traverse task hierarchy: {error}"))?
             .flatten();
+    }
+
+    Ok(false)
+}
+
+fn would_create_dependency_cycle(
+    connection: &Connection,
+    blocker_task_id: &str,
+    blocked_task_id: &str,
+) -> Result<bool, String> {
+    let mut stack = vec![blocked_task_id.to_string()];
+    let mut visited = std::collections::HashSet::new();
+
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+
+        if current == blocker_task_id {
+            return Ok(true);
+        }
+
+        let mut statement = connection
+            .prepare("SELECT blocked_task_id FROM task_dependencies WHERE blocker_task_id = ?1")
+            .map_err(|error| format!("Unable to prepare dependency traversal query: {error}"))?;
+        let rows = statement
+            .query_map([current], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Unable to traverse task dependency graph: {error}"))?;
+
+        for child in rows {
+            stack.push(child.map_err(|error| format!("Unable to read dependency traversal row: {error}"))?);
+        }
     }
 
     Ok(false)
@@ -540,9 +820,20 @@ fn task_summary_columns(alias: &str) -> String {
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'completed'), 0) AS completed_child_count,
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'in_progress'), 0) AS in_progress_child_count,
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'blocked'), 0) AS blocked_child_count,
+        COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocked_task_id = {alias}.id), 0) AS blocked_by_count,
+        COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocker_task_id = {alias}.id), 0) AS blocking_count,
+        CASE WHEN {unresolved_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
+        CASE WHEN {alias}.archived = 0 AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 THEN 1 ELSE 0 END AS ready_for_dispatch,
         {alias}.created_at,
         {alias}.updated_at
-        "#
+        "#,
+        unresolved_blockers = unresolved_blocker_sql(alias),
+    )
+}
+
+fn unresolved_blocker_sql(alias: &str) -> String {
+    format!(
+        "COALESCE((SELECT COUNT(*) FROM task_dependencies d JOIN tasks blocker ON blocker.id = d.blocker_task_id WHERE d.blocked_task_id = {alias}.id AND blocker.status NOT IN ('completed', 'canceled')), 0)"
     )
 }
 
@@ -568,13 +859,21 @@ fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
         completed_child_count: row.get(17)?,
         in_progress_child_count: row.get(18)?,
         blocked_child_count: row.get(19)?,
-        created_at: row.get(20)?,
-        updated_at: row.get(21)?,
+        blocked_by_count: row.get(20)?,
+        blocking_count: row.get(21)?,
+        dependency_blocked: row.get::<_, i64>(22)? != 0,
+        ready_for_dispatch: row.get::<_, i64>(23)? != 0,
+        created_at: row.get(24)?,
+        updated_at: row.get(25)?,
     })
 }
 
 fn task_id() -> String {
     format!("task-{}", Uuid::new_v4().simple())
+}
+
+fn dependency_id() -> String {
+    format!("task-dependency-{}", Uuid::new_v4().simple())
 }
 
 fn now_iso() -> String {
@@ -608,30 +907,38 @@ mod tests {
             .expect("insert lane");
     }
 
-    #[test]
-    fn create_and_load_task_round_trip() {
-        let mut connection = in_memory_connection();
-        seed_workflow(&connection);
-
-        let epic = create_task(
-            &mut connection,
+    fn create_named_task(
+        connection: &mut Connection,
+        title: &str,
+        status: &str,
+        parent_task_id: Option<String>,
+    ) -> TaskDetail {
+        create_task(
+            connection,
             TaskUpsertInput {
-                title: "Task system".into(),
+                title: title.into(),
                 description: None,
-                task_type: "epic".into(),
-                status: "ready".into(),
+                task_type: if parent_task_id.is_none() { "epic" } else { "task" }.into(),
+                status: status.into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
                 current_lane_id: Some("lane-plan".into()),
                 assignee_type: "user".into(),
                 assignee_id: None,
                 repository_id: None,
-                parent_task_id: None,
+                parent_task_id,
                 archived: None,
             },
         )
-        .expect("create epic");
+        .expect("create named task")
+    }
 
+    #[test]
+    fn create_and_load_task_round_trip() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let epic = create_named_task(&mut connection, "Task system", "ready", None);
         let created = create_task(
             &mut connection,
             TaskUpsertInput {
@@ -663,7 +970,10 @@ mod tests {
         let loaded_child = get_task(&connection, &created.id).expect("load child");
         assert_eq!(loaded_child.lineage.len(), 1);
         assert_eq!(loaded_child.lineage[0].id, epic.id);
-        assert_eq!(loaded_child.parent.as_ref().map(|task| task.id.as_str()), Some(epic.id.as_str()));
+        assert_eq!(
+            loaded_child.parent.as_ref().map(|task| task.id.as_str()),
+            Some(epic.id.as_str())
+        );
     }
 
     #[test]
@@ -696,43 +1006,8 @@ mod tests {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
 
-        let parent = create_task(
-            &mut connection,
-            TaskUpsertInput {
-                title: "Parent".into(),
-                description: None,
-                task_type: "epic".into(),
-                status: "ready".into(),
-                priority: "P1".into(),
-                workflow_id: Some("workflow-dev".into()),
-                current_lane_id: Some("lane-plan".into()),
-                assignee_type: "user".into(),
-                assignee_id: None,
-                repository_id: None,
-                parent_task_id: None,
-                archived: None,
-            },
-        )
-        .expect("create parent");
-
-        let child = create_task(
-            &mut connection,
-            TaskUpsertInput {
-                title: "Child".into(),
-                description: None,
-                task_type: "task".into(),
-                status: "ready".into(),
-                priority: "P2".into(),
-                workflow_id: Some("workflow-dev".into()),
-                current_lane_id: Some("lane-plan".into()),
-                assignee_type: "user".into(),
-                assignee_id: None,
-                repository_id: None,
-                parent_task_id: Some(parent.id.clone()),
-                archived: None,
-            },
-        )
-        .expect("create child");
+        let parent = create_named_task(&mut connection, "Parent", "ready", None);
+        let child = create_named_task(&mut connection, "Child", "ready", Some(parent.id.clone()));
 
         let error = update_task(
             &mut connection,
@@ -754,6 +1029,65 @@ mod tests {
         )
         .expect_err("reject parent cycle");
 
+        assert!(error.contains("cycle"));
+    }
+
+    #[test]
+    fn adds_dependencies_and_computes_blocked_state() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let blocker = create_named_task(&mut connection, "Blocker", "in_progress", None);
+        let blocked = create_named_task(&mut connection, "Blocked", "ready", None);
+
+        add_task_dependency(&mut connection, &blocker.id, &blocked.id).expect("add dependency");
+
+        let loaded = get_task(&connection, &blocked.id).expect("load blocked task");
+        assert_eq!(loaded.blocked_by_count, 1);
+        assert!(loaded.dependency_blocked);
+        assert!(!loaded.ready_for_dispatch);
+        assert_eq!(loaded.blocked_by[0].blocker.id, blocker.id);
+
+        let updated_blocker = update_task(
+            &mut connection,
+            &blocker.id,
+            TaskUpsertInput {
+                title: blocker.title.clone(),
+                description: blocker.description.clone(),
+                task_type: blocker.task_type.clone(),
+                status: "completed".into(),
+                priority: blocker.priority.clone(),
+                workflow_id: blocker.workflow_id.clone(),
+                current_lane_id: blocker.current_lane_id.clone(),
+                assignee_type: blocker.assignee_type.clone(),
+                assignee_id: blocker.assignee_id.clone(),
+                repository_id: blocker.repository_id.clone(),
+                parent_task_id: blocker.parent_task_id.clone(),
+                archived: Some(false),
+            },
+        )
+        .expect("complete blocker");
+
+        assert_eq!(updated_blocker.status, "completed");
+        let unblocked = get_task(&connection, &blocked.id).expect("reload blocked task");
+        assert!(!unblocked.dependency_blocked);
+        assert!(unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn rejects_dependency_cycles() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let alpha = create_named_task(&mut connection, "Alpha", "ready", None);
+        let beta = create_named_task(&mut connection, "Beta", "ready", None);
+        let gamma = create_named_task(&mut connection, "Gamma", "ready", None);
+
+        add_task_dependency(&mut connection, &alpha.id, &beta.id).expect("alpha blocks beta");
+        add_task_dependency(&mut connection, &beta.id, &gamma.id).expect("beta blocks gamma");
+
+        let error = add_task_dependency(&mut connection, &gamma.id, &alpha.id)
+            .expect_err("reject dependency cycle");
         assert!(error.contains("cycle"));
     }
 }
