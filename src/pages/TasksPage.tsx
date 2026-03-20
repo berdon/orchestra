@@ -9,6 +9,8 @@ const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
 const TASK_STATUSES: TaskStatus[] = ["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"];
 const TASK_PRIORITIES: TaskPriority[] = ["P0", "P1", "P2", "P3", "P4"];
 
+type TaskNavView = "all" | "attention" | "review" | "blocked" | "active" | "epics";
+
 function createBlankTaskDraft(): TaskUpsertInput {
   return {
     title: "",
@@ -97,13 +99,36 @@ export function TasksPage() {
   const [savingTask, setSavingTask] = useState(false);
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
+  const [taskNavView, setTaskNavView] = useState<TaskNavView>("all");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState<string>("");
   const [commentDraft, setCommentDraft] = useState<TaskCommentInput>(createBlankCommentDraft);
 
+  const attentionTasks = useMemo(
+    () => tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
+    [tasks],
+  );
+
+  const filteredTasks = useMemo(() => {
+    switch (taskNavView) {
+      case "attention":
+        return attentionTasks;
+      case "review":
+        return tasks.filter((task) => task.status === "in_review");
+      case "blocked":
+        return tasks.filter((task) => task.status === "blocked" || task.dependencyBlocked);
+      case "active":
+        return tasks.filter((task) => task.status === "in_progress" || task.readyForDispatch);
+      case "epics":
+        return tasks.filter((task) => task.type === "epic");
+      default:
+        return tasks;
+    }
+  }, [attentionTasks, taskNavView, tasks]);
+
   const selectedTaskSummary = useMemo(
-    () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null,
-    [selectedTaskId, tasks],
+    () => filteredTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0] ?? null,
+    [filteredTasks, selectedTaskId],
   );
 
   const workflowLabelMap = useMemo(
@@ -393,8 +418,68 @@ export function TasksPage() {
         {loadingTasks ? <p className="muted-copy">Loading tasks…</p> : null}
         {taskActionError ? <p className="error-copy">{taskActionError}</p> : null}
 
+        <div className="task-nav-filters" data-role="task-nav-filters">
+          {([
+            ["all", "All", tasks.length],
+            ["attention", "Attention", attentionTasks.length],
+            ["review", "Needs review", tasks.filter((task) => task.status === "in_review").length],
+            ["blocked", "Blocked", tasks.filter((task) => task.status === "blocked" || task.dependencyBlocked).length],
+            ["active", "Active", tasks.filter((task) => task.status === "in_progress" || task.readyForDispatch).length],
+            ["epics", "Epics", tasks.filter((task) => task.type === "epic").length],
+          ] as Array<[TaskNavView, string, number]>).map(([view, label, count]) => (
+            <button
+              key={view}
+              className={taskNavView === view ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
+              data-role={`task-filter-${view}`}
+              type="button"
+              onClick={() => setTaskNavView(view)}
+            >
+              <span>{label}</span>
+              <span>{count}</span>
+            </button>
+          ))}
+        </div>
+
+        <section className="task-section task-section--compact task-attention-queue">
+          <div className="task-section__header">
+            <div>
+              <p className="eyebrow">Inbox</p>
+              <h4>Needs attention</h4>
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setTaskNavView("attention")}>
+              Open queue
+            </button>
+          </div>
+
+          {attentionTasks.length === 0 ? <p className="muted-copy">No review or blocked tasks right now.</p> : null}
+          <div className="task-section-list" data-role="task-attention-queue">
+            {attentionTasks.slice(0, 4).map((task) => (
+              <button
+                className="task-child-card"
+                key={task.id}
+                type="button"
+                onClick={() => {
+                  setSelectedTaskId(task.id);
+                  setIsCreatingTask(false);
+                  setTaskNavView("attention");
+                }}
+              >
+                <div className="workflow-section__header">
+                  <strong>{task.number} · {task.title}</strong>
+                  <span className={`status-badge status-badge--${task.status === "blocked" || task.dependencyBlocked ? "error" : "warning"}`}>
+                    {task.status === "blocked" || task.dependencyBlocked ? "blocked" : "review"}
+                  </span>
+                </div>
+                <p className="muted-copy">
+                  {task.dependencyBlocked ? "Blocked by dependency" : task.status === "in_review" ? "Waiting on user review" : "Needs attention"}
+                </p>
+              </button>
+            ))}
+          </div>
+        </section>
+
         <nav className="task-list" aria-label="Tasks">
-          {tasks.map((task) => (
+          {filteredTasks.map((task) => (
             <a
               key={task.id}
               className={task.id === selectedTaskSummary?.id && !isCreatingTask ? "task-list-link task-list-link--active" : "task-list-link"}
