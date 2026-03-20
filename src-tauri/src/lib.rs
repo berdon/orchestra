@@ -14,7 +14,7 @@ use commands::{
     },
     policies::{
         get_agent_permissions, get_policy, get_role_instance_permissions, get_role_permissions,
-        list_policies,
+        list_orchestra_tools, list_policies,
     },
     project_settings::{get_worker_overlay, update_worker_overlay},
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
@@ -84,6 +84,7 @@ pub fn run() {
             get_agent_permissions,
             get_role_permissions,
             get_role_instance_permissions,
+            list_orchestra_tools,
             get_worker_overlay,
             update_worker_overlay,
             list_sessions,

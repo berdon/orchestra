@@ -275,6 +275,13 @@ pub struct PolicySummary {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizationContext {
+    pub actor_type: String,
+    pub actor_id: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedPermissions {
@@ -284,6 +291,14 @@ pub struct ResolvedPermissions {
     pub policy_ids: Vec<String>,
     pub permissions: Vec<String>,
     pub grants_full_access: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub required_permission: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
