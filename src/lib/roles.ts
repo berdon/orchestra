@@ -42,6 +42,8 @@ function summarizeRole(role: RoleDefinition): RoleSummary {
     model: role.model,
     thinkingLevel: role.thinkingLevel,
     capacity: role.capacity,
+    policyIds: role.policyIds ?? [],
+    directPermissions: role.directPermissions ?? [],
     archived: role.archived,
     createdAt: role.createdAt,
     updatedAt: role.updatedAt,
@@ -109,6 +111,8 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
     model,
     thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
     capacity: Math.max(1, Math.floor(input.capacity || 0)),
+    policyIds: Array.from(new Set(input.policyIds ?? existing?.policyIds ?? [])).sort(),
+    directPermissions: Array.from(new Set(input.directPermissions ?? existing?.directPermissions ?? [])).sort(),
     archived: existing?.archived ?? false,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
@@ -129,6 +133,8 @@ function seedMockRoles(): RoleDefinition[] {
       model: "claude-sonnet-4-20250514",
       thinkingLevel: "medium",
       capacity: 2,
+      policyIds: [],
+      directPermissions: [],
       archived: false,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -143,6 +149,8 @@ function seedMockRoles(): RoleDefinition[] {
       model: "claude-sonnet-4-20250514",
       thinkingLevel: "low",
       capacity: 1,
+      policyIds: [],
+      directPermissions: [],
       archived: false,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -153,7 +161,17 @@ function seedMockRoles(): RoleDefinition[] {
 function ensureMockRoles() {
   const existing = getStoredRoles();
   if (existing) {
-    return existing;
+    const migrated = existing.map((role) => ({
+      ...role,
+      policyIds: role.policyIds ?? [],
+      directPermissions: role.directPermissions ?? [],
+    }));
+
+    if (JSON.stringify(migrated) !== JSON.stringify(existing)) {
+      saveStoredRoles(migrated);
+    }
+
+    return migrated;
   }
 
   const seeded = seedMockRoles();

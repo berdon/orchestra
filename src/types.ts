@@ -312,6 +312,8 @@ export interface RoleDefinition {
   model?: string | null;
   thinkingLevel: string;
   capacity: number;
+  policyIds?: string[];
+  directPermissions?: string[];
   archived: boolean;
   createdAt: string;
   updatedAt: string;

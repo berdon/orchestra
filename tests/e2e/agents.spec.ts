@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("settings agents panel creates a global agent definition and shows bootstrap paths", async ({ page }) => {
+test("settings agents panel creates a global agent definition with access controls and overlay", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -14,10 +14,13 @@ test("settings agents panel creates a global agent definition and shows bootstra
   await page.locator('[data-role="agent-name"]').fill("Architect");
   await page.locator('[data-role="agent-provider"]').selectOption("anthropic");
   await page.locator('[data-role="agent-model"]').selectOption("claude-sonnet-4-20250514");
+  await page.locator('[data-role="agent-supervisor-toggle"]').check();
+  await page.locator('[data-role="agent-permission-roles.dispatch"]').check();
   await page.locator('[data-role="save-agent"]').click();
 
   await expect(page.getByRole("heading", { name: "Architect" })).toBeVisible();
   await expect(page.locator('[data-role="agent-memory-root"]')).toContainText("/mock/agents/architect");
+  await expect(page.locator('[data-role="agent-effective-access"]')).toContainText("Full access");
 
   await page.locator('[data-role="agent-overlay-prompt"]').fill("In this project, optimize for small focused commits.");
   await page.locator('[data-role="save-agent-overlay"]').click();
@@ -34,10 +37,12 @@ test("settings agents panel creates a global agent definition and shows bootstra
   expect(storedState.agent?.slug).toBe("architect");
   expect(storedState.agent?.provider).toBe("anthropic");
   expect(storedState.agent?.model).toBe("claude-sonnet-4-20250514");
+  expect(storedState.agent?.policyIds).toContain("policy-supervisor");
+  expect(storedState.agent?.directPermissions).toContain("roles.dispatch");
   expect(storedState.overlay?.prompt).toBe("In this project, optimize for small focused commits.");
 });
 
-test("protected supervisor only allows provider/model/thinking and overlay edits", async ({ page }) => {
+test("protected supervisor keeps access locked while allowing model and overlay edits", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -46,8 +51,12 @@ test("protected supervisor only allows provider/model/thinking and overlay edits
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Agents" }).click();
-  await page.getByRole("link", { name: "Supervisor" }).click();
+  await page.getByRole("link", { name: /Supervisor/i }).click();
 
+  await expect(page.locator('[data-role="agent-protected-badge"]')).toBeVisible();
+  await expect(page.locator('[data-role="agent-supervisor-toggle"]')).toBeChecked();
+  await expect(page.locator('[data-role="agent-supervisor-toggle"]')).toBeDisabled();
+  await expect(page.locator('[data-role="agent-permission-roles.dispatch"]')).toBeDisabled();
   await expect(page.locator('[data-role="agent-name"]')).toBeDisabled();
   await expect(page.getByRole("button", { name: "Archive agent" })).toHaveCount(0);
 
@@ -73,6 +82,7 @@ test("protected supervisor only allows provider/model/thinking and overlay edits
   expect(storedState.agent?.model).toBe("gpt-5.4");
   expect(storedState.agent?.thinkingLevel).toBe("high");
   expect(storedState.agent?.immutable).toBe(true);
+  expect(storedState.agent?.policyIds).toContain("policy-supervisor");
   expect(storedState.overlay?.prompt).toBe("Use this project as the operational source of truth.");
 });
 
@@ -125,6 +135,6 @@ test("agents page shows project-scoped agent runtime state from dispatched task 
   await page.getByRole("link", { name: /Data/i }).click();
 
   await expect(page.getByRole("heading", { name: "Data" })).toBeVisible();
-  await expect(page.locator('.status-badge').filter({ hasText: 'running' }).first()).toBeVisible();
-  await expect(page.locator('.workflow-lane-card').filter({ hasText: 'Agent runtime view task' }).first()).toBeVisible();
+  await expect(page.locator(".status-badge").filter({ hasText: "running" }).first()).toBeVisible();
+  await expect(page.locator(".workflow-lane-card").filter({ hasText: "Agent runtime view task" }).first()).toBeVisible();
 });
