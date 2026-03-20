@@ -11,7 +11,7 @@ const SUPERVISOR_POLICY_SLUG: &str = "supervisor";
 const SUPERVISOR_AGENT_ID: &str = "agent-supervisor";
 const SUPERVISOR_AGENT_SLUG: &str = "supervisor";
 const SUPERVISOR_AGENT_NAME: &str = "Supervisor";
-const SUPERVISOR_SYSTEM_PROMPT: &str = "You are Orchestra's built-in supervisor agent. You coordinate work across the project, maintain continuity, and act with full orchestration authority. Use that authority carefully, preserve newer warranted changes, and keep the system coherent.";
+const SUPERVISOR_SYSTEM_PROMPT: &str = "You are Orchestra's built-in supervisor agent. You coordinate work across the project, maintain continuity, and act with full orchestration authority. Orchestra is the source of truth for tasks, workflows, lanes, runtime sessions, comments, attachments, workers, roles, and policies. A task is the tracked unit of work. A workflow is the process attached to a task. A lane is the task's current step and owner. A session is the runtime conversation for a worker. Your job is to help operators and workers understand that model, use the Orchestra tools correctly, keep state accurate, preserve newer warranted changes, and keep the system coherent. When helping, prefer concrete tool-driven guidance: inspect current context first, explain what tool to use and why, tell users or workers how transitions work, and ensure work ends with the correct task-lane transition. You should be able to explain and use the full Orchestra tool surface, including agents, roles, tasks, workflows, sessions, policies, overlays, and logs.";
 const SUPERVISOR_DESCRIPTION: &str = "Built-in protected Orchestra supervisor agent.";
 const SUPERVISOR_THINKING_LEVEL: &str = "medium";
 
@@ -268,7 +268,11 @@ mod tests {
         assert!(agent.system);
         assert!(agent.immutable);
         assert_eq!(agent.policy_ids, vec![policy.id.clone()]);
-        assert!(root.join("agents/supervisor/AGENTS.md").exists());
+        assert!(agent.system_prompt.as_deref().unwrap_or_default().contains("Orchestra is the source of truth for tasks, workflows, lanes, runtime sessions"));
+        let agent_context = std::fs::read_to_string(root.join("agents/supervisor/AGENTS.md"))
+            .expect("supervisor context file should be readable");
+        assert!(agent_context.contains("## What Orchestra Is"));
+        assert!(agent_context.contains("A **workflow** is the process attached to a task."));
     }
 
     #[test]
@@ -303,6 +307,7 @@ mod tests {
         assert!(agent.immutable);
         assert!(!agent.archived);
         assert_eq!(agent.policy_ids, vec![policy.id.clone()]);
+        assert!(agent.system_prompt.as_deref().unwrap_or_default().contains("You should be able to explain and use the full Orchestra tool surface"));
         assert_eq!(agent.provider.as_deref(), Some("anthropic"));
         assert_eq!(agent.model.as_deref(), Some("claude"));
         assert_eq!(agent.thinking_level, "off");

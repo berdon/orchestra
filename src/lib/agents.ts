@@ -207,7 +207,7 @@ function seedMockAgents(): AgentDefinition[] {
       slug: "supervisor",
       name: "Supervisor",
       description: "Built-in protected Orchestra supervisor agent.",
-      systemPrompt: "You are Orchestra's built-in supervisor agent.",
+      systemPrompt: "You are Orchestra's built-in supervisor agent. Orchestra is the source of truth for tasks, workflows, lanes, sessions, workers, policies, and runtime state. Explain Orchestra clearly, help users choose the right tools, and keep the system coherent.",
       provider: "anthropic",
       model: "claude-sonnet-4-20250514",
       roleId: null,
