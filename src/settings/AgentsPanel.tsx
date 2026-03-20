@@ -113,23 +113,31 @@ export function AgentsPanel() {
 
     try {
       const agent = await getAgent(agentId);
-      const [memoryInfo, overlay] = await Promise.all([
-        getAgentMemoryInfo(agentId),
-        getWorkerOverlay("agent", agent.slug),
-      ]);
       setAgentDraft(agentToDraft(agent));
-      setAgentMemoryInfo(memoryInfo);
-      setProjectOverlay(overlay);
-      setOverlayDraft(overlay.prompt ?? "");
       setAgentValidation([]);
       setLoadedAgentId(agent.id);
       setLoadedAgentArchived(agent.archived);
       setIsCreatingAgent(false);
+      setLoadingAgentDetail(false);
+
+      void Promise.all([
+        getAgentMemoryInfo(agentId),
+        getWorkerOverlay("agent", agent.slug),
+      ])
+        .then(([memoryInfo, overlay]) => {
+          setAgentMemoryInfo(memoryInfo);
+          setProjectOverlay(overlay);
+          setOverlayDraft(overlay.prompt ?? "");
+        })
+        .catch((error) => {
+          setAgentActionError(error instanceof Error ? error.message : "Unable to load agent details.");
+        });
+      return;
     } catch (error) {
       setAgentActionError(error instanceof Error ? error.message : "Unable to load agent.");
-    } finally {
-      setLoadingAgentDetail(false);
     }
+
+    setLoadingAgentDetail(false);
   }
 
   useEffect(() => {
@@ -228,13 +236,18 @@ export function AgentsPanel() {
       setAgentValidation([]);
       setIsCreatingAgent(false);
 
-      const [memoryInfo, overlay] = await Promise.all([
+      void Promise.all([
         getAgentMemoryInfo(saved.id),
         getWorkerOverlay("agent", saved.slug),
-      ]);
-      setAgentMemoryInfo(memoryInfo);
-      setProjectOverlay(overlay);
-      setOverlayDraft(overlay.prompt ?? "");
+      ])
+        .then(([memoryInfo, overlay]) => {
+          setAgentMemoryInfo(memoryInfo);
+          setProjectOverlay(overlay);
+          setOverlayDraft(overlay.prompt ?? "");
+        })
+        .catch((error) => {
+          setAgentActionError(error instanceof Error ? error.message : "Unable to load saved agent details.");
+        });
     } catch (error) {
       setAgentActionError(error instanceof Error ? error.message : "Unable to save agent.");
     } finally {
