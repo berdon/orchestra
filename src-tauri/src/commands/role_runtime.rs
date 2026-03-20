@@ -50,5 +50,13 @@ pub fn enqueue_role_work(
             queue_entry.id, queue_entry.role_id
         ),
     );
+    state.log_authorized_action(
+        "auth.audit",
+        "enqueue_role_work",
+        authorization.as_ref(),
+        Some("roles.enqueue"),
+        &queue_entry.id,
+        "success",
+    );
     Ok(queue_entry)
 }

@@ -83,5 +83,13 @@ pub fn archive_role(
         "role.archived",
         &format!("Archived role {}", role.id),
     );
+    state.log_authorized_action(
+        "auth.audit",
+        "archive_role",
+        authorization.as_ref(),
+        Some("roles.archive"),
+        &role_id,
+        "success",
+    );
     Ok(role)
 }

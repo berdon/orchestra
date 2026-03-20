@@ -36,6 +36,14 @@ pub fn create_workflow(
         "workflow.created",
         &format!("Created workflow {}", workflow.id),
     );
+    state.log_authorized_action(
+        "auth.audit",
+        "create_workflow",
+        None,
+        None,
+        &workflow.id,
+        "success",
+    );
     Ok(workflow)
 }
 
@@ -51,6 +59,14 @@ pub fn update_workflow(
         "info",
         "workflow.updated",
         &format!("Updated workflow {}", workflow.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "update_workflow",
+        None,
+        None,
+        &workflow_id,
+        "success",
     );
     Ok(workflow)
 }
@@ -68,6 +84,14 @@ pub fn duplicate_workflow(
         "workflow.duplicated",
         &format!("Duplicated workflow {} from {}", workflow.id, workflow_id),
     );
+    state.log_authorized_action(
+        "auth.audit",
+        "duplicate_workflow",
+        None,
+        None,
+        &workflow_id,
+        "success",
+    );
     Ok(workflow)
 }
 
@@ -82,6 +106,14 @@ pub fn archive_workflow(
         "info",
         "workflow.archived",
         &format!("Archived workflow {}", workflow.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "archive_workflow",
+        None,
+        None,
+        &workflow_id,
+        "success",
     );
     Ok(workflow)
 }
