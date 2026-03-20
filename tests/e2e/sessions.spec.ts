@@ -247,6 +247,61 @@ test("sessions UI refreshes an active session after opening even without a local
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("This reply arrived after the session was opened.", { timeout: 4000 });
 });
 
+test("sessions page filters active and closed task sessions", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-role-terminal",
+          slug: "role-terminal",
+          name: "Role Terminal",
+          description: "Single role-owned lane that ends the task.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-role-terminal",
+              key: "implement",
+              name: "Implementation",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Finish the task.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Closable session task");
+  await page.locator('[data-role="task-status"]').selectOption("ready");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-role-terminal");
+  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+  await page.locator('[data-role="complete-task-success"]').click();
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-filter-active"]')).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
+
+  await page.locator('[data-role="session-filter-closed"]').click();
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
+  await expect(page.locator('[data-role="session-link"]')).toContainText("Implementation · Closable session task");
+});
+
 test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

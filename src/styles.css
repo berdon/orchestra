@@ -423,6 +423,34 @@ strong {
   align-content: start;
 }
 
+.filter-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-chip {
+  border: 0;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.filter-chip:hover,
+.filter-chip:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.filter-chip--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
+}
+
 .task-list,
 .role-list,
 .workflow-nav,

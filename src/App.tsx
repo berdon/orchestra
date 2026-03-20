@@ -121,6 +121,8 @@ function getStatusTone(status: SessionStatus) {
       return "warning";
     case "failed":
       return "error";
+    case "closed":
+      return "neutral";
     default:
       return "neutral";
   }
@@ -264,6 +266,7 @@ function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue
 
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
+  const [sessionFilter, setSessionFilter] = useState<"active" | "closed">("active");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("projects");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(getActiveProjectId());
@@ -302,9 +305,14 @@ export function App() {
     [activeProjectId, projects],
   );
 
+  const filteredSessions = useMemo(
+    () => sessions.filter((session) => (sessionFilter === "closed" ? session.status === "closed" : session.status !== "closed")),
+    [sessionFilter, sessions],
+  );
+
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
-    [selectedSessionId, sessions],
+    () => filteredSessions.find((session) => session.id === selectedSessionId) ?? filteredSessions[0] ?? null,
+    [filteredSessions, selectedSessionId],
   );
 
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
@@ -1523,7 +1531,9 @@ export function App() {
           />
         ) : activePage === "sessions" ? (
           <SessionsPage
-            sessions={sessions}
+            sessions={filteredSessions}
+            sessionFilter={sessionFilter}
+            onSessionFilterChange={setSessionFilter}
             selectedSession={selectedSession}
             displayedEvents={displayedEvents}
             selectedSessionPending={Boolean(selectedSessionPendingRun)}

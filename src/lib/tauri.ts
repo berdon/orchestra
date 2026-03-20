@@ -1779,6 +1779,23 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   }
 
   saveMockTasks(nextTasks);
+
+  if (["completed", "canceled"].includes(nextStatus) && task.activeLaneAssignment?.sessionId) {
+    const activeSessionId = task.activeLaneAssignment.sessionId;
+    const isPersistentAgentMainSession =
+      task.activeLaneAssignment.workerType === "agent" &&
+      getStoredMockAgentRuntimes().some((runtime) => runtime.mainSessionId === activeSessionId);
+
+    if (!isPersistentAgentMainSession) {
+      updateMockSession(activeSessionId, (current) => ({
+        ...current,
+        status: "closed",
+        updatedAt,
+      }));
+      emitMockSessionChange({ sessionIds: [activeSessionId], reason: "task.session.closed" });
+    }
+  }
+
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
   emitMockTaskChange({ taskIds: [taskId], reason: `task.transition.${outcome}` });
   return getTask(taskId);

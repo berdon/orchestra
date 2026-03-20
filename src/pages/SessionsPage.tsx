@@ -3,6 +3,8 @@ import type { SessionEvent, SessionModelState, SessionRecord, SessionStatus } fr
 
 interface SessionsPageProps {
   sessions: SessionRecord[];
+  sessionFilter: "active" | "closed";
+  onSessionFilterChange: (value: "active" | "closed") => void;
   selectedSession: SessionRecord | null;
   displayedEvents: SessionEvent[];
   selectedSessionPending: boolean;
@@ -28,6 +30,8 @@ interface SessionsPageProps {
 
 export function SessionsPage({
   sessions,
+  sessionFilter,
+  onSessionFilterChange,
   selectedSession,
   displayedEvents,
   selectedSessionPending,
@@ -73,7 +77,31 @@ export function SessionsPage({
           {loadingSessions ? <p className="muted-copy">Loading sessions…</p> : null}
           {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
 
+          <div className="filter-chip-row" role="tablist" aria-label="Session filters">
+            <button
+              type="button"
+              role="tab"
+              data-role="session-filter-active"
+              aria-selected={sessionFilter === "active"}
+              className={sessionFilter === "active" ? "filter-chip filter-chip--active" : "filter-chip"}
+              onClick={() => onSessionFilterChange("active")}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              role="tab"
+              data-role="session-filter-closed"
+              aria-selected={sessionFilter === "closed"}
+              className={sessionFilter === "closed" ? "filter-chip filter-chip--active" : "filter-chip"}
+              onClick={() => onSessionFilterChange("closed")}
+            >
+              Closed
+            </button>
+          </div>
+
           <nav className="session-list" aria-label="Sessions">
+            {sessions.length === 0 ? <p className="muted-copy">No {sessionFilter} sessions.</p> : null}
             {sessions.map((session) => (
               <div
                 key={session.id}

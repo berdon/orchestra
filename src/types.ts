@@ -4,7 +4,7 @@ export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "logs"
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type SessionStatus = "starting" | "active" | "idle" | "paused" | "failed" | "streaming";
+export type SessionStatus = "starting" | "active" | "idle" | "paused" | "failed" | "streaming" | "closed";
 export type SessionEventKind = "system" | "user" | "assistant";
 
 export interface LogEntry {
