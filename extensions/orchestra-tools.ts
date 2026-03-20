@@ -44,6 +44,19 @@ async function invokeBridge(command: string, payload: Record<string, unknown>) {
   return body.data;
 }
 
+function buildAllowedCommandHelp(allowedCommands: OrchestraToolDefinition[]) {
+  return allowedCommands
+    .map((tool) => `- ${tool.name} (${tool.requiredPermission}) — ${tool.description}`)
+    .join("\n");
+}
+
+function resolveHelpResult(allowedCommands: OrchestraToolDefinition[]) {
+  return {
+    commands: allowedCommands,
+    helpText: buildAllowedCommandHelp(allowedCommands),
+  };
+}
+
 export default function orchestraToolsExtension(pi: ExtensionAPI) {
   const config = getBridgeConfig();
   if (!config) {
@@ -51,9 +64,7 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
   }
 
   const allowedCommandNames = config.allowedCommands.map((tool) => tool.name);
-  const allowedCommandHelp = config.allowedCommands
-    .map((tool) => `- ${tool.name} (${tool.requiredPermission}) — ${tool.description}`)
-    .join("\n");
+  const allowedCommandHelp = buildAllowedCommandHelp(config.allowedCommands);
 
   pi.registerCommand("orchestra-tools", {
     description: "List Orchestra commands available to this session",
@@ -70,6 +81,10 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
         ctx.ui.notify("Usage: /orchestra-run <command> [json]", "warning");
         return;
       }
+      if (command === "help") {
+        ctx.ui.notify(`Available Orchestra commands:\n${allowedCommandHelp}`, "info");
+        return;
+      }
       const payloadText = jsonParts.join(" ").trim();
       const payload = payloadText ? JSON.parse(payloadText) : {};
       const result = await invokeBridge(command, payload as Record<string, unknown>);
@@ -80,15 +95,22 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "orchestra_command",
     label: "Orchestra Command",
-    description: `Invoke Orchestra backend commands. Allowed commands: ${allowedCommandNames.join(", ")}`,
+    description: `Invoke Orchestra backend commands. Allowed commands: help, ${allowedCommandNames.join(", ")}`,
     parameters: Type.Object({
-      command: Type.String({ description: `One of: ${allowedCommandNames.join(", ")}` }),
+      command: Type.String({ description: `One of: help, ${allowedCommandNames.join(", ")}` }),
       inputJson: Type.Optional(
         Type.String({ description: "Optional JSON object string for command input, e.g. {\"includeArchived\":true}" }),
       ),
     }),
     async execute(_toolCallId, params) {
       const command = typeof params.command === "string" ? params.command : "";
+      if (command === "help") {
+        const result = resolveHelpResult(config.allowedCommands);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          details: { command, result },
+        };
+      }
       if (!allowedCommandNames.includes(command)) {
         throw new Error(`Command ${command} is not allowed for this session.`);
       }

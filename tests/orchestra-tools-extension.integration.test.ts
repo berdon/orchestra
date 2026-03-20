@@ -192,4 +192,52 @@ describe("orchestra tools extension", () => {
     expect((requests[0] as any).command).toBe("get_task_context");
     expect((requests[0] as any).payload.taskId).toBe("task-1");
   });
+
+  test("help is available even when no backend commands are allowed", { timeout: 15000 }, async () => {
+    const requests: unknown[] = [];
+    const started = await startJsonServer((body, _req, res) => {
+      requests.push(body);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ success: true, data: {} }));
+    });
+    server = started.server;
+
+    proc = spawn(
+      "pi",
+      [
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--no-extensions",
+        "--extension",
+        resolve("extensions/orchestra-tools.ts"),
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          ORCHESTRA_BRIDGE_URL: started.url,
+          ORCHESTRA_BRIDGE_TOKEN: "test-token",
+          ORCHESTRA_ALLOWED_COMMANDS_JSON: JSON.stringify([]),
+          ORCHESTRA_AUTH_CONTEXT_JSON: JSON.stringify({ actorType: "user", actorId: "tester" }),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    proc.stdin.write(`${JSON.stringify({ type: "prompt", message: "/orchestra-run help" })}\n`);
+
+    const line = await waitForLine(proc, (entry) => {
+      try {
+        const parsed = JSON.parse(entry);
+        return parsed.type === "extension_ui_request" && parsed.method === "notify";
+      } catch {
+        return false;
+      }
+    });
+
+    const payload = JSON.parse(line);
+    expect(payload.message).toContain("Available Orchestra commands");
+    expect(requests).toHaveLength(0);
+  });
 });
