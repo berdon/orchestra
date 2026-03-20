@@ -302,6 +302,85 @@ test("sessions page filters active and closed task sessions", async ({ page }) =
   await expect(page.locator('[data-role="session-link"]')).toContainText("Implementation · Closable session task");
 });
 
+test("sessions transcript unlocks on manual scroll and relocks at bottom", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const events = Array.from({ length: 40 }, (_, index) => ({
+      id: `event-${index}`,
+      kind: index % 2 === 0 ? "assistant" : "user",
+      message: `Transcript event ${index}`,
+      timestamp,
+    }));
+
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-scroll-lock",
+          title: "Scroll lock",
+          status: "idle",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Scroll lock" }).click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+
+  await transcript.waitFor();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Scroll lock");
+
+  await expect.poll(async () =>
+    transcript.evaluate((node) => {
+      const metrics = {
+        top: node.scrollTop,
+        clientHeight: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+      };
+      return metrics.scrollHeight > metrics.clientHeight && metrics.top + metrics.clientHeight >= metrics.scrollHeight - 24;
+    })
+  ).toBe(true);
+
+  await transcript.evaluate((node) => {
+    node.scrollTop = Math.max(0, node.scrollHeight - node.clientHeight - 160);
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+
+  await expect.poll(async () =>
+    transcript.evaluate((node) => {
+      const metrics = {
+        top: node.scrollTop,
+        clientHeight: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+      };
+      return metrics.top + metrics.clientHeight < metrics.scrollHeight - 24;
+    })
+  ).toBe(true);
+
+  await transcript.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+
+  await expect.poll(async () =>
+    transcript.evaluate((node) => {
+      const metrics = {
+        top: node.scrollTop,
+        clientHeight: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+      };
+      return metrics.top + metrics.clientHeight >= metrics.scrollHeight - 24;
+    })
+  ).toBe(true);
+});
+
 test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

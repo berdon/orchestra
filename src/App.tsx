@@ -42,6 +42,7 @@ import type {
   SessionEvent,
   SessionModelState,
   SessionRecord,
+  SessionScrollState,
   SessionStatus,
   SessionStreamEnvelope,
   SettingsTab,
@@ -149,6 +150,10 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
   }
 
   return "Choose a model";
+}
+
+function isScrolledToBottom(node: HTMLDivElement, threshold = 24) {
+  return node.scrollHeight - node.scrollTop - node.clientHeight <= threshold;
 }
 
 function isObject(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
@@ -285,6 +290,7 @@ export function App() {
   const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
   const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
+  const [sessionScrollState, setSessionScrollState] = useState<SessionScrollState>({ lockedToBottom: true });
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
   const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
   const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(null);
@@ -1109,12 +1115,48 @@ export function App() {
     }
 
     const node = transcriptRef.current;
-    if (!node) {
+    if (!node || !sessionScrollState.lockedToBottom) {
       return;
     }
 
     node.scrollTop = node.scrollHeight;
-  }, [displayedEvents, isLogsWindow, selectedSession?.id]);
+  }, [displayedEvents, isLogsWindow, selectedSession?.id, sessionScrollState.lockedToBottom]);
+
+  useEffect(() => {
+    setSessionScrollState({ lockedToBottom: true });
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+
+    const handleScrollLockChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ lockedToBottom?: boolean }>;
+      const lockedToBottom = customEvent.detail?.lockedToBottom ?? false;
+      setSessionScrollState((current) => (current.lockedToBottom === lockedToBottom ? current : { lockedToBottom }));
+    };
+
+    node.addEventListener("orchestra:session-scroll-lock-change", handleScrollLockChange as EventListener);
+    return () => node.removeEventListener("orchestra:session-scroll-lock-change", handleScrollLockChange as EventListener);
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+
+    const syncScrollLockState = () => {
+      const lockedToBottom = isScrolledToBottom(node);
+      setSessionScrollState((current) => (current.lockedToBottom === lockedToBottom ? current : { lockedToBottom }));
+    };
+
+    syncScrollLockState();
+    window.addEventListener("resize", syncScrollLockState);
+    return () => window.removeEventListener("resize", syncScrollLockState);
+  }, [displayedEvents.length, selectedSession?.id]);
 
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun ? "streaming" : selectedSession?.status ?? "idle";
@@ -1545,6 +1587,7 @@ export function App() {
             draftMessage={selectedSessionDraftMessage}
             sessionActionError={sessionActionError}
             transcriptRef={transcriptRef}
+            scrollState={sessionScrollState}
             formatDateTime={formatDateTime}
             formatTimestamp={formatTimestamp}
             formatModelOptionLabel={formatModelOptionLabel}

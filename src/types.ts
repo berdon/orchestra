@@ -94,6 +94,10 @@ export interface SessionRecord {
   events: SessionEvent[];
 }
 
+export interface SessionScrollState {
+  lockedToBottom: boolean;
+}
+
 export interface AgentSummary {
   id: string;
   slug: string;
