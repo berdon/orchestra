@@ -1,3 +1,4 @@
+pub mod agent_dispatch;
 pub mod agent_files;
 pub mod agent_runtime;
 pub mod agents;
@@ -5,6 +6,7 @@ pub mod auth_bootstrap;
 pub mod authorization;
 pub mod command_authorization;
 pub mod database;
+pub mod dispatcher;
 pub mod git_worktrees;
 pub mod live_sessions;
 pub mod logging;

@@ -13,6 +13,7 @@ pub struct AppState {
     subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
     pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    pub dispatcher_tick_active: Mutex<bool>,
     pub tool_bridge: Arc<ToolBridgeConfig>,
 }
 
@@ -48,6 +49,7 @@ impl AppState {
             subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
             session_runtimes: Mutex::new(HashMap::new()),
+            dispatcher_tick_active: Mutex::new(false),
             tool_bridge,
         }
     }
