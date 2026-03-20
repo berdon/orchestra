@@ -75,3 +75,56 @@ test("protected supervisor only allows provider/model/thinking and overlay edits
   expect(storedState.agent?.immutable).toBe(true);
   expect(storedState.overlay?.prompt).toBe("Use this project as the operational source of truth.");
 });
+
+test("agents page shows project-scoped agent runtime state from dispatched task work", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-agent",
+          slug: "agent-flow",
+          name: "Agent Flow",
+          description: "Single agent-owned lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent",
+              key: "agent",
+              name: "Agent",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Agent runtime view task");
+  await page.locator('[data-role="task-status"]').selectOption("ready");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent");
+  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+
+  await expect(page.getByRole("heading", { name: "Data" })).toBeVisible();
+  await expect(page.locator('.status-badge').filter({ hasText: 'running' }).first()).toBeVisible();
+  await expect(page.locator('.workflow-lane-card').filter({ hasText: 'Agent runtime view task' }).first()).toBeVisible();
+});
