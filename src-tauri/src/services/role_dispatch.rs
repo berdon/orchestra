@@ -249,7 +249,7 @@ fn ensure_instance_session(
     queue_entry: &crate::models::RoleQueueEntry,
     instance: &RoleInstance,
 ) -> Result<String, String> {
-    if let Some(preferred_session_id) = preferred_lane_session_id(connection, queue_entry)? {
+    if let Some(preferred_session_id) = preferred_lane_session_id(connection, queue_entry, &role.id)? {
         if pi_sessions::get_session(session_dir, &preferred_session_id, false).is_ok() {
             connection
                 .execute(
@@ -296,6 +296,7 @@ fn ensure_instance_session(
 fn preferred_lane_session_id(
     connection: &Connection,
     queue_entry: &crate::models::RoleQueueEntry,
+    role_id: &str,
 ) -> Result<Option<String>, String> {
     let Some(task_id) = queue_entry.source_task_id.as_deref() else {
         return Ok(None);
@@ -304,20 +305,13 @@ fn preferred_lane_session_id(
         return Ok(None);
     };
 
-    connection
-        .query_row(
-            r#"
-            SELECT session_id
-            FROM task_lane_runs
-            WHERE task_id = ?1 AND lane_id = ?2
-            ORDER BY started_at DESC, id DESC
-            LIMIT 1
-            "#,
-            params![task_id, lane_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to query preferred role lane session: {error}"))
+    crate::services::task_runtime::preferred_lane_session_id(
+        connection,
+        task_id,
+        lane_id,
+        "role",
+        Some(role_id),
+    )
 }
 
 fn apply_role_session_defaults(

@@ -564,7 +564,13 @@ fn dispatch_agent_lane(
         .ok_or_else(|| format!("Lane {} is missing an agent reference", lane.name))?;
     let agent = get_agent_by_slug(connection, agent_slug)?;
 
-    let session_id = if let Some(existing_session_id) = preferred_lane_session_id(connection, &task.id, &lane.id)? {
+    let session_id = if let Some(existing_session_id) = preferred_lane_session_id(
+        connection,
+        &task.id,
+        &lane.id,
+        "agent",
+        Some(agent.id.as_str()),
+    )? {
         if pi_sessions::get_session(session_dir, &existing_session_id, false).is_ok() {
             existing_session_id
         } else {
@@ -1070,21 +1076,27 @@ fn get_agent_by_slug(connection: &Connection, agent_slug: &str) -> Result<AgentD
     agents::get_agent(connection, &agent_id)
 }
 
-fn preferred_lane_session_id(
+pub fn preferred_lane_session_id(
     connection: &Connection,
     task_id: &str,
     lane_id: &str,
+    worker_type: &str,
+    worker_id: Option<&str>,
 ) -> Result<Option<String>, String> {
     connection
         .query_row(
             r#"
             SELECT session_id
-            FROM task_lane_runs
-            WHERE task_id = ?1 AND lane_id = ?2
-            ORDER BY started_at DESC, id DESC
+            FROM task_lane_assignments
+            WHERE task_id = ?1
+              AND lane_id = ?2
+              AND worker_type = ?3
+              AND (?4 IS NULL OR worker_id = ?4)
+              AND session_id IS NOT NULL
+            ORDER BY updated_at DESC, created_at DESC, id DESC
             LIMIT 1
             "#,
-            params![task_id, lane_id],
+            params![task_id, lane_id, worker_type, worker_id],
             |row| row.get::<_, String>(0),
         )
         .optional()
@@ -1555,5 +1567,59 @@ mod tests {
         .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
+    }
+
+    #[test]
+    fn preferred_lane_session_is_scoped_to_the_current_worker_owner() {
+        let mut connection = in_memory_connection();
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Session reuse test".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "draft".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = now_iso();
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-role', ?2, 'workflow-1', 'lane-1', 'role', 'role-1', 'failed',
+                    'session-role', NULL, NULL, 'instance-1', NULL,
+                    ?1, ?1, ?1, ?1
+                )
+                "#,
+                params![now.as_str(), task.id.as_str()],
+            )
+            .expect("role assignment should insert");
+
+        let role_session = preferred_lane_session_id(&connection, task.id.as_str(), "lane-1", "role", Some("role-1"))
+            .expect("role preferred session should resolve");
+        assert_eq!(role_session.as_deref(), Some("session-role"));
+
+        let changed_role_session = preferred_lane_session_id(&connection, task.id.as_str(), "lane-1", "role", Some("role-2"))
+            .expect("different role should not reuse old session");
+        assert!(changed_role_session.is_none());
+
+        let agent_session = preferred_lane_session_id(&connection, task.id.as_str(), "lane-1", "agent", Some("agent-1"))
+            .expect("agent lookup should not reuse role session");
+        assert!(agent_session.is_none());
     }
 }
