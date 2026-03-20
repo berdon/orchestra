@@ -156,7 +156,7 @@ pub fn validate_role(
         errors.push(validation_error(
             "invalid",
             "thinkingLevel",
-            "Thinking level must be one of: off, minimal, low, medium, high.",
+            "Thinking level must be one of: off, minimal, low, medium, high, xhigh.",
         ));
     }
 
@@ -390,7 +390,7 @@ fn normalize_input(input: RoleUpsertInput) -> RoleUpsertInput {
 }
 
 fn is_valid_thinking_level(value: &str) -> bool {
-    matches!(value, "off" | "minimal" | "low" | "medium" | "high")
+    matches!(value, "off" | "minimal" | "low" | "medium" | "high" | "xhigh")
 }
 
 fn normalized_optional_string(value: Option<String>) -> Option<String> {

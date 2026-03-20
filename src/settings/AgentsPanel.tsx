@@ -9,6 +9,7 @@ import {
   updateAgent,
   validateAgent,
 } from "../lib/agents";
+import { listPiModels } from "../lib/tauri";
 import { getWorkerOverlay, updateWorkerOverlay } from "../lib/projectSettings";
 import type {
   AgentDefinition,
@@ -17,6 +18,7 @@ import type {
   AgentUpsertInput,
   AgentValidationError,
   ProjectWorkerOverlay,
+  SessionModel,
 } from "../types";
 
 function createBlankAgentDraft(): AgentUpsertInput {
@@ -58,6 +60,8 @@ export function AgentsPanel() {
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [loadedAgentId, setLoadedAgentId] = useState<string | null>(null);
   const [loadedAgentArchived, setLoadedAgentArchived] = useState(false);
+  const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
+  const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [agentMemoryInfo, setAgentMemoryInfo] = useState<AgentMemoryInfo | null>(null);
   const [projectOverlay, setProjectOverlay] = useState<ProjectWorkerOverlay | null>(null);
   const [overlayDraft, setOverlayDraft] = useState("");
@@ -69,6 +73,14 @@ export function AgentsPanel() {
   );
 
   const validationSummary = useMemo(() => agentValidation.map((error) => `${error.path}: ${error.message}`), [agentValidation]);
+  const providerOptions = useMemo(
+    () => Array.from(new Set(availableModels.map((model) => model.provider))).sort(),
+    [availableModels],
+  );
+  const filteredModelOptions = useMemo(
+    () => availableModels.filter((model) => !agentDraft.provider || model.provider === agentDraft.provider),
+    [availableModels, agentDraft.provider],
+  );
 
   async function loadAgents() {
     setLoadingAgents(true);
@@ -123,6 +135,31 @@ export function AgentsPanel() {
   useEffect(() => {
     void loadAgents();
   }, [includeArchivedAgents]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingModelOptions(true);
+    void listPiModels()
+      .then((models) => {
+        if (!cancelled) {
+          setAvailableModels(models);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAgentActionError(error instanceof Error ? error.message : "Unable to load PI models.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingModelOptions(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (isCreatingAgent) {
@@ -280,7 +317,6 @@ export function AgentsPanel() {
               }}
             >
               {agent.name}
-              <span className="role-list-link__meta">{agent.slug}</span>
             </a>
           ))}
         </nav>
@@ -333,13 +369,25 @@ export function AgentsPanel() {
 
                 <label className="field-group">
                   <span className="field-group__label">Provider</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    placeholder="e.g. anthropic"
+                  <select
+                    className="select-input"
                     value={agentDraft.provider ?? ""}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, provider: event.target.value }))}
-                  />
+                    disabled={loadingModelOptions}
+                    onChange={(event) =>
+                      updateAgentDraft((draft) => ({
+                        ...draft,
+                        provider: event.target.value,
+                        model: draft.provider === event.target.value ? draft.model : "",
+                      }))
+                    }
+                  >
+                    <option value="">{loadingModelOptions ? "Loading providers…" : "Select a provider"}</option>
+                    {providerOptions.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {provider}
+                      </option>
+                    ))}
+                  </select>
                   {getAgentValidationForPath(agentValidation, "provider").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
@@ -347,13 +395,21 @@ export function AgentsPanel() {
 
                 <label className="field-group">
                   <span className="field-group__label">Model</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    placeholder="e.g. claude-sonnet-4-20250514"
+                  <select
+                    className="select-input"
                     value={agentDraft.model ?? ""}
+                    disabled={loadingModelOptions || !(agentDraft.provider ?? "")}
                     onChange={(event) => updateAgentDraft((draft) => ({ ...draft, model: event.target.value }))}
-                  />
+                  >
+                    <option value="">
+                      {loadingModelOptions ? "Loading models…" : agentDraft.provider ? "Select a model" : "Select a provider first"}
+                    </option>
+                    {filteredModelOptions.map((model) => (
+                      <option key={`${model.provider}/${model.id}`} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
                   {getAgentValidationForPath(agentValidation, "model").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
@@ -371,6 +427,7 @@ export function AgentsPanel() {
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
+                    <option value="xhigh">XHigh</option>
                   </select>
                   {getAgentValidationForPath(agentValidation, "thinkingLevel").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
