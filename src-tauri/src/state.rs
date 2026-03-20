@@ -3,13 +3,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{models::LogEntry, services::live_sessions::SessionRuntime};
+use crate::{
+    models::LogEntry,
+    services::{live_sessions::SessionRuntime, tool_bridge::ToolBridgeConfig},
+};
 
 pub struct AppState {
     pub logs: Mutex<Vec<LogEntry>>,
     subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
     pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    pub tool_bridge: Arc<ToolBridgeConfig>,
 }
 
 pub fn now_iso() -> String {
@@ -31,19 +35,20 @@ fn create_log(level: &str, target: &str, message: &str) -> LogEntry {
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(tool_bridge: Arc<ToolBridgeConfig>) -> Self {
         Self {
             logs: Mutex::new(vec![
                 create_log("info", "app.bootstrap", "Orchestra backend initialized"),
                 create_log(
                     "info",
                     "session.backend",
-                    "Desktop mode uses real pi session files, background RPC turns, and streaming session events",
+                    "Desktop mode uses real pi session files, background RPC turns, streaming session events",
                 ),
             ]),
             subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
             session_runtimes: Mutex::new(HashMap::new()),
+            tool_bridge,
         }
     }
 

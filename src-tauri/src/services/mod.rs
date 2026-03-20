@@ -14,4 +14,5 @@ pub mod project_settings;
 pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;
+pub mod tool_bridge;
 pub mod workflows;

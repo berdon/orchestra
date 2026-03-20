@@ -8,13 +8,14 @@ use std::{
     time::Duration,
 };
 
+use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
-    models::{SessionModel, SessionModelState, SessionStreamEnvelope},
-    services::pi_sessions::get_session_path,
+    models::{AuthorizationContext, SessionModel, SessionModelState, SessionStreamEnvelope},
+    services::{command_authorization, database, pi_sessions::get_session_path},
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -40,6 +41,14 @@ impl SessionRuntime {
         session_id: String,
         session_path: PathBuf,
     ) -> Result<Arc<Self>, String> {
+        let bridge_config = app.state::<crate::state::AppState>().tool_bridge.clone();
+        let authorization_context = runtime_authorization_context(&session_id)?;
+        let allowed_tools = crate::services::tool_bridge::list_bridge_tools(
+            &database::open_connection()?,
+            authorization_context.as_ref(),
+        )?;
+        let extension_path = project_root.join("extensions").join("orchestra-tools.ts");
+
         let mut child = Command::new("pi")
             .arg("--mode")
             .arg("rpc")
@@ -48,6 +57,21 @@ impl SessionRuntime {
             .arg("--session-dir")
             .arg(&session_dir)
             .arg("--no-extensions")
+            .arg("--extension")
+            .arg(&extension_path)
+            .env("ORCHESTRA_BRIDGE_URL", &bridge_config.url)
+            .env("ORCHESTRA_BRIDGE_TOKEN", &bridge_config.token)
+            .env(
+                "ORCHESTRA_ALLOWED_COMMANDS_JSON",
+                serde_json::to_string(&allowed_tools)
+                    .map_err(|error| format!("Unable to serialize allowed tools: {error}"))?,
+            )
+            .env(
+                "ORCHESTRA_AUTH_CONTEXT_JSON",
+                serde_json::to_string(&authorization_context).map_err(|error| {
+                    format!("Unable to serialize authorization context: {error}")
+                })?,
+            )
             .current_dir(project_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -530,6 +554,30 @@ pub fn maybe_runtime(
         .ok()
         .and_then(|runtimes| runtimes.get(session_id).map(Arc::clone))
         .filter(|runtime| !runtime.is_closed())
+}
+
+fn runtime_authorization_context(session_id: &str) -> Result<Option<AuthorizationContext>, String> {
+    let connection = database::open_connection()?;
+    let role_instance_id = connection
+        .query_row(
+            "SELECT id FROM role_instances WHERE session_id = ?1 LIMIT 1",
+            [session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to resolve session authorization context: {error}"))?;
+
+    if let Some(role_instance_id) = role_instance_id {
+        return Ok(Some(AuthorizationContext {
+            actor_type: "role_instance".into(),
+            actor_id: role_instance_id,
+        }));
+    }
+
+    Ok(Some(AuthorizationContext {
+        actor_type: "user".into(),
+        actor_id: "desktop-user".into(),
+    }))
 }
 
 fn extract_message_text(message: &Value) -> String {

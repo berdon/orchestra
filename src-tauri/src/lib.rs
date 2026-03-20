@@ -36,6 +36,8 @@ pub fn run() {
     services::logging::init_logging();
     let database_path = services::database::initialize_database()
         .expect("unable to initialize Orchestra SQLite database");
+    let tool_bridge =
+        services::tool_bridge::start_tool_bridge().expect("unable to start Orchestra tool bridge");
     let mut bootstrap_connection = services::database::open_connection()
         .expect("unable to open Orchestra SQLite database for bootstrap");
     let (supervisor_policy, supervisor_agent) =
@@ -45,7 +47,7 @@ pub fn run() {
         )
         .expect("unable to seed Orchestra supervisor authorization state");
 
-    let app_state = AppState::new();
+    let app_state = AppState::new(tool_bridge.clone());
     app_state.log(
         "info",
         "storage.sqlite",
@@ -61,6 +63,11 @@ pub fn run() {
             "Ensured supervisor policy {} and supervisor agent {}",
             supervisor_policy.id, supervisor_agent.id
         ),
+    );
+    app_state.log(
+        "info",
+        "tool.bridge",
+        &format!("Started Orchestra tool bridge at {}", tool_bridge.url),
     );
 
     tauri::Builder::default()
