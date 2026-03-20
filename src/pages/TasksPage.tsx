@@ -14,6 +14,8 @@ import {
   getWorkflow,
   listTasks,
   listWorkflows,
+  listenToSessionStream,
+  listenToTaskChanges,
   removeTaskAttachment,
   removeTaskDependency,
   requestUserIntervention,
@@ -22,6 +24,7 @@ import {
 import type {
   AgentSummary,
   RoleSummary,
+  SessionStreamEnvelope,
   TaskCommentInput,
   TaskDetail,
   TaskSummary,
@@ -99,6 +102,42 @@ interface TasksPageProps {
 
 function sameData<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next);
+}
+
+const TASK_EVENT_TOOL_NAMES = new Set([
+  "create_task",
+  "create_subtask",
+  "update_task",
+  "comment_on_task",
+  "dispatch_task_lane",
+  "complete_lane_as_success",
+  "complete_lane_as_failure",
+  "request_user_intervention",
+  "add_task_dependency",
+  "remove_task_dependency",
+  "add_task_attachment",
+  "remove_task_attachment",
+]);
+
+function getSessionEventType(payload: SessionStreamEnvelope) {
+  if (payload.event && typeof payload.event === "object" && !Array.isArray(payload.event) && "type" in payload.event) {
+    const value = payload.event.type;
+    return typeof value === "string" ? value : "";
+  }
+
+  return "";
+}
+
+function shouldRefreshTasksFromSessionEvent(payload: SessionStreamEnvelope) {
+  const eventType = getSessionEventType(payload);
+  if (eventType === "tool_execution_end") {
+    const toolName = payload.event && typeof payload.event === "object" && !Array.isArray(payload.event) && "toolName" in payload.event
+      ? payload.event.toolName
+      : null;
+    return typeof toolName === "string" && TASK_EVENT_TOOL_NAMES.has(toolName);
+  }
+
+  return false;
 }
 
 export function TasksPage({ projectId = null, createTaskToken = 0, createTaskProjectId = null, openTaskRequest = null }: TasksPageProps) {
@@ -272,27 +311,68 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
   }, [route.kind === "detail" ? route.taskId : null]);
 
   useEffect(() => {
-    if (route.kind === "create" || taskDraftDirty) {
+    if (route.kind === "create") {
       return;
     }
 
+    let cancelled = false;
+
     const refresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
       void loadTasksData({ silent: true });
-      if (route.kind === "detail") {
-        void loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
+      if (route.kind === "detail" && !taskDraftDirty) {
+        void loadTaskDetail(route.taskId, { silent: true });
       }
     };
 
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
+    let disposeTaskChanges: (() => void) | undefined;
+    let disposeSessionStream: (() => void) | undefined;
+
+    void listenToTaskChanges((event) => {
+      if (cancelled) {
+        return;
+      }
+      if (event.taskIds.length === 0) {
+        refresh();
+        return;
+      }
+      if (route.kind === "detail" && event.taskIds.includes(route.taskId)) {
+        refresh();
+        return;
+      }
+      refresh();
+    }).then((dispose) => {
+      if (cancelled) {
+        dispose();
+        return;
+      }
+      disposeTaskChanges = dispose;
+    });
+
+    void listenToSessionStream((payload) => {
+      if (!cancelled && shouldRefreshTasksFromSessionEvent(payload)) {
         refresh();
       }
-    }, 10000);
+    }).then((dispose) => {
+      if (cancelled) {
+        dispose();
+        return;
+      }
+      disposeSessionStream = dispose;
+    });
 
+    const intervalId = window.setInterval(refresh, 60000);
     window.addEventListener("focus", refresh);
+
     return () => {
+      cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refresh);
+      disposeTaskChanges?.();
+      disposeSessionStream?.();
     };
   }, [route, taskDraftDirty, includeArchivedTasks]);
 

@@ -24,6 +24,21 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionReco
 }
 
 #[tauri::command]
+pub async fn get_session_record(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRecord, String> {
+    let subscribed = state.subscribed_session_ids()?.contains(&session_id);
+    let session_id_for_task = session_id.clone();
+    spawn_blocking(move || {
+        let context = detect_session_context(None)?;
+        get_session(&context.session_dir, &session_id_for_task, subscribed)
+    })
+    .await
+    .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
+}
+
+#[tauri::command]
 pub async fn create_session(
     app: AppHandle,
     state: State<'_, AppState>,

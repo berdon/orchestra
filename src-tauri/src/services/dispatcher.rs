@@ -2,7 +2,7 @@ use std::{thread, time::Duration};
 
 use tauri::{AppHandle, Manager};
 
-use crate::{services::{agent_dispatch, database, pi_sessions, role_dispatch, role_runtime, task_runtime}, state::AppState};
+use crate::{services::{agent_dispatch, app_events, database, pi_sessions, role_dispatch, role_runtime, task_runtime}, state::AppState};
 
 const DISPATCHER_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -71,6 +71,11 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
                 context.session_dir.clone(),
                 &assignment,
             )?;
+            let _ = app_events::emit_task_change(
+                &app,
+                "task.runtime.assignment_started",
+                [assignment.task_id.clone()],
+            );
             activated_roles += 1;
         }
     }

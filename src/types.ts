@@ -285,6 +285,11 @@ export interface SessionStreamEnvelope {
   receivedAt: string;
 }
 
+export interface TaskChangeEvent {
+  taskIds: string[];
+  reason: string;
+}
+
 export type WorkflowOwnerType = "user" | "agent" | "role";
 export type WorkflowTransitionType = "lane" | "user_intervention" | "end";
 
