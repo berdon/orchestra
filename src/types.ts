@@ -377,12 +377,19 @@ export interface TaskSummary {
   archived: boolean;
   commentCount: number;
   laneRunCount: number;
+  childCount: number;
+  completedChildCount: number;
+  inProgressChildCount: number;
+  blockedChildCount: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface TaskDetail extends TaskSummary {
   repositoryId?: string | null;
+  parent?: TaskSummary | null;
+  lineage: TaskSummary[];
+  children: TaskSummary[];
   comments: TaskComment[];
   laneRuns: TaskLaneRun[];
 }

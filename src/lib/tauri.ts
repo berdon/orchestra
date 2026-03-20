@@ -349,10 +349,42 @@ function seedMockTasks(): TaskDetail[] {
   const firstLane = workflow?.lanes[0];
   const secondLane = workflow?.lanes[1];
 
+  const epicTaskId = createId("task");
   const planningTaskId = createId("task");
+  const blockedTaskId = createId("task");
   const planningSessionId = createId("session");
 
-  return [
+  return enrichMockTasks([
+    {
+      id: epicTaskId,
+      projectId: CURRENT_PROJECT_ID,
+      number: "ORC-1",
+      title: "Define Orchestra task system",
+      description: "Document the task model including hierarchy, dependencies, attachments, and task tools.",
+      type: "epic",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow?.id ?? null,
+      currentLaneId: firstLane?.id ?? null,
+      assigneeType: "user",
+      assigneeId: null,
+      repositoryId: null,
+      parentTaskId: null,
+      archived: false,
+      commentCount: 0,
+      laneRunCount: 0,
+      childCount: 0,
+      completedChildCount: 0,
+      inProgressChildCount: 0,
+      blockedChildCount: 0,
+      parent: null,
+      lineage: [],
+      children: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      comments: [],
+      laneRuns: [],
+    },
     {
       id: planningTaskId,
       projectId: CURRENT_PROJECT_ID,
@@ -367,10 +399,17 @@ function seedMockTasks(): TaskDetail[] {
       assigneeType: "role",
       assigneeId: "developer",
       repositoryId: null,
-      parentTaskId: null,
+      parentTaskId: epicTaskId,
       archived: false,
       commentCount: 1,
       laneRunCount: 1,
+      childCount: 0,
+      completedChildCount: 0,
+      inProgressChildCount: 0,
+      blockedChildCount: 0,
+      parent: null,
+      lineage: [],
+      children: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [
@@ -400,35 +439,42 @@ function seedMockTasks(): TaskDetail[] {
         : [],
     },
     {
-      id: createId("task"),
+      id: blockedTaskId,
       projectId: CURRENT_PROJECT_ID,
-      number: "ORC-1",
-      title: "Define Orchestra task system",
-      description: "Document the task model including hierarchy, dependencies, attachments, and task tools.",
-      type: "epic",
-      status: "ready",
-      priority: "P1",
+      number: "ORC-3",
+      title: "Plan hierarchy rollups",
+      description: "Use the epic container to summarize child task progress and expose lineage in the task detail pane.",
+      type: "task",
+      status: "blocked",
+      priority: "P2",
       workflowId: workflow?.id ?? null,
       currentLaneId: firstLane?.id ?? null,
       assigneeType: "user",
       assigneeId: null,
       repositoryId: null,
-      parentTaskId: null,
+      parentTaskId: epicTaskId,
       archived: false,
       commentCount: 0,
       laneRunCount: 0,
+      childCount: 0,
+      completedChildCount: 0,
+      inProgressChildCount: 0,
+      blockedChildCount: 0,
+      parent: null,
+      lineage: [],
+      children: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
       laneRuns: [],
     },
-  ];
+  ]);
 }
 
 function ensureMockTasks() {
   const existing = getStoredValue<TaskDetail[]>(TASK_STORAGE_KEY);
   if (existing) {
-    return existing;
+    return enrichMockTasks(existing);
   }
 
   const seeded = seedMockTasks();
@@ -437,7 +483,7 @@ function ensureMockTasks() {
 }
 
 function saveMockTasks(tasks: TaskDetail[]) {
-  setStoredValue(TASK_STORAGE_KEY, tasks);
+  setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks));
 }
 
 function summarizeTask(task: TaskDetail): TaskSummary {
@@ -458,9 +504,51 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     archived: task.archived,
     commentCount: task.comments.length,
     laneRunCount: task.laneRuns.length,
+    childCount: task.children.length,
+    completedChildCount: task.children.filter((child) => child.status === "completed").length,
+    inProgressChildCount: task.children.filter((child) => child.status === "in_progress").length,
+    blockedChildCount: task.children.filter((child) => child.status === "blocked").length,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   };
+}
+
+function enrichMockTasks(tasks: TaskDetail[]) {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+
+  return tasks
+    .map((task) => {
+      const lineage: TaskSummary[] = [];
+      let currentParentId = task.parentTaskId ?? null;
+      while (currentParentId) {
+        const parentTask = byId.get(currentParentId);
+        if (!parentTask) {
+          break;
+        }
+        lineage.push(summarizeTask({ ...parentTask, parent: null, lineage: [], children: [] }));
+        currentParentId = parentTask.parentTaskId ?? null;
+      }
+      lineage.reverse();
+
+      const children = tasks
+        .filter((candidate) => candidate.parentTaskId === task.id)
+        .sort((left, right) => left.number.localeCompare(right.number))
+        .map((child) => summarizeTask({ ...child, parent: null, lineage: [], children: [] }));
+
+      return {
+        ...task,
+        parent: task.parentTaskId && byId.get(task.parentTaskId) ? summarizeTask({ ...(byId.get(task.parentTaskId) as TaskDetail), parent: null, lineage: [], children: [] }) : null,
+        lineage,
+        children,
+        commentCount: task.comments.length,
+        laneRunCount: task.laneRuns.length,
+        childCount: children.length,
+        completedChildCount: children.filter((child) => child.status === "completed").length,
+        inProgressChildCount: children.filter((child) => child.status === "in_progress").length,
+        blockedChildCount: children.filter((child) => child.status === "blocked").length,
+      } satisfies TaskDetail;
+    })
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
 function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetail): TaskDetail {
@@ -491,6 +579,13 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     archived: input.archived ?? existingTask?.archived ?? false,
     commentCount: existingTask?.comments.length ?? 0,
     laneRunCount: existingTask?.laneRuns.length ?? 0,
+    childCount: 0,
+    completedChildCount: 0,
+    inProgressChildCount: 0,
+    blockedChildCount: 0,
+    parent: null,
+    lineage: [],
+    children: [],
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
     comments: existingTask?.comments ?? [],
@@ -498,7 +593,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
   };
 }
 
-function validateMockTaskInput(input: TaskUpsertInput) {
+function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
   const errors: Array<{ path: string; message: string }> = [];
 
   if (!input.title.trim()) {
@@ -522,6 +617,37 @@ function validateMockTaskInput(input: TaskUpsertInput) {
 
   if (!["user", "agent", "role", "unassigned"].includes(input.assigneeType)) {
     errors.push({ path: "assigneeType", message: "Assignee type must be one of: user, agent, role, unassigned." });
+  }
+
+  if (["user", "unassigned"].includes(input.assigneeType) && input.assigneeId?.trim()) {
+    errors.push({ path: "assigneeId", message: "User and unassigned tasks must not specify an assignee id." });
+  }
+
+  if (["agent", "role"].includes(input.assigneeType) && !input.assigneeId?.trim()) {
+    errors.push({ path: "assigneeId", message: "Agent and role tasks require an assignee id." });
+  }
+
+  if (input.currentLaneId?.trim() && !input.workflowId?.trim()) {
+    errors.push({ path: "currentLaneId", message: "A current lane requires a workflow selection." });
+  }
+
+  if (input.parentTaskId?.trim()) {
+    const parentId = input.parentTaskId.trim();
+    const tasks = ensureMockTasks();
+    if (taskId && parentId === taskId) {
+      errors.push({ path: "parentTaskId", message: "A task cannot be its own parent." });
+    } else if (!tasks.some((task) => task.id === parentId)) {
+      errors.push({ path: "parentTaskId", message: "Parent task was not found." });
+    } else if (taskId) {
+      let currentParentId: string | null = parentId;
+      while (currentParentId) {
+        if (currentParentId === taskId) {
+          errors.push({ path: "parentTaskId", message: "Parent would create a hierarchy cycle." });
+          break;
+        }
+        currentParentId = tasks.find((task) => task.id === currentParentId)?.parentTaskId ?? null;
+      }
+    }
   }
 
   return errors;
@@ -1059,7 +1185,7 @@ export async function createTask(input: TaskUpsertInput): Promise<TaskDetail> {
 
 export async function updateTask(taskId: string, input: TaskUpsertInput): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    const validation = validateMockTaskInput(input);
+    const validation = validateMockTaskInput(input, taskId);
     if (validation.length > 0) {
       throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
     }
