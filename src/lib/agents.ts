@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { getActiveProjectId } from "./projects";
 import { isTauriAvailable } from "./tauri";
 import type {
   AgentDefinition,
@@ -13,12 +14,28 @@ import type {
   AgentUpsertInput,
   AgentValidationError,
   AgentValidationResult,
+  SessionModel,
+  SessionRecord,
 } from "../types";
 
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
 const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
+const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
+const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const DEFAULT_PROJECT_ID = "orchestra";
+
+function activeProjectId() {
+  return getActiveProjectId() ?? DEFAULT_PROJECT_ID;
+}
+
+function sessionStorageKey() {
+  return `${SESSION_STORAGE_KEY}.${activeProjectId()}`;
+}
+
+function sessionModelStorageKey() {
+  return `${SESSION_MODEL_STORAGE_KEY}.${activeProjectId()}`;
+}
 
 function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
@@ -63,6 +80,57 @@ function getStoredAgentQueue() {
 
 function saveStoredAgentQueue(entries: AgentQueueEntry[]) {
   window.localStorage.setItem(AGENT_QUEUE_STORAGE_KEY, JSON.stringify(entries));
+}
+
+function getStoredSessions() {
+  const value = window.localStorage.getItem(sessionStorageKey());
+  return value ? (JSON.parse(value) as SessionRecord[]) : [];
+}
+
+function saveStoredSessions(sessions: SessionRecord[]) {
+  window.localStorage.setItem(sessionStorageKey(), JSON.stringify(sessions));
+}
+
+function getStoredSessionModels() {
+  const value = window.localStorage.getItem(sessionModelStorageKey());
+  return value ? (JSON.parse(value) as Record<string, SessionModel>) : {};
+}
+
+function saveStoredSessionModels(models: Record<string, SessionModel>) {
+  window.localStorage.setItem(sessionModelStorageKey(), JSON.stringify(models));
+}
+
+function createSessionRecord(title: string, openingAssistantMessage: string): SessionRecord {
+  const timestamp = nowIso();
+  return {
+    id: createId("session"),
+    title,
+    status: "active",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    subscribed: true,
+    events: [
+      {
+        id: createId("event"),
+        kind: "system",
+        message: `${title} created from Orchestra.`,
+        timestamp,
+      },
+      {
+        id: createId("event"),
+        kind: "assistant",
+        message: openingAssistantMessage,
+        timestamp,
+      },
+    ],
+  };
+}
+
+function upsertStoredSession(session: SessionRecord) {
+  const sessions = getStoredSessions().filter((entry) => entry.id !== session.id);
+  const nextSessions = [session, ...sessions].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  saveStoredSessions(nextSessions);
+  return session;
 }
 
 function summarizeAgent(agent: AgentDefinition): AgentSummary {
@@ -340,6 +408,55 @@ export async function getAgentOperations(agentId: string): Promise<AgentOperatio
   }
 
   return invoke<AgentOperationsDetail>("get_agent_operations", { agentId });
+}
+
+export async function ensureAgentSession(agentId: string): Promise<SessionRecord> {
+  if (!isTauriAvailable()) {
+    const agent = await getAgent(agentId);
+    const runtime = ensureMockAgentRuntime(agentId);
+    const existingSession = runtime.mainSessionId
+      ? getStoredSessions().find((session) => session.id === runtime.mainSessionId) ?? null
+      : null;
+
+    const session: SessionRecord = existingSession
+      ? { ...existingSession, subscribed: true, status: "active", updatedAt: nowIso() }
+      : createSessionRecord(
+          `${agent.name} main session`,
+          `${agent.name} is ready. This persistent session keeps the agent's context and can be reopened from anywhere in Orchestra.`,
+        );
+
+    upsertStoredSession(session);
+
+    if (agent.provider && agent.model) {
+      const models = getStoredSessionModels();
+      models[session.id] = {
+        id: agent.model,
+        name: agent.model,
+        provider: agent.provider,
+        api: agent.provider,
+        reasoning: true,
+      };
+      saveStoredSessionModels(models);
+    }
+
+    saveStoredAgentRuntimes(
+      getStoredAgentRuntimes().map((entry) =>
+        entry.agentId === agentId && entry.projectId === DEFAULT_PROJECT_ID
+          ? {
+              ...entry,
+              mainSessionId: session.id,
+              runtimeCwd: entry.runtimeCwd ?? `/mock/projects/${activeProjectId()}`,
+              status: entry.currentQueueEntryId ? "running" : "idle",
+              updatedAt: nowIso(),
+            }
+          : entry,
+      ),
+    );
+
+    return session;
+  }
+
+  return invoke<SessionRecord>("ensure_agent_session", { agentId });
 }
 
 export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry> {

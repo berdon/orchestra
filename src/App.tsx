@@ -8,6 +8,8 @@ import {
   getSessionModelState,
   isCurrentLogsWindow,
   listSessions,
+  listTasks,
+  listWorkflows,
   listenToSessionStream,
   openLogsWindow,
   sendSessionMessage,
@@ -15,9 +17,14 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
+import { ensureAgentSession, listAgentOperations } from "./lib/agents";
+import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
+import { listRoleOperations } from "./lib/roleRuntime";
 import { AgentsPage } from "./agents/AgentsPage";
+import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
+import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { AgentsPanel } from "./settings/AgentsPanel";
@@ -35,6 +42,7 @@ import type {
   SessionRecord,
   SessionStatus,
   SessionStreamEnvelope,
+  SettingsTab,
 } from "./types";
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
@@ -52,7 +60,11 @@ const SETTINGS_TABS = [
   { id: "logs", label: "Logs" },
 ] as const;
 
-type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
+const SUPERVISOR_AGENT_ID = "agent-supervisor";
+
+function supervisorQuickChatStorageKey(projectId: string | null) {
+  return `orchestra.quick-chat.supervisor.${projectId ?? "default"}`;
+}
 
 interface PendingSessionRun {
   runId: string;
@@ -262,13 +274,23 @@ export function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
-  const [draftMessage, setDraftMessage] = useState("");
+  const [draftMessages, setDraftMessages] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingSessionRun>>({});
   const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
   const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
+  const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
+  const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(null);
+  const [agentsSelectionRequest, setAgentsSelectionRequest] = useState<{ type: "role" | "agent"; id: string; token: number } | null>(null);
+  const [rolesSelectionRequest, setRolesSelectionRequest] = useState<{ roleId: string; token: number } | null>(null);
+  const [workflowsSelectionRequest, setWorkflowsSelectionRequest] = useState<{ workflowId: string; token: number } | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteLoading, setCommandPaletteLoading] = useState(false);
+  const [commandPaletteItems, setCommandPaletteItems] = useState<CommandPaletteItem[]>([]);
+  const [supervisorQuickChatOpen, setSupervisorQuickChatOpen] = useState(false);
+  const [supervisorSessionId, setSupervisorSessionId] = useState<string | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
@@ -286,6 +308,13 @@ export function App() {
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
   const displayedEvents = selectedSession?.events ?? [];
+  const selectedSessionDraftMessage = selectedSession ? draftMessages[selectedSession.id] ?? "" : "";
+  const supervisorSession = useMemo(
+    () => sessions.find((session) => session.id === supervisorSessionId) ?? null,
+    [sessions, supervisorSessionId],
+  );
+  const supervisorSessionDraftMessage = supervisorSession ? draftMessages[supervisorSession.id] ?? "" : "";
+  const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
     setSessions((current) => {
@@ -317,6 +346,13 @@ export function App() {
 
   const patchSessionRecord = useCallback((sessionId: string, patch: (session: SessionRecord) => SessionRecord) => {
     setSessions((current) => current.map((session) => (session.id === sessionId ? patch(session) : session)));
+  }, []);
+
+  const updateDraftMessage = useCallback((sessionId: string, value: string) => {
+    setDraftMessages((current) => ({
+      ...current,
+      [sessionId]: value,
+    }));
   }, []);
 
   const patchStreamingAssistantEvent = useCallback(
@@ -843,6 +879,41 @@ export function App() {
   }, [activeProjectId]);
 
   useEffect(() => {
+    const stored = window.localStorage.getItem(supervisorQuickChatStorageKey(activeProjectId));
+    if (!stored) {
+      setSupervisorSessionId(null);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as { sessionId?: string; draft?: string };
+      const restoredSessionId = parsed.sessionId ?? null;
+      setSupervisorSessionId(restoredSessionId);
+      if (restoredSessionId && parsed.draft) {
+        const restoredDraft = parsed.draft;
+        setDraftMessages((current) => ({
+          ...current,
+          [restoredSessionId]: restoredDraft,
+        }));
+      }
+    } catch {
+      setSupervisorSessionId(null);
+    }
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      return;
+    }
+
+    const draft = supervisorSessionId ? draftMessages[supervisorSessionId] ?? "" : "";
+    window.localStorage.setItem(
+      supervisorQuickChatStorageKey(activeProjectId),
+      JSON.stringify({ sessionId: supervisorSessionId, draft }),
+    );
+  }, [activeProjectId, draftMessages, supervisorSessionId]);
+
+  useEffect(() => {
     if (isLogsWindow) {
       return;
     }
@@ -875,10 +946,8 @@ export function App() {
       };
     }
 
-    if (activePage === "sessions") {
-      void loadSessions();
-    }
-  }, [activePage, isLogsWindow]);
+    void loadSessions();
+  }, [activeProjectId, isLogsWindow]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -992,19 +1061,145 @@ export function App() {
     }
   }
 
-  function handleSendMessage() {
-    if (!selectedSession) {
+  function navigateToTask(taskId: string) {
+    setActivePage("tasks");
+    setTasksOpenRequest((current) => ({ taskId, token: (current?.token ?? 0) + 1, projectId: activeProjectId }));
+  }
+
+  function navigateToAgent(agentId: string) {
+    setActivePage("agents");
+    setAgentsSelectionRequest((current) => ({ type: "agent", id: agentId, token: (current?.token ?? 0) + 1 }));
+  }
+
+  function navigateToRole(roleId: string) {
+    setActivePage("settings");
+    setSettingsTab("roles");
+    setRolesSelectionRequest((current) => ({ roleId, token: (current?.token ?? 0) + 1 }));
+  }
+
+  function navigateToWorkflow(workflowId: string) {
+    setActivePage("settings");
+    setSettingsTab("workflows");
+    setWorkflowsSelectionRequest((current) => ({ workflowId, token: (current?.token ?? 0) + 1 }));
+  }
+
+  async function handleOpenAgentSession(agentId: string, options?: { openQuickChat?: boolean }) {
+    setSessionActionError(null);
+    try {
+      const session = await ensureAgentSession(agentId);
+      mergeSessionRecord(session, { select: !options?.openQuickChat });
+      if (options?.openQuickChat) {
+        setSupervisorSessionId(session.id);
+        setSupervisorQuickChatOpen(true);
+      } else {
+        setActivePage("sessions");
+        setSelectedSessionId(session.id);
+      }
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to open agent session.");
+    }
+  }
+
+  async function refreshCommandPaletteItems() {
+    setCommandPaletteLoading(true);
+    try {
+      const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows] = await Promise.all([
+        listSessions(),
+        listTasks(false),
+        listAgentOperations(false),
+        listRoleOperations(false),
+        listWorkflows(false),
+      ]);
+      setSessions(nextSessions);
+      setCommandPaletteItems(
+        buildCommandPaletteItems({
+          sessions: nextSessions,
+          tasks: nextTasks,
+          agents: nextAgents,
+          roles: nextRoles,
+          workflows: nextWorkflows,
+        }),
+      );
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to load command palette items.");
+    } finally {
+      setCommandPaletteLoading(false);
+    }
+  }
+
+  function handleOpenCommandPalette() {
+    setCommandPaletteOpen(true);
+    void refreshCommandPaletteItems();
+  }
+
+  async function handleOpenSupervisorQuickChat() {
+    setCommandPaletteOpen(false);
+    await handleOpenAgentSession(SUPERVISOR_AGENT_ID, { openQuickChat: true });
+  }
+
+  async function handleCommandPaletteSelect(item: CommandPaletteItem) {
+    setCommandPaletteOpen(false);
+
+    switch (item.action.type) {
+      case "navigate-page":
+        setActivePage(item.action.page);
+        return;
+      case "navigate-settings":
+        setActivePage("settings");
+        setSettingsTab(item.action.tab);
+        return;
+      case "open-task":
+        navigateToTask(item.action.taskId);
+        return;
+      case "open-session":
+        setActivePage("sessions");
+        setSelectedSessionId(item.action.sessionId);
+        return;
+      case "open-agent":
+        navigateToAgent(item.action.agentId);
+        return;
+      case "open-role":
+        navigateToRole(item.action.roleId);
+        return;
+      case "open-workflow":
+        navigateToWorkflow(item.action.workflowId);
+        return;
+      case "create-task":
+        setActivePage("tasks");
+        setTasksCreateProjectId(activeProjectId);
+        setTasksCreateToken((current) => current + 1);
+        return;
+      case "create-session":
+        setActivePage("sessions");
+        await runSessionAction(async () => createSession());
+        return;
+      case "open-logs":
+        await handleOpenLogsWindow();
+        return;
+      case "open-supervisor-chat":
+        await handleOpenSupervisorQuickChat();
+        return;
+      case "launch-agent-session":
+        await handleOpenAgentSession(item.action.agentId);
+        return;
+      default:
+        return;
+    }
+  }
+
+  function handleSendMessage(sessionId: string) {
+    const session = sessions.find((entry) => entry.id === sessionId);
+    if (!session) {
       return;
     }
 
-    const trimmedMessage = draftMessage.trim();
-    if (!trimmedMessage || pendingRuns[selectedSession.id]) {
+    const trimmedMessage = (draftMessages[sessionId] ?? "").trim();
+    if (!trimmedMessage || pendingRuns[sessionId]) {
       return;
     }
 
     const runId = createClientId("run");
     const timestamp = nowIso();
-    const sessionId = selectedSession.id;
 
     const pendingUserEvent: SessionEvent = {
       id: `pending-user-${runId}`,
@@ -1016,7 +1211,7 @@ export function App() {
     };
 
     setSessionActionError(null);
-    setDraftMessage("");
+    updateDraftMessage(sessionId, "");
     setPendingRuns((current) => ({
       ...current,
       [sessionId]: {
@@ -1024,24 +1219,49 @@ export function App() {
         userEvent: pendingUserEvent,
       },
     }));
-    patchSessionRecord(sessionId, (session) => ({
-      ...session,
+    patchSessionRecord(sessionId, (record) => ({
+      ...record,
       status: "streaming",
       updatedAt: timestamp,
-      events: [...session.events.filter((event) => event.runId !== runId), pendingUserEvent],
+      events: [...record.events.filter((event) => event.runId !== runId), pendingUserEvent],
     }));
 
     void sendSessionMessage(sessionId, trimmedMessage, runId).catch((error) => {
-      patchSessionRecord(sessionId, (session) => ({
-        ...session,
+      patchSessionRecord(sessionId, (record) => ({
+        ...record,
         status: "failed",
-        events: session.events.filter((event) => event.runId !== runId),
+        events: record.events.filter((event) => event.runId !== runId),
       }));
       removePendingRun(sessionId, runId);
-      setDraftMessage((current) => (current.length === 0 ? trimmedMessage : current));
+      updateDraftMessage(sessionId, trimmedMessage);
       setSessionActionError(error instanceof Error ? error.message : "Unable to queue message.");
     });
   }
+
+  useEffect(() => {
+    if (isLogsWindow) {
+      return;
+    }
+
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.repeat) {
+        return;
+      }
+
+      if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        handleOpenCommandPalette();
+      }
+
+      if (event.key.toLowerCase() === "t") {
+        event.preventDefault();
+        void handleOpenSupervisorQuickChat();
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
+  }, [isLogsWindow, sessions, draftMessages, pendingRuns]);
 
   if (isLogsWindow) {
     return (
@@ -1159,13 +1379,22 @@ export function App() {
                 className="primary-button"
                 data-role="new-task"
                 type="button"
-                onClick={() => setTasksCreateToken((current) => current + 1)}
+                onClick={() => {
+                  setTasksCreateProjectId(activeProjectId);
+                  setTasksCreateToken((current) => current + 1);
+                }}
               >
                 New task
               </button>
             ) : null}
           </div>
           <div className="status-cluster">
+            <button className="secondary-button" data-role="open-command-palette" type="button" onClick={() => handleOpenCommandPalette()}>
+              Search · Ctrl+P
+            </button>
+            <button className="secondary-button" data-role="open-supervisor-quick-chat" type="button" onClick={() => void handleOpenSupervisorQuickChat()}>
+              Supervisor · Ctrl+T
+            </button>
             <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
               Open logs
             </button>
@@ -1186,9 +1415,9 @@ export function App() {
           ) : settingsTab === "agents" ? (
             <AgentsPanel />
           ) : settingsTab === "roles" ? (
-            <RolesPanel />
+            <RolesPanel selectionRequest={rolesSelectionRequest} />
           ) : settingsTab === "workflows" ? (
-            <WorkflowsPanel />
+            <WorkflowsPanel selectionRequest={workflowsSelectionRequest} />
           ) : (
             <section className="panel panel--split">
               <div>
@@ -1210,7 +1439,11 @@ export function App() {
             </section>
           )
         ) : activePage === "agents" ? (
-          <AgentsPage key={activeProject?.id ?? "default"} />
+          <AgentsPage
+            key={activeProject?.id ?? "default"}
+            onOpenAgentSession={(agentId) => void handleOpenAgentSession(agentId)}
+            selectedWorkerRequest={agentsSelectionRequest}
+          />
         ) : activePage === "sessions" ? (
           <SessionsPage
             sessions={sessions}
@@ -1222,7 +1455,7 @@ export function App() {
             loadingSessions={loadingSessions}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
-            draftMessage={draftMessage}
+            draftMessage={selectedSessionDraftMessage}
             sessionActionError={sessionActionError}
             transcriptRef={transcriptRef}
             formatDateTime={formatDateTime}
@@ -1233,13 +1466,62 @@ export function App() {
             onSelectSession={setSelectedSessionId}
             onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
             onModelChange={(value) => void handleModelChange(value)}
-            onDraftChange={setDraftMessage}
-            onSendMessage={handleSendMessage}
+            onDraftChange={(value) => {
+              if (selectedSession) {
+                updateDraftMessage(selectedSession.id, value);
+              }
+            }}
+            onSendMessage={() => {
+              if (selectedSession) {
+                handleSendMessage(selectedSession.id);
+              }
+            }}
           />
         ) : (
-          <TasksPage createTaskToken={tasksCreateToken} key={activeProject?.id ?? "default"} />
+          <TasksPage
+            createTaskProjectId={tasksCreateProjectId}
+            createTaskToken={tasksCreateToken}
+            key={activeProject?.id ?? "default"}
+            openTaskRequest={tasksOpenRequest}
+            projectId={activeProject?.id ?? null}
+          />
         )}
       </main>
+
+      <CommandPalette
+        items={commandPaletteItems}
+        loading={commandPaletteLoading}
+        onClose={() => setCommandPaletteOpen(false)}
+        onSelect={(item) => void handleCommandPaletteSelect(item)}
+        open={commandPaletteOpen}
+      />
+      <SupervisorQuickChatModal
+        draftMessage={supervisorSessionDraftMessage}
+        error={sessionActionError}
+        events={supervisorSession?.events ?? []}
+        formatTimestamp={formatTimestamp}
+        onClose={() => setSupervisorQuickChatOpen(false)}
+        onDraftChange={(value) => {
+          if (supervisorSession) {
+            updateDraftMessage(supervisorSession.id, value);
+          }
+        }}
+        onOpenFullSession={() => {
+          if (supervisorSession) {
+            setActivePage("sessions");
+            setSelectedSessionId(supervisorSession.id);
+            setSupervisorQuickChatOpen(false);
+          }
+        }}
+        onSend={() => {
+          if (supervisorSession) {
+            handleSendMessage(supervisorSession.id);
+          }
+        }}
+        open={supervisorQuickChatOpen}
+        pending={Boolean(supervisorPendingRun)}
+        session={supervisorSession}
+      />
     </div>
   );
 }

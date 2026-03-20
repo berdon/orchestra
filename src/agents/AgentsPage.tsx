@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getAgentOperations, listAgentOperations } from "../lib/agents";
 import {
@@ -18,7 +18,12 @@ import type {
   RoleOperationsSnapshot,
 } from "../types";
 
-export function AgentsPage() {
+interface AgentsPageProps {
+  selectedWorkerRequest?: { type: "role" | "agent"; id: string; token: number } | null;
+  onOpenAgentSession: (agentId: string) => void;
+}
+
+export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }: AgentsPageProps) {
   const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
@@ -27,6 +32,7 @@ export function AgentsPage() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedWorkerRequestTokenRef = useRef<number>(0);
 
   const selectedRoleSnapshot = useMemo(
     () => selectedWorker?.type === "role" ? roleSnapshots.find((role) => role.role.id === selectedWorker.id) ?? null : null,
@@ -116,6 +122,15 @@ export function AgentsPage() {
 
     void loadAgentDetail(selectedWorker.id);
   }, [selectedWorker?.id, selectedWorker?.type]);
+
+  useEffect(() => {
+    if (!selectedWorkerRequest || selectedWorkerRequest.token === selectedWorkerRequestTokenRef.current) {
+      return;
+    }
+
+    selectedWorkerRequestTokenRef.current = selectedWorkerRequest.token;
+    setSelectedWorker({ type: selectedWorkerRequest.type, id: selectedWorkerRequest.id });
+  }, [selectedWorkerRequest]);
 
   async function refreshSelectedRole(roleId: string) {
     const [roleOps, detail, nextAgentSnapshots] = await Promise.all([listRoleOperations(), getRoleOperations(roleId), listAgentOperations()]);
@@ -230,7 +245,7 @@ export function AgentsPage() {
             }
           />
         ) : selectedWorker?.type === "agent" && selectedAgentDetail ? (
-          <AgentOperationsDetail detail={selectedAgentDetail} />
+          <AgentOperationsDetail detail={selectedAgentDetail} onOpenSession={onOpenAgentSession} />
         ) : (
           <div className="empty-state">
             <p className="eyebrow">No worker selected</p>

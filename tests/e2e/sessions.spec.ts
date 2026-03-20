@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+async function triggerShortcut(page: import("@playwright/test").Page, key: string) {
+  await page.evaluate((nextKey) => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: nextKey, ctrlKey: true, bubbles: true }));
+  }, key);
+}
+
 test("sessions UI creates a session and streams a mock reply", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -153,4 +159,27 @@ test("sessions UI shows streamed assistant text when rejoining an active session
   });
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from rejoined stream");
+});
+
+test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+
+  await page.locator('[data-role="supervisor-composer-input"]').fill("Check the current project status");
+  await page.locator('[data-role="supervisor-send-message"]').click();
+
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Check the current project status", { timeout: 10_000 });
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Check the current project status", { timeout: 20_000 });
+
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toHaveCount(0);
+
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Check the current project status");
 });

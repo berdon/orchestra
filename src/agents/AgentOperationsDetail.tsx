@@ -2,6 +2,7 @@ import type { AgentOperationsDetail } from "../types";
 
 interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
+  onOpenSession: (agentId: string) => void;
 }
 
 function formatDateTime(timestamp?: string | null) {
@@ -17,7 +18,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, onOpenSession }: AgentOperationsDetailProps) {
   return (
     <div className="workforce-detail-stack">
       <section className="workflow-section workforce-role-summary">
@@ -29,6 +30,14 @@ export function AgentOperationsDetail({ detail }: AgentOperationsDetailProps) {
           </div>
 
           <div className="action-cluster">
+            <button
+              className="primary-button"
+              data-role="open-agent-session"
+              type="button"
+              onClick={() => onOpenSession(detail.agent.id)}
+            >
+              {detail.runtimeState.mainSessionId ? "Open session" : "Launch session"}
+            </button>
             <span className={`status-badge status-badge--${detail.runtimeState.status === "running" ? "success" : detail.runtimeState.status === "needs_attention" ? "error" : "neutral"}`}>
               {detail.runtimeState.status}
             </span>

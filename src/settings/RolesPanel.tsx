@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
@@ -46,7 +46,11 @@ function getRoleValidationForPath(errors: RoleValidationError[], path: string) {
   return errors.filter((error) => error.path === path);
 }
 
-export function RolesPanel() {
+interface RolesPanelProps {
+  selectionRequest?: { roleId: string; token: number } | null;
+}
+
+export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [roleDraft, setRoleDraft] = useState<RoleUpsertInput>(createBlankRoleDraft);
@@ -62,6 +66,7 @@ export function RolesPanel() {
   const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
   const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
+  const selectionRequestTokenRef = useRef<number>(0);
 
   const selectedRoleSummary = useMemo(
     () => roles.find((role) => role.id === selectedRoleId) ?? roles[0] ?? null,
@@ -191,6 +196,16 @@ export function RolesPanel() {
 
     void loadRoleDetail(roleId);
   }, [selectedRoleSummary?.id, isCreatingRole, loadedRoleId]);
+
+  useEffect(() => {
+    if (!selectionRequest || selectionRequest.token === selectionRequestTokenRef.current) {
+      return;
+    }
+
+    selectionRequestTokenRef.current = selectionRequest.token;
+    setIsCreatingRole(false);
+    setSelectedRoleId(selectionRequest.roleId);
+  }, [selectionRequest]);
 
   async function refreshRoleValidation(nextDraft: RoleUpsertInput) {
     try {

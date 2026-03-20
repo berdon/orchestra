@@ -236,7 +236,7 @@ fn deliver_nonblocking_entry(
     }
 }
 
-fn ensure_main_session(
+pub fn ensure_main_session(
     project_root: &Path,
     session_dir: &Path,
     agent_id: &str,
