@@ -1,0 +1,69 @@
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  clickSelector,
+  createWebdriverSession,
+  deleteWebdriverSession,
+  ensureReactReady,
+  getCurrentUrl,
+  getDomSnapshot,
+  sleep,
+  waitForSelector,
+} from "./driver";
+
+const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
+const tauriBinary = process.env.ORCHESTRA_TAURI_BINARY;
+const testHome = process.env.ORCHESTRA_TEST_HOME;
+
+describe("desktop Tauri webdriver harness", () => {
+  it.skipIf(!isDesktopE2E)("launches the real app and creates a real session file", async () => {
+    expect(tauriBinary).toBeTruthy();
+    expect(testHome).toBeTruthy();
+
+    const expectedSessionDir = join(testHome!, ".orchestra", "projects", "orchestra", "sessions");
+    const debugSourcePath = join(testHome!, "desktop-source.html");
+    const beforeFiles = existsSync(expectedSessionDir) ? readdirSync(expectedSessionDir).length : 0;
+
+    const sessionId = await createWebdriverSession();
+    try {
+      const initialUrl = await getCurrentUrl(sessionId);
+      const initialDom = await ensureReactReady(sessionId);
+      writeFileSync(debugSourcePath, initialDom.html, "utf8");
+      expect(initialUrl === "tauri://localhost" || initialUrl === "http://localhost:1420/").toBe(true);
+
+      const createSessionState = await waitForSelector(sessionId, '[data-role="create-session"]');
+      writeFileSync(debugSourcePath, createSessionState.html, "utf8");
+      await clickSelector(sessionId, '[data-role="create-session"]');
+      await sleep(500);
+
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        if (existsSync(expectedSessionDir) && readdirSync(expectedSessionDir).length > beforeFiles) {
+          break;
+        }
+        await sleep(500);
+      }
+
+      expect(existsSync(expectedSessionDir)).toBe(true);
+      const afterFiles = readdirSync(expectedSessionDir);
+      expect(afterFiles.length).toBeGreaterThan(beforeFiles);
+
+      const newest = afterFiles
+        .map((fileName) => ({ fileName, fullPath: join(expectedSessionDir, fileName) }))
+        .sort((left, right) => right.fileName.localeCompare(left.fileName))[0];
+      expect(newest).toBeTruthy();
+
+      const content = readFileSync(newest!.fullPath, "utf8");
+      expect(content).toContain('"type":"session"');
+      expect(content).toContain('"cwd":"/home/openclaw/workspace/orchestra/worktrees/data-01"');
+
+      const finalDom = await getDomSnapshot(sessionId);
+      expect(finalDom.text).toContain("Real pi session ready");
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 90_000);
+});
