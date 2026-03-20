@@ -67,3 +67,78 @@ test("command palette can open the new task flow and closes with escape", async 
 
   await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
 });
+
+test("keyboard navigation scrolls the active command into view", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const tasks = Array.from({ length: 25 }, (_, index) => ({
+      id: `task-${index + 1}`,
+      projectId: "orchestra",
+      number: `ORC-${index + 1}`,
+      title: `Scrollable task ${index + 1}`,
+      description: null,
+      type: "task",
+      status: "ready",
+      priority: "P2",
+      workflowId: null,
+      currentLaneId: null,
+      assigneeType: "unassigned",
+      assigneeId: null,
+      repositoryId: null,
+      parentTaskId: null,
+      archived: false,
+      commentCount: 0,
+      laneRunCount: 0,
+      childCount: 0,
+      completedChildCount: 0,
+      inProgressChildCount: 0,
+      blockedChildCount: 0,
+      blockedByCount: 0,
+      blockingCount: 0,
+      attachmentCount: 0,
+      dependencyBlocked: false,
+      readyForDispatch: true,
+      parent: null,
+      lineage: [],
+      children: [],
+      blockedBy: [],
+      blocking: [],
+      attachments: [],
+      activeLaneAssignment: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      comments: [],
+      laneRuns: [],
+    }));
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify(tasks));
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "o");
+  await expect(page.locator('[data-role="command-palette-overlay"]')).toBeVisible();
+
+  await page.locator('[data-role="command-palette-input"]').fill("scrollable task");
+  for (let index = 0; index < 12; index += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
+
+  const scrollState = await page.evaluate(() => {
+    const results = document.querySelector('[data-role="command-palette-results"]') as HTMLDivElement | null;
+    const active = document.querySelector('[data-role="command-palette-item"][data-active="true"]') as HTMLButtonElement | null;
+    if (!results || !active) {
+      return null;
+    }
+
+    const resultsRect = results.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    return {
+      scrollTop: results.scrollTop,
+      activeWithinViewport: activeRect.top >= resultsRect.top && activeRect.bottom <= resultsRect.bottom,
+    };
+  });
+
+  expect(scrollState).not.toBeNull();
+  expect(scrollState?.scrollTop ?? 0).toBeGreaterThan(0);
+  expect(scrollState?.activeWithinViewport).toBe(true);
+});
