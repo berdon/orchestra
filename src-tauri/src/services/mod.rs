@@ -1,6 +1,8 @@
 pub mod agent_files;
 pub mod agents;
 pub mod auth_bootstrap;
+pub mod authorization;
+pub mod command_authorization;
 pub mod database;
 pub mod git_worktrees;
 pub mod live_sessions;

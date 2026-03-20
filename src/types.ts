@@ -155,6 +155,26 @@ export interface PolicySummary {
   updatedAt: string;
 }
 
+export interface AuthorizationContext {
+  actorType: string;
+  actorId: string;
+}
+
+export interface ResolvedPermissions {
+  actorType: string;
+  actorId: string;
+  inheritedRoleId?: string | null;
+  policyIds: string[];
+  permissions: string[];
+  grantsFullAccess: boolean;
+}
+
+export interface OrchestraToolDefinition {
+  name: string;
+  description: string;
+  requiredPermission: string;
+}
+
 export interface QueuedSessionMessage {
   sessionId: string;
   runId: string;
