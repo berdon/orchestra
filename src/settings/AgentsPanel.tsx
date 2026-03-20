@@ -60,6 +60,7 @@ export function AgentsPanel() {
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [loadedAgentId, setLoadedAgentId] = useState<string | null>(null);
   const [loadedAgentArchived, setLoadedAgentArchived] = useState(false);
+  const [loadedAgentProtected, setLoadedAgentProtected] = useState(false);
   const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
   const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [agentMemoryInfo, setAgentMemoryInfo] = useState<AgentMemoryInfo | null>(null);
@@ -117,6 +118,7 @@ export function AgentsPanel() {
       setAgentValidation([]);
       setLoadedAgentId(agent.id);
       setLoadedAgentArchived(agent.archived);
+      setLoadedAgentProtected(Boolean(agent.system || agent.immutable || agent.slug === "supervisor"));
       setIsCreatingAgent(false);
       setLoadingAgentDetail(false);
 
@@ -211,6 +213,7 @@ export function AgentsPanel() {
     setOverlayDraft("");
     setLoadedAgentId(null);
     setLoadedAgentArchived(false);
+    setLoadedAgentProtected(false);
     setIsCreatingAgent(true);
   }
 
@@ -232,6 +235,7 @@ export function AgentsPanel() {
       setSelectedAgentId(saved.id);
       setLoadedAgentId(saved.id);
       setLoadedAgentArchived(saved.archived);
+      setLoadedAgentProtected(Boolean(saved.system || saved.immutable || saved.slug === "supervisor"));
       setAgentDraft(agentToDraft(saved));
       setAgentValidation([]);
       setIsCreatingAgent(false);
@@ -346,7 +350,7 @@ export function AgentsPanel() {
               <div className="action-cluster">
                 {agentMemoryInfo ? <span className="status-badge status-badge--accent">{agentMemoryInfo.slug}</span> : null}
                 {loadedAgentArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
-                {!isCreatingAgent && loadedAgentId ? (
+                {!isCreatingAgent && loadedAgentId && !loadedAgentProtected ? (
                   <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveAgent()} disabled={savingAgent || loadedAgentArchived}>
                     Archive agent
                   </button>
@@ -373,6 +377,7 @@ export function AgentsPanel() {
                     data-role="agent-name"
                     type="text"
                     value={agentDraft.name}
+                    disabled={loadedAgentProtected && !isCreatingAgent}
                     onChange={(event) => updateAgentDraft((draft) => ({ ...draft, name: event.target.value }))}
                   />
                   {getAgentValidationForPath(agentValidation, "name").map((error) => (
@@ -384,6 +389,7 @@ export function AgentsPanel() {
                   <span className="field-group__label">Provider</span>
                   <select
                     className="select-input"
+                    data-role="agent-provider"
                     value={agentDraft.provider ?? ""}
                     disabled={loadingModelOptions}
                     onChange={(event) =>
@@ -410,6 +416,7 @@ export function AgentsPanel() {
                   <span className="field-group__label">Model</span>
                   <select
                     className="select-input"
+                    data-role="agent-model"
                     value={agentDraft.model ?? ""}
                     disabled={loadingModelOptions || !(agentDraft.provider ?? "")}
                     onChange={(event) => updateAgentDraft((draft) => ({ ...draft, model: event.target.value }))}
@@ -432,6 +439,7 @@ export function AgentsPanel() {
                   <span className="field-group__label">Thinking</span>
                   <select
                     className="select-input"
+                    data-role="agent-thinking"
                     value={agentDraft.thinkingLevel ?? "off"}
                     onChange={(event) => updateAgentDraft((draft) => ({ ...draft, thinkingLevel: event.target.value }))}
                   >
@@ -463,6 +471,7 @@ export function AgentsPanel() {
                     className="text-area"
                     rows={8}
                     value={agentDraft.systemPrompt ?? ""}
+                    disabled={loadedAgentProtected && !isCreatingAgent}
                     onChange={(event) => updateAgentDraft((draft) => ({ ...draft, systemPrompt: event.target.value }))}
                   />
                 </label>
@@ -508,6 +517,7 @@ export function AgentsPanel() {
                     onChange={(event) => setOverlayDraft(event.target.value)}
                   />
                 </label>
+                {loadedAgentProtected ? <p className="muted-copy">Supervisor identity fields are locked. Provider, model, thinking, and project overlay remain editable.</p> : null}
                 {projectOverlay.updatedAt ? <p className="muted-copy">Last updated {projectOverlay.updatedAt}</p> : null}
               </section>
             ) : null}
@@ -537,3 +547,5 @@ export function AgentsPanel() {
     </section>
   );
 }
+
+

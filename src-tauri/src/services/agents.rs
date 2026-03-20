@@ -292,57 +292,106 @@ fn update_agent_in(
     orchestra_root_override: Option<&Path>,
 ) -> Result<AgentDefinition, String> {
     let existing = get_agent(connection, agent_id)?;
-    if existing.immutable {
-        return Err(format!(
-            "Agent {agent_id} is immutable and cannot be updated"
-        ));
-    }
-
-    let validation = validate_agent(connection, &input)?;
-    if !validation.valid {
-        return Err(format_validation_errors(&validation.errors));
-    }
 
     let normalized = normalize_input(input);
+    if existing.immutable || existing.system {
+        let mut errors = Vec::new();
+        match (&normalized.provider, &normalized.model) {
+            (Some(_), None) => errors.push(validation_error(
+                "required",
+                "model",
+                "Select a model when a provider is configured.",
+            )),
+            (None, Some(_)) => errors.push(validation_error(
+                "required",
+                "provider",
+                "Select a provider when a model is configured.",
+            )),
+            _ => {}
+        }
+
+        if let Some(level) = normalized.thinking_level.as_deref() {
+            if !is_valid_thinking_level(level) {
+                errors.push(validation_error(
+                    "invalid",
+                    "thinkingLevel",
+                    "Thinking level must be one of: off, minimal, low, medium, high, xhigh.",
+                ));
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(format_validation_errors(&errors));
+        }
+    } else {
+        let validation = validate_agent(connection, &normalized)?;
+        if !validation.valid {
+            return Err(format_validation_errors(&validation.errors));
+        }
+    }
     let now = now_iso();
     let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let tx = connection
         .transaction()
         .map_err(|error| format!("Unable to start agent update transaction: {error}"))?;
 
-    tx.execute(
-        r#"
-        UPDATE agents
-        SET name = ?2,
-            description = ?3,
-            system_prompt = ?4,
-            provider = ?5,
-            model = ?6,
-            role_id = ?7,
-            thinking_level = ?8,
-            direct_permissions = ?9,
-            updated_at = ?10
-        WHERE id = ?1
-        "#,
-        params![
-            agent_id,
-            normalized.name,
-            normalized.description,
-            normalized.system_prompt,
-            normalized.provider,
-            normalized.model,
-            normalized.role_id,
-            normalized
-                .thinking_level
-                .clone()
-                .unwrap_or_else(|| "off".into()),
-            direct_permissions,
-            now,
-        ],
-    )
-    .map_err(|error| format!("Unable to update agent {agent_id}: {error}"))?;
+    if existing.immutable || existing.system {
+        tx.execute(
+            r#"
+            UPDATE agents
+            SET provider = ?2,
+                model = ?3,
+                thinking_level = ?4,
+                updated_at = ?5
+            WHERE id = ?1
+            "#,
+            params![
+                agent_id,
+                normalized.provider,
+                normalized.model,
+                normalized
+                    .thinking_level
+                    .clone()
+                    .unwrap_or_else(|| existing.thinking_level.clone()),
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to update protected agent {agent_id}: {error}"))?;
+    } else {
+        tx.execute(
+            r#"
+            UPDATE agents
+            SET name = ?2,
+                description = ?3,
+                system_prompt = ?4,
+                provider = ?5,
+                model = ?6,
+                role_id = ?7,
+                thinking_level = ?8,
+                direct_permissions = ?9,
+                updated_at = ?10
+            WHERE id = ?1
+            "#,
+            params![
+                agent_id,
+                normalized.name,
+                normalized.description,
+                normalized.system_prompt,
+                normalized.provider,
+                normalized.model,
+                normalized.role_id,
+                normalized
+                    .thinking_level
+                    .clone()
+                    .unwrap_or_else(|| "off".into()),
+                direct_permissions,
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to update agent {agent_id}: {error}"))?;
 
-    policies::sync_agent_policy_ids(&tx, agent_id, &normalized.policy_ids, &now)?;
+        policies::sync_agent_policy_ids(&tx, agent_id, &normalized.policy_ids, &now)?;
+    }
 
     tx.commit()
         .map_err(|error| format!("Unable to commit agent update: {error}"))?;
@@ -664,5 +713,58 @@ mod tests {
 
         let archived = archive_agent(&connection, &created.id).expect("agent should archive");
         assert!(archived.archived);
+    }
+
+    #[test]
+    fn protected_agents_only_allow_runtime_model_updates_and_cannot_be_archived() {
+        let home = unique_home("agents-protected-home");
+        fs::create_dir_all(&home).expect("home should exist");
+
+        let mut connection = open_test_connection("agents-protected");
+        connection
+            .execute(
+                r#"INSERT INTO agents (
+                    id, slug, name, description, system_prompt, provider, model, role_id,
+                    thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, '[]', 1, 1, 0, ?9, ?9)"#,
+                params![
+                    "agent-supervisor",
+                    "supervisor",
+                    "Supervisor",
+                    "Built-in protected Orchestra supervisor agent.",
+                    "Locked prompt",
+                    Option::<String>::None,
+                    Option::<String>::None,
+                    "medium",
+                    now_iso(),
+                ],
+            )
+            .expect("protected agent should seed");
+
+        let updated = update_agent_in(
+            &mut connection,
+            "agent-supervisor",
+            AgentUpsertInput {
+                name: "Changed Name".into(),
+                description: Some("Changed description".into()),
+                system_prompt: Some("Changed prompt".into()),
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-4-20250514".into()),
+                role_id: Some("role-reviewer".into()),
+                thinking_level: Some("high".into()),
+                policy_ids: vec!["policy-supervisor".into()],
+                direct_permissions: vec!["tasks.read".into()],
+            },
+            Some(&home),
+        )
+        .expect("protected agent runtime settings should update");
+
+        assert_eq!(updated.name, "Supervisor");
+        assert_eq!(updated.description.as_deref(), Some("Built-in protected Orchestra supervisor agent."));
+        assert_eq!(updated.system_prompt.as_deref(), Some("Locked prompt"));
+        assert_eq!(updated.provider.as_deref(), Some("anthropic"));
+        assert_eq!(updated.model.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(updated.thinking_level, "high");
+        assert!(archive_agent(&connection, "agent-supervisor").is_err());
     }
 }

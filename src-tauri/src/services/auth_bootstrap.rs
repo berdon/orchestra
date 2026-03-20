@@ -125,23 +125,19 @@ pub fn ensure_supervisor_agent(
                         name = ?2,
                         description = ?3,
                         system_prompt = ?4,
-                        provider = NULL,
-                        model = NULL,
                         role_id = NULL,
-                        thinking_level = ?5,
-                        direct_permissions = ?6,
+                        direct_permissions = ?5,
                         system = 1,
                         immutable = 1,
                         archived = 0,
-                        updated_at = ?7
-                    WHERE id = ?8
+                        updated_at = ?6
+                    WHERE id = ?7
                     "#,
                     params![
                         SUPERVISOR_AGENT_SLUG,
                         SUPERVISOR_AGENT_NAME,
                         SUPERVISOR_DESCRIPTION,
                         SUPERVISOR_SYSTEM_PROMPT,
-                        SUPERVISOR_THINKING_LEVEL,
                         direct_permissions,
                         now,
                         existing_id,
@@ -307,5 +303,8 @@ mod tests {
         assert!(agent.immutable);
         assert!(!agent.archived);
         assert_eq!(agent.policy_ids, vec![policy.id.clone()]);
+        assert_eq!(agent.provider.as_deref(), Some("anthropic"));
+        assert_eq!(agent.model.as_deref(), Some("claude"));
+        assert_eq!(agent.thinking_level, "off");
     }
 }

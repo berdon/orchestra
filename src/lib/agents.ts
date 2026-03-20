@@ -45,6 +45,8 @@ function summarizeAgent(agent: AgentDefinition): AgentSummary {
     slug: agent.slug,
     name: agent.name,
     thinkingLevel: agent.thinkingLevel,
+    system: agent.system,
+    immutable: agent.immutable,
     archived: agent.archived,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
@@ -132,6 +134,24 @@ function seedMockAgents(): AgentDefinition[] {
   const timestamp = nowIso();
   return [
     {
+      id: "agent-supervisor",
+      slug: "supervisor",
+      name: "Supervisor",
+      description: "Built-in protected Orchestra supervisor agent.",
+      systemPrompt: "You are Orchestra's built-in supervisor agent.",
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      roleId: null,
+      thinkingLevel: "medium",
+      policyIds: ["policy-supervisor"],
+      directPermissions: [],
+      system: true,
+      immutable: true,
+      archived: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+    {
       id: createId("agent"),
       slug: "data",
       name: "Data",
@@ -139,7 +159,12 @@ function seedMockAgents(): AgentDefinition[] {
       systemPrompt: "Keep context, preserve continuity, and move the project forward.",
       provider: "anthropic",
       model: "claude-sonnet-4-20250514",
+      roleId: null,
       thinkingLevel: "medium",
+      policyIds: [],
+      directPermissions: [],
+      system: false,
+      immutable: false,
       archived: false,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -223,7 +248,17 @@ export async function updateAgent(agentId: string, input: AgentUpsertInput): Pro
       throw new Error(`Agent ${agentId} was not found`);
     }
 
-    const updated = normalizeMockAgentInput(input, existing);
+    const updated = existing.immutable || existing.system
+      ? {
+          ...existing,
+          provider: input.provider?.trim() || null,
+          model: input.model?.trim() || null,
+          thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(input.thinkingLevel?.trim().toLowerCase() || "")
+            ? input.thinkingLevel!.trim().toLowerCase()
+            : existing.thinkingLevel,
+          updatedAt: nowIso(),
+        }
+      : normalizeMockAgentInput(input, existing);
     saveStoredAgents(agents.map((agent) => (agent.id === agentId ? updated : agent)));
     return updated;
   }
@@ -237,6 +272,10 @@ export async function archiveAgent(agentId: string): Promise<AgentDefinition> {
     const existing = agents.find((agent) => agent.id === agentId);
     if (!existing) {
       throw new Error(`Agent ${agentId} was not found`);
+    }
+
+    if (existing.system || existing.immutable) {
+      throw new Error(`Agent ${agentId} is protected and cannot be archived`);
     }
 
     const archived: AgentDefinition = {
