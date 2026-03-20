@@ -564,26 +564,44 @@ fn dispatch_agent_lane(
         .ok_or_else(|| format!("Lane {} is missing an agent reference", lane.name))?;
     let agent = get_agent_by_slug(connection, agent_slug)?;
 
-    let session_id = if let Some(existing_session_id) = preferred_lane_session_id(
-        connection,
-        &task.id,
-        &lane.id,
-        "agent",
-        Some(agent.id.as_str()),
-    )? {
+    let runtime_state = agent_runtime::ensure_agent_runtime_state(connection, &agent.id)?;
+    let runtime_cwd = runtime_state
+        .runtime_cwd
+        .clone()
+        .unwrap_or_else(|| project_root.display().to_string());
+    let session_id = if let Some(existing_session_id) = runtime_state.main_session_id.clone() {
         if pi_sessions::get_session(session_dir, &existing_session_id, false).is_ok() {
             existing_session_id
         } else {
-            create_agent_session(project_root, session_dir, &agent, task)?.record.id
+            let created = pi_sessions::create_session_file(
+                project_root,
+                session_dir,
+                Some(&format!("{} main session", agent.name)),
+                false,
+            )?;
+            created.record.id
         }
     } else {
-        create_agent_session(project_root, session_dir, &agent, task)?.record.id
+        let created = pi_sessions::create_session_file(
+            project_root,
+            session_dir,
+            Some(&format!("{} main session", agent.name)),
+            false,
+        )?;
+        created.record.id
     };
 
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
+    let _ = agent_runtime::update_agent_runtime_dispatch_state(
+        connection,
+        &agent.id,
+        Some(&session_id),
+        Some(&runtime_cwd),
+        runtime_state.current_queue_entry_id.as_deref(),
+        &runtime_state.status,
+        runtime_state.last_error.as_deref(),
+    )?;
     ensure_lane_run(connection, task.id.as_str(), lane.id.as_str(), &session_id, now)?;
-
-    let runtime_cwd = project_root.display().to_string();
     let queue_entry = agent_runtime::enqueue_agent_work(
         connection,
         crate::models::AgentQueueEntryInput {
@@ -1101,20 +1119,6 @@ pub fn preferred_lane_session_id(
         )
         .optional()
         .map_err(|error| format!("Unable to query preferred lane session: {error}"))
-}
-
-fn create_agent_session(
-    project_root: &Path,
-    session_dir: &Path,
-    agent: &AgentDefinition,
-    task: &TaskDetail,
-) -> Result<pi_sessions::StoredSession, String> {
-    pi_sessions::create_session_file(
-        project_root,
-        session_dir,
-        Some(&format!("{} · {}", agent.name, task.title)),
-        false,
-    )
 }
 
 fn apply_agent_session_defaults(

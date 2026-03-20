@@ -11,6 +11,7 @@ import {
   listSessions,
   listTasks,
   listWorkflows,
+  listenToSessionChanges,
   listenToSessionStream,
   openLogsWindow,
   sendSessionMessage,
@@ -919,20 +920,41 @@ export function App() {
       return;
     }
 
-    let unlisten: (() => void) | undefined;
+    let unlistenStream: (() => void) | undefined;
+    let unlistenChanges: (() => void) | undefined;
     let cancelled = false;
 
-    void listenToSessionStream(handleSessionStreamEvent).then((dispose) => {
+    void listenToSessionStream((payload) => {
+      handleSessionStreamEvent(payload);
+      setSessions((current) => {
+        if (current.some((session) => session.id === payload.sessionId)) {
+          return current;
+        }
+        void loadSessions();
+        return current;
+      });
+    }).then((dispose) => {
       if (cancelled) {
         void dispose();
         return;
       }
-      unlisten = dispose;
+      unlistenStream = dispose;
+    });
+
+    void listenToSessionChanges(() => {
+      void loadSessions();
+    }).then((dispose) => {
+      if (cancelled) {
+        void dispose();
+        return;
+      }
+      unlistenChanges = dispose;
     });
 
     return () => {
       cancelled = true;
-      unlisten?.();
+      unlistenStream?.();
+      unlistenChanges?.();
     };
   }, [handleSessionStreamEvent, isLogsWindow]);
 
@@ -949,6 +971,26 @@ export function App() {
 
     void loadSessions();
   }, [activeProjectId, isLogsWindow]);
+
+  useEffect(() => {
+    if (isLogsWindow || activePage !== "sessions") {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadSessions();
+    }, 15000);
+
+    const refreshOnFocus = () => {
+      void loadSessions();
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [activePage, isLogsWindow]);
 
   useEffect(() => {
     if (isLogsWindow) {

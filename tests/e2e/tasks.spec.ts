@@ -179,11 +179,97 @@ test("task detail dispatches an agent-owned lane and completes the workflow", as
 
   await page.locator('[data-role="dispatch-task-lane"]').click();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("agent");
-  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("data");
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("lane-agent");
 
   await page.locator('[data-role="complete-task-success"]').click();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
   await expect(page.locator('[data-role="task-timeline"]')).toContainText('Lane lane-agent completed');
+});
+
+
+test("dispatching a role-owned task surfaces the spawned runtime session in the Sessions list", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sessions" }).click();
+  const previousSessionCount = await page.locator('[data-role="session-link"]').count();
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("role");
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(previousSessionCount + 1);
+});
+
+
+test("dispatching an agent-owned task reuses the agent main session instead of spawning a duplicate", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-agent",
+          slug: "agent-flow",
+          name: "Agent Flow",
+          description: "Single agent-owned lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent",
+              key: "agent",
+              name: "Agent",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sessions" }).click();
+  const initialSessionCount = await page.locator('[data-role="session-link"]').count();
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+  await page.locator('[data-role="open-agent-session"]').click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(initialSessionCount + 1);
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Agent session reuse task");
+  await page.locator('[data-role="task-status"]').selectOption("ready");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent");
+  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(initialSessionCount + 1);
+
+  const sessionCounts = await page.evaluate(() => {
+    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
+    return sessions.filter((session: { title: string }) => session.title === "Data main session").length;
+  });
+
+  expect(sessionCounts).toBe(1);
 });
 
 test("task detail refreshes from backend task-change events without waiting on polling", async ({ page }) => {

@@ -285,6 +285,11 @@ export interface SessionStreamEnvelope {
   receivedAt: string;
 }
 
+export interface SessionChangeEvent {
+  sessionIds: string[];
+  reason: string;
+}
+
 export interface TaskChangeEvent {
   taskIds: string[];
   reason: string;
