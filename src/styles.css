@@ -504,6 +504,15 @@ strong {
 
 .workforce-agent-link {
   background: transparent;
+  display: grid;
+  gap: 6px;
+  white-space: normal;
+}
+
+.workforce-agent-link--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
 }
 
 .session-delete-button {

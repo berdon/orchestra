@@ -241,8 +241,40 @@ function ensureMockAgentRuntime(agentId: string) {
   return created;
 }
 
+function getStoredTaskAssignmentsForAgent(agent: AgentDefinition) {
+  const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]") as Array<{
+    activeLaneAssignment?: {
+      workerType?: string;
+      workerId?: string | null;
+      sessionId?: string | null;
+      runtimeCwd?: string | null;
+      id?: string;
+      updatedAt?: string;
+      createdAt?: string;
+    } | null;
+  }>;
+  return tasks
+    .map((task) => task.activeLaneAssignment)
+    .filter(
+      (assignment): assignment is NonNullable<typeof assignment> =>
+        Boolean(assignment && assignment.workerType === "agent" && [agent.id, agent.slug].includes(assignment.workerId ?? "")),
+    );
+}
+
 function summarizeAgentOperations(agent: AgentDefinition): AgentOperationsSnapshot {
-  const runtimeState = ensureMockAgentRuntime(agent.id);
+  const baseRuntime = ensureMockAgentRuntime(agent.id);
+  const activeAssignments = getStoredTaskAssignmentsForAgent(agent);
+  const latestAssignment = activeAssignments[0] ?? null;
+  const runtimeState: AgentRuntimeState = latestAssignment
+    ? {
+        ...baseRuntime,
+        status: "running",
+        mainSessionId: latestAssignment.sessionId ?? baseRuntime.mainSessionId,
+        runtimeCwd: latestAssignment.runtimeCwd ?? baseRuntime.runtimeCwd,
+        currentQueueEntryId: latestAssignment.id ?? baseRuntime.currentQueueEntryId,
+        updatedAt: latestAssignment.updatedAt ?? latestAssignment.createdAt ?? baseRuntime.updatedAt,
+      }
+    : baseRuntime;
   const queueEntries = getStoredAgentQueue().filter((entry) => entry.agentId === agent.id && ["queued", "dispatched"].includes(entry.status));
   return {
     agent,
@@ -285,11 +317,11 @@ export async function listAgentOperations(includeArchived = false): Promise<Agen
 export async function getAgentOperations(agentId: string): Promise<AgentOperationsDetail> {
   if (!isTauriAvailable()) {
     const agent = await getAgent(agentId);
-    const runtimeState = ensureMockAgentRuntime(agentId);
+    const snapshot = summarizeAgentOperations(agent);
     const queueEntries = getStoredAgentQueue().filter((entry) => entry.agentId === agentId);
     return {
       agent,
-      runtimeState,
+      runtimeState: snapshot.runtimeState,
       queueEntries,
     };
   }

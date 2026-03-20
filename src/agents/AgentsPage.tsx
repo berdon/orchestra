@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { listAgents } from "../lib/agents";
+import { getAgentOperations, listAgentOperations } from "../lib/agents";
 import {
   dispatchRoleQueue,
   disposeRoleInstance,
@@ -9,21 +9,33 @@ import {
   listRoleOperations,
   releaseRoleInstance,
 } from "../lib/roleRuntime";
+import { AgentOperationsDetail } from "./AgentOperationsDetail";
 import { RoleOperationsDetail } from "./RoleOperationsDetail";
-import type { AgentSummary, RoleOperationsDetail as RoleOperationsDetailModel, RoleOperationsSnapshot } from "../types";
+import type {
+  AgentOperationsDetail as AgentOperationsDetailModel,
+  AgentOperationsSnapshot,
+  RoleOperationsDetail as RoleOperationsDetailModel,
+  RoleOperationsSnapshot,
+} from "../types";
 
 export function AgentsPage() {
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
-  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
   const [selectedRoleDetail, setSelectedRoleDetail] = useState<RoleOperationsDetailModel | null>(null);
+  const [selectedAgentDetail, setSelectedAgentDetail] = useState<AgentOperationsDetailModel | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedSnapshot = useMemo(
-    () => roleSnapshots.find((role) => role.role.id === selectedRoleId) ?? roleSnapshots[0] ?? null,
-    [selectedRoleId, roleSnapshots],
+  const selectedRoleSnapshot = useMemo(
+    () => selectedWorker?.type === "role" ? roleSnapshots.find((role) => role.role.id === selectedWorker.id) ?? null : null,
+    [selectedWorker, roleSnapshots],
+  );
+
+  const selectedAgentSnapshot = useMemo(
+    () => selectedWorker?.type === "agent" ? agentSnapshots.find((agent) => agent.agent.id === selectedWorker.id) ?? null : null,
+    [selectedWorker, agentSnapshots],
   );
 
   async function loadRoleDetail(roleId: string) {
@@ -33,8 +45,24 @@ export function AgentsPage() {
     try {
       const detail = await getRoleOperations(roleId);
       setSelectedRoleDetail(detail);
+      setSelectedAgentDetail(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to load role operations.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadAgentDetail(agentId: string) {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const detail = await getAgentOperations(agentId);
+      setSelectedAgentDetail(detail);
+      setSelectedRoleDetail(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to load agent operations.");
     } finally {
       setLoading(false);
     }
@@ -45,14 +73,23 @@ export function AgentsPage() {
     setError(null);
 
     try {
-      const [nextAgents, nextRoleSnapshots] = await Promise.all([listAgents(), listRoleOperations()]);
-      setAgents(nextAgents);
+      const [nextAgentSnapshots, nextRoleSnapshots] = await Promise.all([listAgentOperations(), listRoleOperations()]);
+      setAgentSnapshots(nextAgentSnapshots);
       setRoleSnapshots(nextRoleSnapshots);
-      setSelectedRoleId((current) => {
-        if (current && nextRoleSnapshots.some((role) => role.role.id === current)) {
+      setSelectedWorker((current) => {
+        if (current?.type === "role" && nextRoleSnapshots.some((role) => role.role.id === current.id)) {
           return current;
         }
-        return nextRoleSnapshots[0]?.role.id ?? null;
+        if (current?.type === "agent" && nextAgentSnapshots.some((agent) => agent.agent.id === current.id)) {
+          return current;
+        }
+        if (nextRoleSnapshots[0]) {
+          return { type: "role", id: nextRoleSnapshots[0].role.id };
+        }
+        if (nextAgentSnapshots[0]) {
+          return { type: "agent", id: nextAgentSnapshots[0].agent.id };
+        }
+        return null;
       });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to load workforce operations.");
@@ -66,17 +103,25 @@ export function AgentsPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedSnapshot?.role.id) {
+    if (!selectedWorker) {
       setSelectedRoleDetail(null);
+      setSelectedAgentDetail(null);
       return;
     }
 
-    void loadRoleDetail(selectedSnapshot.role.id);
-  }, [selectedSnapshot?.role.id]);
+    if (selectedWorker.type === "role") {
+      void loadRoleDetail(selectedWorker.id);
+      return;
+    }
+
+    void loadAgentDetail(selectedWorker.id);
+  }, [selectedWorker?.id, selectedWorker?.type]);
 
   async function refreshSelectedRole(roleId: string) {
-    const [snapshots, detail] = await Promise.all([listRoleOperations(), getRoleOperations(roleId)]);
-    setRoleSnapshots(snapshots);
+    const [roleOps, detail, nextAgentSnapshots] = await Promise.all([listRoleOperations(), getRoleOperations(roleId), listAgentOperations()]);
+    setRoleSnapshots(roleOps);
+    setAgentSnapshots(nextAgentSnapshots);
+    setSelectedWorker({ type: "role", id: roleId });
     setSelectedRoleDetail(detail);
   }
 
@@ -112,11 +157,11 @@ export function AgentsPage() {
           {roleSnapshots.map((snapshot) => (
             <a
               key={snapshot.role.id}
-              className={snapshot.role.id === selectedSnapshot?.role.id ? "workforce-role-link workforce-role-link--active" : "workforce-role-link"}
+              className={snapshot.role.id === selectedRoleSnapshot?.role.id ? "workforce-role-link workforce-role-link--active" : "workforce-role-link"}
               href="#"
               onClick={(event) => {
                 event.preventDefault();
-                setSelectedRoleId(snapshot.role.id);
+                setSelectedWorker({ type: "role", id: snapshot.role.id });
               }}
             >
               {snapshot.role.name}
@@ -130,19 +175,31 @@ export function AgentsPage() {
             <h3>Persistent collaborators</h3>
           </div>
 
-          {agents.length === 0 ? <p className="muted-copy">No agents yet.</p> : null}
+          {agentSnapshots.length === 0 ? <p className="muted-copy">No agents yet.</p> : null}
           <nav className="workforce-agent-nav" aria-label="Named agents">
-            {agents.map((agent) => (
-              <span className="workforce-agent-link" key={agent.id}>
-                {agent.name} · {agent.thinkingLevel}
-              </span>
+            {agentSnapshots.map((agentSnapshot) => (
+              <a
+                className={agentSnapshot.agent.id === selectedAgentSnapshot?.agent.id ? "workforce-agent-link workforce-agent-link--active" : "workforce-agent-link"}
+                href="#"
+                key={agentSnapshot.agent.id}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setSelectedWorker({ type: "agent", id: agentSnapshot.agent.id });
+                }}
+              >
+                <strong>{agentSnapshot.agent.name}</strong>
+                <span className="task-list-link__meta">
+                  <span>{agentSnapshot.runtimeState.status}</span>
+                  <span>{agentSnapshot.queuedCount} queued</span>
+                </span>
+              </a>
             ))}
           </nav>
         </div>
       </aside>
 
       <section className="panel workforce-detail-panel">
-        {selectedRoleDetail ? (
+        {selectedWorker?.type === "role" && selectedRoleDetail ? (
           <RoleOperationsDetail
             detail={selectedRoleDetail}
             busy={busy}
@@ -172,11 +229,13 @@ export function AgentsPage() {
               })
             }
           />
+        ) : selectedWorker?.type === "agent" && selectedAgentDetail ? (
+          <AgentOperationsDetail detail={selectedAgentDetail} />
         ) : (
           <div className="empty-state">
-            <p className="eyebrow">No role selected</p>
-            <h3>Choose a role</h3>
-            <p>Select a role from the workforce list to inspect queue pressure, runtime instances, and disposable worktree state.</p>
+            <p className="eyebrow">No worker selected</p>
+            <h3>Choose a worker</h3>
+            <p>Select a role or agent to inspect project-scoped runtime state, queue pressure, sessions, and execution details.</p>
           </div>
         )}
       </section>

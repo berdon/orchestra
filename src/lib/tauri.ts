@@ -36,6 +36,8 @@ const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
 const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
+const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
+const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 const CURRENT_PROJECT_ID = "orchestra";
 
@@ -235,6 +237,22 @@ function ensureMockSessions() {
 
 function getStoredMockAgents() {
   return getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
+}
+
+function getStoredMockAgentRuntimes() {
+  return getStoredValue<Array<Record<string, unknown>>>(AGENT_RUNTIME_STORAGE_KEY) ?? [];
+}
+
+function saveStoredMockAgentRuntimes(runtimes: Array<Record<string, unknown>>) {
+  setStoredValue(AGENT_RUNTIME_STORAGE_KEY, runtimes);
+}
+
+function getStoredMockAgentQueue() {
+  return getStoredValue<Array<Record<string, unknown>>>(AGENT_QUEUE_STORAGE_KEY) ?? [];
+}
+
+function saveStoredMockAgentQueue(entries: Array<Record<string, unknown>>) {
+  setStoredValue(AGENT_QUEUE_STORAGE_KEY, entries);
 }
 
 function getStoredMockRoles() {
@@ -1367,7 +1385,9 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       workflowId: workflow.id,
       laneId: lane.id,
       workerType: lane.assignedEntityType,
-      workerId: lane.assignedEntityId ?? null,
+      workerId: lane.assignedEntityType === "agent"
+        ? getStoredMockAgents().find((agent) => agent.slug === lane.assignedEntityId)?.id ?? lane.assignedEntityId ?? null
+        : lane.assignedEntityId ?? null,
       status: "active",
       sessionId: createId("session"),
       runtimeCwd: `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
@@ -1379,6 +1399,48 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+
+    if (lane.assignedEntityType === "agent" && assignment.workerId) {
+      const agentQueueEntryId = createId("agent-queue");
+      saveStoredMockAgentQueue([
+        ...getStoredMockAgentQueue(),
+        {
+          id: agentQueueEntryId,
+          projectId: CURRENT_PROJECT_ID,
+          agentId: assignment.workerId,
+          status: "dispatched",
+          sourceType: "workflow_lane",
+          sourceTaskId: task.id,
+          sourceWorkflowId: workflow.id,
+          sourceLaneId: lane.id,
+          deliveryMode: "prompt",
+          title: `${task.number} · ${task.title}`,
+          message: assignment.prompt,
+          sessionId: assignment.sessionId,
+          runId: createId("run"),
+          dispatchedAt: assignment.startedAt,
+          completedAt: null,
+          createdAt: assignment.createdAt,
+          updatedAt: assignment.updatedAt,
+        },
+      ]);
+      const existingRuntimes = getStoredMockAgentRuntimes().filter((runtime) => runtime.agentId !== assignment.workerId);
+      saveStoredMockAgentRuntimes([
+        ...existingRuntimes,
+        {
+          projectId: CURRENT_PROJECT_ID,
+          agentId: assignment.workerId,
+          status: "running",
+          mainSessionId: assignment.sessionId,
+          runtimeCwd: assignment.runtimeCwd,
+          currentQueueEntryId: agentQueueEntryId,
+          lastDispatchAt: assignment.updatedAt,
+          lastError: null,
+          createdAt: assignment.createdAt,
+          updatedAt: assignment.updatedAt,
+        },
+      ]);
+    }
 
     const nextTasks = tasks.map((entry) =>
       entry.id === taskId
@@ -1522,6 +1584,63 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
         }
       : entry,
   );
+
+  if (task.activeLaneAssignment?.workerType === "agent" && task.activeLaneAssignment.workerId) {
+    saveStoredMockAgentQueue(
+      getStoredMockAgentQueue().map((entry) =>
+        entry.id === task.activeLaneAssignment?.id || entry.sessionId === task.activeLaneAssignment?.sessionId
+          ? {
+              ...entry,
+              status: outcome === "failure" ? "failed" : "completed",
+              completedAt: updatedAt,
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
+    saveStoredMockAgentRuntimes(
+      getStoredMockAgentRuntimes().map((runtime) =>
+        runtime.agentId === task.activeLaneAssignment?.workerId
+          ? {
+              ...runtime,
+              status: outcome === "failure" ? "needs_attention" : autoAssignment ? "running" : "idle",
+              mainSessionId: autoAssignment?.sessionId ?? task.activeLaneAssignment?.sessionId,
+              runtimeCwd: autoAssignment?.runtimeCwd ?? task.activeLaneAssignment?.runtimeCwd,
+              currentQueueEntryId: autoAssignment?.id ?? null,
+              lastDispatchAt: updatedAt,
+              lastError: outcome === "failure" ? notes ?? "Marked failed" : null,
+              updatedAt,
+            }
+          : runtime,
+      ),
+    );
+  }
+
+  if (autoAssignment?.workerType === "agent" && autoAssignment.workerId) {
+    saveStoredMockAgentQueue([
+      ...getStoredMockAgentQueue(),
+      {
+        id: autoAssignment.id,
+        projectId: CURRENT_PROJECT_ID,
+        agentId: autoAssignment.workerId,
+        status: "dispatched",
+        sourceType: "workflow_lane",
+        sourceTaskId: taskId,
+        sourceWorkflowId: workflow.id,
+        sourceLaneId: autoAssignment.laneId,
+        deliveryMode: "prompt",
+        title: `${task.number} · ${task.title}`,
+        message: autoAssignment.prompt,
+        sessionId: autoAssignment.sessionId,
+        runId: createId("run"),
+        dispatchedAt: autoAssignment.startedAt,
+        completedAt: null,
+        createdAt: autoAssignment.createdAt,
+        updatedAt: autoAssignment.updatedAt,
+      },
+    ]);
+  }
+
   saveMockTasks(nextTasks);
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
   return getTask(taskId);
