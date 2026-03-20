@@ -289,3 +289,24 @@ test("tasks page exposes a review inbox filter and attention queue", async ({ pa
   await page.locator('[data-role="task-filter-blocked"]').click();
   await expect(page.locator('.task-list')).toContainText("Plan hierarchy rollups");
 });
+
+test("tasks page shows a chronological activity timeline", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("link", { name: /Implement task foundation shell/i }).click();
+
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("User commented");
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Lane");
+
+  await page.locator('[data-role="task-attachment-input"]').setInputFiles({
+    name: "timeline.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Timeline attachment"),
+  });
+
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Attachment added: timeline.txt");
+});

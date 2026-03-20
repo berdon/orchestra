@@ -1016,9 +1016,19 @@ strong {
 }
 
 .task-attachment-grid,
-.task-runtime-card {
+.task-runtime-card,
+.task-timeline {
   display: grid;
   gap: 12px;
+}
+
+.task-timeline-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(251, 246, 242, 0.9);
 }
 
 .task-comment-composer,
