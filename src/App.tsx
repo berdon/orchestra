@@ -6,6 +6,7 @@ import {
   getAppInfo,
   getLogs,
   getSessionModelState,
+  getSessionRecord,
   isCurrentLogsWindow,
   listSessions,
   listTasks,
@@ -1017,6 +1018,40 @@ export function App() {
       cancelled = true;
     };
   }, [activePage, isLogsWindow, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate, mergeSessionRecord]);
+
+  useEffect(() => {
+    if (isLogsWindow || activePage !== "sessions" || !selectedSession?.id || selectedSession.status !== "active") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshSelectedSession = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void getSessionRecord(selectedSession.id)
+        .then((record) => {
+          if (!cancelled) {
+            mergeSessionRecord(record, { select: false });
+          }
+        })
+        .catch(() => {
+          // Ignore refresh misses while the session runtime is reconciling.
+        });
+    };
+
+    refreshSelectedSession();
+    const intervalId = window.setInterval(refreshSelectedSession, 1000);
+    window.addEventListener("focus", refreshSelectedSession);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshSelectedSession);
+    };
+  }, [activePage, isLogsWindow, mergeSessionRecord, selectedSession?.id, selectedSession?.status]);
 
   useEffect(() => {
     if (isLogsWindow) {

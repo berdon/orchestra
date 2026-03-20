@@ -27,8 +27,9 @@ use commands::{
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
-        create_session, delete_session, get_session_model_state, list_sessions, resume_session,
-        send_session_message, set_session_model, subscribe_session, unsubscribe_session,
+        create_session, delete_session, get_session_model_state, get_session_record,
+        list_sessions, resume_session, send_session_message, set_session_model,
+        subscribe_session, unsubscribe_session,
     },
     tasks::{
         add_task_attachment, add_task_dependency, comment_on_task, complete_lane_as_failure,
@@ -126,6 +127,7 @@ pub fn run() {
             get_worker_overlay,
             update_worker_overlay,
             list_sessions,
+            get_session_record,
             create_session,
             delete_session,
             resume_session,

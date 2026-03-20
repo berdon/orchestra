@@ -5,14 +5,25 @@ use crate::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskDependency,
         TaskDetail, TaskSummary, TaskUpsertInput,
     },
-    services::{database, pi_sessions, task_attachments, task_runtime, tasks},
+    services::{app_events, database, pi_sessions, task_attachments, task_runtime, tasks},
     state::AppState,
 };
 
+fn emit_task_change(app: &AppHandle, reason: &str, task_ids: impl IntoIterator<Item = String>) {
+    let _ = app_events::emit_task_change(app, reason.to_string(), task_ids);
+}
+
 #[tauri::command]
-pub fn list_tasks(project_id: Option<String>, include_archived: Option<bool>) -> Result<Vec<TaskSummary>, String> {
+pub fn list_tasks(
+    project_id: Option<String>,
+    include_archived: Option<bool>,
+) -> Result<Vec<TaskSummary>, String> {
     let connection = database::open_connection()?;
-    tasks::list_tasks(&connection, project_id.as_deref().unwrap_or("orchestra"), include_archived.unwrap_or(false))
+    tasks::list_tasks(
+        &connection,
+        project_id.as_deref().unwrap_or("orchestra"),
+        include_archived.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
@@ -29,6 +40,7 @@ pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
 
 #[tauri::command]
 pub fn create_task(
+    app: AppHandle,
     state: State<'_, AppState>,
     project_id: Option<String>,
     input: TaskUpsertInput,
@@ -44,11 +56,13 @@ pub fn create_task(
         &task.id,
         "success",
     );
+    emit_task_change(&app, "task.created", [task.id.clone()]);
     Ok(task)
 }
 
 #[tauri::command]
 pub fn create_subtask(
+    app: AppHandle,
     state: State<'_, AppState>,
     parent_task_id: String,
     input: TaskUpsertInput,
@@ -64,11 +78,13 @@ pub fn create_subtask(
         &task.id,
         "success",
     );
+    emit_task_change(&app, "task.created", [task.id.clone(), parent_task_id]);
     Ok(task)
 }
 
 #[tauri::command]
 pub fn update_task(
+    app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     input: TaskUpsertInput,
@@ -84,6 +100,7 @@ pub fn update_task(
         &task_id,
         "success",
     );
+    emit_task_change(&app, "task.updated", [task.id.clone()]);
     Ok(task)
 }
 
@@ -113,7 +130,7 @@ pub async fn comment_on_task(
             }
         } else {
             task_runtime::maybe_interrupt_with_comment(
-                app,
+                app.clone(),
                 &state,
                 context.session_dir.clone(),
                 &active_assignment,
@@ -121,7 +138,11 @@ pub async fn comment_on_task(
             )?;
         }
     }
-    state.log("info", "task.commented", &format!("Added comment {} to task {}", comment.id, task_id));
+    state.log(
+        "info",
+        "task.commented",
+        &format!("Added comment {} to task {}", comment.id, task_id),
+    );
     state.log_authorized_action(
         "auth.audit",
         "comment_on_task",
@@ -130,17 +151,28 @@ pub async fn comment_on_task(
         &comment.id,
         "success",
     );
+    emit_task_change(
+        &app,
+        if comment.interrupt_agent {
+            "task.comment.interrupt_requested"
+        } else {
+            "task.commented"
+        },
+        [task_id],
+    );
     Ok(comment)
 }
 
 #[tauri::command]
 pub fn add_task_dependency(
+    app: AppHandle,
     state: State<'_, AppState>,
     blocker_task_id: String,
     blocked_task_id: String,
 ) -> Result<TaskDependency, String> {
     let mut connection = database::open_connection()?;
-    let dependency = tasks::add_task_dependency(&mut connection, &blocker_task_id, &blocked_task_id)?;
+    let dependency =
+        tasks::add_task_dependency(&mut connection, &blocker_task_id, &blocked_task_id)?;
     state.log(
         "info",
         "task.dependency.added",
@@ -154,11 +186,17 @@ pub fn add_task_dependency(
         &dependency.id,
         "success",
     );
+    emit_task_change(
+        &app,
+        "task.dependency.added",
+        [blocker_task_id, blocked_task_id],
+    );
     Ok(dependency)
 }
 
 #[tauri::command]
 pub fn remove_task_dependency(
+    app: AppHandle,
     state: State<'_, AppState>,
     dependency_id: String,
 ) -> Result<TaskDependency, String> {
@@ -177,11 +215,20 @@ pub fn remove_task_dependency(
         &dependency_id,
         "success",
     );
+    emit_task_change(
+        &app,
+        "task.dependency.removed",
+        [
+            dependency.blocker_task_id.clone(),
+            dependency.blocked_task_id.clone(),
+        ],
+    );
     Ok(dependency)
 }
 
 #[tauri::command]
 pub fn add_task_attachment(
+    app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     input: TaskAttachmentInput,
@@ -201,11 +248,13 @@ pub fn add_task_attachment(
         &attachment.id,
         "success",
     );
+    emit_task_change(&app, "task.attachment.added", [task_id]);
     Ok(attachment)
 }
 
 #[tauri::command]
 pub fn remove_task_attachment(
+    app: AppHandle,
     state: State<'_, AppState>,
     attachment_id: String,
 ) -> Result<TaskAttachment, String> {
@@ -223,6 +272,11 @@ pub fn remove_task_attachment(
         None,
         &attachment_id,
         "success",
+    );
+    emit_task_change(
+        &app,
+        "task.attachment.removed",
+        [attachment.task_id.clone()],
     );
     Ok(attachment)
 }
@@ -243,9 +297,14 @@ pub async fn dispatch_task_lane(
         &context.session_dir,
         &task_id,
     )?;
-    task_runtime::start_assignment_run(app, &state, context.session_dir.clone(), &assignment)?;
+    task_runtime::start_assignment_run(app.clone(), &state, context.session_dir.clone(), &assignment)?;
     let task = tasks::get_task_context(&connection, &task_id)?;
-    state.log("info", "task.dispatch", &format!("Dispatched task lane for task {}", task_id));
+    state.log(
+        "info",
+        "task.dispatch",
+        &format!("Dispatched task lane for task {}", task_id),
+    );
+    emit_task_change(&app, "task.dispatch", [task.id.clone()]);
     Ok(task)
 }
 
@@ -323,10 +382,20 @@ async fn complete_lane_command(
         &context.session_dir,
         &task_id,
     )? {
-        task_runtime::start_assignment_run(app, &state, context.session_dir.clone(), &next_assignment)?;
+        task_runtime::start_assignment_run(
+            app.clone(),
+            &state,
+            context.session_dir.clone(),
+            &next_assignment,
+        )?;
         task = tasks::get_task_context(&connection, &task_id)?;
     }
 
-    state.log("info", "task.transition", &format!("Completed task lane {} with outcome {}", task_id, outcome));
+    state.log(
+        "info",
+        "task.transition",
+        &format!("Completed task lane {} with outcome {}", task_id, outcome),
+    );
+    emit_task_change(&app, &format!("task.transition.{outcome}"), [task.id.clone()]);
     Ok(task)
 }

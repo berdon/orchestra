@@ -16,6 +16,7 @@ import type {
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
+  TaskChangeEvent,
   TaskCommentInput,
   TaskDependency,
   TaskDetail,
@@ -126,6 +127,10 @@ function setStoredValue<T>(key: string, value: T) {
 
 function emitMockSessionStream(event: SessionStreamEnvelope) {
   window.dispatchEvent(new CustomEvent("orchestra:session-stream", { detail: event }));
+}
+
+function emitMockTaskChange(event: TaskChangeEvent) {
+  window.dispatchEvent(new CustomEvent("orchestra:task-change", { detail: event }));
 }
 
 function createMockSessionEnvelope(sessionId: string, runId: string, event: JsonValue): SessionStreamEnvelope {
@@ -999,6 +1004,21 @@ export async function listenToSessionStream(
   };
 }
 
+export async function listenToTaskChanges(
+  handler: (event: TaskChangeEvent) => void,
+): Promise<() => void> {
+  const listener = (event: Event) => {
+    if (event instanceof CustomEvent) {
+      handler(event.detail as TaskChangeEvent);
+    }
+  };
+
+  window.addEventListener("orchestra:task-change", listener);
+  return () => {
+    window.removeEventListener("orchestra:task-change", listener);
+  };
+}
+
 export async function getAppInfo(): Promise<AppInfo> {
   if (!isTauriAvailable()) {
     return {
@@ -1055,6 +1075,19 @@ export async function listSessions(): Promise<SessionRecord[]> {
   }
 
   return invoke<SessionRecord[]>("list_sessions");
+}
+
+export async function getSessionRecord(sessionId: string): Promise<SessionRecord> {
+  if (!isTauriAvailable()) {
+    const session = ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
+    if (!session) {
+      throw new Error(`Unable to find session ${sessionId}`);
+    }
+
+    return session;
+  }
+
+  return invoke<SessionRecord>("get_session_record", { sessionId });
 }
 
 export async function createSession(title?: string): Promise<SessionRecord> {
@@ -1339,6 +1372,7 @@ export async function createTask(input: TaskUpsertInput): Promise<TaskDetail> {
     const task = normalizeMockTaskInput(input);
     saveMockTasks([task, ...ensureMockTasks()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
     appendMockLog("info", "task.created", `Created task ${task.id}`);
+    emitMockTaskChange({ taskIds: [task.id], reason: "task.created" });
     return task;
   }
 
@@ -1365,6 +1399,7 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
     );
     appendMockLog("info", "task.updated", `Updated task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.updated" });
     return getTask(taskId);
   }
 
@@ -1484,6 +1519,7 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
     );
     saveMockTasks(nextTasks);
     appendMockLog("info", "task.dispatch", `Dispatched task ${taskId} into ${lane.assignedEntityType}:${lane.assignedEntityId ?? "user"}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.dispatch" });
     return getTask(taskId);
   }
 
@@ -1658,6 +1694,7 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 
   saveMockTasks(nextTasks);
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
+  emitMockTaskChange({ taskIds: [taskId], reason: `task.transition.${outcome}` });
   return getTask(taskId);
 }
 
@@ -1729,6 +1766,7 @@ export async function addTaskDependency(blockerTaskId: string, blockedTaskId: st
     saveMockTaskDependencies([...dependencies, dependency]);
     saveMockTasks(tasks);
     appendMockLog("info", "task.dependency.added", `Added dependency ${blockerTaskId} -> ${blockedTaskId}`);
+    emitMockTaskChange({ taskIds: [blockerTaskId, blockedTaskId], reason: "task.dependency.added" });
     return dependency;
   }
 
@@ -1746,6 +1784,7 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
     saveMockTaskDependencies(dependencies.filter((entry) => entry.id !== dependencyId));
     saveMockTasks(ensureMockTasks());
     appendMockLog("info", "task.dependency.removed", `Removed dependency ${dependencyId}`);
+    emitMockTaskChange({ taskIds: [dependency.blockerTaskId, dependency.blockedTaskId], reason: "task.dependency.removed" });
     return dependency;
   }
 
@@ -1795,6 +1834,10 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
       input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
       `Added comment ${comment.id} to task ${taskId}`,
     );
+    emitMockTaskChange({
+      taskIds: [taskId],
+      reason: input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
+    });
     return comment;
   }
 
@@ -1827,6 +1870,7 @@ export async function addTaskAttachment(taskId: string, input: TaskAttachmentInp
 
     saveMockTasks(tasks.map((entry) => (entry.id === taskId ? { ...entry, attachments: [...entry.attachments, attachment] } : entry)));
     appendMockLog("info", "task.attachment.added", `Added attachment ${attachment.id} to task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.attachment.added" });
     return attachment;
   }
 
@@ -1853,9 +1897,11 @@ export async function removeTaskAttachment(attachmentId: string): Promise<TaskAt
       throw new Error(`Task attachment ${attachmentId} was not found`);
     }
 
+    const removedAttachment = removed as TaskAttachment;
     saveMockTasks(updated);
     appendMockLog("info", "task.attachment.removed", `Removed attachment ${attachmentId}`);
-    return removed;
+    emitMockTaskChange({ taskIds: [removedAttachment.taskId], reason: "task.attachment.removed" });
+    return removedAttachment;
   }
 
   return invoke<TaskAttachment>("remove_task_attachment", { attachmentId });

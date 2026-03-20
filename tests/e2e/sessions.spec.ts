@@ -161,6 +161,72 @@ test("sessions UI shows streamed assistant text when rejoining an active session
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from rejoined stream");
 });
 
+test("sessions UI refreshes an active session after opening even without a local send", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-active-refresh",
+          title: "Active refresh",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "user-1",
+              kind: "user",
+              message: "Keep watching this session",
+              timestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Active refresh" }).click();
+
+  await page.evaluate(() => {
+    window.setTimeout(() => {
+      const timestamp = new Date().toISOString();
+      window.localStorage.setItem(
+        "orchestra.mock.sessions.orchestra",
+        JSON.stringify([
+          {
+            id: "session-active-refresh",
+            title: "Active refresh",
+            status: "idle",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            subscribed: true,
+            events: [
+              {
+                id: "user-1",
+                kind: "user",
+                message: "Keep watching this session",
+                timestamp,
+              },
+              {
+                id: "assistant-1",
+                kind: "assistant",
+                message: "This reply arrived after the session was opened.",
+                timestamp,
+              },
+            ],
+          },
+        ]),
+      );
+    }, 150);
+  });
+
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("This reply arrived after the session was opened.", { timeout: 4000 });
+});
+
 test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

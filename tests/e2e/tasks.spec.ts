@@ -185,3 +185,36 @@ test("task detail dispatches an agent-owned lane and completes the workflow", as
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
   await expect(page.locator('[data-role="task-timeline"]')).toContainText('Lane lane-agent completed');
 });
+
+test("task detail refreshes from backend task-change events without waiting on polling", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected seeded task was not found");
+    }
+    target.title = "Updated from backend event";
+    target.updatedAt = new Date().toISOString();
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(
+      new CustomEvent("orchestra:task-change", {
+        detail: {
+          taskIds: [target.id],
+          reason: "task.updated",
+        },
+      }),
+    );
+  });
+
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Updated from backend event");
+});
