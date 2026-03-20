@@ -249,6 +249,10 @@ fn ensure_instance_session(
     queue_entry: &crate::models::RoleQueueEntry,
     instance: &RoleInstance,
 ) -> Result<String, String> {
+    let prefers_lane_specific_session = queue_entry.source_type == "workflow_lane"
+        && queue_entry.source_task_id.is_some()
+        && queue_entry.source_lane_id.is_some();
+
     if let Some(preferred_session_id) = preferred_lane_session_id(connection, queue_entry, &role.id)? {
         if pi_sessions::get_session(session_dir, &preferred_session_id, false).is_ok() {
             connection
@@ -262,10 +266,12 @@ fn ensure_instance_session(
         }
     }
 
-    if let Some(session_id) = instance.session_id.as_deref() {
-        if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
-            apply_role_session_defaults(runtime_cwd, session_dir, session_id, role)?;
-            return Ok(session_id.to_string());
+    if !prefers_lane_specific_session {
+        if let Some(session_id) = instance.session_id.as_deref() {
+            if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
+                apply_role_session_defaults(runtime_cwd, session_dir, session_id, role)?;
+                return Ok(session_id.to_string());
+            }
         }
     }
 
@@ -400,8 +406,8 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::{
-        models::RoleQueueEntryInput,
-        services::{database::initialize_database_at, roles},
+        models::{RoleInstanceInput, RoleQueueEntryInput, TaskUpsertInput},
+        services::{database::initialize_database_at, pi_sessions, roles, role_runtime, tasks},
     };
     use std::{
         env,
@@ -540,6 +546,165 @@ mod tests {
         assert_eq!(detail.instances[0].status, "running");
         assert!(detail.instances[0].session_id.is_some());
         assert!(detail.instances[0].worktree_path.is_some());
+    }
+
+    #[test]
+    fn workflow_lane_first_entry_creates_a_new_role_session() {
+        let mut connection = open_test_connection("role-dispatch-new-lane-session");
+        let role = create_role(&mut connection, "Builder", 1);
+        let project_root = init_test_repo("role-dispatch-new-lane-session-project");
+        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let old_session = pi_sessions::create_session_file(&project_root, &session_dir, Some("Old instance session"), false)
+            .expect("old session should create");
+        let instance = role_runtime::create_role_instance(
+            &mut connection,
+            RoleInstanceInput {
+                role_id: role.id.clone(),
+                display_name: None,
+                status: Some("idle".into()),
+                current_queue_entry_id: None,
+                session_id: Some(old_session.record.id.clone()),
+                worktree_path: None,
+                last_heartbeat_at: None,
+                last_error: None,
+            },
+        )
+        .expect("idle role instance should create");
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "First lane entry".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "role".into(),
+                assignee_id: Some(role.id.clone()),
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        role_runtime::enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "workflow_lane".into(),
+                source_task_id: Some(task.id.clone()),
+                source_workflow_id: Some("workflow-1".into()),
+                source_lane_id: Some("lane-implement".into()),
+                title: "Enter implement lane".into(),
+                summary: None,
+                entry_prompt: Some("Implement the work".into()),
+            },
+        )
+        .expect("queue work should succeed");
+
+        let detail = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+            .expect("dispatch should succeed");
+        let updated_instance = detail
+            .instances
+            .iter()
+            .find(|entry| entry.id == instance.id)
+            .expect("existing instance should be reused");
+        assert_ne!(updated_instance.session_id.as_deref(), Some(old_session.record.id.as_str()));
+    }
+
+    #[test]
+    fn workflow_lane_reentry_reuses_the_previous_lane_session() {
+        let mut connection = open_test_connection("role-dispatch-reentry-session");
+        let role = create_role(&mut connection, "Builder", 1);
+        let project_root = init_test_repo("role-dispatch-reentry-session-project");
+        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let stale_session = pi_sessions::create_session_file(&project_root, &session_dir, Some("Stale instance session"), false)
+            .expect("stale session should create");
+        let prior_lane_session = pi_sessions::create_session_file(&project_root, &session_dir, Some("Prior lane session"), false)
+            .expect("prior lane session should create");
+        let instance = role_runtime::create_role_instance(
+            &mut connection,
+            RoleInstanceInput {
+                role_id: role.id.clone(),
+                display_name: None,
+                status: Some("idle".into()),
+                current_queue_entry_id: None,
+                session_id: Some(stale_session.record.id.clone()),
+                worktree_path: None,
+                last_heartbeat_at: None,
+                last_error: None,
+            },
+        )
+        .expect("idle role instance should create");
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Lane reentry".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "role".into(),
+                assignee_id: Some(role.id.clone()),
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'prior-assignment', ?1, 'workflow-1', 'lane-implement', 'role', ?2, 'completed',
+                    ?3, NULL, NULL, 'old-instance', NULL,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                )
+                "#,
+                params![task.id.as_str(), role.id.as_str(), prior_lane_session.record.id.as_str()],
+            )
+            .expect("prior assignment should insert");
+
+        role_runtime::enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "workflow_lane".into(),
+                source_task_id: Some(task.id.clone()),
+                source_workflow_id: Some("workflow-1".into()),
+                source_lane_id: Some("lane-implement".into()),
+                title: "Re-enter implement lane".into(),
+                summary: None,
+                entry_prompt: Some("Implement the work again".into()),
+            },
+        )
+        .expect("queue work should succeed");
+
+        let detail = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+            .expect("dispatch should succeed");
+        let updated_instance = detail
+            .instances
+            .iter()
+            .find(|entry| entry.id == instance.id)
+            .expect("existing instance should be reused");
+        assert_eq!(updated_instance.session_id.as_deref(), Some(prior_lane_session.record.id.as_str()));
     }
 
     #[test]
