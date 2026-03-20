@@ -107,6 +107,10 @@ export async function getProject(projectId: string): Promise<ProjectDetail> {
   return invoke<ProjectDetail>("get_project", { projectId });
 }
 
+function emitProjectsChanged() {
+  window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
+}
+
 export async function createProject(input: ProjectUpsertInput): Promise<ProjectDetail> {
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -125,7 +129,9 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectD
     return project;
   }
 
-  return invoke<ProjectDetail>("create_project", { input });
+  const project = await invoke<ProjectDetail>("create_project", { input });
+  emitProjectsChanged();
+  return project;
 }
 
 export async function updateProject(projectId: string, input: ProjectUpsertInput): Promise<ProjectDetail> {
@@ -146,7 +152,9 @@ export async function updateProject(projectId: string, input: ProjectUpsertInput
     return updated;
   }
 
-  return invoke<ProjectDetail>("update_project", { projectId, input });
+  const project = await invoke<ProjectDetail>("update_project", { projectId, input });
+  emitProjectsChanged();
+  return project;
 }
 
 export async function createRepository(projectId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
@@ -177,7 +185,9 @@ export async function createRepository(projectId: string, input: RepositoryUpser
     return repository;
   }
 
-  return invoke<RepositoryRecord>("create_repository", { projectId, input });
+  const repository = await invoke<RepositoryRecord>("create_repository", { projectId, input });
+  emitProjectsChanged();
+  return repository;
 }
 
 export async function updateRepository(repositoryId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
@@ -210,7 +220,9 @@ export async function updateRepository(repositoryId: string, input: RepositoryUp
     return updatedRepository;
   }
 
-  return invoke<RepositoryRecord>("update_repository", { repositoryId, input });
+  const repository = await invoke<RepositoryRecord>("update_repository", { repositoryId, input });
+  emitProjectsChanged();
+  return repository;
 }
 
 export async function setProjectDefaultRepository(projectId: string, repositoryId: string | null): Promise<ProjectDetail> {
@@ -236,5 +248,7 @@ export async function setProjectDefaultRepository(projectId: string, repositoryI
     return updatedProject;
   }
 
-  return invoke<ProjectDetail>("set_project_default_repository", { projectId, repositoryId });
+  const project = await invoke<ProjectDetail>("set_project_default_repository", { projectId, repositoryId });
+  emitProjectsChanged();
+  return project;
 }

@@ -1304,15 +1304,15 @@ export async function sendSessionMessage(sessionId: string, message: string, run
 }
 
 export async function listTasks(includeArchived = false): Promise<TaskSummary[]> {
+  const activeProjectId = getActiveProjectId();
   if (!isTauriAvailable()) {
-    const activeProjectId = getActiveProjectId();
     return ensureMockTasks()
       .filter((task) => task.projectId === activeProjectId)
       .filter((task) => includeArchived || !task.archived)
       .map(summarizeTask);
   }
 
-  return invoke<TaskSummary[]>("list_tasks", { includeArchived });
+  return invoke<TaskSummary[]>("list_tasks", { projectId: activeProjectId, includeArchived });
 }
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
@@ -1329,6 +1329,7 @@ export async function getTask(taskId: string): Promise<TaskDetail> {
 }
 
 export async function createTask(input: TaskUpsertInput): Promise<TaskDetail> {
+  const activeProjectId = getActiveProjectId();
   if (!isTauriAvailable()) {
     const validation = validateMockTaskInput(input);
     if (validation.length > 0) {
@@ -1341,7 +1342,7 @@ export async function createTask(input: TaskUpsertInput): Promise<TaskDetail> {
     return task;
   }
 
-  return invoke<TaskDetail>("create_task", { input });
+  return invoke<TaskDetail>("create_task", { projectId: activeProjectId, input });
 }
 
 export async function updateTask(taskId: string, input: TaskUpsertInput): Promise<TaskDetail> {

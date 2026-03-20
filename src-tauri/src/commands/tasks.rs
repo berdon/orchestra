@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn list_tasks(include_archived: Option<bool>) -> Result<Vec<TaskSummary>, String> {
+pub fn list_tasks(project_id: Option<String>, include_archived: Option<bool>) -> Result<Vec<TaskSummary>, String> {
     let connection = database::open_connection()?;
-    tasks::list_tasks(&connection, include_archived.unwrap_or(false))
+    tasks::list_tasks(&connection, project_id.as_deref().unwrap_or("orchestra"), include_archived.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -30,10 +30,11 @@ pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
 #[tauri::command]
 pub fn create_task(
     state: State<'_, AppState>,
+    project_id: Option<String>,
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
-    let task = tasks::create_task(&mut connection, input)?;
+    let task = tasks::create_task(&mut connection, project_id.as_deref(), input)?;
     state.log("info", "task.created", &format!("Created task {}", task.id));
     state.log_authorized_action(
         "auth.audit",

@@ -25,14 +25,18 @@ const VALID_TASK_PRIORITIES: &[&str] = &["P0", "P1", "P2", "P3", "P4"];
 const VALID_ASSIGNEE_TYPES: &[&str] = &["user", "agent", "role", "unassigned"];
 const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "canceled"];
 
-pub fn list_tasks(connection: &Connection, include_archived: bool) -> Result<Vec<TaskSummary>, String> {
+pub fn list_tasks(
+    connection: &Connection,
+    project_id: &str,
+    include_archived: bool,
+) -> Result<Vec<TaskSummary>, String> {
     let mut statement = connection
         .prepare(&format!(
             r#"
             SELECT
                 {summary_columns}
             FROM tasks t
-            WHERE (?1 = 1 OR t.archived = 0)
+            WHERE t.project_id = ?1 AND (?2 = 1 OR t.archived = 0)
             ORDER BY t.archived ASC, t.updated_at DESC, t.sequence_number DESC
             "#,
             summary_columns = task_summary_columns("t"),
@@ -40,8 +44,8 @@ pub fn list_tasks(connection: &Connection, include_archived: bool) -> Result<Vec
         .map_err(|error| format!("Unable to prepare task list query: {error}"))?;
 
     let rows = statement
-        .query_map([if include_archived { 1 } else { 0 }], map_task_summary_row)
-        .map_err(|error| format!("Unable to query tasks: {error}"))?;
+        .query_map(params![project_id, if include_archived { 1 } else { 0 }], map_task_summary_row)
+        .map_err(|error| format!("Unable to query tasks for project {project_id}: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to read task rows: {error}"))
@@ -123,11 +127,15 @@ pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDe
     get_task(connection, task_id)
 }
 
-pub fn create_task(connection: &mut Connection, input: TaskUpsertInput) -> Result<TaskDetail, String> {
+pub fn create_task(
+    connection: &mut Connection,
+    project_id: Option<&str>,
+    input: TaskUpsertInput,
+) -> Result<TaskDetail, String> {
     let normalized = apply_default_lane_if_needed(connection, normalize_input(input))?;
     validate_task_input(connection, &normalized, None)?;
 
-    let project_id = DEFAULT_PROJECT_ID.to_string();
+    let project_id = project_id.unwrap_or(DEFAULT_PROJECT_ID).to_string();
     let sequence_number = next_task_sequence_number(connection, &project_id)?;
     let number = format!("ORC-{sequence_number}");
     let task_id = task_id();
@@ -194,7 +202,10 @@ pub fn create_subtask(
     mut input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     input.parent_task_id = Some(parent_task_id.to_string());
-    create_task(connection, input)
+    let project_id = connection
+        .query_row("SELECT project_id FROM tasks WHERE id = ?1", [parent_task_id], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to resolve parent task project: {error}"))?;
+    create_task(connection, Some(&project_id), input)
 }
 
 pub fn update_task(
@@ -1040,6 +1051,7 @@ mod tests {
     ) -> TaskDetail {
         create_task(
             connection,
+            Some(DEFAULT_PROJECT_ID),
             TaskUpsertInput {
                 title: title.into(),
                 description: None,
@@ -1066,6 +1078,7 @@ mod tests {
         let epic = create_named_task(&mut connection, "Task system", "ready", None);
         let created = create_task(
             &mut connection,
+            Some(DEFAULT_PROJECT_ID),
             TaskUpsertInput {
                 title: "Map task foundation".into(),
                 description: Some("Persist task records".into()),
@@ -1102,10 +1115,65 @@ mod tests {
     }
 
     #[test]
+    fn lists_tasks_scoped_to_project() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task_a = create_task(
+            &mut connection,
+            Some("project-a"),
+            TaskUpsertInput {
+                title: "Task A".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task A should create");
+        let task_b = create_task(
+            &mut connection,
+            Some("project-b"),
+            TaskUpsertInput {
+                title: "Task B".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task B should create");
+
+        let project_a = list_tasks(&connection, "project-a", false).expect("project A tasks");
+        let project_b = list_tasks(&connection, "project-b", false).expect("project B tasks");
+        assert_eq!(project_a.len(), 1);
+        assert_eq!(project_b.len(), 1);
+        assert_eq!(project_a[0].id, task_a.id);
+        assert_eq!(project_b[0].id, task_b.id);
+        assert_eq!(task_a.number, "ORC-1");
+        assert_eq!(task_b.number, "ORC-1");
+    }
+
+    #[test]
     fn rejects_lane_without_matching_workflow() {
         let mut connection = in_memory_connection();
         let error = create_task(
             &mut connection,
+            Some(DEFAULT_PROJECT_ID),
             TaskUpsertInput {
                 title: "Broken".into(),
                 description: None,

@@ -1378,6 +1378,7 @@ mod tests {
         let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
         let task = tasks::create_task(
             &mut connection,
+            Some("orchestra"),
             TaskUpsertInput {
                 title: "Runtime task".into(),
                 description: Some("Make runtime orchestration real.".into()),
@@ -1514,6 +1515,7 @@ mod tests {
         .expect("workflow should create");
         let task = tasks::create_task(
             &mut connection,
+            Some("orchestra"),
             TaskUpsertInput {
                 title: "Agent runtime task".into(),
                 description: Some("Run through an agent-owned lane.".into()),

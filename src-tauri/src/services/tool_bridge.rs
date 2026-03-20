@@ -315,7 +315,12 @@ fn invoke_bridge_command(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            serde_json::to_value(tasks::list_tasks(connection, include_archived)?)
+            let project_id = payload
+                .get("projectId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("orchestra");
+            serde_json::to_value(tasks::list_tasks(connection, project_id, include_archived)?)
                 .map_err(|error| format!("Unable to serialize tasks: {error}"))
         }
         "get_task" | "get_task_context" => {
@@ -329,8 +334,13 @@ fn invoke_bridge_command(
             let input: TaskUpsertInput =
                 serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
                     .map_err(|error| format!("Unable to parse task input: {error}"))?;
+            let project_id = payload
+                .get("projectId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string);
             let mut writable = database::open_connection()?;
-            serde_json::to_value(tasks::create_task(&mut writable, input)?)
+            serde_json::to_value(tasks::create_task(&mut writable, project_id.as_deref(), input)?)
                 .map_err(|error| format!("Unable to serialize task: {error}"))
         }
         "create_subtask" => {
