@@ -921,8 +921,7 @@ strong {
   white-space: nowrap;
 }
 
-.tasks-page-header,
-.tasks-toolbar,
+.task-overview-controls,
 .tasks-overview-stack,
 .task-draft-grid,
 .task-board-scroll,
@@ -938,33 +937,53 @@ strong {
   gap: 16px;
 }
 
-.tasks-page-header {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+.tasks-overview-page,
+.tasks-overview-stack,
+.task-board-section,
+.task-board-scroll {
+  min-width: 0;
 }
 
-.tasks-toolbar {
-  justify-items: end;
-  gap: 12px;
+.task-overview-controls {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.task-overview-controls__archived-toggle {
+  align-self: center;
 }
 
 .tasks-overview-stack {
   align-content: start;
 }
 
+.task-board-section {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+}
+
 .task-draft-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 280px));
+  justify-content: start;
 }
 
 .task-board-scroll {
+  width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   padding-bottom: 4px;
 }
 
 .task-lane-board {
+  width: max-content;
+  min-width: 100%;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(240px, 1fr);
+  grid-auto-columns: minmax(240px, 320px);
   align-items: start;
 }
 

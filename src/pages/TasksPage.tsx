@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
@@ -90,7 +90,15 @@ interface TaskTimelineItem {
   tone: "neutral" | "warning" | "success" | "error";
 }
 
-export function TasksPage() {
+interface TasksPageProps {
+  createTaskToken?: number;
+}
+
+function sameData<T>(current: T, next: T) {
+  return JSON.stringify(current) === JSON.stringify(next);
+}
+
+export function TasksPage({ createTaskToken = 0 }: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [workflowSummaries, setWorkflowSummaries] = useState<WorkflowSummary[]>([]);
@@ -108,6 +116,7 @@ export function TasksPage() {
   const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
+  const createTaskTokenRef = useRef(createTaskToken);
 
   const filteredTasks = useMemo(() => {
     switch (taskFilter) {
@@ -193,9 +202,11 @@ export function TasksPage() {
     [route, tasks],
   );
 
-  async function loadTasksData() {
-    setLoadingTasks(true);
-    setTaskActionError(null);
+  async function loadTasksData(options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      setLoadingTasks(true);
+      setTaskActionError(null);
+    }
     try {
       const [nextTasks, nextWorkflows, nextAgents, nextRoles] = await Promise.all([
         listTasks(includeArchivedTasks),
@@ -203,36 +214,46 @@ export function TasksPage() {
         listAgents(false),
         listRoles(false),
       ]);
-      setTasks(nextTasks);
-      setWorkflowSummaries(nextWorkflows);
-      setAgents(nextAgents);
-      setRoles(nextRoles);
+      setTasks((current) => (sameData(current, nextTasks) ? current : nextTasks));
+      setWorkflowSummaries((current) => (sameData(current, nextWorkflows) ? current : nextWorkflows));
+      setAgents((current) => (sameData(current, nextAgents) ? current : nextAgents));
+      setRoles((current) => (sameData(current, nextRoles) ? current : nextRoles));
 
       const workflowIds = Array.from(new Set(nextTasks.filter((task) => task.workflowId && !isDraftTask(task)).map((task) => task.workflowId!)));
       const definitions = await Promise.all(workflowIds.map((workflowId) => getWorkflow(workflowId)));
-      setWorkflowDefinitions(Object.fromEntries(definitions.map((definition) => [definition.id, definition])));
+      const nextDefinitions = Object.fromEntries(definitions.map((definition) => [definition.id, definition]));
+      setWorkflowDefinitions((current) => (sameData(current, nextDefinitions) ? current : nextDefinitions));
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to load tasks.");
     } finally {
-      setLoadingTasks(false);
+      if (!options?.silent) {
+        setLoadingTasks(false);
+      }
     }
   }
 
-  async function loadTaskDetail(taskId: string, options?: { preserveDraft?: boolean }) {
-    setLoadingTaskDetail(true);
-    setTaskActionError(null);
+  async function loadTaskDetail(taskId: string, options?: { preserveDraft?: boolean; silent?: boolean }) {
+    if (!options?.silent) {
+      setLoadingTaskDetail(true);
+      setTaskActionError(null);
+    }
     try {
       const task = await getTask(taskId);
-      setTaskDetail(task);
-      setCommentDraft(createBlankCommentDraft());
+      setTaskDetail((current) => (sameData(current, task) ? current : task));
+      if (!options?.silent) {
+        setCommentDraft(createBlankCommentDraft());
+      }
       if (!options?.preserveDraft) {
-        setTaskDraft(taskToDraft(task));
+        const nextDraft = taskToDraft(task);
+        setTaskDraft((current) => (sameData(current, nextDraft) ? current : nextDraft));
         setTaskDraftDirty(false);
       }
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to load task.");
     } finally {
-      setLoadingTaskDetail(false);
+      if (!options?.silent) {
+        setLoadingTaskDetail(false);
+      }
     }
   }
 
@@ -247,26 +268,38 @@ export function TasksPage() {
   }, [route.kind === "detail" ? route.taskId : null]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void loadTasksData();
-      if (route.kind === "detail") {
-        void loadTaskDetail(route.taskId, { preserveDraft: taskDraftDirty });
-      }
-    }, 2000);
+    if (route.kind === "create" || taskDraftDirty) {
+      return;
+    }
 
     const refresh = () => {
-      void loadTasksData();
+      void loadTasksData({ silent: true });
       if (route.kind === "detail") {
-        void loadTaskDetail(route.taskId, { preserveDraft: taskDraftDirty });
+        void loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
       }
     };
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        refresh();
+      }
+    }, 10000);
 
     window.addEventListener("focus", refresh);
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refresh);
     };
-  }, [route, taskDraftDirty]);
+  }, [route, taskDraftDirty, includeArchivedTasks]);
+
+  useEffect(() => {
+    if (createTaskToken === createTaskTokenRef.current) {
+      return;
+    }
+
+    createTaskTokenRef.current = createTaskToken;
+    openCreateTask();
+  }, [createTaskToken]);
 
   function openCreateTask(parentTaskId?: string | null, workflowId?: string | null) {
     setTaskDraft({
@@ -453,7 +486,6 @@ export function TasksPage() {
           board={boardModel}
           filter={taskFilter}
           includeArchived={includeArchivedTasks}
-          onCreateTask={() => openCreateTask()}
           onFilterChange={setTaskFilter}
           onIncludeArchivedChange={setIncludeArchivedTasks}
           onOpenTask={openTaskDetail}
