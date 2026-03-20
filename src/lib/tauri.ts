@@ -8,6 +8,7 @@ import type {
   LogLevel,
   QueuedSessionMessage,
   RoleSummary,
+  SessionChangeEvent,
   SessionEvent,
   SessionModel,
   SessionModelState,
@@ -127,6 +128,10 @@ function setStoredValue<T>(key: string, value: T) {
 
 function emitMockSessionStream(event: SessionStreamEnvelope) {
   window.dispatchEvent(new CustomEvent("orchestra:session-stream", { detail: event }));
+}
+
+export function emitMockSessionChange(event: SessionChangeEvent) {
+  window.dispatchEvent(new CustomEvent("orchestra:session-change", { detail: event }));
 }
 
 function emitMockTaskChange(event: TaskChangeEvent) {
@@ -343,6 +348,55 @@ function appendMockLog(level: LogLevel, target: string, message: string) {
 
 function saveMockSessions(sessions: SessionRecord[]) {
   setStoredValue(sessionStorageKey(), sessions);
+}
+
+export function upsertMockSession(session: SessionRecord) {
+  const sessions = ensureMockSessions().filter((entry) => entry.id !== session.id);
+  saveMockSessions(sortSessions([session, ...sessions]));
+}
+
+export function createMockSessionRecord(title: string, openingAssistantMessage: string): SessionRecord {
+  const timestamp = nowIso();
+  return {
+    id: createId("session"),
+    title,
+    status: "active",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    subscribed: false,
+    events: [
+      createEvent("system", `${title} created from Orchestra runtime.`),
+      createEvent("assistant", openingAssistantMessage),
+    ],
+  };
+}
+
+function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
+  const runtime = getStoredMockAgentRuntimes().find((entry) => entry.agentId === agentId && entry.projectId === CURRENT_PROJECT_ID) ?? null;
+  const existingSessionId = typeof runtime?.mainSessionId === "string" ? runtime.mainSessionId : null;
+  const existingSession = existingSessionId ? ensureMockSessions().find((entry) => entry.id === existingSessionId) ?? null : null;
+  const session = existingSession ?? createMockSessionRecord(
+    `${agentSlug} main session`.replace(/(^|\s)\S/g, (value) => value.toUpperCase()),
+    `${agentSlug} is ready. This persistent session keeps the agent context for dispatched work.`,
+  );
+
+  ensureMockSessionModel(session.id);
+  upsertMockSession(session);
+  saveStoredMockAgentRuntimes(
+    getStoredMockAgentRuntimes().map((entry) =>
+      entry.agentId === agentId && entry.projectId === CURRENT_PROJECT_ID
+        ? {
+            ...entry,
+            mainSessionId: session.id,
+            runtimeCwd: (typeof entry.runtimeCwd === "string" && entry.runtimeCwd) ? entry.runtimeCwd : `/mock/projects/${CURRENT_PROJECT_ID}`,
+            status: entry.currentQueueEntryId ? "running" : "idle",
+            updatedAt: nowIso(),
+          }
+        : entry,
+    ),
+  );
+
+  return session;
 }
 
 function updateMockSession(sessionId: string, updater: (session: SessionRecord) => SessionRecord) {
@@ -1004,6 +1058,21 @@ export async function listenToSessionStream(
   };
 }
 
+export async function listenToSessionChanges(
+  handler: (event: SessionChangeEvent) => void,
+): Promise<() => void> {
+  const listener = (event: Event) => {
+    if (event instanceof CustomEvent) {
+      handler(event.detail as SessionChangeEvent);
+    }
+  };
+
+  window.addEventListener("orchestra:session-change", listener);
+  return () => {
+    window.removeEventListener("orchestra:session-change", listener);
+  };
+}
+
 export async function listenToTaskChanges(
   handler: (event: TaskChangeEvent) => void,
 ): Promise<() => void> {
@@ -1110,6 +1179,7 @@ export async function createSession(title?: string): Promise<SessionRecord> {
     const updated = sortSessions([session, ...ensureMockSessions()]);
     saveMockSessions(updated);
     appendMockLog("info", "sessions.create", `Created session ${session.id}`);
+    emitMockSessionChange({ sessionIds: [session.id], reason: "sessions.create" });
     return session;
   }
 
@@ -1429,28 +1499,33 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       throw new Error("Current lane is user-owned and cannot be dispatched.");
     }
 
+    const workerId = lane.assignedEntityType === "agent"
+      ? getStoredMockAgents().find((agent) => agent.slug === lane.assignedEntityId)?.id ?? lane.assignedEntityId ?? null
+      : lane.assignedEntityId ?? null;
+    const assignmentStartedAt = nowIso();
     const assignment: TaskLaneAssignment = {
       id: createId("task-assignment"),
       taskId: task.id,
       workflowId: workflow.id,
       laneId: lane.id,
       workerType: lane.assignedEntityType,
-      workerId: lane.assignedEntityType === "agent"
-        ? getStoredMockAgents().find((agent) => agent.slug === lane.assignedEntityId)?.id ?? lane.assignedEntityId ?? null
-        : lane.assignedEntityId ?? null,
+      workerId,
       status: "active",
-      sessionId: createId("session"),
+      sessionId: null,
       runtimeCwd: `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
       roleQueueEntryId: lane.assignedEntityType === "role" ? createId("queue") : null,
       roleInstanceId: lane.assignedEntityType === "role" ? createId("instance") : null,
       prompt: `Work task ${task.number}: ${task.title}`,
-      startedAt: nowIso(),
+      startedAt: assignmentStartedAt,
       completedAt: null,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
+      createdAt: assignmentStartedAt,
+      updatedAt: assignmentStartedAt,
     };
 
     if (lane.assignedEntityType === "agent" && assignment.workerId) {
+      const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
+      assignment.sessionId = agentSession.id;
+      assignment.runtimeCwd = `/mock/projects/${CURRENT_PROJECT_ID}`;
       const agentQueueEntryId = createId("agent-queue");
       saveStoredMockAgentQueue([
         ...getStoredMockAgentQueue(),
@@ -1474,22 +1549,30 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
           updatedAt: assignment.updatedAt,
         },
       ]);
-      const existingRuntimes = getStoredMockAgentRuntimes().filter((runtime) => runtime.agentId !== assignment.workerId);
-      saveStoredMockAgentRuntimes([
-        ...existingRuntimes,
-        {
-          projectId: CURRENT_PROJECT_ID,
-          agentId: assignment.workerId,
-          status: "running",
-          mainSessionId: assignment.sessionId,
-          runtimeCwd: assignment.runtimeCwd,
-          currentQueueEntryId: agentQueueEntryId,
-          lastDispatchAt: assignment.updatedAt,
-          lastError: null,
-          createdAt: assignment.createdAt,
-          updatedAt: assignment.updatedAt,
-        },
-      ]);
+      saveStoredMockAgentRuntimes(
+        getStoredMockAgentRuntimes().map((runtime) =>
+          runtime.agentId === assignment.workerId && runtime.projectId === CURRENT_PROJECT_ID
+            ? {
+                ...runtime,
+                status: "running",
+                mainSessionId: assignment.sessionId,
+                runtimeCwd: assignment.runtimeCwd,
+                currentQueueEntryId: agentQueueEntryId,
+                lastDispatchAt: assignment.updatedAt,
+                lastError: null,
+                updatedAt: assignment.updatedAt,
+              }
+            : runtime,
+        ),
+      );
+    } else if (lane.assignedEntityType === "role") {
+      const roleSession = createMockSessionRecord(
+        `${lane.name} · ${task.title}`,
+        `Role runtime session for ${task.number} is active and ready to continue the assigned lane.`,
+      );
+      assignment.sessionId = roleSession.id;
+      upsertMockSession(roleSession);
+      emitMockSessionChange({ sessionIds: [roleSession.id], reason: "task.dispatch.role_session" });
     }
 
     const nextTasks = tasks.map((entry) =>
@@ -1519,6 +1602,9 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
     );
     saveMockTasks(nextTasks);
     appendMockLog("info", "task.dispatch", `Dispatched task ${taskId} into ${lane.assignedEntityType}:${lane.assignedEntityId ?? "user"}`);
+    if (assignment.sessionId) {
+      emitMockSessionChange({ sessionIds: [assignment.sessionId], reason: "task.dispatch" });
+    }
     emitMockTaskChange({ taskIds: [taskId], reason: "task.dispatch" });
     return getTask(taskId);
   }

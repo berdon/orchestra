@@ -3,6 +3,7 @@ use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 use crate::{
     models::{QueuedSessionMessage, SessionModelState, SessionRecord},
     services::{
+        app_events,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{
             create_session_file, delete_session_file, detect_session_context, get_session,
@@ -61,7 +62,7 @@ pub async fn create_session(
     state.set_session_subscription(&created.record.id, true)?;
     let _ = ensure_runtime(
         &state.session_runtimes,
-        app,
+        app.clone(),
         project_root,
         session_dir,
         &created.record.id,
@@ -75,12 +76,17 @@ pub async fn create_session(
             created.path.display()
         ),
     );
+    let _ = app_events::emit_session_change(&app, "sessions.create", [created.record.id.clone()]);
 
     Ok(created.record)
 }
 
 #[tauri::command]
-pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub async fn delete_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
     if let Some(runtime) = state.remove_session_runtime(&session_id)? {
         runtime.shutdown();
     }
@@ -97,6 +103,7 @@ pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> R
         "sessions.delete",
         &format!("Deleted pi session {}", session_id),
     );
+    let _ = app_events::emit_session_change(&app, "sessions.delete", [session_id]);
     Ok(())
 }
 

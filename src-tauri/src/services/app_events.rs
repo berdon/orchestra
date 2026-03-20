@@ -8,6 +8,13 @@ pub struct TaskChangeEvent {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionChangeEvent {
+    pub session_ids: Vec<String>,
+    pub reason: String,
+}
+
 pub fn emit_window_event<T: Serialize>(
     app: &AppHandle,
     event_name: &str,
@@ -38,6 +45,21 @@ pub fn emit_task_change(
         "orchestra:task-change",
         &TaskChangeEvent {
             task_ids: task_ids.into_iter().collect(),
+            reason: reason.into(),
+        },
+    )
+}
+
+pub fn emit_session_change(
+    app: &AppHandle,
+    reason: impl Into<String>,
+    session_ids: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
+    emit_window_event(
+        app,
+        "orchestra:session-change",
+        &SessionChangeEvent {
+            session_ids: session_ids.into_iter().collect(),
             reason: reason.into(),
         },
     )

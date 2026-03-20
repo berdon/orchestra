@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::{
     models::{AgentOperationsDetail, AgentOperationsSnapshot, AgentQueueEntry, AgentQueueEntryInput, SessionRecord},
-    services::{agent_dispatch, agent_runtime, database, live_sessions::ensure_runtime, pi_sessions::{detect_session_context, get_session}},
+    services::{app_events, agent_dispatch, agent_runtime, database, live_sessions::ensure_runtime, pi_sessions::{detect_session_context, get_session}},
     state::AppState,
 };
 
@@ -46,12 +46,14 @@ pub async fn ensure_agent_session(
     state.set_session_subscription(&session_id, true)?;
     let runtime = ensure_runtime(
         &state.session_runtimes,
-        app,
+        app.clone(),
         context.project_root,
         context.session_dir.clone(),
         &session_id,
     )?;
     runtime.set_subscribed(true);
 
-    get_session(&context.session_dir, &session_id, true)
+    let record = get_session(&context.session_dir, &session_id, true)?;
+    let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
+    Ok(record)
 }

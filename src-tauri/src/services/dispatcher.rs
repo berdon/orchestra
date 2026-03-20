@@ -71,6 +71,13 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
                 context.session_dir.clone(),
                 &assignment,
             )?;
+            if let Some(session_id) = assignment.session_id.clone() {
+                let _ = app_events::emit_session_change(
+                    &app,
+                    "task.runtime.assignment_started",
+                    [session_id],
+                );
+            }
             let _ = app_events::emit_task_change(
                 &app,
                 "task.runtime.assignment_started",

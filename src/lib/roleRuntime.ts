@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { getRole, listRoles } from "./roles";
-import { isTauriAvailable } from "./tauri";
+import { createMockSessionRecord, emitMockSessionChange, isTauriAvailable, upsertMockSession } from "./tauri";
 import type {
   RoleDefinition,
   RoleInstance,
@@ -131,11 +131,17 @@ async function runMockDispatch(roleId: string) {
       updatedAt: nowIso(),
     } satisfies RoleInstance;
 
+    const createdSession = instance.sessionId
+      ? null
+      : createMockSessionRecord(
+          `${role.name} · ${nextEntry.title}`,
+          `${role.name} runtime is active and ready to continue ${nextEntry.title}.`,
+        );
     const assignedInstance: RoleInstance = {
       ...instance,
       status: "running",
       currentQueueEntryId: nextEntry.id,
-      sessionId: instance.sessionId ?? buildMockSessionId(),
+      sessionId: instance.sessionId ?? createdSession?.id ?? buildMockSessionId(),
       worktreePath: instance.worktreePath ?? buildMockWorktreePath(role, instance.id),
       updatedAt: nowIso(),
     };
@@ -143,6 +149,11 @@ async function runMockDispatch(roleId: string) {
     instances = reusable
       ? instances.map((entry) => (entry.id === assignedInstance.id ? assignedInstance : entry))
       : [assignedInstance, ...instances];
+
+    if (createdSession) {
+      upsertMockSession(createdSession);
+      emitMockSessionChange({ sessionIds: [createdSession.id], reason: "sessions.role_runtime.created" });
+    }
 
     queueEntries = queueEntries.map((entry) =>
       entry.id === nextEntry.id

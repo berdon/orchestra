@@ -13,6 +13,14 @@ fn emit_task_change(app: &AppHandle, reason: &str, task_ids: impl IntoIterator<I
     let _ = app_events::emit_task_change(app, reason.to_string(), task_ids);
 }
 
+fn emit_session_change(
+    app: &AppHandle,
+    reason: &str,
+    session_ids: impl IntoIterator<Item = String>,
+) {
+    let _ = app_events::emit_session_change(app, reason.to_string(), session_ids);
+}
+
 #[tauri::command]
 pub fn list_tasks(
     project_id: Option<String>,
@@ -298,6 +306,9 @@ pub async fn dispatch_task_lane(
         &task_id,
     )?;
     task_runtime::start_assignment_run(app.clone(), &state, context.session_dir.clone(), &assignment)?;
+    if let Some(session_id) = assignment.session_id.clone() {
+        emit_session_change(&app, "task.dispatch", [session_id]);
+    }
     let task = tasks::get_task_context(&connection, &task_id)?;
     state.log(
         "info",
@@ -388,6 +399,9 @@ async fn complete_lane_command(
             context.session_dir.clone(),
             &next_assignment,
         )?;
+        if let Some(session_id) = next_assignment.session_id.clone() {
+            emit_session_change(&app, "task.transition.next_assignment", [session_id]);
+        }
         task = tasks::get_task_context(&connection, &task_id)?;
     }
 

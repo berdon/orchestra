@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { getActiveProjectId } from "./projects";
-import { isTauriAvailable } from "./tauri";
+import { createMockSessionRecord, emitMockSessionChange, isTauriAvailable, upsertMockSession } from "./tauri";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
@@ -98,39 +98,6 @@ function getStoredSessionModels() {
 
 function saveStoredSessionModels(models: Record<string, SessionModel>) {
   window.localStorage.setItem(sessionModelStorageKey(), JSON.stringify(models));
-}
-
-function createSessionRecord(title: string, openingAssistantMessage: string): SessionRecord {
-  const timestamp = nowIso();
-  return {
-    id: createId("session"),
-    title,
-    status: "active",
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    subscribed: true,
-    events: [
-      {
-        id: createId("event"),
-        kind: "system",
-        message: `${title} created from Orchestra.`,
-        timestamp,
-      },
-      {
-        id: createId("event"),
-        kind: "assistant",
-        message: openingAssistantMessage,
-        timestamp,
-      },
-    ],
-  };
-}
-
-function upsertStoredSession(session: SessionRecord) {
-  const sessions = getStoredSessions().filter((entry) => entry.id !== session.id);
-  const nextSessions = [session, ...sessions].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  saveStoredSessions(nextSessions);
-  return session;
 }
 
 function summarizeAgent(agent: AgentDefinition): AgentSummary {
@@ -420,12 +387,15 @@ export async function ensureAgentSession(agentId: string): Promise<SessionRecord
 
     const session: SessionRecord = existingSession
       ? { ...existingSession, subscribed: true, status: "active", updatedAt: nowIso() }
-      : createSessionRecord(
-          `${agent.name} main session`,
-          `${agent.name} is ready. This persistent session keeps the agent's context and can be reopened from anywhere in Orchestra.`,
-        );
+      : {
+          ...createMockSessionRecord(
+            `${agent.name} main session`,
+            `${agent.name} is ready. This persistent session keeps the agent's context and can be reopened from anywhere in Orchestra.`,
+          ),
+          subscribed: true,
+        };
 
-    upsertStoredSession(session);
+    upsertMockSession(session);
 
     if (agent.provider && agent.model) {
       const models = getStoredSessionModels();
@@ -453,6 +423,7 @@ export async function ensureAgentSession(agentId: string): Promise<SessionRecord
       ),
     );
 
+    emitMockSessionChange({ sessionIds: [session.id], reason: existingSession ? "sessions.ensure_agent.reused" : "sessions.ensure_agent.created" });
     return session;
   }
 
