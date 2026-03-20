@@ -4,7 +4,14 @@ import { Type } from "@sinclair/typebox";
 type AuthorizationContext = { actorType: string; actorId: string } | null;
 type OrchestraToolDefinition = { name: string; description: string; requiredPermission: string };
 
-function getBridgeConfig() {
+type BridgeConfig = {
+  bridgeUrl: string;
+  token: string;
+  allowedCommands: OrchestraToolDefinition[];
+  authorization: AuthorizationContext;
+};
+
+export function getBridgeConfig() {
   const bridgeUrl = process.env.ORCHESTRA_BRIDGE_URL;
   const token = process.env.ORCHESTRA_BRIDGE_TOKEN;
   const allowedCommandsRaw = process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON;
@@ -16,7 +23,7 @@ function getBridgeConfig() {
 
   const allowedCommands = JSON.parse(allowedCommandsRaw) as OrchestraToolDefinition[];
   const authorization = authorizationRaw ? (JSON.parse(authorizationRaw) as AuthorizationContext) : null;
-  return { bridgeUrl, token, allowedCommands, authorization };
+  return { bridgeUrl, token, allowedCommands, authorization } satisfies BridgeConfig;
 }
 
 async function invokeBridge(command: string, payload: Record<string, unknown>) {
@@ -57,13 +64,42 @@ function resolveHelpResult(allowedCommands: OrchestraToolDefinition[]) {
   };
 }
 
+export function parseInputJson(inputJson: unknown) {
+  if (typeof inputJson !== "string" || inputJson.trim().length === 0) {
+    return {};
+  }
+  return JSON.parse(inputJson) as Record<string, unknown>;
+}
+
+export function createBridgeTool(tool: OrchestraToolDefinition) {
+  return {
+    name: tool.name,
+    label: `Orchestra · ${tool.name}`,
+    description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional inputJson when the command needs arguments.`,
+    parameters: Type.Object({
+      inputJson: Type.Optional(
+        Type.String({
+          description: "Optional JSON object string for the command input payload, e.g. {\"taskId\":\"task-1\",\"notes\":\"Done\"}",
+        }),
+      ),
+    }),
+    async execute(_toolCallId: string, params: { inputJson?: string }) {
+      const payload = parseInputJson(params.inputJson);
+      const result = await invokeBridge(tool.name, payload);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        details: { command: tool.name, payload, result },
+      };
+    },
+  };
+}
+
 export default function orchestraToolsExtension(pi: ExtensionAPI) {
   const config = getBridgeConfig();
   if (!config) {
     return;
   }
 
-  const allowedCommandNames = config.allowedCommands.map((tool) => tool.name);
   const allowedCommandHelp = buildAllowedCommandHelp(config.allowedCommands);
 
   pi.registerCommand("orchestra-tools", {
@@ -85,6 +121,10 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
         ctx.ui.notify(`Available Orchestra commands:\n${allowedCommandHelp}`, "info");
         return;
       }
+      if (!config.allowedCommands.some((tool) => tool.name === command)) {
+        ctx.ui.notify(`Command ${command} is not available in this session.`, "warning");
+        return;
+      }
       const payloadText = jsonParts.join(" ").trim();
       const payload = payloadText ? JSON.parse(payloadText) : {};
       const result = await invokeBridge(command, payload as Record<string, unknown>);
@@ -93,35 +133,20 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "orchestra_command",
-    label: "Orchestra Command",
-    description: `Invoke Orchestra backend commands. Allowed commands: help, ${allowedCommandNames.join(", ")}`,
-    parameters: Type.Object({
-      command: Type.String({ description: `One of: help, ${allowedCommandNames.join(", ")}` }),
-      inputJson: Type.Optional(
-        Type.String({ description: "Optional JSON object string for command input, e.g. {\"includeArchived\":true}" }),
-      ),
-    }),
-    async execute(_toolCallId, params) {
-      const command = typeof params.command === "string" ? params.command : "";
-      if (command === "help") {
-        const result = resolveHelpResult(config.allowedCommands);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          details: { command, result },
-        };
-      }
-      if (!allowedCommandNames.includes(command)) {
-        throw new Error(`Command ${command} is not allowed for this session.`);
-      }
-      const payload = typeof params.inputJson === "string" && params.inputJson.trim().length > 0
-        ? JSON.parse(params.inputJson)
-        : {};
-      const result = await invokeBridge(command, payload as Record<string, unknown>);
+    name: "orchestra_help",
+    label: "Orchestra Help",
+    description: "List Orchestra backend commands available to this session.",
+    parameters: Type.Object({}),
+    async execute() {
+      const result = resolveHelpResult(config.allowedCommands);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        details: { command, result },
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        details: { command: "help", result },
       };
     },
   });
+
+  for (const tool of config.allowedCommands) {
+    pi.registerTool(createBridgeTool(tool));
+  }
 }

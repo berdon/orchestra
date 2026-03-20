@@ -452,14 +452,20 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                         }
                     }
                     "assistant" => {
+                        let message_id = line
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("assistant-message")
+                            .to_string();
+
+                        for tool_event in extract_tool_use_events(message, &message_id, &message_timestamp) {
+                            events.push(tool_event);
+                        }
+
                         if let Some(text) = non_empty_trimmed(&message_text) {
                             last_visible_role = Some("assistant");
                             events.push(SessionEvent {
-                                id: line
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("assistant-message")
-                                    .to_string(),
+                                id: message_id,
                                 kind: "assistant".into(),
                                 message: text.to_string(),
                                 timestamp: message_timestamp,
@@ -1058,6 +1064,57 @@ fn extract_message_text(message: &Value) -> String {
         .join("\n\n")
 }
 
+fn extract_tool_use_events(
+    message: &Value,
+    message_id: &str,
+    message_timestamp: &str,
+) -> Vec<SessionEvent> {
+    message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let block_type = block.get("type").and_then(Value::as_str).unwrap_or_default();
+            let normalized_type = block_type.replace(['_', '-'], "").to_ascii_lowercase();
+            if normalized_type != "tooluse" {
+                return None;
+            }
+
+            let tool_name = block
+                .get("toolName")
+                .and_then(Value::as_str)
+                .or_else(|| block.get("name").and_then(Value::as_str))
+                .unwrap_or("tool");
+            let args = block
+                .get("input")
+                .or_else(|| block.get("args"))
+                .or_else(|| block.get("parameters"));
+            let args_suffix = args
+                .and_then(format_tool_payload)
+                .map(|payload| format!("\n{}", payload))
+                .unwrap_or_default();
+
+            Some(SessionEvent {
+                id: format!("{}-tool-use-{}", message_id, index),
+                kind: "system".into(),
+                message: format!("Tool call: {tool_name}{args_suffix}"),
+                timestamp: message_timestamp.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn format_tool_payload(value: &Value) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+
+    let serialized = serde_json::to_string_pretty(value).ok()?;
+    non_empty_trimmed(&serialized).map(ToOwned::to_owned)
+}
+
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
@@ -1452,6 +1509,77 @@ process.stdin.on('end', () => {
         assert_eq!(sessions[0].events[1].kind, "assistant");
         assert_eq!(sessions[0].events[1].message, "Real pi session reply");
         assert!(sessions[0].subscribed);
+    }
+
+    #[test]
+    fn parses_tool_calls_and_results_from_session_jsonl() {
+        let root = unique_temp_dir("orchestra-real-session-tools");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_id = Uuid::new_v4().to_string();
+        let session_path = session_dir.join("tools.jsonl");
+        let content = format!(
+            "{}\n{}\n{}\n{}\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": "2026-03-20T10:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "message",
+                "id": "11111111",
+                "timestamp": "2026-03-20T10:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolUse",
+                            "toolCallId": "call-1",
+                            "toolName": "complete_lane_as_success",
+                            "input": {"taskId": "task-1", "notes": "done"}
+                        }
+                    ],
+                    "timestamp": 1774000801000i64,
+                }
+            }),
+            json!({
+                "type": "message",
+                "id": "22222222",
+                "timestamp": "2026-03-20T10:00:02Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolName": "complete_lane_as_success",
+                    "content": [{ "type": "text", "text": "{\"id\":\"task-1\",\"status\":\"done\"}" }],
+                    "timestamp": 1774000802000i64,
+                }
+            }),
+            json!({
+                "type": "message",
+                "id": "33333333",
+                "timestamp": "2026-03-20T10:00:03Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Task completed." }],
+                    "timestamp": 1774000803000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let parsed = parse_session_file(&session_path, true).expect("session should parse");
+        assert_eq!(parsed.record.events.len(), 3);
+        assert_eq!(parsed.record.events[0].kind, "system");
+        assert!(parsed.record.events[0].message.contains("Tool call: complete_lane_as_success"));
+        assert!(parsed.record.events[0].message.contains("task-1"));
+        assert_eq!(parsed.record.events[1].kind, "system");
+        assert!(parsed.record.events[1].message.contains("complete_lane_as_success tool result"));
+        assert_eq!(parsed.record.events[2].kind, "assistant");
+        assert_eq!(parsed.record.events[2].message, "Task completed.");
     }
 
     #[test]
