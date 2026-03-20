@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { getActiveProjectId } from "./projects";
+import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import { createMockSessionRecord, emitMockSessionChange, isTauriAvailable, upsertMockSession } from "./tauri";
 import type {
   AgentDefinition,
@@ -267,18 +267,19 @@ function ensureMockAgents() {
 }
 
 function ensureMockAgentRuntime(agentId: string) {
+  const projectId = activeProjectId();
   const runtimes = getStoredAgentRuntimes();
-  const existing = runtimes.find((runtime) => runtime.agentId === agentId && runtime.projectId === DEFAULT_PROJECT_ID);
+  const existing = runtimes.find((runtime) => runtime.agentId === agentId && runtime.projectId === projectId);
   if (existing) {
     return existing;
   }
 
   const created: AgentRuntimeState = {
-    projectId: DEFAULT_PROJECT_ID,
+    projectId,
     agentId,
     status: "idle",
     mainSessionId: null,
-    runtimeCwd: null,
+    runtimeCwd: getProjectRuntimeCwd(projectId),
     currentQueueEntryId: null,
     lastDispatchAt: null,
     lastError: null,
@@ -411,11 +412,11 @@ export async function ensureAgentSession(agentId: string): Promise<SessionRecord
 
     saveStoredAgentRuntimes(
       getStoredAgentRuntimes().map((entry) =>
-        entry.agentId === agentId && entry.projectId === DEFAULT_PROJECT_ID
+        entry.agentId === agentId && entry.projectId === activeProjectId()
           ? {
               ...entry,
               mainSessionId: session.id,
-              runtimeCwd: entry.runtimeCwd ?? `/mock/projects/${activeProjectId()}`,
+              runtimeCwd: entry.runtimeCwd ?? getProjectRuntimeCwd(activeProjectId()),
               status: entry.currentQueueEntryId ? "running" : "idle",
               updatedAt: nowIso(),
             }
@@ -434,7 +435,7 @@ export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<Age
   if (!isTauriAvailable()) {
     const normalized: AgentQueueEntry = {
       id: createId("agent-queue"),
-      projectId: DEFAULT_PROJECT_ID,
+      projectId: activeProjectId(),
       agentId: input.agentId,
       status: "queued",
       sourceType: input.sourceType,

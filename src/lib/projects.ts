@@ -82,6 +82,17 @@ export function getActiveProjectId() {
   return stored && projects.some((project) => project.id === stored) ? stored : projects[0]?.id ?? null;
 }
 
+export function getProjectRuntimeCwd(projectId?: string | null) {
+  const projects = ensureMockProjects();
+  const resolvedProjectId = projectId ?? getActiveProjectId();
+  const project = resolvedProjectId ? projects.find((entry) => entry.id === resolvedProjectId) ?? null : null;
+  const defaultRepository = project?.defaultRepositoryId
+    ? project.repositories.find((repository) => repository.id === project.defaultRepositoryId) ?? null
+    : project?.repositories[0] ?? null;
+
+  return defaultRepository?.localPath ?? `/mock/projects/${project?.slug ?? resolvedProjectId ?? DEFAULT_PROJECT_ID}`;
+}
+
 export function setActiveProjectId(projectId: string) {
   window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId);
   window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
@@ -126,6 +137,7 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectD
       updatedAt: timestamp,
     };
     saveStoredProjects([project, ...projects]);
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, project.id);
     return project;
   }
 
@@ -182,6 +194,9 @@ export async function createRepository(projectId: string, input: RepositoryUpser
       updatedAt: nowIso(),
     };
     saveStoredProjects(projects.map((entry) => (entry.id === projectId ? updatedProject : entry)));
+    if (getActiveProjectId() === projectId) {
+      window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
+    }
     return repository;
   }
 
