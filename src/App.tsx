@@ -219,6 +219,35 @@ function hasVisibleAssistantText(event?: SessionEvent) {
   return Boolean(event?.message.trim() && event.message.trim() !== "Running tools…");
 }
 
+function formatJsonSummary(value: JsonValue | undefined | null, limit = 500) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  const serialized = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (!serialized) {
+    return "";
+  }
+
+  return serialized.length > limit ? `${serialized.slice(0, limit)}…` : serialized;
+}
+
+function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue | undefined | null, result?: JsonValue | undefined | null) {
+  const sections = [`${prefix}: ${toolName}`];
+  const formattedArgs = formatJsonSummary(args);
+  const formattedResult = formatJsonSummary(result);
+
+  if (formattedArgs) {
+    sections.push(`Input\n${formattedArgs}`);
+  }
+
+  if (formattedResult) {
+    sections.push(`Output\n${formattedResult}`);
+  }
+
+  return sections.join("\n\n");
+}
+
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("projects");
@@ -296,6 +325,32 @@ export function App() {
         const existingIndex = session.events.findIndex((event) => event.runId === runId && event.kind === "assistant");
         const baseEvent = existingIndex >= 0 ? session.events[existingIndex]! : buildStreamAssistantEvent(runId, timestamp);
         const nextEvent = patch(baseEvent);
+        const nextEvents = existingIndex >= 0
+          ? session.events.map((event, index) => (index === existingIndex ? nextEvent : event))
+          : [...session.events, nextEvent];
+        return {
+          ...session,
+          status: "streaming",
+          updatedAt: timestamp,
+          events: nextEvents,
+        };
+      });
+    },
+    [patchSessionRecord],
+  );
+
+  const upsertSystemEvent = useCallback(
+    (sessionId: string, eventId: string, runId: string, timestamp: string, message: string, pending = false) => {
+      patchSessionRecord(sessionId, (session) => {
+        const existingIndex = session.events.findIndex((event) => event.id === eventId);
+        const nextEvent: SessionEvent = {
+          id: eventId,
+          kind: "system",
+          message,
+          timestamp,
+          pending,
+          runId,
+        };
         const nextEvents = existingIndex >= 0
           ? session.events.map((event, index) => (index === existingIndex ? nextEvent : event))
           : [...session.events, nextEvent];
@@ -629,6 +684,12 @@ export function App() {
       }
 
       if (eventType === "tool_execution_start" || eventType === "tool_execution_update" || eventType === "tool_execution_end") {
+        const rpcEvent = isObject(payload.event) ? payload.event : null;
+        const toolName = asString(rpcEvent?.toolName) || "tool";
+        const toolCallId = asString(rpcEvent?.toolCallId) || `${runId}-${toolName}`;
+        const args = rpcEvent?.args;
+        const toolEventId = `tool-execution-${toolCallId}`;
+
         if (pendingRuns[payload.sessionId]) {
           updatePendingRun(payload.sessionId, (current) => ({
             ...current,
@@ -645,6 +706,39 @@ export function App() {
             pending: true,
             thinking: false,
           }));
+        }
+
+        if (eventType === "tool_execution_start") {
+          upsertSystemEvent(
+            payload.sessionId,
+            toolEventId,
+            runId,
+            eventTimestamp,
+            buildToolEventMessage("Tool running", toolName, args),
+            true,
+          );
+        } else if (eventType === "tool_execution_update") {
+          const partialResult = isObject(rpcEvent?.partialResult) ? rpcEvent?.partialResult : null;
+          const partialContent = partialResult?.content;
+          upsertSystemEvent(
+            payload.sessionId,
+            toolEventId,
+            runId,
+            eventTimestamp,
+            buildToolEventMessage("Tool running", toolName, args, partialContent ?? partialResult),
+            true,
+          );
+        } else {
+          const result = rpcEvent?.result;
+          const isError = rpcEvent?.isError === true;
+          upsertSystemEvent(
+            payload.sessionId,
+            toolEventId,
+            runId,
+            eventTimestamp,
+            buildToolEventMessage(isError ? "Tool failed" : "Tool result", toolName, args, result),
+            false,
+          );
         }
         return;
       }
@@ -714,7 +808,7 @@ export function App() {
         setSessionActionError(asString(rpcEvent?.message) || "Session action failed.");
       }
     },
-    [applySessionUpdate, patchSessionRecord, patchStreamingAssistantEvent, pendingRuns, removePendingRun, updatePendingRun],
+    [applySessionUpdate, patchSessionRecord, patchStreamingAssistantEvent, pendingRuns, removePendingRun, updatePendingRun, upsertSystemEvent],
   );
 
   useEffect(() => {

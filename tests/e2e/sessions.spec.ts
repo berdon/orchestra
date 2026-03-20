@@ -20,6 +20,71 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
 });
 
+test("sessions UI shows tool invocations in the transcript", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-tools",
+          title: "Show tools",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Show tools" }).click();
+
+  await page.evaluate(() => {
+    const receivedAt = new Date().toISOString();
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-tools",
+          runId: "run-tools",
+          receivedAt,
+          event: {
+            type: "tool_execution_start",
+            toolCallId: "call-1",
+            toolName: "complete_lane_as_success",
+            args: { taskId: "task-1", notes: "Ship it" },
+          },
+        },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-tools",
+          runId: "run-tools",
+          receivedAt,
+          event: {
+            type: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "complete_lane_as_success",
+            args: { taskId: "task-1", notes: "Ship it" },
+            result: {
+              content: [{ type: "text", text: '{"id":"task-1","status":"done"}' }],
+            },
+            isError: false,
+          },
+        },
+      }),
+    );
+  });
+
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Tool result: complete_lane_as_success");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("task-1");
+});
+
 test("sessions UI shows streamed assistant text when rejoining an active session", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
