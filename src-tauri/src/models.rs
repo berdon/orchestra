@@ -439,6 +439,14 @@ pub struct TaskAttachmentInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskCommentInput {
+    pub author: String,
+    pub message: String,
+    pub interrupt_agent: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskLaneRun {
     pub id: String,
     pub task_id: String,

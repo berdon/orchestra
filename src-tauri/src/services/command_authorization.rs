@@ -110,6 +110,37 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Change a session model",
         "sessions.model",
     ),
+    ("list_tasks", "List tasks", "tasks.read"),
+    ("get_task", "Get a task", "tasks.read"),
+    (
+        "get_task_context",
+        "Get a task with hierarchy, dependencies, attachments, and lane context",
+        "tasks.read",
+    ),
+    ("create_task", "Create a task", "tasks.create"),
+    ("create_subtask", "Create a subtask", "tasks.create"),
+    ("update_task", "Update a task", "tasks.update"),
+    ("comment_on_task", "Comment on a task", "tasks.comment"),
+    (
+        "add_task_dependency",
+        "Add a task dependency",
+        "tasks.dependencies.write",
+    ),
+    (
+        "remove_task_dependency",
+        "Remove a task dependency",
+        "tasks.dependencies.write",
+    ),
+    (
+        "add_task_attachment",
+        "Add a task attachment",
+        "tasks.attachments.write",
+    ),
+    (
+        "remove_task_attachment",
+        "Remove a task attachment",
+        "tasks.attachments.write",
+    ),
     (
         "get_worker_overlay",
         "Read project worker overlay settings",
