@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5ioAAAAASUVORK5CYII=";
+
 test("tasks page creates and edits a persisted task in browser mode", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -108,4 +110,43 @@ test("tasks page adds dependencies and shows unblock flow", async ({ page }) => 
 
   expect(storedState?.blockedBy?.length).toBe(1);
   expect(storedState?.dependencyBlocked).toBe(false);
+});
+
+test("tasks page uploads text and image attachments", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Attachment target");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="task-attachment-input"]').setInputFiles([
+    {
+      name: "notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Attachment preview text"),
+    },
+    {
+      name: "pixel.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(TINY_PNG_BASE64, "base64"),
+    },
+  ]);
+
+  await expect(page.locator('[data-role="task-attachments"]')).toContainText("notes.txt");
+  await expect(page.locator('[data-role="task-attachments"]')).toContainText("pixel.png");
+  await expect(page.locator('.task-attachment-card__text')).toContainText("Attachment preview text");
+  await expect(page.locator('.task-attachment-card__image')).toHaveCount(1);
+
+  const storedState = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((task: { title: string }) => task.title === "Attachment target") ?? null;
+  });
+
+  expect(storedState?.attachments?.length).toBe(2);
+  expect(storedState?.attachmentCount).toBe(2);
 });

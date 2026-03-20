@@ -415,6 +415,30 @@ pub struct TaskComment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskAttachment {
+    pub id: String,
+    pub task_id: String,
+    pub file_name: String,
+    pub media_type: String,
+    pub byte_size: i64,
+    pub stored_path: String,
+    pub caption: Option<String>,
+    pub preview_text: Option<String>,
+    pub image_data_url: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskAttachmentInput {
+    pub file_name: String,
+    pub media_type: String,
+    pub base64_data: String,
+    pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskLaneRun {
     pub id: String,
     pub task_id: String,
@@ -452,6 +476,7 @@ pub struct TaskSummary {
     pub blocked_child_count: i64,
     pub blocked_by_count: i64,
     pub blocking_count: i64,
+    pub attachment_count: i64,
     pub dependency_blocked: bool,
     pub ready_for_dispatch: bool,
     pub created_at: String,
@@ -496,6 +521,7 @@ pub struct TaskDetail {
     pub blocked_child_count: i64,
     pub blocked_by_count: i64,
     pub blocking_count: i64,
+    pub attachment_count: i64,
     pub dependency_blocked: bool,
     pub ready_for_dispatch: bool,
     pub parent: Option<TaskSummary>,
@@ -503,6 +529,7 @@ pub struct TaskDetail {
     pub children: Vec<TaskSummary>,
     pub blocked_by: Vec<TaskDependency>,
     pub blocking: Vec<TaskDependency>,
+    pub attachments: Vec<TaskAttachment>,
     pub comments: Vec<TaskComment>,
     pub lane_runs: Vec<TaskLaneRun>,
     pub created_at: String,

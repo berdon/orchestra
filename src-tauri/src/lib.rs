@@ -25,8 +25,8 @@ use commands::{
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
     },
     tasks::{
-        add_task_dependency, create_task, get_task, list_tasks, remove_task_dependency,
-        update_task,
+        add_task_attachment, add_task_dependency, create_task, get_task, list_tasks,
+        remove_task_attachment, remove_task_dependency, update_task,
     },
     workflows::{
         archive_workflow, create_workflow, duplicate_workflow, get_workflow, list_workflows,
@@ -113,6 +113,8 @@ pub fn run() {
             update_task,
             add_task_dependency,
             remove_task_dependency,
+            add_task_attachment,
+            remove_task_attachment,
             list_roles,
             get_role,
             validate_role,

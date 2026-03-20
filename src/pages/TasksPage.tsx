@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { addTaskDependency, createTask, getTask, listTasks, listWorkflows, removeTaskDependency, updateTask } from "../lib/tauri";
+import { addTaskAttachment, addTaskDependency, createTask, getTask, listTasks, listWorkflows, removeTaskAttachment, removeTaskDependency, updateTask } from "../lib/tauri";
 import type { TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
@@ -58,6 +58,19 @@ function getStatusTone(status: string) {
     default:
       return "neutral";
   }
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const commaIndex = result.indexOf(",");
+      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 export function TasksPage() {
@@ -211,6 +224,44 @@ export function TasksPage() {
     }
   }
 
+  async function handleAttachmentInputChange(fileList: FileList | null) {
+    if (!selectedTaskSummary || !fileList?.length) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      for (const file of Array.from(fileList)) {
+        const base64Data = await readFileAsBase64(file);
+        await addTaskAttachment(selectedTaskSummary.id, {
+          fileName: file.name,
+          mediaType: file.type || "application/octet-stream",
+          base64Data,
+          caption: null,
+        });
+      }
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to add attachment.");
+    }
+  }
+
+  async function handleRemoveAttachment(attachmentId: string) {
+    if (!selectedTaskSummary) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      await removeTaskAttachment(attachmentId);
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to remove attachment.");
+    }
+  }
+
   useEffect(() => {
     void loadTasks();
   }, [includeArchivedTasks]);
@@ -270,6 +321,7 @@ export function TasksPage() {
                 <span>{task.priority}</span>
                 <span>{task.type}</span>
                 {task.childCount ? <span>{task.childCount} children</span> : null}
+                {task.attachmentCount ? <span>{task.attachmentCount} attachments</span> : null}
                 {task.dependencyBlocked ? <span>dependency blocked</span> : null}
               </span>
             </a>
@@ -291,6 +343,7 @@ export function TasksPage() {
                     <span>{selectedTaskSummary.commentCount} comments</span>
                     <span>{selectedTaskSummary.laneRunCount} lane runs</span>
                     {selectedTaskSummary.childCount ? <span>{selectedTaskSummary.childCount} children</span> : null}
+                    {selectedTaskSummary.attachmentCount ? <span>{selectedTaskSummary.attachmentCount} attachments</span> : null}
                     {selectedTaskSummary.blockedByCount ? <span>{selectedTaskSummary.blockedByCount} blockers</span> : null}
                     <span>{selectedTaskSummary.readyForDispatch ? "Dispatchable" : "Not dispatchable"}</span>
                   </div>
@@ -588,6 +641,50 @@ export function TasksPage() {
                     )}
                   </div>
                 </div>
+              </section>
+
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Attachments</p>
+                    <h4>Task materials</h4>
+                  </div>
+                  {!isCreatingTask && selectedTaskSummary ? (
+                    <label className="secondary-button task-attachment-upload">
+                      <input
+                        data-role="task-attachment-input"
+                        type="file"
+                        multiple
+                        onChange={(event) => void handleAttachmentInputChange(event.target.files)}
+                      />
+                      Add attachment
+                    </label>
+                  ) : null}
+                </div>
+
+                {taskDetail?.attachments.length ? (
+                  <div className="task-attachment-grid" data-role="task-attachments">
+                    {taskDetail.attachments.map((attachment) => (
+                      <article className="task-attachment-card" key={attachment.id}>
+                        <div className="workflow-section__header">
+                          <strong>{attachment.fileName}</strong>
+                          <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleRemoveAttachment(attachment.id)}>
+                            Remove
+                          </button>
+                        </div>
+                        <p className="muted-copy">
+                          {attachment.mediaType} · {Math.max(1, Math.round(attachment.byteSize / 1024))} KB
+                        </p>
+                        {attachment.caption ? <p>{attachment.caption}</p> : null}
+                        {attachment.imageDataUrl ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl} /> : null}
+                        {attachment.previewText ? <pre className="task-attachment-card__text">{attachment.previewText}</pre> : null}
+                        <p className="muted-copy">{attachment.storedPath}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No attachments yet. Upload text or image files to give agents richer task context.</p>
+                )}
               </section>
 
               <section className="task-section">

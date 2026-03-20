@@ -358,6 +358,26 @@ export interface TaskDependency {
   createdAt: string;
 }
 
+export interface TaskAttachment {
+  id: string;
+  taskId: string;
+  fileName: string;
+  mediaType: string;
+  byteSize: number;
+  storedPath: string;
+  caption?: string | null;
+  previewText?: string | null;
+  imageDataUrl?: string | null;
+  createdAt: string;
+}
+
+export interface TaskAttachmentInput {
+  fileName: string;
+  mediaType: string;
+  base64Data: string;
+  caption?: string | null;
+}
+
 export interface TaskLaneRun {
   id: string;
   taskId: string;
@@ -392,6 +412,7 @@ export interface TaskSummary {
   blockedChildCount: number;
   blockedByCount: number;
   blockingCount: number;
+  attachmentCount: number;
   dependencyBlocked: boolean;
   readyForDispatch: boolean;
   createdAt: string;
@@ -405,6 +426,7 @@ export interface TaskDetail extends TaskSummary {
   children: TaskSummary[];
   blockedBy: TaskDependency[];
   blocking: TaskDependency[];
+  attachments: TaskAttachment[];
   comments: TaskComment[];
   laneRuns: TaskLaneRun[];
 }

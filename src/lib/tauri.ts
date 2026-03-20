@@ -12,6 +12,8 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionStreamEnvelope,
+  TaskAttachment,
+  TaskAttachmentInput,
   TaskDependency,
   TaskDetail,
   TaskLaneRun,
@@ -381,6 +383,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedChildCount: 0,
       blockedByCount: 0,
       blockingCount: 0,
+      attachmentCount: 0,
       dependencyBlocked: false,
       readyForDispatch: true,
       parent: null,
@@ -388,6 +391,7 @@ function seedMockTasks(): TaskDetail[] {
       children: [],
       blockedBy: [],
       blocking: [],
+      attachments: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
@@ -417,6 +421,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedChildCount: 0,
       blockedByCount: 0,
       blockingCount: 0,
+      attachmentCount: 0,
       dependencyBlocked: false,
       readyForDispatch: true,
       parent: null,
@@ -424,6 +429,7 @@ function seedMockTasks(): TaskDetail[] {
       children: [],
       blockedBy: [],
       blocking: [],
+      attachments: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [
@@ -476,6 +482,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedChildCount: 0,
       blockedByCount: 0,
       blockingCount: 0,
+      attachmentCount: 0,
       dependencyBlocked: false,
       readyForDispatch: true,
       parent: null,
@@ -483,6 +490,7 @@ function seedMockTasks(): TaskDetail[] {
       children: [],
       blockedBy: [],
       blocking: [],
+      attachments: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
@@ -553,6 +561,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     blockedChildCount: task.children.filter((child) => child.status === "blocked").length,
     blockedByCount: task.blockedBy.length,
     blockingCount: task.blocking.length,
+    attachmentCount: task.attachments.length,
     dependencyBlocked: task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status)),
     readyForDispatch:
       !task.archived &&
@@ -577,8 +586,10 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     blockedChildCount: 0,
     blockedByCount: 0,
     blockingCount: 0,
+    attachmentCount: 0,
     dependencyBlocked: false,
     readyForDispatch: false,
+    attachments: task.attachments ?? [],
   }));
   const bareById = new Map(bareTasks.map((task) => [task.id, task]));
 
@@ -634,6 +645,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         blockedChildCount: children.filter((child) => child.status === "blocked").length,
         blockedByCount: blockedBy.length,
         blockingCount: blocking.length,
+        attachmentCount: task.attachments.length,
         dependencyBlocked,
         readyForDispatch: !task.archived && ["ready", "in_progress"].includes(task.status) && !dependencyBlocked,
       } satisfies TaskDetail;
@@ -675,6 +687,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     blockedChildCount: 0,
     blockedByCount: 0,
     blockingCount: 0,
+    attachmentCount: existingTask?.attachments.length ?? 0,
     dependencyBlocked: false,
     readyForDispatch: false,
     parent: null,
@@ -682,6 +695,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     children: [],
     blockedBy: [],
     blocking: [],
+    attachments: existingTask?.attachments ?? [],
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
     comments: existingTask?.comments ?? [],
@@ -1370,6 +1384,66 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
   }
 
   return invoke<TaskDependency>("remove_task_dependency", { dependencyId });
+}
+
+export async function addTaskAttachment(taskId: string, input: TaskAttachmentInput): Promise<TaskAttachment> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+
+    const bytes = atob(input.base64Data);
+    const imageDataUrl = input.mediaType.startsWith("image/") ? `data:${input.mediaType};base64,${input.base64Data}` : null;
+    const previewText = input.mediaType.startsWith("text/") || input.mediaType === "application/json" ? bytes : null;
+    const attachment: TaskAttachment = {
+      id: createId("task-attachment"),
+      taskId,
+      fileName: input.fileName,
+      mediaType: input.mediaType || "application/octet-stream",
+      byteSize: bytes.length,
+      storedPath: `/mock/attachments/${taskId}/${input.fileName}`,
+      caption: input.caption?.trim() || null,
+      previewText,
+      imageDataUrl,
+      createdAt: nowIso(),
+    };
+
+    saveMockTasks(tasks.map((entry) => (entry.id === taskId ? { ...entry, attachments: [...entry.attachments, attachment] } : entry)));
+    appendMockLog("info", "task.attachment.added", `Added attachment ${attachment.id} to task ${taskId}`);
+    return attachment;
+  }
+
+  return invoke<TaskAttachment>("add_task_attachment", { taskId, input });
+}
+
+export async function removeTaskAttachment(attachmentId: string): Promise<TaskAttachment> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    let removed: TaskAttachment | null = null;
+    const updated = tasks.map((task) => {
+      const match = task.attachments.find((attachment) => attachment.id === attachmentId) ?? null;
+      if (!match) {
+        return task;
+      }
+      removed = match;
+      return {
+        ...task,
+        attachments: task.attachments.filter((attachment) => attachment.id !== attachmentId),
+      };
+    });
+
+    if (!removed) {
+      throw new Error(`Task attachment ${attachmentId} was not found`);
+    }
+
+    saveMockTasks(updated);
+    appendMockLog("info", "task.attachment.removed", `Removed attachment ${attachmentId}`);
+    return removed;
+  }
+
+  return invoke<TaskAttachment>("remove_task_attachment", { attachmentId });
 }
 
 export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {
