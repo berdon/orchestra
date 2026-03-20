@@ -277,6 +277,17 @@ pub struct PolicySummary {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResolvedPermissions {
+    pub actor_type: String,
+    pub actor_id: String,
+    pub inherited_role_id: Option<String>,
+    pub policy_ids: Vec<String>,
+    pub permissions: Vec<String>,
+    pub grants_full_access: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleValidationResult {
     pub valid: bool,
     pub errors: Vec<RoleValidationError>,
