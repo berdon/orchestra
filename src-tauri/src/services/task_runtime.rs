@@ -1142,6 +1142,7 @@ fn apply_agent_session_defaults(
 fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &WorkflowLane) -> String {
     let mut sections = vec![
         format!("You are an agent working inside Orchestra on task {} — {}.", task.number, task.title),
+        format!("Canonical task ID: {}", task.id),
         "Orchestra is the project orchestration system. It tracks tasks, workflows, worker ownership, runtime sessions, comments, attachments, and transitions between steps of work. You are operating as a worker inside that system, so your job is not just to do good work — it is to keep Orchestra's state accurate as you work.".into(),
         [
             "Orchestra concepts you need to understand:",
@@ -1203,13 +1204,14 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
         [
             "How to work effectively in this session:",
             "1. Start by understanding the task in Orchestra terms, not just the latest message.",
-            "2. If anything is unclear or may have changed, call get_task_context first to refresh the live task state.",
-            "3. Do the reasoning/work needed for the lane.",
-            "4. Record important findings or status updates with comment_on_task so the next worker or human can understand what happened.",
-            "5. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
-            "6. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
-            "7. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
-            "8. When the lane is finished, explicitly transition it with the correct completion tool.",
+            "2. Immediately call get_task_context using the canonical task ID shown above so you are working from fresh live state before making decisions.",
+            "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
+            "4. Do the reasoning/work needed for the lane.",
+            "5. Record important findings or status updates with comment_on_task so the next worker or human can understand what happened.",
+            "6. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
+            "7. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
+            "8. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
+            "9. When the lane is finished, explicitly transition it with the correct completion tool.",
         ]
         .join("\n"),
     );
@@ -1483,10 +1485,11 @@ mod tests {
 
         let prompt = build_lane_prompt(&task, &workflow, &lane);
         assert!(prompt.contains("You are an agent working inside Orchestra"));
+        assert!(prompt.contains("Canonical task ID:"));
         assert!(prompt.contains("- Workflow: the overall process definition attached to a task."));
         assert!(prompt.contains("- Lane: the current step of the workflow."));
         assert!(prompt.contains("How to work effectively in this session:"));
-        assert!(prompt.contains("2. If anything is unclear or may have changed, call get_task_context first"));
+        assert!(prompt.contains("2. Immediately call get_task_context using the canonical task ID shown above"));
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
         assert!(prompt.contains("- get_task_context(task_id):"));
         assert!(prompt.contains("- comment_on_task(task_id, input):"));
