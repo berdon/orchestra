@@ -1,24 +1,70 @@
+use rusqlite::OptionalExtension;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{QueuedSessionMessage, SessionModelState, SessionRecord},
     services::{
-        app_events,
+        app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{
             create_session_file, delete_session_file, detect_session_context, get_session,
             list_sessions as list_real_sessions, set_session_model as apply_session_model,
         },
+        task_runtime,
     },
     state::AppState,
 };
+
+fn decorate_session_record(mut record: SessionRecord) -> Result<SessionRecord, String> {
+    let connection = database::open_connection()?;
+
+    let is_persistent_agent_session = connection
+        .query_row(
+            "SELECT 1 FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
+            [record.id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query agent runtime session {}: {error}", record.id))?
+        .is_some();
+
+    if !is_persistent_agent_session
+        && task_runtime::get_active_assignment_for_session(&connection, &record.id)?.is_none()
+    {
+        let task_status = connection
+            .query_row(
+                r#"
+                SELECT t.status
+                FROM task_lane_runs lr
+                JOIN tasks t ON t.id = lr.task_id
+                WHERE lr.session_id = ?1
+                ORDER BY COALESCE(lr.completed_at, lr.started_at) DESC, lr.id DESC
+                LIMIT 1
+                "#,
+                [record.id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to query session task status {}: {error}", record.id))?;
+
+        if matches!(task_status.as_deref(), Some("completed") | Some("canceled")) {
+            record.status = "closed".into();
+        }
+    }
+
+    Ok(record)
+}
 
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
     spawn_blocking(move || {
         let context = detect_session_context(None)?;
-        list_real_sessions(&context.session_dir, &subscribed)
+        let sessions = list_real_sessions(&context.session_dir, &subscribed)?;
+        sessions
+            .into_iter()
+            .map(decorate_session_record)
+            .collect::<Result<Vec<_>, _>>()
     })
     .await
     .map_err(|error| format!("Unable to join list_sessions task: {error}"))?
@@ -33,7 +79,8 @@ pub async fn get_session_record(
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
         let context = detect_session_context(None)?;
-        get_session(&context.session_dir, &session_id_for_task, subscribed)
+        let record = get_session(&context.session_dir, &session_id_for_task, subscribed)?;
+        decorate_session_record(record)
     })
     .await
     .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
