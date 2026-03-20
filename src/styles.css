@@ -1435,8 +1435,10 @@ strong {
   width: min(760px, calc(100vw - 48px));
   max-height: min(78vh, 720px);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
   padding: 20px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 20px;
   background: var(--bg-elevated);

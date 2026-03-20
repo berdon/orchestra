@@ -6,13 +6,13 @@ async function triggerShortcut(page: import("@playwright/test").Page, key: strin
   }, key);
 }
 
-test("ctrl+p opens the command palette and can launch an agent session", async ({ page }) => {
+test("ctrl+o opens the command palette and can launch an agent session", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
 
   await page.goto("/");
-  await triggerShortcut(page, "p");
+  await triggerShortcut(page, "o");
   await expect(page.locator('[data-role="command-palette-overlay"]')).toBeVisible();
 
   await page.locator('[data-role="command-palette-input"]').fill("launch data session");
@@ -28,7 +28,7 @@ test("command palette can jump directly to a role definition", async ({ page }) 
   });
 
   await page.goto("/");
-  await triggerShortcut(page, "p");
+  await triggerShortcut(page, "o");
   await page.locator('[data-role="command-palette-input"]').fill("Reviewer");
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Reviewer" }).first().click();
 
@@ -42,7 +42,7 @@ test("command palette can jump directly to a workflow definition", async ({ page
   });
 
   await page.goto("/");
-  await triggerShortcut(page, "p");
+  await triggerShortcut(page, "o");
   await page.locator('[data-role="command-palette-input"]').fill("Development");
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Development" }).first().click();
 
@@ -56,12 +56,12 @@ test("command palette can open the new task flow and closes with escape", async 
   });
 
   await page.goto("/");
-  await triggerShortcut(page, "p");
+  await triggerShortcut(page, "o");
   await expect(page.locator('[data-role="command-palette-overlay"]')).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-role="command-palette-overlay"]')).toHaveCount(0);
 
-  await triggerShortcut(page, "p");
+  await triggerShortcut(page, "o");
   await page.locator('[data-role="command-palette-input"]').fill("create task");
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Create task" }).first().click();
 

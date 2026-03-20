@@ -1248,7 +1248,7 @@ export function App() {
         return;
       }
 
-      if (event.key.toLowerCase() === "p") {
+      if (event.key.toLowerCase() === "o") {
         event.preventDefault();
         handleOpenCommandPalette();
       }
@@ -1390,7 +1390,7 @@ export function App() {
           </div>
           <div className="status-cluster">
             <button className="secondary-button" data-role="open-command-palette" type="button" onClick={() => handleOpenCommandPalette()}>
-              Search · Ctrl+P
+              Search · Ctrl+O
             </button>
             <button className="secondary-button" data-role="open-supervisor-quick-chat" type="button" onClick={() => void handleOpenSupervisorQuickChat()}>
               Supervisor · Ctrl+T
