@@ -202,6 +202,19 @@ function buildToolPlaceholder(runId: string, timestamp: string) {
   });
 }
 
+function buildStreamAssistantEvent(runId: string, timestamp: string, overrides?: Partial<SessionEvent>): SessionEvent {
+  return {
+    id: createClientId(`stream-assistant-${runId}`),
+    kind: "assistant",
+    message: "",
+    timestamp,
+    pending: true,
+    thinking: false,
+    runId,
+    ...overrides,
+  };
+}
+
 function hasVisibleAssistantText(event?: SessionEvent) {
   return Boolean(event?.message.trim() && event.message.trim() !== "Running tools…");
 }
@@ -275,6 +288,26 @@ export function App() {
   const patchSessionRecord = useCallback((sessionId: string, patch: (session: SessionRecord) => SessionRecord) => {
     setSessions((current) => current.map((session) => (session.id === sessionId ? patch(session) : session)));
   }, []);
+
+  const patchStreamingAssistantEvent = useCallback(
+    (sessionId: string, runId: string, timestamp: string, patch: (event: SessionEvent) => SessionEvent) => {
+      patchSessionRecord(sessionId, (session) => {
+        const existingIndex = session.events.findIndex((event) => event.runId === runId && event.kind === "assistant");
+        const baseEvent = existingIndex >= 0 ? session.events[existingIndex]! : buildStreamAssistantEvent(runId, timestamp);
+        const nextEvent = patch(baseEvent);
+        const nextEvents = existingIndex >= 0
+          ? session.events.map((event, index) => (index === existingIndex ? nextEvent : event))
+          : [...session.events, nextEvent];
+        return {
+          ...session,
+          status: "streaming",
+          updatedAt: timestamp,
+          events: nextEvents,
+        };
+      });
+    },
+    [patchSessionRecord],
+  );
 
   const updatePendingRun = useCallback((sessionId: string, updater: (run: PendingSessionRun) => PendingSessionRun) => {
     let nextRun: PendingSessionRun | undefined;
@@ -428,14 +461,23 @@ export function App() {
         }
 
         if (role === "assistant") {
-          updatePendingRun(payload.sessionId, (current) => ({
-            ...current,
-            userEvent: {
-              ...current.userEvent,
-              pending: false,
-            },
-            assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp),
-          }));
+          if (pendingRuns[payload.sessionId]) {
+            updatePendingRun(payload.sessionId, (current) => ({
+              ...current,
+              userEvent: {
+                ...current.userEvent,
+                pending: false,
+              },
+              assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp),
+            }));
+          } else {
+            patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+              ...event,
+              pending: true,
+              thinking: false,
+              timestamp: eventTimestamp,
+            }));
+          }
         }
         return;
       }
@@ -448,82 +490,127 @@ export function App() {
 
         switch (deltaType) {
           case "thinking_start":
-            updatePendingRun(payload.sessionId, (current) => ({
-              ...current,
-              userEvent: {
-                ...current.userEvent,
-                pending: false,
-              },
-              assistantEvent: current.assistantEvent
-                ? {
-                    ...current.assistantEvent,
-                    pending: true,
-                    thinking: true,
-                    timestamp: eventTimestamp,
-                  }
-                : buildPendingAssistantEvent(runId, eventTimestamp, { thinking: true }),
-            }));
-            return;
-          case "thinking_end":
-            updatePendingRun(payload.sessionId, (current) => ({
-              ...current,
-              assistantEvent: current.assistantEvent
-                ? {
-                    ...current.assistantEvent,
-                    thinking: false,
-                    pending: true,
-                  }
-                : buildPendingAssistantEvent(runId, eventTimestamp),
-            }));
-            return;
-          case "text_start":
-            updatePendingRun(payload.sessionId, (current) => ({
-              ...current,
-              userEvent: {
-                ...current.userEvent,
-                pending: false,
-              },
-              assistantEvent: current.assistantEvent
-                ? {
-                    ...current.assistantEvent,
-                    pending: true,
-                    thinking: false,
-                    message: hasVisibleAssistantText(current.assistantEvent) ? current.assistantEvent.message : "",
-                  }
-                : buildPendingAssistantEvent(runId, eventTimestamp),
-            }));
-            return;
-          case "text_delta":
-            updatePendingRun(payload.sessionId, (current) => {
-              const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp);
-              const chunk = delta ? asString(delta.delta) : "";
-              const nextMessage = hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk;
-              return {
+            if (pendingRuns[payload.sessionId]) {
+              updatePendingRun(payload.sessionId, (current) => ({
                 ...current,
                 userEvent: {
                   ...current.userEvent,
                   pending: false,
                 },
-                assistantEvent: {
-                  ...base,
-                  message: nextMessage,
-                  pending: true,
-                  thinking: false,
+                assistantEvent: current.assistantEvent
+                  ? {
+                      ...current.assistantEvent,
+                      pending: true,
+                      thinking: true,
+                      timestamp: eventTimestamp,
+                    }
+                  : buildPendingAssistantEvent(runId, eventTimestamp, { thinking: true }),
+              }));
+            } else {
+              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+                ...event,
+                pending: true,
+                thinking: true,
+                timestamp: eventTimestamp,
+              }));
+            }
+            return;
+          case "thinking_end":
+            if (pendingRuns[payload.sessionId]) {
+              updatePendingRun(payload.sessionId, (current) => ({
+                ...current,
+                assistantEvent: current.assistantEvent
+                  ? {
+                      ...current.assistantEvent,
+                      thinking: false,
+                      pending: true,
+                    }
+                  : buildPendingAssistantEvent(runId, eventTimestamp),
+              }));
+            } else {
+              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+                ...event,
+                thinking: false,
+                pending: true,
+              }));
+            }
+            return;
+          case "text_start":
+            if (pendingRuns[payload.sessionId]) {
+              updatePendingRun(payload.sessionId, (current) => ({
+                ...current,
+                userEvent: {
+                  ...current.userEvent,
+                  pending: false,
                 },
-              };
-            });
+                assistantEvent: current.assistantEvent
+                  ? {
+                      ...current.assistantEvent,
+                      pending: true,
+                      thinking: false,
+                      message: hasVisibleAssistantText(current.assistantEvent) ? current.assistantEvent.message : "",
+                    }
+                  : buildPendingAssistantEvent(runId, eventTimestamp),
+              }));
+            } else {
+              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+                ...event,
+                pending: true,
+                thinking: false,
+                message: hasVisibleAssistantText(event) ? event.message : "",
+              }));
+            }
+            return;
+          case "text_delta":
+            if (pendingRuns[payload.sessionId]) {
+              updatePendingRun(payload.sessionId, (current) => {
+                const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp);
+                const chunk = delta ? asString(delta.delta) : "";
+                const nextMessage = hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk;
+                return {
+                  ...current,
+                  userEvent: {
+                    ...current.userEvent,
+                    pending: false,
+                  },
+                  assistantEvent: {
+                    ...base,
+                    message: nextMessage,
+                    pending: true,
+                    thinking: false,
+                  },
+                };
+              });
+            } else {
+              const chunk = delta ? asString(delta.delta) : "";
+              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+                ...event,
+                message: hasVisibleAssistantText(event) ? `${event.message}${chunk}` : chunk,
+                pending: true,
+                thinking: false,
+              }));
+            }
             return;
           case "toolcall_start":
           case "toolcall_delta":
           case "toolcall_end":
-            updatePendingRun(payload.sessionId, (current) => ({
-              ...current,
-              userEvent: {
-                ...current.userEvent,
-                pending: false,
-              },
-              assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
-            }));
+            if (pendingRuns[payload.sessionId]) {
+              updatePendingRun(payload.sessionId, (current) => ({
+                ...current,
+                userEvent: {
+                  ...current.userEvent,
+                  pending: false,
+                },
+                assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
+              }));
+            } else {
+              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+                ...event,
+                message: event.message || "Running tools…",
+                pending: true,
+                thinking: false,
+              }));
+            }
             return;
           case "error":
             patchSessionRecord(payload.sessionId, (session) => ({
@@ -541,14 +628,23 @@ export function App() {
       }
 
       if (eventType === "tool_execution_start" || eventType === "tool_execution_update" || eventType === "tool_execution_end") {
-        updatePendingRun(payload.sessionId, (current) => ({
-          ...current,
-          userEvent: {
-            ...current.userEvent,
-            pending: false,
-          },
-          assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
-        }));
+        if (pendingRuns[payload.sessionId]) {
+          updatePendingRun(payload.sessionId, (current) => ({
+            ...current,
+            userEvent: {
+              ...current.userEvent,
+              pending: false,
+            },
+            assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
+          }));
+        } else {
+          patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+            ...event,
+            message: event.message || "Running tools…",
+            pending: true,
+            thinking: false,
+          }));
+        }
         return;
       }
 
@@ -559,26 +655,36 @@ export function App() {
           return;
         }
 
-        updatePendingRun(payload.sessionId, (current) => ({
-          ...current,
-          userEvent: {
-            ...current.userEvent,
+        if (pendingRuns[payload.sessionId]) {
+          updatePendingRun(payload.sessionId, (current) => ({
+            ...current,
+            userEvent: {
+              ...current.userEvent,
+              pending: false,
+            },
+            assistantEvent: current.assistantEvent
+              ? {
+                  ...current.assistantEvent,
+                  message: finalMessage,
+                  pending: false,
+                  thinking: false,
+                  timestamp: eventTimestamp,
+                }
+              : buildPendingAssistantEvent(runId, eventTimestamp, {
+                  message: finalMessage,
+                  pending: false,
+                  thinking: false,
+                }),
+          }));
+        } else {
+          patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+            ...event,
+            message: finalMessage,
             pending: false,
-          },
-          assistantEvent: current.assistantEvent
-            ? {
-                ...current.assistantEvent,
-                message: finalMessage,
-                pending: false,
-                thinking: false,
-                timestamp: eventTimestamp,
-              }
-            : buildPendingAssistantEvent(runId, eventTimestamp, {
-                message: finalMessage,
-                pending: false,
-                thinking: false,
-              }),
-        }));
+            thinking: false,
+            timestamp: eventTimestamp,
+          }));
+        }
         return;
       }
 
@@ -607,7 +713,7 @@ export function App() {
         setSessionActionError(asString(rpcEvent?.message) || "Session action failed.");
       }
     },
-    [applySessionUpdate, patchSessionRecord, removePendingRun, updatePendingRun],
+    [applySessionUpdate, patchSessionRecord, patchStreamingAssistantEvent, pendingRuns, removePendingRun, updatePendingRun],
   );
 
   useEffect(() => {
