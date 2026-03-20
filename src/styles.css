@@ -904,10 +904,66 @@ strong {
   gap: 12px;
 }
 
+.task-lineage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-lineage__crumb,
+.task-child-card {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: white;
+  color: var(--text);
+  border-radius: 14px;
+}
+
+.task-lineage__crumb {
+  padding: 8px 12px;
+}
+
+.task-lineage__current {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.task-rollup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.status-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(251, 246, 242, 0.9);
+}
+
+.status-card__label {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.task-child-card,
 .task-history-card {
   display: grid;
   gap: 10px;
   padding: 14px 16px;
+  text-align: left;
+  box-shadow: var(--shadow);
+}
+
+.task-child-card:hover,
+.task-lineage__crumb:hover {
+  border-color: var(--accent);
+}
+
+.task-history-card {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: rgba(251, 246, 242, 0.9);

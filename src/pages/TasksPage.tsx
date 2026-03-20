@@ -142,6 +142,22 @@ export function TasksPage() {
     setIsCreatingTask(true);
   }
 
+  function beginCreateSubtask() {
+    if (!selectedTaskSummary) {
+      return;
+    }
+
+    setTaskActionError(null);
+    setTaskDetail(null);
+    setTaskDraft({
+      ...createBlankTaskDraft(),
+      workflowId: taskDetail?.workflowId ?? selectedTaskSummary.workflowId ?? null,
+      parentTaskId: selectedTaskSummary.id,
+    });
+    setLoadedTaskId(null);
+    setIsCreatingTask(true);
+  }
+
   async function handleSaveTask() {
     setSavingTask(true);
     setTaskActionError(null);
@@ -216,6 +232,7 @@ export function TasksPage() {
                 <span>{formatStatusLabel(task.status)}</span>
                 <span>{task.priority}</span>
                 <span>{task.type}</span>
+                {task.childCount ? <span>{task.childCount} children</span> : null}
               </span>
             </a>
           ))}
@@ -235,6 +252,7 @@ export function TasksPage() {
                     <span>{workflowLabelMap.get(selectedTaskSummary.workflowId ?? "") ?? "No workflow"}</span>
                     <span>{selectedTaskSummary.commentCount} comments</span>
                     <span>{selectedTaskSummary.laneRunCount} lane runs</span>
+                    {selectedTaskSummary.childCount ? <span>{selectedTaskSummary.childCount} children</span> : null}
                   </div>
                 ) : (
                   <div className="session-detail__meta">
@@ -245,7 +263,12 @@ export function TasksPage() {
 
               <div className="action-cluster">
                 {!isCreatingTask && selectedTaskSummary ? (
-                  <span className={`status-badge status-badge--${getStatusTone(selectedTaskSummary.status)}`}>{formatStatusLabel(selectedTaskSummary.status)}</span>
+                  <>
+                    <button className="secondary-button" data-role="new-subtask" type="button" onClick={beginCreateSubtask}>
+                      New subtask
+                    </button>
+                    <span className={`status-badge status-badge--${getStatusTone(selectedTaskSummary.status)}`}>{formatStatusLabel(selectedTaskSummary.status)}</span>
+                  </>
                 ) : null}
                 <button className="primary-button" data-role="save-task" type="button" disabled={savingTask || loadingTaskDetail} onClick={() => void handleSaveTask()}>
                   {savingTask ? "Saving…" : isCreatingTask ? "Create task" : "Save changes"}
@@ -382,6 +405,81 @@ export function TasksPage() {
             </div>
 
             <div className="task-detail-sections">
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Hierarchy</p>
+                    <h4>Lineage and rollups</h4>
+                  </div>
+                </div>
+
+                {taskDraft.parentTaskId && taskDetail?.lineage.length ? (
+                  <div className="task-lineage" data-role="task-lineage">
+                    {taskDetail.lineage.map((ancestor) => (
+                      <button
+                        className="task-lineage__crumb"
+                        key={ancestor.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTaskId(ancestor.id);
+                          setIsCreatingTask(false);
+                        }}
+                      >
+                        {ancestor.number} · {ancestor.title}
+                      </button>
+                    ))}
+                    {taskDetail.parent ? <span className="task-lineage__current">Parent: {taskDetail.parent.number}</span> : null}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No parent task. This task is currently a top-level item.</p>
+                )}
+
+                {taskDetail?.childCount ? (
+                  <div className="task-rollup-grid">
+                    <article className="status-card">
+                      <span className="status-card__label">Children</span>
+                      <strong>{taskDetail.childCount}</strong>
+                    </article>
+                    <article className="status-card">
+                      <span className="status-card__label">In progress</span>
+                      <strong>{taskDetail.inProgressChildCount}</strong>
+                    </article>
+                    <article className="status-card">
+                      <span className="status-card__label">Blocked</span>
+                      <strong>{taskDetail.blockedChildCount}</strong>
+                    </article>
+                    <article className="status-card">
+                      <span className="status-card__label">Completed</span>
+                      <strong>{taskDetail.completedChildCount}</strong>
+                    </article>
+                  </div>
+                ) : null}
+
+                {taskDetail?.children.length ? (
+                  <div className="task-section-list" data-role="task-children">
+                    {taskDetail.children.map((child) => (
+                      <button
+                        className="task-child-card"
+                        key={child.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTaskId(child.id);
+                          setIsCreatingTask(false);
+                        }}
+                      >
+                        <div className="workflow-section__header">
+                          <strong>{child.number} · {child.title}</strong>
+                          <span className={`status-badge status-badge--${getStatusTone(child.status)}`}>{formatStatusLabel(child.status)}</span>
+                        </div>
+                        <p className="muted-copy">{child.type} · {child.priority}</p>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No child tasks yet. Use “New subtask” to break work down under this task.</p>
+                )}
+              </section>
+
               <section className="task-section">
                 <div className="task-section__header">
                   <div>

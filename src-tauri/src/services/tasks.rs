@@ -1,5 +1,5 @@
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use crate::models::{TaskComment, TaskDetail, TaskLaneRun, TaskSummary, TaskUpsertInput};
@@ -20,57 +20,20 @@ const VALID_ASSIGNEE_TYPES: &[&str] = &["user", "agent", "role", "unassigned"];
 
 pub fn list_tasks(connection: &Connection, include_archived: bool) -> Result<Vec<TaskSummary>, String> {
     let mut statement = connection
-        .prepare(
+        .prepare(&format!(
             r#"
             SELECT
-                t.id,
-                t.project_id,
-                t.number,
-                t.title,
-                t.description,
-                t.task_type,
-                t.status,
-                t.priority,
-                t.workflow_id,
-                t.current_lane_id,
-                t.assignee_type,
-                t.assignee_id,
-                t.parent_task_id,
-                t.archived,
-                COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = t.id), 0) AS comment_count,
-                COALESCE((SELECT COUNT(*) FROM task_lane_runs lr WHERE lr.task_id = t.id), 0) AS lane_run_count,
-                t.created_at,
-                t.updated_at
+                {summary_columns}
             FROM tasks t
             WHERE (?1 = 1 OR t.archived = 0)
             ORDER BY t.archived ASC, t.updated_at DESC, t.sequence_number DESC
             "#,
-        )
+            summary_columns = task_summary_columns("t"),
+        ))
         .map_err(|error| format!("Unable to prepare task list query: {error}"))?;
 
     let rows = statement
-        .query_map([if include_archived { 1 } else { 0 }], |row| {
-            Ok(TaskSummary {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                number: row.get(2)?,
-                title: row.get(3)?,
-                description: row.get(4)?,
-                task_type: row.get(5)?,
-                status: row.get(6)?,
-                priority: row.get(7)?,
-                workflow_id: row.get(8)?,
-                current_lane_id: row.get(9)?,
-                assignee_type: row.get(10)?,
-                assignee_id: row.get(11)?,
-                parent_task_id: row.get(12)?,
-                archived: row.get::<_, i64>(13)? != 0,
-                comment_count: row.get(14)?,
-                lane_run_count: row.get(15)?,
-                created_at: row.get(16)?,
-                updated_at: row.get(17)?,
-            })
-        })
+        .query_map([if include_archived { 1 } else { 0 }], map_task_summary_row)
         .map_err(|error| format!("Unable to query tasks: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -80,30 +43,16 @@ pub fn list_tasks(connection: &Connection, include_archived: bool) -> Result<Vec
 pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
     let mut task = connection
         .query_row(
-            r#"
-            SELECT
-                t.id,
-                t.project_id,
-                t.number,
-                t.title,
-                t.description,
-                t.task_type,
-                t.status,
-                t.priority,
-                t.workflow_id,
-                t.current_lane_id,
-                t.assignee_type,
-                t.assignee_id,
-                t.repository_id,
-                t.parent_task_id,
-                t.archived,
-                COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = t.id), 0) AS comment_count,
-                COALESCE((SELECT COUNT(*) FROM task_lane_runs lr WHERE lr.task_id = t.id), 0) AS lane_run_count,
-                t.created_at,
-                t.updated_at
-            FROM tasks t
-            WHERE t.id = ?1
-            "#,
+            &format!(
+                r#"
+                SELECT
+                    {summary_columns},
+                    t.repository_id
+                FROM tasks t
+                WHERE t.id = ?1
+                "#,
+                summary_columns = task_summary_columns("t"),
+            ),
             [task_id],
             |row| {
                 Ok(TaskDetail {
@@ -119,15 +68,22 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     current_lane_id: row.get(9)?,
                     assignee_type: row.get(10)?,
                     assignee_id: row.get(11)?,
-                    repository_id: row.get(12)?,
-                    parent_task_id: row.get(13)?,
-                    archived: row.get::<_, i64>(14)? != 0,
-                    comment_count: row.get(15)?,
-                    lane_run_count: row.get(16)?,
+                    parent_task_id: row.get(12)?,
+                    archived: row.get::<_, i64>(13)? != 0,
+                    comment_count: row.get(14)?,
+                    lane_run_count: row.get(15)?,
+                    child_count: row.get(16)?,
+                    completed_child_count: row.get(17)?,
+                    in_progress_child_count: row.get(18)?,
+                    blocked_child_count: row.get(19)?,
+                    repository_id: row.get(22)?,
+                    parent: None,
+                    lineage: Vec::new(),
+                    children: Vec::new(),
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
-                    created_at: row.get(17)?,
-                    updated_at: row.get(18)?,
+                    created_at: row.get(20)?,
+                    updated_at: row.get(21)?,
                 })
             },
         )
@@ -135,6 +91,9 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
         .map_err(|error| format!("Unable to query task {task_id}: {error}"))?
         .ok_or_else(|| format!("Task {task_id} was not found"))?;
 
+    task.parent = load_parent_summary(connection, task.parent_task_id.as_deref())?;
+    task.lineage = load_lineage(connection, task.parent_task_id.clone())?;
+    task.children = load_child_tasks(connection, task_id)?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
     Ok(task)
@@ -308,6 +267,10 @@ fn validate_task_input(
             errors.push("parentTaskId: A task cannot be its own parent.".to_string());
         } else if !task_exists(connection, parent_task_id)? {
             errors.push("parentTaskId: Parent task was not found.".to_string());
+        } else if let Some(task_id) = task_id {
+            if would_create_parent_cycle(connection, task_id, parent_task_id)? {
+                errors.push("parentTaskId: Parent would create a hierarchy cycle.".to_string());
+            }
         }
     }
 
@@ -389,6 +352,69 @@ fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<Tas
         .map_err(|error| format!("Unable to collect task lane runs for {task_id}: {error}"))
 }
 
+fn load_parent_summary(
+    connection: &Connection,
+    parent_task_id: Option<&str>,
+) -> Result<Option<TaskSummary>, String> {
+    match parent_task_id {
+        Some(parent_task_id) => load_task_summary(connection, parent_task_id).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn load_lineage(connection: &Connection, mut parent_task_id: Option<String>) -> Result<Vec<TaskSummary>, String> {
+    let mut lineage = Vec::new();
+
+    while let Some(current_parent_id) = parent_task_id {
+        let parent = load_task_summary(connection, &current_parent_id)?;
+        parent_task_id = parent.parent_task_id.clone();
+        lineage.push(parent);
+    }
+
+    lineage.reverse();
+    Ok(lineage)
+}
+
+fn load_child_tasks(connection: &Connection, task_id: &str) -> Result<Vec<TaskSummary>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            r#"
+            SELECT
+                {summary_columns}
+            FROM tasks t
+            WHERE t.parent_task_id = ?1
+            ORDER BY t.archived ASC, t.sequence_number ASC, t.created_at ASC
+            "#,
+            summary_columns = task_summary_columns("t"),
+        ))
+        .map_err(|error| format!("Unable to prepare child task query: {error}"))?;
+
+    let rows = statement
+        .query_map([task_id], map_task_summary_row)
+        .map_err(|error| format!("Unable to query child tasks for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect child tasks for {task_id}: {error}"))
+}
+
+fn load_task_summary(connection: &Connection, task_id: &str) -> Result<TaskSummary, String> {
+    connection
+        .query_row(
+            &format!(
+                r#"
+                SELECT
+                    {summary_columns}
+                FROM tasks t
+                WHERE t.id = ?1
+                "#,
+                summary_columns = task_summary_columns("t"),
+            ),
+            [task_id],
+            map_task_summary_row,
+        )
+        .map_err(|error| format!("Unable to load task summary {task_id}: {error}"))
+}
+
 fn next_task_sequence_number(connection: &Connection, project_id: &str) -> Result<i64, String> {
     connection
         .query_row(
@@ -439,6 +465,32 @@ fn lane_exists_for_workflow(
     Ok(exists.is_some())
 }
 
+fn would_create_parent_cycle(
+    connection: &Connection,
+    task_id: &str,
+    proposed_parent_id: &str,
+) -> Result<bool, String> {
+    let mut current = Some(proposed_parent_id.to_string());
+
+    while let Some(current_id) = current {
+        if current_id == task_id {
+            return Ok(true);
+        }
+
+        current = connection
+            .query_row(
+                "SELECT parent_task_id FROM tasks WHERE id = ?1",
+                [current_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to traverse task hierarchy: {error}"))?
+            .flatten();
+    }
+
+    Ok(false)
+}
+
 fn normalize_input(mut input: TaskUpsertInput) -> TaskUpsertInput {
     input.title = input.title.trim().to_string();
     input.description = normalized_optional_string(input.description);
@@ -465,6 +517,62 @@ fn normalized_optional_string(value: Option<String>) -> Option<String> {
     })
 }
 
+fn task_summary_columns(alias: &str) -> String {
+    format!(
+        r#"
+        {alias}.id,
+        {alias}.project_id,
+        {alias}.number,
+        {alias}.title,
+        {alias}.description,
+        {alias}.task_type,
+        {alias}.status,
+        {alias}.priority,
+        {alias}.workflow_id,
+        {alias}.current_lane_id,
+        {alias}.assignee_type,
+        {alias}.assignee_id,
+        {alias}.parent_task_id,
+        {alias}.archived,
+        COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = {alias}.id), 0) AS comment_count,
+        COALESCE((SELECT COUNT(*) FROM task_lane_runs lr WHERE lr.task_id = {alias}.id), 0) AS lane_run_count,
+        COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id), 0) AS child_count,
+        COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'completed'), 0) AS completed_child_count,
+        COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'in_progress'), 0) AS in_progress_child_count,
+        COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'blocked'), 0) AS blocked_child_count,
+        {alias}.created_at,
+        {alias}.updated_at
+        "#
+    )
+}
+
+fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
+    Ok(TaskSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        number: row.get(2)?,
+        title: row.get(3)?,
+        description: row.get(4)?,
+        task_type: row.get(5)?,
+        status: row.get(6)?,
+        priority: row.get(7)?,
+        workflow_id: row.get(8)?,
+        current_lane_id: row.get(9)?,
+        assignee_type: row.get(10)?,
+        assignee_id: row.get(11)?,
+        parent_task_id: row.get(12)?,
+        archived: row.get::<_, i64>(13)? != 0,
+        comment_count: row.get(14)?,
+        lane_run_count: row.get(15)?,
+        child_count: row.get(16)?,
+        completed_child_count: row.get(17)?,
+        in_progress_child_count: row.get(18)?,
+        blocked_child_count: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
+    })
+}
+
 fn task_id() -> String {
     format!("task-{}", Uuid::new_v4().simple())
 }
@@ -484,28 +592,33 @@ mod tests {
         connection
     }
 
-    #[test]
-    fn create_and_load_task_round_trip() {
-        let mut connection = in_memory_connection();
+    fn seed_workflow(connection: &Connection) {
+        let now = now_iso();
         connection
             .execute(
                 "INSERT INTO workflows (id, slug, name, archived, created_at, updated_at) VALUES (?1, ?2, ?3, 0, ?4, ?4)",
-                params!["workflow-dev", "development", "Development", now_iso()],
+                params!["workflow-dev", "development", "Development", now],
             )
             .expect("insert workflow");
         connection
             .execute(
                 "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, success_transition_type, failure_transition_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 'user', 'end', 'end', ?5, ?5)",
-                params!["lane-plan", "workflow-dev", "plan", "Plan", now_iso()],
+                params!["lane-plan", "workflow-dev", "plan", "Plan", now],
             )
             .expect("insert lane");
+    }
 
-        let created = create_task(
+    #[test]
+    fn create_and_load_task_round_trip() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let epic = create_task(
             &mut connection,
             TaskUpsertInput {
-                title: "Map task foundation".into(),
-                description: Some("Persist task records".into()),
-                task_type: "feature".into(),
+                title: "Task system".into(),
+                description: None,
+                task_type: "epic".into(),
                 status: "ready".into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -517,16 +630,40 @@ mod tests {
                 archived: None,
             },
         )
+        .expect("create epic");
+
+        let created = create_task(
+            &mut connection,
+            TaskUpsertInput {
+                title: "Map task foundation".into(),
+                description: Some("Persist task records".into()),
+                task_type: "feature".into(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "role".into(),
+                assignee_id: Some("developer".into()),
+                repository_id: None,
+                parent_task_id: Some(epic.id.clone()),
+                archived: None,
+            },
+        )
         .expect("create task");
 
-        assert_eq!(created.number, "ORC-1");
-        assert_eq!(created.title, "Map task foundation");
-        assert_eq!(created.workflow_id.as_deref(), Some("workflow-dev"));
-        assert_eq!(created.current_lane_id.as_deref(), Some("lane-plan"));
+        assert_eq!(created.number, "ORC-2");
+        assert_eq!(created.parent_task_id.as_deref(), Some(epic.id.as_str()));
 
-        let listed = list_tasks(&connection, false).expect("list tasks");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, created.id);
+        let loaded_epic = get_task(&connection, &epic.id).expect("load epic");
+        assert_eq!(loaded_epic.child_count, 1);
+        assert_eq!(loaded_epic.in_progress_child_count, 1);
+        assert_eq!(loaded_epic.children.len(), 1);
+        assert_eq!(loaded_epic.children[0].id, created.id);
+
+        let loaded_child = get_task(&connection, &created.id).expect("load child");
+        assert_eq!(loaded_child.lineage.len(), 1);
+        assert_eq!(loaded_child.lineage[0].id, epic.id);
+        assert_eq!(loaded_child.parent.as_ref().map(|task| task.id.as_str()), Some(epic.id.as_str()));
     }
 
     #[test]
@@ -552,5 +689,71 @@ mod tests {
         .expect_err("reject missing workflow for lane");
 
         assert!(error.contains("currentLaneId"));
+    }
+
+    #[test]
+    fn rejects_parent_cycles() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let parent = create_task(
+            &mut connection,
+            TaskUpsertInput {
+                title: "Parent".into(),
+                description: None,
+                task_type: "epic".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("create parent");
+
+        let child = create_task(
+            &mut connection,
+            TaskUpsertInput {
+                title: "Child".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                parent_task_id: Some(parent.id.clone()),
+                archived: None,
+            },
+        )
+        .expect("create child");
+
+        let error = update_task(
+            &mut connection,
+            &parent.id,
+            TaskUpsertInput {
+                title: parent.title.clone(),
+                description: parent.description.clone(),
+                task_type: parent.task_type.clone(),
+                status: parent.status.clone(),
+                priority: parent.priority.clone(),
+                workflow_id: parent.workflow_id.clone(),
+                current_lane_id: parent.current_lane_id.clone(),
+                assignee_type: parent.assignee_type.clone(),
+                assignee_id: parent.assignee_id.clone(),
+                repository_id: parent.repository_id.clone(),
+                parent_task_id: Some(child.id.clone()),
+                archived: Some(false),
+            },
+        )
+        .expect_err("reject parent cycle");
+
+        assert!(error.contains("cycle"));
     }
 }
