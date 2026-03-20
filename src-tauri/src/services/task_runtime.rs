@@ -1175,7 +1175,23 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
     }
 
     sections.push(
-        "Use Orchestra task tools when appropriate. When the lane is complete, mark it as success, failure, or request user intervention through the provided task transition tools.".into(),
+        [
+            "Available Orchestra task tools:",
+            "- get_task_context: Fetch the latest full task context, including hierarchy, dependencies, attachments, comments, lane runs, and active assignment state.",
+            "- comment_on_task: Add a task comment with guidance, findings, or status updates. Use this to leave useful context behind.",
+            "- create_subtask: Create a child task when the work should be split into smaller tracked units.",
+            "- add_task_dependency / remove_task_dependency: Manage blocking relationships between tasks when other work must finish first or a dependency is no longer needed.",
+            "- add_task_attachment / remove_task_attachment: Attach or remove supporting files and artifacts that matter for execution or review.",
+            "- complete_lane_as_success: Finish the current lane successfully and advance the workflow through its success transition.",
+            "- complete_lane_as_failure: Finish the current lane as failed so the workflow follows its failure transition.",
+            "- request_user_intervention: Stop and hand the task back to the human when you are blocked, uncertain, missing permissions, or any required transition/completion step fails.",
+            "",
+            "You must use either complete_lane_as_success, complete_lane_as_failure, or request_user_intervention to finish this task lane.",
+            "You are not done and cannot stop until you have used one of those tools.",
+            "If any completion or transition step fails, you must request user intervention instead of stopping.",
+            "Do not stop until you have finished the task lane and transitioned it.",
+        ]
+        .join("\n"),
     );
 
     sections.join("\n\n")
@@ -1352,6 +1368,79 @@ mod tests {
             },
         )
         .expect("workflow should create")
+    }
+
+    #[test]
+    fn lane_prompt_lists_tools_and_requires_an_explicit_transition() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Prompt rules task".into(),
+                description: Some("Exercise the generated lane prompt.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let task = tasks::get_task_context(&connection, &task.id).expect("task context should load");
+        let lane = workflow
+            .lanes
+            .iter()
+            .find(|lane| lane.id == "lane-implement")
+            .cloned()
+            .expect("implement lane should exist");
+
+        let prompt = build_lane_prompt(&task, &workflow, &lane);
+        assert!(prompt.contains("Available Orchestra task tools:"));
+        assert!(prompt.contains("- complete_lane_as_success:"));
+        assert!(prompt.contains("- complete_lane_as_failure:"));
+        assert!(prompt.contains("- request_user_intervention:"));
+        assert!(prompt.contains("You must use either complete_lane_as_success, complete_lane_as_failure, or request_user_intervention to finish this task lane."));
+        assert!(prompt.contains("You are not done and cannot stop until you have used one of those tools."));
+        assert!(prompt.contains("If any completion or transition step fails, you must request user intervention instead of stopping."));
+        assert!(prompt.contains("Do not stop until you have finished the task lane and transitioned it."));
     }
 
     #[test]
