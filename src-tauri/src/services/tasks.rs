@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        TaskAttachment, TaskComment, TaskDependency, TaskDetail, TaskLaneRun, TaskSummary,
+        TaskComment, TaskCommentInput, TaskDependency, TaskDetail, TaskLaneRun, TaskSummary,
         TaskUpsertInput,
     },
     services::task_attachments,
@@ -117,6 +117,10 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     Ok(task)
 }
 
+pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
+    get_task(connection, task_id)
+}
+
 pub fn create_task(connection: &mut Connection, input: TaskUpsertInput) -> Result<TaskDetail, String> {
     let normalized = normalize_input(input);
     validate_task_input(connection, &normalized, None)?;
@@ -180,6 +184,15 @@ pub fn create_task(connection: &mut Connection, input: TaskUpsertInput) -> Resul
         .map_err(|error| format!("Unable to commit task creation: {error}"))?;
 
     get_task(connection, &task_id)
+}
+
+pub fn create_subtask(
+    connection: &mut Connection,
+    parent_task_id: &str,
+    mut input: TaskUpsertInput,
+) -> Result<TaskDetail, String> {
+    input.parent_task_id = Some(parent_task_id.to_string());
+    create_task(connection, input)
 }
 
 pub fn update_task(
@@ -282,6 +295,56 @@ pub fn remove_task_dependency(
     }
 
     Ok(dependency)
+}
+
+pub fn add_task_comment(
+    connection: &mut Connection,
+    task_id: &str,
+    input: TaskCommentInput,
+) -> Result<TaskComment, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+
+    let author = input.author.trim();
+    let message = input.message.trim();
+    if author.is_empty() {
+        return Err("author: Comment author is required.".to_string());
+    }
+    if message.is_empty() {
+        return Err("message: Comment message is required.".to_string());
+    }
+
+    let comment = TaskComment {
+        id: format!("task-comment-{}", Uuid::new_v4().simple()),
+        task_id: task_id.to_string(),
+        author: author.to_string(),
+        message: message.to_string(),
+        interrupt_agent: input.interrupt_agent,
+        created_at: now_iso(),
+        updated_at: now_iso(),
+    };
+
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start task comment transaction: {error}"))?;
+    tx.execute(
+        "INSERT INTO task_comments (id, task_id, author, message, interrupt_agent, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            comment.id,
+            comment.task_id,
+            comment.author,
+            comment.message,
+            if comment.interrupt_agent { 1 } else { 0 },
+            comment.created_at,
+            comment.updated_at,
+        ],
+    )
+    .map_err(|error| format!("Unable to add task comment: {error}"))?;
+    tx.commit()
+        .map_err(|error| format!("Unable to commit task comment: {error}"))?;
+
+    Ok(comment)
 }
 
 fn validate_task_input(

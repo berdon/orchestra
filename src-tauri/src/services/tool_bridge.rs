@@ -7,10 +7,13 @@ use tiny_http::{Method, Response, Server, StatusCode};
 use uuid::Uuid;
 
 use crate::{
-    models::{AuthorizationContext, OrchestraToolDefinition, RoleQueueEntryInput},
+    models::{
+        AuthorizationContext, OrchestraToolDefinition, RoleQueueEntryInput, TaskAttachmentInput,
+        TaskCommentInput, TaskUpsertInput,
+    },
     services::{
         agents, authorization, command_authorization, database, policies, project_settings,
-        role_dispatch, role_runtime, roles, workflows,
+        role_dispatch, role_runtime, roles, task_attachments, tasks, workflows,
     },
 };
 
@@ -47,6 +50,17 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_role_operations",
     "get_role_operations",
     "enqueue_role_work",
+    "list_tasks",
+    "get_task",
+    "get_task_context",
+    "create_task",
+    "create_subtask",
+    "update_task",
+    "comment_on_task",
+    "add_task_dependency",
+    "remove_task_dependency",
+    "add_task_attachment",
+    "remove_task_attachment",
     "list_workflows",
     "get_workflow",
     "create_workflow",
@@ -289,6 +303,96 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             serde_json::to_value(role_runtime::enqueue_role_work(&mut writable, input)?)
                 .map_err(|error| format!("Unable to serialize role queue entry: {error}"))
+        }
+        "list_tasks" => {
+            let include_archived = payload
+                .get("includeArchived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(tasks::list_tasks(connection, include_archived)?)
+                .map_err(|error| format!("Unable to serialize tasks: {error}"))
+        }
+        "get_task" | "get_task_context" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(tasks::get_task_context(connection, &task_id)?)
+                .map_err(|error| format!("Unable to serialize task context: {error}"))
+        }
+        "create_task" => {
+            command_authorization::require_permission(connection, authorization, "tasks.create")?;
+            let input: TaskUpsertInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse task input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(tasks::create_task(&mut writable, input)?)
+                .map_err(|error| format!("Unable to serialize task: {error}"))
+        }
+        "create_subtask" => {
+            let parent_task_id = require_string(&payload, "parentTaskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.create")?;
+            let input: TaskUpsertInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse task input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(tasks::create_subtask(&mut writable, &parent_task_id, input)?)
+                .map_err(|error| format!("Unable to serialize task: {error}"))
+        }
+        "update_task" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            let input: TaskUpsertInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse task input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(tasks::update_task(&mut writable, &task_id, input)?)
+                .map_err(|error| format!("Unable to serialize task: {error}"))
+        }
+        "comment_on_task" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.comment")?;
+            let input: TaskCommentInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse task comment input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(tasks::add_task_comment(&mut writable, &task_id, input)?)
+                .map_err(|error| format!("Unable to serialize task comment: {error}"))
+        }
+        "add_task_dependency" => {
+            let blocker_task_id = require_string(&payload, "blockerTaskId")?;
+            let blocked_task_id = require_string(&payload, "blockedTaskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.dependencies.write")?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(tasks::add_task_dependency(
+                &mut writable,
+                &blocker_task_id,
+                &blocked_task_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize task dependency: {error}"))
+        }
+        "remove_task_dependency" => {
+            let dependency_id = require_string(&payload, "dependencyId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.dependencies.write")?;
+            let writable = database::open_connection()?;
+            serde_json::to_value(tasks::remove_task_dependency(&writable, &dependency_id)?)
+                .map_err(|error| format!("Unable to serialize removed task dependency: {error}"))
+        }
+        "add_task_attachment" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.attachments.write")?;
+            let input: TaskAttachmentInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse task attachment input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(task_attachments::add_task_attachment(&mut writable, &task_id, input)?)
+                .map_err(|error| format!("Unable to serialize task attachment: {error}"))
+        }
+        "remove_task_attachment" => {
+            let attachment_id = require_string(&payload, "attachmentId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.attachments.write")?;
+            let writable = database::open_connection()?;
+            serde_json::to_value(task_attachments::remove_task_attachment(&writable, &attachment_id)?)
+                .map_err(|error| format!("Unable to serialize removed task attachment: {error}"))
         }
         "list_workflows" => {
             let include_archived = payload
