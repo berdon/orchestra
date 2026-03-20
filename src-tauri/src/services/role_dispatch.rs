@@ -54,10 +54,10 @@ pub fn dispatch_role_queue(
             ensure_instance_worktree(connection, project_root, &role.slug, &instance)?;
         let session_id = ensure_instance_session(
             connection,
-            project_root,
+            &worktree_path,
             session_dir,
             &role,
-            &queue_entry.title,
+            &queue_entry,
             &instance,
         )?;
 
@@ -243,23 +243,36 @@ fn ensure_instance_worktree(
 
 fn ensure_instance_session(
     connection: &Connection,
-    project_root: &Path,
+    runtime_cwd: &Path,
     session_dir: &Path,
     role: &crate::models::RoleDefinition,
-    queue_title: &str,
+    queue_entry: &crate::models::RoleQueueEntry,
     instance: &RoleInstance,
 ) -> Result<String, String> {
+    if let Some(preferred_session_id) = preferred_lane_session_id(connection, queue_entry)? {
+        if pi_sessions::get_session(session_dir, &preferred_session_id, false).is_ok() {
+            connection
+                .execute(
+                    "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![instance.id, preferred_session_id, crate::state::now_iso()],
+                )
+                .map_err(|error| format!("Unable to update preferred role session for instance {}: {error}", instance.id))?;
+            apply_role_session_defaults(runtime_cwd, session_dir, &preferred_session_id, role)?;
+            return Ok(preferred_session_id);
+        }
+    }
+
     if let Some(session_id) = instance.session_id.as_deref() {
         if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
-            apply_role_session_defaults(project_root, session_dir, session_id, role)?;
+            apply_role_session_defaults(runtime_cwd, session_dir, session_id, role)?;
             return Ok(session_id.to_string());
         }
     }
 
     let created = pi_sessions::create_session_file(
-        project_root,
+        runtime_cwd,
         session_dir,
-        Some(&format!("{} · {}", role.name, queue_title)),
+        Some(&format!("{} · {}", role.name, queue_entry.title)),
         false,
     )?;
 
@@ -275,9 +288,36 @@ fn ensure_instance_session(
             )
         })?;
 
-    apply_role_session_defaults(project_root, session_dir, &created.record.id, role)?;
+    apply_role_session_defaults(runtime_cwd, session_dir, &created.record.id, role)?;
 
     Ok(created.record.id)
+}
+
+fn preferred_lane_session_id(
+    connection: &Connection,
+    queue_entry: &crate::models::RoleQueueEntry,
+) -> Result<Option<String>, String> {
+    let Some(task_id) = queue_entry.source_task_id.as_deref() else {
+        return Ok(None);
+    };
+    let Some(lane_id) = queue_entry.source_lane_id.as_deref() else {
+        return Ok(None);
+    };
+
+    connection
+        .query_row(
+            r#"
+            SELECT session_id
+            FROM task_lane_runs
+            WHERE task_id = ?1 AND lane_id = ?2
+            ORDER BY started_at DESC, id DESC
+            LIMIT 1
+            "#,
+            params![task_id, lane_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query preferred role lane session: {error}"))
 }
 
 fn apply_role_session_defaults(

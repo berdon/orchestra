@@ -460,6 +460,27 @@ pub struct TaskLaneRun {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskLaneAssignment {
+    pub id: String,
+    pub task_id: String,
+    pub workflow_id: String,
+    pub lane_id: String,
+    pub worker_type: String,
+    pub worker_id: Option<String>,
+    pub status: String,
+    pub session_id: Option<String>,
+    pub runtime_cwd: Option<String>,
+    pub role_queue_entry_id: Option<String>,
+    pub role_instance_id: Option<String>,
+    pub prompt: Option<String>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskSummary {
     pub id: String,
     pub project_id: String,
@@ -540,6 +561,7 @@ pub struct TaskDetail {
     pub attachments: Vec<TaskAttachment>,
     pub comments: Vec<TaskComment>,
     pub lane_runs: Vec<TaskLaneRun>,
+    pub active_lane_assignment: Option<TaskLaneAssignment>,
     pub created_at: String,
     pub updated_at: String,
 }

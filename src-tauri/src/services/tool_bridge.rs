@@ -9,11 +9,12 @@ use uuid::Uuid;
 use crate::{
     models::{
         AuthorizationContext, OrchestraToolDefinition, RoleQueueEntryInput, TaskAttachmentInput,
-        TaskCommentInput, TaskUpsertInput,
+        TaskCommentInput, TaskLaneAssignment, TaskUpsertInput,
     },
     services::{
-        agents, authorization, command_authorization, database, policies, project_settings,
-        role_dispatch, role_runtime, roles, task_attachments, tasks, workflows,
+        agents, authorization, command_authorization, database, pi_sessions, policies,
+        project_settings, role_dispatch, role_runtime, roles, task_attachments, tasks,
+        workflows,
     },
 };
 
@@ -57,6 +58,10 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "create_subtask",
     "update_task",
     "comment_on_task",
+    "dispatch_task_lane",
+    "complete_lane_as_success",
+    "complete_lane_as_failure",
+    "request_user_intervention",
     "add_task_dependency",
     "remove_task_dependency",
     "add_task_attachment",
@@ -355,8 +360,91 @@ fn invoke_bridge_command(
                 serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
                     .map_err(|error| format!("Unable to parse task comment input: {error}"))?;
             let mut writable = database::open_connection()?;
-            serde_json::to_value(tasks::add_task_comment(&mut writable, &task_id, input)?)
+            let comment = tasks::add_task_comment(&mut writable, &task_id, input)?;
+            serde_json::to_value(comment)
                 .map_err(|error| format!("Unable to serialize task comment: {error}"))
+        }
+        "dispatch_task_lane" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let context = pi_sessions::detect_session_context(None)?;
+            let mut writable = database::open_connection()?;
+            let assignment = crate::services::task_runtime::dispatch_task_lane(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+            )?;
+            start_assignment_blocking(&context.session_dir, &assignment)?;
+            serde_json::to_value(assignment)
+                .map_err(|error| format!("Unable to serialize task dispatch assignment: {error}"))
+        }
+        "complete_lane_as_success" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let context = pi_sessions::detect_session_context(None)?;
+            let mut writable = database::open_connection()?;
+            let task = crate::services::task_runtime::complete_lane_as_success(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                notes,
+                authorization,
+            )?;
+            if let Some(next_assignment) = crate::services::task_runtime::maybe_auto_dispatch_task(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+            )? {
+                start_assignment_blocking(&context.session_dir, &next_assignment)?;
+            }
+            serde_json::to_value(task)
+                .map_err(|error| format!("Unable to serialize completed task lane: {error}"))
+        }
+        "complete_lane_as_failure" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let context = pi_sessions::detect_session_context(None)?;
+            let mut writable = database::open_connection()?;
+            let task = crate::services::task_runtime::complete_lane_as_failure(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                notes,
+                authorization,
+            )?;
+            if let Some(next_assignment) = crate::services::task_runtime::maybe_auto_dispatch_task(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+            )? {
+                start_assignment_blocking(&context.session_dir, &next_assignment)?;
+            }
+            serde_json::to_value(task)
+                .map_err(|error| format!("Unable to serialize failed task lane: {error}"))
+        }
+        "request_user_intervention" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let context = pi_sessions::detect_session_context(None)?;
+            let mut writable = database::open_connection()?;
+            let task = crate::services::task_runtime::request_user_intervention(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                notes,
+                authorization,
+            )?;
+            serde_json::to_value(task)
+                .map_err(|error| format!("Unable to serialize user-intervention task lane: {error}"))
         }
         "add_task_dependency" => {
             let blocker_task_id = require_string(&payload, "blockerTaskId")?;
@@ -547,6 +635,36 @@ fn invoke_bridge_command(
         }
         _ => Err(format!("Unsupported Orchestra bridge command: {command}")),
     }
+}
+
+fn start_assignment_blocking(
+    session_dir: &std::path::Path,
+    assignment: &TaskLaneAssignment,
+) -> Result<(), String> {
+    if assignment.status != "active" {
+        return Ok(());
+    }
+    let Some(session_id) = assignment.session_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(runtime_cwd) = assignment.runtime_cwd.as_deref() else {
+        return Ok(());
+    };
+    let Some(prompt) = assignment.prompt.as_deref() else {
+        return Ok(());
+    };
+
+    let run_id = format!("bridge-run-{}", Uuid::new_v4().simple());
+    let _ = pi_sessions::stream_prompt_session(
+        std::path::Path::new(runtime_cwd),
+        session_dir,
+        session_id,
+        &run_id,
+        prompt,
+        false,
+        |_| {},
+    )?;
+    Ok(())
 }
 
 fn require_string(payload: &Value, key: &str) -> Result<String, String> {

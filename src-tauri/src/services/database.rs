@@ -261,6 +261,32 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_attachments_task_id
                 ON task_attachments(task_id, created_at ASC);
 
+            CREATE TABLE IF NOT EXISTS task_lane_assignments (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                lane_id TEXT NOT NULL,
+                worker_type TEXT NOT NULL,
+                worker_id TEXT,
+                status TEXT NOT NULL,
+                session_id TEXT,
+                runtime_cwd TEXT,
+                role_queue_entry_id TEXT,
+                role_instance_id TEXT,
+                prompt TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_lane_assignments_task_id
+                ON task_lane_assignments(task_id, status, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_task_lane_assignments_session_id
+                ON task_lane_assignments(session_id);
+
             CREATE TABLE IF NOT EXISTS workflows (
                 id TEXT PRIMARY KEY,
                 slug TEXT NOT NULL UNIQUE,

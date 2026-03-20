@@ -395,6 +395,25 @@ export interface TaskLaneRun {
   completedAt?: string | null;
 }
 
+export interface TaskLaneAssignment {
+  id: string;
+  taskId: string;
+  workflowId: string;
+  laneId: string;
+  workerType: string;
+  workerId?: string | null;
+  status: string;
+  sessionId?: string | null;
+  runtimeCwd?: string | null;
+  roleQueueEntryId?: string | null;
+  roleInstanceId?: string | null;
+  prompt?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TaskSummary {
   id: string;
   projectId: string;
@@ -435,6 +454,7 @@ export interface TaskDetail extends TaskSummary {
   attachments: TaskAttachment[];
   comments: TaskComment[];
   laneRuns: TaskLaneRun[];
+  activeLaneAssignment?: TaskLaneAssignment | null;
 }
 
 export interface TaskUpsertInput {

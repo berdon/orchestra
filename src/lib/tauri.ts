@@ -18,6 +18,7 @@ import type {
   TaskCommentInput,
   TaskDependency,
   TaskDetail,
+  TaskLaneAssignment,
   TaskLaneRun,
   TaskSummary,
   TaskUpsertInput,
@@ -394,6 +395,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedBy: [],
       blocking: [],
       attachments: [],
+      activeLaneAssignment: null,
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
@@ -432,6 +434,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedBy: [],
       blocking: [],
       attachments: [],
+      activeLaneAssignment: null,
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [
@@ -493,6 +496,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedBy: [],
       blocking: [],
       attachments: [],
+      activeLaneAssignment: null,
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
@@ -540,6 +544,7 @@ function saveMockTasks(tasks: TaskDetail[]) {
 }
 
 function summarizeTask(task: TaskDetail): TaskSummary {
+  const dependencyBlocked = task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status));
   return {
     id: task.id,
     projectId: task.projectId,
@@ -564,11 +569,13 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     blockedByCount: task.blockedBy.length,
     blockingCount: task.blocking.length,
     attachmentCount: task.attachments.length,
-    dependencyBlocked: task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status)),
+    dependencyBlocked,
     readyForDispatch:
       !task.archived &&
+      Boolean(task.workflowId && task.currentLaneId) &&
       ["ready", "in_progress"].includes(task.status) &&
-      !task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status)),
+      !dependencyBlocked &&
+      !task.activeLaneAssignment,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   };
@@ -592,6 +599,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     dependencyBlocked: false,
     readyForDispatch: false,
     attachments: task.attachments ?? [],
+    activeLaneAssignment: task.activeLaneAssignment ?? null,
   }));
   const bareById = new Map(bareTasks.map((task) => [task.id, task]));
 
@@ -649,7 +657,12 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         blockingCount: blocking.length,
         attachmentCount: task.attachments.length,
         dependencyBlocked,
-        readyForDispatch: !task.archived && ["ready", "in_progress"].includes(task.status) && !dependencyBlocked,
+        readyForDispatch:
+          !task.archived &&
+          Boolean(task.workflowId && task.currentLaneId) &&
+          ["ready", "in_progress"].includes(task.status) &&
+          !dependencyBlocked &&
+          !task.activeLaneAssignment,
       } satisfies TaskDetail;
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
@@ -658,6 +671,9 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
 function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetail): TaskDetail {
   const timestamp = nowIso();
   const previousTasks = ensureMockTasks();
+  const workflow = input.workflowId ? ensureMockWorkflows().find((entry) => entry.id === input.workflowId) : null;
+  const resolvedLaneId = input.currentLaneId?.trim() || workflow?.lanes.slice().sort((left, right) => left.order - right.order)[0]?.id || null;
+  const resolvedLane = workflow?.lanes.find((entry) => entry.id === resolvedLaneId) ?? null;
   const nextSequence = existingTask
     ? Number(existingTask.number.replace(/^ORC-/, "")) || previousTasks.length + 1
     : previousTasks.reduce((highest, task) => {
@@ -675,9 +691,9 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     status: input.status,
     priority: input.priority,
     workflowId: input.workflowId?.trim() || null,
-    currentLaneId: input.currentLaneId?.trim() || null,
-    assigneeType: input.assigneeType,
-    assigneeId: input.assigneeId?.trim() || null,
+    currentLaneId: resolvedLaneId,
+    assigneeType: resolvedLane?.assignedEntityType ?? input.assigneeType,
+    assigneeId: resolvedLane?.assignedEntityId ?? (input.assigneeId?.trim() || null),
     repositoryId: input.repositoryId?.trim() || null,
     parentTaskId: input.parentTaskId?.trim() || null,
     archived: input.archived ?? existingTask?.archived ?? false,
@@ -698,6 +714,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     blockedBy: [],
     blocking: [],
     attachments: existingTask?.attachments ?? [],
+    activeLaneAssignment: existingTask?.activeLaneAssignment ?? null,
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
     comments: existingTask?.comments ?? [],
@@ -1319,6 +1336,219 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
   }
 
   return invoke<TaskDetail>("update_task", { taskId, input });
+}
+
+export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+    if (!task.workflowId || !task.currentLaneId) {
+      throw new Error("Task must have a workflow and current lane before dispatch.");
+    }
+    if (task.activeLaneAssignment) {
+      return getTask(taskId);
+    }
+
+    const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+    const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
+    if (!workflow || !lane) {
+      throw new Error("Current workflow lane could not be resolved.");
+    }
+    if (lane.assignedEntityType === "user") {
+      throw new Error("Current lane is user-owned and cannot be dispatched.");
+    }
+
+    const assignment: TaskLaneAssignment = {
+      id: createId("task-assignment"),
+      taskId: task.id,
+      workflowId: workflow.id,
+      laneId: lane.id,
+      workerType: lane.assignedEntityType,
+      workerId: lane.assignedEntityId ?? null,
+      status: "active",
+      sessionId: createId("session"),
+      runtimeCwd: `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
+      roleQueueEntryId: lane.assignedEntityType === "role" ? createId("queue") : null,
+      roleInstanceId: lane.assignedEntityType === "role" ? createId("instance") : null,
+      prompt: `Work task ${task.number}: ${task.title}`,
+      startedAt: nowIso(),
+      completedAt: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+
+    const nextTasks = tasks.map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            status: "in_progress",
+            assigneeType: lane.assignedEntityType,
+            assigneeId: lane.assignedEntityId ?? null,
+            activeLaneAssignment: assignment,
+            laneRuns: [
+              ...entry.laneRuns,
+              {
+                id: createId("lane-run"),
+                taskId: entry.id,
+                laneId: lane.id,
+                sessionId: assignment.sessionId!,
+                result: "needs_user" as const,
+                notes: null,
+                startedAt: assignment.startedAt,
+                completedAt: null,
+              },
+            ],
+            updatedAt: assignment.updatedAt,
+          }
+        : entry,
+    );
+    saveMockTasks(nextTasks);
+    appendMockLog("info", "task.dispatch", `Dispatched task ${taskId} into ${lane.assignedEntityType}:${lane.assignedEntityId ?? "user"}`);
+    return getTask(taskId);
+  }
+
+  return invoke<TaskDetail>("dispatch_task_lane", { taskId });
+}
+
+async function completeMockTaskLane(taskId: string, outcome: "success" | "failure" | "needs_user", notes?: string): Promise<TaskDetail> {
+  const tasks = ensureMockTasks();
+  const task = tasks.find((entry) => entry.id === taskId);
+  if (!task || !task.workflowId || !task.currentLaneId) {
+    throw new Error(`Task ${taskId} does not have an active workflow lane.`);
+  }
+  const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+  const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
+  if (!workflow || !lane) {
+    throw new Error("Current workflow lane could not be resolved.");
+  }
+
+  const updatedAt = nowIso();
+  const laneRuns = task.activeLaneAssignment
+    ? task.laneRuns.map((run, index, allRuns) =>
+        index === allRuns.length - 1 && run.completedAt == null
+          ? { ...run, result: outcome, notes: notes ?? run.notes ?? null, completedAt: updatedAt }
+          : run,
+      )
+    : task.laneRuns;
+
+  let nextLaneId: string | null = task.currentLaneId;
+  let nextStatus: string = task.status;
+  let nextAssigneeType: string = task.assigneeType;
+  let nextAssigneeId: string | null = task.assigneeId ?? null;
+
+  if (outcome === "success") {
+    if (lane.successTransitionType === "lane" && lane.successTargetLaneId) {
+      const nextLane = workflow.lanes.find((entry) => entry.id === lane.successTargetLaneId);
+      nextLaneId = nextLane?.id ?? null;
+      nextStatus = nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
+      nextAssigneeType = nextLane?.assignedEntityType ?? "unassigned";
+      nextAssigneeId = nextLane?.assignedEntityId ?? null;
+    } else {
+      nextLaneId = null;
+      nextStatus = "completed";
+      nextAssigneeType = "unassigned";
+      nextAssigneeId = null;
+    }
+  } else if (outcome === "failure") {
+    if (lane.failureTransitionType === "lane" && lane.failureTargetLaneId) {
+      const nextLane = workflow.lanes.find((entry) => entry.id === lane.failureTargetLaneId);
+      nextLaneId = nextLane?.id ?? null;
+      nextStatus = nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
+      nextAssigneeType = nextLane?.assignedEntityType ?? "unassigned";
+      nextAssigneeId = nextLane?.assignedEntityId ?? null;
+    } else {
+      nextStatus = "blocked";
+      nextAssigneeType = "user";
+      nextAssigneeId = null;
+    }
+  } else {
+    nextStatus = "in_review";
+    nextAssigneeType = "user";
+    nextAssigneeId = null;
+  }
+
+  const nextLane = nextLaneId ? workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null : null;
+  const autoAssignment =
+    nextLane && nextLane.assignedEntityType !== "user" && ["ready", "in_progress"].includes(nextStatus)
+      ? {
+          id: createId("task-assignment"),
+          taskId,
+          workflowId: workflow.id,
+          laneId: nextLane.id,
+          workerType: nextLane.assignedEntityType,
+          workerId: nextLane.assignedEntityId ?? null,
+          status: "active",
+          sessionId: createId("session"),
+          runtimeCwd: `/mock/runtime/${nextLane.assignedEntityType}/${nextLane.assignedEntityId ?? "user"}`,
+          roleQueueEntryId: nextLane.assignedEntityType === "role" ? createId("queue") : null,
+          roleInstanceId: nextLane.assignedEntityType === "role" ? createId("instance") : null,
+          prompt: `Work task ${task.number}: ${task.title}`,
+          startedAt: updatedAt,
+          completedAt: null,
+          createdAt: updatedAt,
+          updatedAt,
+        }
+      : null;
+
+  const nextTasks = tasks.map((entry) =>
+    entry.id === taskId
+      ? {
+          ...entry,
+          currentLaneId: nextLaneId,
+          status: nextStatus,
+          assigneeType: nextAssigneeType,
+          assigneeId: nextAssigneeId,
+          activeLaneAssignment: autoAssignment,
+          laneRuns:
+            autoAssignment && nextLane
+              ? [
+                  ...laneRuns,
+                  {
+                    id: createId("lane-run"),
+                    taskId: entry.id,
+                    laneId: nextLane.id,
+                    sessionId: autoAssignment.sessionId!,
+                    result: "needs_user" as const,
+                    notes: null,
+                    startedAt: autoAssignment.startedAt,
+                    completedAt: null,
+                  },
+                ]
+              : laneRuns,
+          updatedAt,
+        }
+      : entry,
+  );
+  saveMockTasks(nextTasks);
+  appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
+  return getTask(taskId);
+}
+
+export async function completeLaneAsSuccess(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return completeMockTaskLane(taskId, "success", notes);
+  }
+
+  return invoke<TaskDetail>("complete_lane_as_success", { taskId, notes });
+}
+
+export async function completeLaneAsFailure(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return completeMockTaskLane(taskId, "failure", notes);
+  }
+
+  return invoke<TaskDetail>("complete_lane_as_failure", { taskId, notes });
+}
+
+export async function requestUserIntervention(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return completeMockTaskLane(taskId, "needs_user", notes);
+  }
+
+  return invoke<TaskDetail>("request_user_intervention", { taskId, notes });
 }
 
 export async function addTaskDependency(blockerTaskId: string, blockedTaskId: string): Promise<TaskDependency> {
