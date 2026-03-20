@@ -17,8 +17,8 @@ import {
 } from "./lib/tauri";
 import { AgentsPage } from "./agents/AgentsPage";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { SessionsPage } from "./pages/SessionsPage";
+import { TasksPage } from "./pages/TasksPage";
 import { AgentsPanel } from "./settings/AgentsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
@@ -40,14 +40,6 @@ const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "sessions", label: "Sessions" },
   { id: "settings", label: "Settings" },
 ];
-
-const PAGE_COPY: Record<Exclude<PrimaryPage, "sessions" | "settings" | "agents">, { eyebrow: string; title: string; body: string }> = {
-  tasks: {
-    eyebrow: "Workflow operations",
-    title: "Tasks",
-    body: "Task and workflow management will land after the session-first slice is proven end to end.",
-  },
-};
 
 const SETTINGS_TABS = [
   { id: "agents", label: "Agents" },
@@ -987,11 +979,7 @@ export function App() {
             onSendMessage={handleSendMessage}
           />
         ) : (
-          <PlaceholderPage
-            eyebrow={PAGE_COPY[activePage].eyebrow}
-            title={PAGE_COPY[activePage].title}
-            body={PAGE_COPY[activePage].body}
-          />
+          <TasksPage />
         )}
       </main>
     </div>

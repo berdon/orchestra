@@ -334,6 +334,74 @@ export interface RoleOperationsDetail {
   instances: RoleInstance[];
 }
 
+export type TaskType = "task" | "bug" | "feature" | "chore" | "epic";
+export type TaskStatus = "draft" | "ready" | "in_progress" | "blocked" | "in_review" | "completed" | "canceled";
+export type TaskPriority = "P0" | "P1" | "P2" | "P3" | "P4";
+export type TaskAssigneeType = "user" | "agent" | "role" | "unassigned";
+
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  author: string;
+  message: string;
+  interruptAgent: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskLaneRun {
+  id: string;
+  taskId: string;
+  laneId: string;
+  sessionId: string;
+  result: "success" | "failure" | "needs_user" | "canceled";
+  notes?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
+}
+
+export interface TaskSummary {
+  id: string;
+  projectId: string;
+  number: string;
+  title: string;
+  description?: string | null;
+  type: TaskType | string;
+  status: TaskStatus | string;
+  priority: TaskPriority | string;
+  workflowId?: string | null;
+  currentLaneId?: string | null;
+  assigneeType: TaskAssigneeType | string;
+  assigneeId?: string | null;
+  parentTaskId?: string | null;
+  archived: boolean;
+  commentCount: number;
+  laneRunCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskDetail extends TaskSummary {
+  repositoryId?: string | null;
+  comments: TaskComment[];
+  laneRuns: TaskLaneRun[];
+}
+
+export interface TaskUpsertInput {
+  title: string;
+  description?: string | null;
+  type: TaskType | string;
+  status: TaskStatus | string;
+  priority: TaskPriority | string;
+  workflowId?: string | null;
+  currentLaneId?: string | null;
+  assigneeType: TaskAssigneeType | string;
+  assigneeId?: string | null;
+  repositoryId?: string | null;
+  parentTaskId?: string | null;
+  archived?: boolean;
+}
+
 export interface WorkflowDefinition {
   id: string;
   slug: string;

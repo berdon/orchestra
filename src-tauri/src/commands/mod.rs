@@ -6,4 +6,5 @@ pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;
 pub mod sessions;
+pub mod tasks;
 pub mod workflows;
