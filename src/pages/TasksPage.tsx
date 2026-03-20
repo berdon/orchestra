@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { listAgents } from "../lib/agents";
+import { listRoles } from "../lib/roles";
 import { addTaskAttachment, addTaskDependency, commentOnTask, createTask, getTask, listTasks, listWorkflows, removeTaskAttachment, removeTaskDependency, updateTask } from "../lib/tauri";
-import type { TaskCommentInput, TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
+import type { AgentSummary, RoleSummary, TaskCommentInput, TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
 const TASK_STATUSES: TaskStatus[] = ["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"];
@@ -84,6 +86,8 @@ function readFileAsBase64(file: File) {
 export function TasksPage() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [loadedTaskId, setLoadedTaskId] = useState<string | null>(null);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
@@ -111,6 +115,18 @@ export function TasksPage() {
     () => tasks.filter((task) => task.id !== selectedTaskSummary?.id),
     [selectedTaskSummary?.id, tasks],
   );
+
+  const availableAssignees = useMemo(() => {
+    if (taskDraft.assigneeType === "agent") {
+      return agents.map((agent) => ({ value: agent.slug, label: agent.name }));
+    }
+
+    if (taskDraft.assigneeType === "role") {
+      return roles.map((role) => ({ value: role.slug, label: role.name }));
+    }
+
+    return [];
+  }, [agents, roles, taskDraft.assigneeType]);
 
   async function loadTasks() {
     setLoadingTasks(true);
@@ -160,6 +176,16 @@ export function TasksPage() {
       setWorkflows(await listWorkflows(false));
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to load workflows.");
+    }
+  }
+
+  async function loadWorkersForTasks() {
+    try {
+      const [nextAgents, nextRoles] = await Promise.all([listAgents(false), listRoles(false)]);
+      setAgents(nextAgents);
+      setRoles(nextRoles);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to load available workers.");
     }
   }
 
@@ -296,6 +322,7 @@ export function TasksPage() {
 
   useEffect(() => {
     void loadWorkflowsForTasks();
+    void loadWorkersForTasks();
   }, []);
 
   useEffect(() => {
@@ -490,7 +517,7 @@ export function TasksPage() {
                     setTaskDraft((current) => ({
                       ...current,
                       assigneeType: event.target.value,
-                      assigneeId: ["agent", "role"].includes(event.target.value) ? current.assigneeId : null,
+                      assigneeId: null,
                     }))
                   }
                 >
@@ -503,14 +530,20 @@ export function TasksPage() {
 
               {taskDraft.assigneeType === "agent" || taskDraft.assigneeType === "role" ? (
                 <label className="field-group task-editor-grid__full">
-                  <span className="field-group__label">Assignee id</span>
-                  <input
-                    className="text-input"
+                  <span className="field-group__label">{taskDraft.assigneeType === "agent" ? "Agent" : "Role"}</span>
+                  <select
+                    className="select-input"
                     data-role="task-assignee-id"
-                    placeholder={taskDraft.assigneeType === "agent" ? "agent slug" : "role slug"}
                     value={taskDraft.assigneeId ?? ""}
                     onChange={(event) => setTaskDraft((current) => ({ ...current, assigneeId: event.target.value || null }))}
-                  />
+                  >
+                    <option value="">Select a {taskDraft.assigneeType}</option>
+                    {availableAssignees.map((assignee) => (
+                      <option key={assignee.value} value={assignee.value}>
+                        {assignee.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               ) : null}
 

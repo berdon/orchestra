@@ -16,8 +16,11 @@ test("tasks page creates and edits a persisted task in browser mode", async ({ p
   await page.locator('[data-role="task-type"]').selectOption("feature");
   await page.locator('[data-role="task-status"]').selectOption("in_progress");
   await page.locator('[data-role="task-priority"]').selectOption("P1");
+  await page.locator('[data-role="task-assignee-type"]').selectOption("agent");
+  await expect(page.locator('[data-role="task-assignee-id"]')).toContainText("Data");
   await page.locator('[data-role="task-assignee-type"]').selectOption("role");
-  await page.locator('[data-role="task-assignee-id"]').fill("developer");
+  await expect(page.locator('[data-role="task-assignee-id"]')).toContainText("Developer");
+  await page.locator('[data-role="task-assignee-id"]').selectOption("developer");
   await page.locator('[data-role="task-description"]').fill("Create the first persisted Tasks surface.");
   await page.locator('[data-role="save-task"]').click();
 
