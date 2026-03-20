@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::{
-    models::{TaskDetail, TaskSummary, TaskUpsertInput},
+    models::{TaskDependency, TaskDetail, TaskSummary, TaskUpsertInput},
     services::{database, tasks},
     state::AppState,
 };
@@ -55,4 +55,51 @@ pub fn update_task(
         "success",
     );
     Ok(task)
+}
+
+#[tauri::command]
+pub fn add_task_dependency(
+    state: State<'_, AppState>,
+    blocker_task_id: String,
+    blocked_task_id: String,
+) -> Result<TaskDependency, String> {
+    let mut connection = database::open_connection()?;
+    let dependency = tasks::add_task_dependency(&mut connection, &blocker_task_id, &blocked_task_id)?;
+    state.log(
+        "info",
+        "task.dependency.added",
+        &format!("Added dependency {} -> {}", blocker_task_id, blocked_task_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "add_task_dependency",
+        None,
+        None,
+        &dependency.id,
+        "success",
+    );
+    Ok(dependency)
+}
+
+#[tauri::command]
+pub fn remove_task_dependency(
+    state: State<'_, AppState>,
+    dependency_id: String,
+) -> Result<TaskDependency, String> {
+    let connection = database::open_connection()?;
+    let dependency = tasks::remove_task_dependency(&connection, &dependency_id)?;
+    state.log(
+        "info",
+        "task.dependency.removed",
+        &format!("Removed dependency {}", dependency_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "remove_task_dependency",
+        None,
+        None,
+        &dependency_id,
+        "success",
+    );
+    Ok(dependency)
 }

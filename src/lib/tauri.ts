@@ -12,6 +12,7 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionStreamEnvelope,
+  TaskDependency,
   TaskDetail,
   TaskLaneRun,
   TaskSummary,
@@ -28,6 +29,7 @@ const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
+const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 const CURRENT_PROJECT_ID = "orchestra";
@@ -354,7 +356,7 @@ function seedMockTasks(): TaskDetail[] {
   const blockedTaskId = createId("task");
   const planningSessionId = createId("session");
 
-  return enrichMockTasks([
+  const tasks: TaskDetail[] = [
     {
       id: epicTaskId,
       projectId: CURRENT_PROJECT_ID,
@@ -377,9 +379,15 @@ function seedMockTasks(): TaskDetail[] {
       completedChildCount: 0,
       inProgressChildCount: 0,
       blockedChildCount: 0,
+      blockedByCount: 0,
+      blockingCount: 0,
+      dependencyBlocked: false,
+      readyForDispatch: true,
       parent: null,
       lineage: [],
       children: [],
+      blockedBy: [],
+      blocking: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
@@ -407,9 +415,15 @@ function seedMockTasks(): TaskDetail[] {
       completedChildCount: 0,
       inProgressChildCount: 0,
       blockedChildCount: 0,
+      blockedByCount: 0,
+      blockingCount: 0,
+      dependencyBlocked: false,
+      readyForDispatch: true,
       parent: null,
       lineage: [],
       children: [],
+      blockedBy: [],
+      blocking: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [
@@ -445,7 +459,7 @@ function seedMockTasks(): TaskDetail[] {
       title: "Plan hierarchy rollups",
       description: "Use the epic container to summarize child task progress and expose lineage in the task detail pane.",
       type: "task",
-      status: "blocked",
+      status: "ready",
       priority: "P2",
       workflowId: workflow?.id ?? null,
       currentLaneId: firstLane?.id ?? null,
@@ -460,21 +474,50 @@ function seedMockTasks(): TaskDetail[] {
       completedChildCount: 0,
       inProgressChildCount: 0,
       blockedChildCount: 0,
+      blockedByCount: 0,
+      blockingCount: 0,
+      dependencyBlocked: false,
+      readyForDispatch: true,
       parent: null,
       lineage: [],
       children: [],
+      blockedBy: [],
+      blocking: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
       laneRuns: [],
     },
-  ]);
+  ];
+
+  const dependencies: TaskDependency[] = [
+    {
+      id: createId("task-dependency"),
+      blockerTaskId: planningTaskId,
+      blockedTaskId,
+      blocker: summarizeTask(tasks[1]!),
+      blocked: summarizeTask(tasks[2]!),
+      createdAt: timestamp,
+    },
+  ];
+
+  saveMockTaskDependencies(dependencies);
+  return enrichMockTasks(tasks, dependencies);
+}
+
+function ensureMockTaskDependencies() {
+  return getStoredValue<TaskDependency[]>(TASK_DEPENDENCY_STORAGE_KEY) ?? [];
+}
+
+function saveMockTaskDependencies(dependencies: TaskDependency[]) {
+  setStoredValue(TASK_DEPENDENCY_STORAGE_KEY, dependencies);
 }
 
 function ensureMockTasks() {
   const existing = getStoredValue<TaskDetail[]>(TASK_STORAGE_KEY);
+  const dependencies = ensureMockTaskDependencies();
   if (existing) {
-    return enrichMockTasks(existing);
+    return enrichMockTasks(existing, dependencies);
   }
 
   const seeded = seedMockTasks();
@@ -483,7 +526,7 @@ function ensureMockTasks() {
 }
 
 function saveMockTasks(tasks: TaskDetail[]) {
-  setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks));
+  setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks, ensureMockTaskDependencies()));
 }
 
 function summarizeTask(task: TaskDetail): TaskSummary {
@@ -508,44 +551,91 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     completedChildCount: task.children.filter((child) => child.status === "completed").length,
     inProgressChildCount: task.children.filter((child) => child.status === "in_progress").length,
     blockedChildCount: task.children.filter((child) => child.status === "blocked").length,
+    blockedByCount: task.blockedBy.length,
+    blockingCount: task.blocking.length,
+    dependencyBlocked: task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status)),
+    readyForDispatch:
+      !task.archived &&
+      ["ready", "in_progress"].includes(task.status) &&
+      !task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status)),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   };
 }
 
-function enrichMockTasks(tasks: TaskDetail[]) {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
+function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
+  const bareTasks = tasks.map((task) => ({
+    ...task,
+    parent: null,
+    lineage: [],
+    children: [],
+    blockedBy: [],
+    blocking: [],
+    childCount: 0,
+    completedChildCount: 0,
+    inProgressChildCount: 0,
+    blockedChildCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+    dependencyBlocked: false,
+    readyForDispatch: false,
+  }));
+  const bareById = new Map(bareTasks.map((task) => [task.id, task]));
 
-  return tasks
+  return bareTasks
     .map((task) => {
       const lineage: TaskSummary[] = [];
       let currentParentId = task.parentTaskId ?? null;
       while (currentParentId) {
-        const parentTask = byId.get(currentParentId);
+        const parentTask = bareById.get(currentParentId);
         if (!parentTask) {
           break;
         }
-        lineage.push(summarizeTask({ ...parentTask, parent: null, lineage: [], children: [] }));
+        lineage.push(summarizeTask(parentTask));
         currentParentId = parentTask.parentTaskId ?? null;
       }
       lineage.reverse();
 
-      const children = tasks
+      const children = bareTasks
         .filter((candidate) => candidate.parentTaskId === task.id)
         .sort((left, right) => left.number.localeCompare(right.number))
-        .map((child) => summarizeTask({ ...child, parent: null, lineage: [], children: [] }));
+        .map((child) => summarizeTask(child));
+
+      const blockedBy = dependencies
+        .filter((dependency) => dependency.blockedTaskId === task.id)
+        .map((dependency) => ({
+          ...dependency,
+          blocker: summarizeTask(bareById.get(dependency.blockerTaskId) ?? task),
+          blocked: summarizeTask(bareById.get(dependency.blockedTaskId) ?? task),
+        }));
+
+      const blocking = dependencies
+        .filter((dependency) => dependency.blockerTaskId === task.id)
+        .map((dependency) => ({
+          ...dependency,
+          blocker: summarizeTask(bareById.get(dependency.blockerTaskId) ?? task),
+          blocked: summarizeTask(bareById.get(dependency.blockedTaskId) ?? task),
+        }));
+
+      const dependencyBlocked = blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status));
 
       return {
         ...task,
-        parent: task.parentTaskId && byId.get(task.parentTaskId) ? summarizeTask({ ...(byId.get(task.parentTaskId) as TaskDetail), parent: null, lineage: [], children: [] }) : null,
+        parent: task.parentTaskId && bareById.get(task.parentTaskId) ? summarizeTask(bareById.get(task.parentTaskId) as TaskDetail) : null,
         lineage,
         children,
+        blockedBy,
+        blocking,
         commentCount: task.comments.length,
         laneRunCount: task.laneRuns.length,
         childCount: children.length,
         completedChildCount: children.filter((child) => child.status === "completed").length,
         inProgressChildCount: children.filter((child) => child.status === "in_progress").length,
         blockedChildCount: children.filter((child) => child.status === "blocked").length,
+        blockedByCount: blockedBy.length,
+        blockingCount: blocking.length,
+        dependencyBlocked,
+        readyForDispatch: !task.archived && ["ready", "in_progress"].includes(task.status) && !dependencyBlocked,
       } satisfies TaskDetail;
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
@@ -583,9 +673,15 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     completedChildCount: 0,
     inProgressChildCount: 0,
     blockedChildCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+    dependencyBlocked: false,
+    readyForDispatch: false,
     parent: null,
     lineage: [],
     children: [],
+    blockedBy: [],
+    blocking: [],
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
     comments: existingTask?.comments ?? [],
@@ -1203,10 +1299,77 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
     );
     appendMockLog("info", "task.updated", `Updated task ${taskId}`);
-    return updated;
+    return getTask(taskId);
   }
 
   return invoke<TaskDetail>("update_task", { taskId, input });
+}
+
+export async function addTaskDependency(blockerTaskId: string, blockedTaskId: string): Promise<TaskDependency> {
+  if (!isTauriAvailable()) {
+    if (blockerTaskId === blockedTaskId) {
+      throw new Error("A task cannot depend on itself.");
+    }
+
+    const tasks = ensureMockTasks();
+    if (!tasks.some((task) => task.id === blockerTaskId) || !tasks.some((task) => task.id === blockedTaskId)) {
+      throw new Error("Both tasks must exist before adding a dependency.");
+    }
+
+    const dependencies = ensureMockTaskDependencies();
+    if (dependencies.some((dependency) => dependency.blockerTaskId === blockerTaskId && dependency.blockedTaskId === blockedTaskId)) {
+      throw new Error("That dependency already exists.");
+    }
+
+    let currentBlockedIds = [blockedTaskId];
+    const visited = new Set<string>();
+    while (currentBlockedIds.length > 0) {
+      const current = currentBlockedIds.pop()!;
+      if (!visited.add(current)) {
+        continue;
+      }
+      if (current === blockerTaskId) {
+        throw new Error("That dependency would create a cycle.");
+      }
+      currentBlockedIds.push(
+        ...dependencies.filter((dependency) => dependency.blockerTaskId === current).map((dependency) => dependency.blockedTaskId),
+      );
+    }
+
+    const blocker = tasks.find((task) => task.id === blockerTaskId)!;
+    const blocked = tasks.find((task) => task.id === blockedTaskId)!;
+    const dependency: TaskDependency = {
+      id: createId("task-dependency"),
+      blockerTaskId,
+      blockedTaskId,
+      blocker: summarizeTask(blocker),
+      blocked: summarizeTask(blocked),
+      createdAt: nowIso(),
+    };
+    saveMockTaskDependencies([...dependencies, dependency]);
+    saveMockTasks(tasks);
+    appendMockLog("info", "task.dependency.added", `Added dependency ${blockerTaskId} -> ${blockedTaskId}`);
+    return dependency;
+  }
+
+  return invoke<TaskDependency>("add_task_dependency", { blockerTaskId, blockedTaskId });
+}
+
+export async function removeTaskDependency(dependencyId: string): Promise<TaskDependency> {
+  if (!isTauriAvailable()) {
+    const dependencies = ensureMockTaskDependencies();
+    const dependency = dependencies.find((entry) => entry.id === dependencyId);
+    if (!dependency) {
+      throw new Error(`Task dependency ${dependencyId} was not found`);
+    }
+
+    saveMockTaskDependencies(dependencies.filter((entry) => entry.id !== dependencyId));
+    saveMockTasks(ensureMockTasks());
+    appendMockLog("info", "task.dependency.removed", `Removed dependency ${dependencyId}`);
+    return dependency;
+  }
+
+  return invoke<TaskDependency>("remove_task_dependency", { dependencyId });
 }
 
 export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {

@@ -349,6 +349,15 @@ export interface TaskComment {
   updatedAt: string;
 }
 
+export interface TaskDependency {
+  id: string;
+  blockerTaskId: string;
+  blockedTaskId: string;
+  blocker: TaskSummary;
+  blocked: TaskSummary;
+  createdAt: string;
+}
+
 export interface TaskLaneRun {
   id: string;
   taskId: string;
@@ -381,6 +390,10 @@ export interface TaskSummary {
   completedChildCount: number;
   inProgressChildCount: number;
   blockedChildCount: number;
+  blockedByCount: number;
+  blockingCount: number;
+  dependencyBlocked: boolean;
+  readyForDispatch: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -390,6 +403,8 @@ export interface TaskDetail extends TaskSummary {
   parent?: TaskSummary | null;
   lineage: TaskSummary[];
   children: TaskSummary[];
+  blockedBy: TaskDependency[];
+  blocking: TaskDependency[];
   comments: TaskComment[];
   laneRuns: TaskLaneRun[];
 }
