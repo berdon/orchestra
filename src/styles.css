@@ -423,6 +423,7 @@ strong {
   align-content: start;
 }
 
+.task-list,
 .role-list,
 .workflow-nav,
 .workforce-role-nav,
@@ -467,6 +468,7 @@ strong {
   font-weight: 650;
 }
 
+.task-list-link,
 .role-list-link,
 .workflow-nav-link,
 .workforce-role-link,
@@ -483,6 +485,7 @@ strong {
   border-radius: 12px;
 }
 
+.task-list-link:hover,
 .role-list-link:hover,
 .workflow-nav-link:hover,
 .workforce-role-link:hover {
@@ -490,6 +493,7 @@ strong {
   background: var(--bg-subtle);
 }
 
+.task-list-link--active,
 .role-list-link--active,
 .workflow-nav-link--active,
 .workforce-role-link--active {
@@ -683,6 +687,7 @@ strong {
   gap: 18px;
 }
 
+.task-shell,
 .role-shell,
 .workflow-shell,
 .workforce-shell {
@@ -698,6 +703,8 @@ strong {
   gap: 18px;
 }
 
+.task-nav-panel,
+.task-detail-panel,
 .role-nav-panel,
 .role-detail-panel,
 .workflow-nav-panel,
@@ -709,6 +716,7 @@ strong {
   min-height: 0;
 }
 
+.task-nav-panel,
 .role-nav-panel,
 .workflow-nav-panel,
 .workforce-nav-panel {
@@ -717,6 +725,7 @@ strong {
   align-content: start;
 }
 
+.task-detail-panel,
 .role-detail-panel,
 .workflow-detail-panel,
 .workforce-detail-panel {
@@ -726,6 +735,7 @@ strong {
   padding: 20px;
 }
 
+.task-detail-stack,
 .workflow-lane-list,
 .workflow-validation-list,
 .workforce-detail-stack {
@@ -733,6 +743,7 @@ strong {
   gap: 10px;
 }
 
+.task-detail-stack,
 .workforce-detail-stack {
   align-content: start;
 }
@@ -818,10 +829,19 @@ strong {
   word-break: break-word;
 }
 
+.task-editor-grid,
 .workflow-editor-grid,
 .workflow-form-grid {
   display: grid;
   gap: 16px;
+}
+
+.task-editor-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-editor-grid__full {
+  grid-column: 1 / -1;
 }
 
 .workflow-form-grid {
@@ -837,14 +857,60 @@ strong {
   grid-column: 1 / -1;
 }
 
+.task-list-link {
+  display: grid;
+  gap: 6px;
+  white-space: normal;
+}
+
+.task-list-link__eyebrow,
+.task-list-link__meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.task-list-link__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-detail-sections,
+.task-section,
 .workflow-section,
 .workflow-lane-card {
   display: grid;
   gap: 16px;
+}
+
+.task-section,
+.workflow-section,
+.workflow-lane-card {
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.8);
+}
+
+.task-section-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-history-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(251, 246, 242, 0.9);
 }
 
 .workflow-section--compact {
@@ -923,6 +989,7 @@ strong {
 
 @media (max-width: 1100px) {
   .session-shell,
+  .task-shell,
   .workflow-shell,
   .panel--split,
   .panel--session-hero,
@@ -931,6 +998,7 @@ strong {
     flex-direction: column;
   }
 
+  .task-editor-grid,
   .workflow-form-grid,
   .workflow-form-grid--compact {
     grid-template-columns: 1fr;

@@ -403,6 +403,100 @@ pub struct RoleOperationsDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskComment {
+    pub id: String,
+    pub task_id: String,
+    pub author: String,
+    pub message: String,
+    pub interrupt_agent: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLaneRun {
+    pub id: String,
+    pub task_id: String,
+    pub lane_id: String,
+    pub session_id: String,
+    pub result: String,
+    pub notes: Option<String>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSummary {
+    pub id: String,
+    pub project_id: String,
+    pub number: String,
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub status: String,
+    pub priority: String,
+    pub workflow_id: Option<String>,
+    pub current_lane_id: Option<String>,
+    pub assignee_type: String,
+    pub assignee_id: Option<String>,
+    pub parent_task_id: Option<String>,
+    pub archived: bool,
+    pub comment_count: i64,
+    pub lane_run_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDetail {
+    pub id: String,
+    pub project_id: String,
+    pub number: String,
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub status: String,
+    pub priority: String,
+    pub workflow_id: Option<String>,
+    pub current_lane_id: Option<String>,
+    pub assignee_type: String,
+    pub assignee_id: Option<String>,
+    pub repository_id: Option<String>,
+    pub parent_task_id: Option<String>,
+    pub archived: bool,
+    pub comment_count: i64,
+    pub lane_run_count: i64,
+    pub comments: Vec<TaskComment>,
+    pub lane_runs: Vec<TaskLaneRun>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskUpsertInput {
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub status: String,
+    pub priority: String,
+    pub workflow_id: Option<String>,
+    pub current_lane_id: Option<String>,
+    pub assignee_type: String,
+    pub assignee_id: Option<String>,
+    pub repository_id: Option<String>,
+    pub parent_task_id: Option<String>,
+    pub archived: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowDefinition {
     pub id: String,
     pub slug: String,

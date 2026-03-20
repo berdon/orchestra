@@ -1,0 +1,449 @@
+import { useEffect, useMemo, useState } from "react";
+
+import { createTask, getTask, listTasks, listWorkflows, updateTask } from "../lib/tauri";
+import type { TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
+
+const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
+const TASK_STATUSES: TaskStatus[] = ["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"];
+const TASK_PRIORITIES: TaskPriority[] = ["P0", "P1", "P2", "P3", "P4"];
+
+function createBlankTaskDraft(): TaskUpsertInput {
+  return {
+    title: "",
+    description: "",
+    type: "task",
+    status: "draft",
+    priority: "P2",
+    workflowId: null,
+    currentLaneId: null,
+    assigneeType: "unassigned",
+    assigneeId: null,
+    repositoryId: null,
+    parentTaskId: null,
+    archived: false,
+  };
+}
+
+function taskToDraft(task: TaskDetail): TaskUpsertInput {
+  return {
+    title: task.title,
+    description: task.description ?? "",
+    type: (task.type as TaskType) ?? "task",
+    status: (task.status as TaskStatus) ?? "draft",
+    priority: (task.priority as TaskPriority) ?? "P2",
+    workflowId: task.workflowId ?? null,
+    currentLaneId: task.currentLaneId ?? null,
+    assigneeType: task.assigneeType,
+    assigneeId: task.assigneeId ?? null,
+    repositoryId: task.repositoryId ?? null,
+    parentTaskId: task.parentTaskId ?? null,
+    archived: task.archived,
+  };
+}
+
+function formatStatusLabel(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+function getStatusTone(status: string) {
+  switch (status) {
+    case "completed":
+      return "success";
+    case "blocked":
+      return "error";
+    case "in_review":
+      return "warning";
+    case "in_progress":
+      return "accent";
+    default:
+      return "neutral";
+  }
+}
+
+export function TasksPage() {
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [loadedTaskId, setLoadedTaskId] = useState<string | null>(null);
+  const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
+  const [taskDraft, setTaskDraft] = useState<TaskUpsertInput>(createBlankTaskDraft);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [loadingTaskDetail, setLoadingTaskDetail] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
+  const [taskActionError, setTaskActionError] = useState<string | null>(null);
+  const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+
+  const selectedTaskSummary = useMemo(
+    () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null,
+    [selectedTaskId, tasks],
+  );
+
+  const workflowLabelMap = useMemo(
+    () => new Map(workflows.map((workflow) => [workflow.id, workflow.name])),
+    [workflows],
+  );
+
+  async function loadTasks() {
+    setLoadingTasks(true);
+    setTaskActionError(null);
+
+    try {
+      const nextTasks = await listTasks(includeArchivedTasks);
+      setTasks(nextTasks);
+      setSelectedTaskId((current) => {
+        if (isCreatingTask) {
+          return current;
+        }
+
+        if (current && nextTasks.some((task) => task.id === current)) {
+          return current;
+        }
+
+        return nextTasks[0]?.id ?? null;
+      });
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to load tasks.");
+    } finally {
+      setLoadingTasks(false);
+    }
+  }
+
+  async function loadTaskDetail(taskId: string) {
+    setLoadingTaskDetail(true);
+    setTaskActionError(null);
+
+    try {
+      const task = await getTask(taskId);
+      setTaskDetail(task);
+      setTaskDraft(taskToDraft(task));
+      setLoadedTaskId(task.id);
+      setIsCreatingTask(false);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to load task.");
+    } finally {
+      setLoadingTaskDetail(false);
+    }
+  }
+
+  async function loadWorkflowsForTasks() {
+    try {
+      setWorkflows(await listWorkflows(false));
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to load workflows.");
+    }
+  }
+
+  function beginCreateTask() {
+    setTaskActionError(null);
+    setTaskDetail(null);
+    setTaskDraft(createBlankTaskDraft());
+    setLoadedTaskId(null);
+    setIsCreatingTask(true);
+  }
+
+  async function handleSaveTask() {
+    setSavingTask(true);
+    setTaskActionError(null);
+
+    try {
+      const saved = isCreatingTask || !loadedTaskId ? await createTask(taskDraft) : await updateTask(loadedTaskId, taskDraft);
+      await loadTasks();
+      setSelectedTaskId(saved.id);
+      await loadTaskDetail(saved.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to save task.");
+    } finally {
+      setSavingTask(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadTasks();
+  }, [includeArchivedTasks]);
+
+  useEffect(() => {
+    void loadWorkflowsForTasks();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTaskSummary || isCreatingTask) {
+      return;
+    }
+
+    if (selectedTaskSummary.id !== loadedTaskId) {
+      void loadTaskDetail(selectedTaskSummary.id);
+    }
+  }, [isCreatingTask, loadedTaskId, selectedTaskSummary?.id]);
+
+  return (
+    <section className="task-shell">
+      <aside className="task-nav-panel">
+        <div className="panel__header panel__header--stacked">
+          <div>
+            <p className="eyebrow">Workflow operations</p>
+            <h3>Tasks</h3>
+          </div>
+          <div className="action-cluster">
+            <label className="checkbox-row">
+              <input type="checkbox" checked={includeArchivedTasks} onChange={(event) => setIncludeArchivedTasks(event.target.checked)} />
+              Show archived
+            </label>
+            <button className="primary-button" data-role="new-task" type="button" onClick={beginCreateTask}>
+              New task
+            </button>
+          </div>
+        </div>
+
+        {loadingTasks ? <p className="muted-copy">Loading tasks…</p> : null}
+        {taskActionError ? <p className="error-copy">{taskActionError}</p> : null}
+
+        <nav className="task-list" aria-label="Tasks">
+          {tasks.map((task) => (
+            <a
+              key={task.id}
+              className={task.id === selectedTaskSummary?.id && !isCreatingTask ? "task-list-link task-list-link--active" : "task-list-link"}
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
+                setSelectedTaskId(task.id);
+                setIsCreatingTask(false);
+              }}
+            >
+              <span className="task-list-link__eyebrow">{task.number}</span>
+              <strong>{task.title}</strong>
+              <span className="task-list-link__meta">
+                <span>{formatStatusLabel(task.status)}</span>
+                <span>{task.priority}</span>
+                <span>{task.type}</span>
+              </span>
+            </a>
+          ))}
+        </nav>
+      </aside>
+
+      <section className="panel task-detail-panel">
+        {selectedTaskSummary || isCreatingTask ? (
+          <div className="task-detail-stack">
+            <div className="panel__header panel__header--session-detail">
+              <div>
+                <p className="eyebrow">Task detail</p>
+                <h3 data-role="task-title-heading">{isCreatingTask ? "New task" : taskDraft.title.trim() || selectedTaskSummary?.title || "Untitled task"}</h3>
+                {!isCreatingTask && selectedTaskSummary ? (
+                  <div className="session-detail__meta">
+                    <span>{selectedTaskSummary.number}</span>
+                    <span>{workflowLabelMap.get(selectedTaskSummary.workflowId ?? "") ?? "No workflow"}</span>
+                    <span>{selectedTaskSummary.commentCount} comments</span>
+                    <span>{selectedTaskSummary.laneRunCount} lane runs</span>
+                  </div>
+                ) : (
+                  <div className="session-detail__meta">
+                    <span>Create a workflow-driven task record for Orchestra.</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="action-cluster">
+                {!isCreatingTask && selectedTaskSummary ? (
+                  <span className={`status-badge status-badge--${getStatusTone(selectedTaskSummary.status)}`}>{formatStatusLabel(selectedTaskSummary.status)}</span>
+                ) : null}
+                <button className="primary-button" data-role="save-task" type="button" disabled={savingTask || loadingTaskDetail} onClick={() => void handleSaveTask()}>
+                  {savingTask ? "Saving…" : isCreatingTask ? "Create task" : "Save changes"}
+                </button>
+              </div>
+            </div>
+
+            <div className="task-editor-grid">
+              <label className="field-group">
+                <span className="field-group__label">Title</span>
+                <input
+                  className="text-input"
+                  data-role="task-title"
+                  value={taskDraft.title}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, title: event.target.value }))}
+                />
+              </label>
+
+              <label className="field-group">
+                <span className="field-group__label">Type</span>
+                <select
+                  className="select-input"
+                  data-role="task-type"
+                  value={taskDraft.type}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, type: event.target.value as TaskType }))}
+                >
+                  {TASK_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-group">
+                <span className="field-group__label">Status</span>
+                <select
+                  className="select-input"
+                  data-role="task-status"
+                  value={taskDraft.status}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, status: event.target.value as TaskStatus }))}
+                >
+                  {TASK_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {formatStatusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-group">
+                <span className="field-group__label">Priority</span>
+                <select
+                  className="select-input"
+                  data-role="task-priority"
+                  value={taskDraft.priority}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, priority: event.target.value as TaskPriority }))}
+                >
+                  {TASK_PRIORITIES.map((priority) => (
+                    <option key={priority} value={priority}>
+                      {priority}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-group">
+                <span className="field-group__label">Workflow</span>
+                <select
+                  className="select-input"
+                  data-role="task-workflow"
+                  value={taskDraft.workflowId ?? ""}
+                  onChange={(event) =>
+                    setTaskDraft((current) => ({
+                      ...current,
+                      workflowId: event.target.value || null,
+                      currentLaneId: null,
+                    }))
+                  }
+                >
+                  <option value="">No workflow selected</option>
+                  {workflows.map((workflow) => (
+                    <option key={workflow.id} value={workflow.id}>
+                      {workflow.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-group">
+                <span className="field-group__label">Assignee type</span>
+                <select
+                  className="select-input"
+                  data-role="task-assignee-type"
+                  value={taskDraft.assigneeType}
+                  onChange={(event) =>
+                    setTaskDraft((current) => ({
+                      ...current,
+                      assigneeType: event.target.value,
+                      assigneeId: ["agent", "role"].includes(event.target.value) ? current.assigneeId : null,
+                    }))
+                  }
+                >
+                  <option value="unassigned">unassigned</option>
+                  <option value="user">user</option>
+                  <option value="agent">agent</option>
+                  <option value="role">role</option>
+                </select>
+              </label>
+
+              {taskDraft.assigneeType === "agent" || taskDraft.assigneeType === "role" ? (
+                <label className="field-group task-editor-grid__full">
+                  <span className="field-group__label">Assignee id</span>
+                  <input
+                    className="text-input"
+                    data-role="task-assignee-id"
+                    placeholder={taskDraft.assigneeType === "agent" ? "agent slug" : "role slug"}
+                    value={taskDraft.assigneeId ?? ""}
+                    onChange={(event) => setTaskDraft((current) => ({ ...current, assigneeId: event.target.value || null }))}
+                  />
+                </label>
+              ) : null}
+
+              <label className="field-group task-editor-grid__full">
+                <span className="field-group__label">Description</span>
+                <textarea
+                  className="text-area"
+                  data-role="task-description"
+                  rows={6}
+                  value={taskDraft.description ?? ""}
+                  onChange={(event) => setTaskDraft((current) => ({ ...current, description: event.target.value }))}
+                />
+              </label>
+            </div>
+
+            <div className="task-detail-sections">
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Comments</p>
+                    <h4>Task conversation</h4>
+                  </div>
+                </div>
+
+                {taskDetail?.comments.length ? (
+                  <div className="task-section-list">
+                    {taskDetail.comments.map((comment) => (
+                      <article className="transcript-event transcript-event--system" key={comment.id}>
+                        <div className="transcript-event__meta">
+                          <span>{comment.author}</span>
+                          <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                        </div>
+                        <p>{comment.message}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No comments yet. Comment delivery and interrupt controls land in the next slice.</p>
+                )}
+              </section>
+
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Lane history</p>
+                    <h4>Execution continuity</h4>
+                  </div>
+                </div>
+
+                {taskDetail?.laneRuns.length ? (
+                  <div className="task-section-list">
+                    {taskDetail.laneRuns.map((laneRun) => (
+                      <article className="task-history-card" key={laneRun.id}>
+                        <div className="workflow-section__header">
+                          <strong>{laneRun.laneId}</strong>
+                          <span className={`status-badge status-badge--${laneRun.result === "success" ? "success" : laneRun.result === "failure" ? "error" : "neutral"}`}>
+                            {laneRun.result.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        <p className="muted-copy">Session {laneRun.sessionId}</p>
+                        {laneRun.notes ? <p>{laneRun.notes}</p> : null}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No lane runs recorded yet.</p>
+                )}
+              </section>
+            </div>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p className="eyebrow">No task selected</p>
+            <h3>Create or select a task</h3>
+            <p>The first task slice gives Orchestra a persisted task list and detail shell for workflow execution.</p>
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}

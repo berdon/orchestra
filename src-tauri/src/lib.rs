@@ -24,6 +24,7 @@ use commands::{
         create_session, delete_session, get_session_model_state, list_sessions, resume_session,
         send_session_message, set_session_model, subscribe_session, unsubscribe_session,
     },
+    tasks::{create_task, get_task, list_tasks, update_task},
     workflows::{
         archive_workflow, create_workflow, duplicate_workflow, get_workflow, list_workflows,
         update_workflow, validate_workflow,
@@ -103,6 +104,10 @@ pub fn run() {
             get_session_model_state,
             set_session_model,
             send_session_message,
+            list_tasks,
+            get_task,
+            create_task,
+            update_task,
             list_roles,
             get_role,
             validate_role,

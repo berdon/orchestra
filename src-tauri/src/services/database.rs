@@ -42,7 +42,7 @@ pub fn open_connection() -> Result<Connection, String> {
     })
 }
 
-fn apply_migrations(connection: &Connection) -> Result<(), String> {
+pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
             r#"
@@ -161,6 +161,70 @@ fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_agent_policy_assignments_policy_id
                 ON agent_policy_assignments(policy_id);
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                sequence_number INTEGER NOT NULL,
+                number TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                task_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                workflow_id TEXT,
+                current_lane_id TEXT,
+                assignee_type TEXT NOT NULL,
+                assignee_id TEXT,
+                repository_id TEXT,
+                parent_task_id TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
+                FOREIGN KEY(parent_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_sequence
+                ON tasks(project_id, sequence_number);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_number
+                ON tasks(project_id, number);
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_updated_at
+                ON tasks(updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_parent
+                ON tasks(parent_task_id);
+
+            CREATE TABLE IF NOT EXISTS task_comments (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                author TEXT NOT NULL,
+                message TEXT NOT NULL,
+                interrupt_agent INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_comments_task_id
+                ON task_comments(task_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS task_lane_runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                lane_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                result TEXT NOT NULL,
+                notes TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_lane_runs_task_id
+                ON task_lane_runs(task_id, started_at ASC);
 
             CREATE TABLE IF NOT EXISTS workflows (
                 id TEXT PRIMARY KEY,

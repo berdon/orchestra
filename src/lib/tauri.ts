@@ -12,6 +12,10 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionStreamEnvelope,
+  TaskDetail,
+  TaskLaneRun,
+  TaskSummary,
+  TaskUpsertInput,
   WorkflowDefinition,
   WorkflowLane,
   WorkflowSummary,
@@ -23,8 +27,10 @@ const LOG_STORAGE_KEY = "orchestra.mock.logs";
 const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
+const TASK_STORAGE_KEY = "orchestra.mock.tasks";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
+const CURRENT_PROJECT_ID = "orchestra";
 
 const MOCK_MODELS: SessionModel[] = [
   {
@@ -335,6 +341,190 @@ function summarizeWorkflow(workflow: WorkflowDefinition): WorkflowSummary {
     createdAt: workflow.createdAt,
     updatedAt: workflow.updatedAt,
   };
+}
+
+function seedMockTasks(): TaskDetail[] {
+  const timestamp = nowIso();
+  const workflow = ensureMockWorkflows()[0];
+  const firstLane = workflow?.lanes[0];
+  const secondLane = workflow?.lanes[1];
+
+  const planningTaskId = createId("task");
+  const planningSessionId = createId("session");
+
+  return [
+    {
+      id: planningTaskId,
+      projectId: CURRENT_PROJECT_ID,
+      number: "ORC-2",
+      title: "Implement task foundation shell",
+      description: "Add the first real Tasks page with list/detail editing so task orchestration can move out of placeholders.",
+      type: "feature",
+      status: "in_progress",
+      priority: "P1",
+      workflowId: workflow?.id ?? null,
+      currentLaneId: secondLane?.id ?? null,
+      assigneeType: "role",
+      assigneeId: "developer",
+      repositoryId: null,
+      parentTaskId: null,
+      archived: false,
+      commentCount: 1,
+      laneRunCount: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      comments: [
+        {
+          id: createId("task-comment"),
+          taskId: planningTaskId,
+          author: "User",
+          message: "Start with persistence and a task list/detail shell before layering on graph features.",
+          interruptAgent: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ],
+      laneRuns: secondLane
+        ? [
+            {
+              id: createId("lane-run"),
+              taskId: planningTaskId,
+              laneId: secondLane.id,
+              sessionId: planningSessionId,
+              result: "needs_user",
+              notes: "Waiting on task persistence APIs.",
+              startedAt: timestamp,
+              completedAt: null,
+            } satisfies TaskLaneRun,
+          ]
+        : [],
+    },
+    {
+      id: createId("task"),
+      projectId: CURRENT_PROJECT_ID,
+      number: "ORC-1",
+      title: "Define Orchestra task system",
+      description: "Document the task model including hierarchy, dependencies, attachments, and task tools.",
+      type: "epic",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow?.id ?? null,
+      currentLaneId: firstLane?.id ?? null,
+      assigneeType: "user",
+      assigneeId: null,
+      repositoryId: null,
+      parentTaskId: null,
+      archived: false,
+      commentCount: 0,
+      laneRunCount: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      comments: [],
+      laneRuns: [],
+    },
+  ];
+}
+
+function ensureMockTasks() {
+  const existing = getStoredValue<TaskDetail[]>(TASK_STORAGE_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const seeded = seedMockTasks();
+  setStoredValue(TASK_STORAGE_KEY, seeded);
+  return seeded;
+}
+
+function saveMockTasks(tasks: TaskDetail[]) {
+  setStoredValue(TASK_STORAGE_KEY, tasks);
+}
+
+function summarizeTask(task: TaskDetail): TaskSummary {
+  return {
+    id: task.id,
+    projectId: task.projectId,
+    number: task.number,
+    title: task.title,
+    description: task.description,
+    type: task.type,
+    status: task.status,
+    priority: task.priority,
+    workflowId: task.workflowId,
+    currentLaneId: task.currentLaneId,
+    assigneeType: task.assigneeType,
+    assigneeId: task.assigneeId,
+    parentTaskId: task.parentTaskId,
+    archived: task.archived,
+    commentCount: task.comments.length,
+    laneRunCount: task.laneRuns.length,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
+}
+
+function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetail): TaskDetail {
+  const timestamp = nowIso();
+  const previousTasks = ensureMockTasks();
+  const nextSequence = existingTask
+    ? Number(existingTask.number.replace(/^ORC-/, "")) || previousTasks.length + 1
+    : previousTasks.reduce((highest, task) => {
+        const sequence = Number(task.number.replace(/^ORC-/, "")) || 0;
+        return Math.max(highest, sequence);
+      }, 0) + 1;
+
+  return {
+    id: existingTask?.id ?? createId("task"),
+    projectId: existingTask?.projectId ?? CURRENT_PROJECT_ID,
+    number: existingTask?.number ?? `ORC-${nextSequence}`,
+    title: input.title.trim(),
+    description: input.description?.trim() || null,
+    type: input.type,
+    status: input.status,
+    priority: input.priority,
+    workflowId: input.workflowId?.trim() || null,
+    currentLaneId: input.currentLaneId?.trim() || null,
+    assigneeType: input.assigneeType,
+    assigneeId: input.assigneeId?.trim() || null,
+    repositoryId: input.repositoryId?.trim() || null,
+    parentTaskId: input.parentTaskId?.trim() || null,
+    archived: input.archived ?? existingTask?.archived ?? false,
+    commentCount: existingTask?.comments.length ?? 0,
+    laneRunCount: existingTask?.laneRuns.length ?? 0,
+    createdAt: existingTask?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+    comments: existingTask?.comments ?? [],
+    laneRuns: existingTask?.laneRuns ?? [],
+  };
+}
+
+function validateMockTaskInput(input: TaskUpsertInput) {
+  const errors: Array<{ path: string; message: string }> = [];
+
+  if (!input.title.trim()) {
+    errors.push({ path: "title", message: "Task title is required." });
+  }
+
+  if (!["task", "bug", "feature", "chore", "epic"].includes(input.type)) {
+    errors.push({ path: "type", message: "Task type must be one of: task, bug, feature, chore, epic." });
+  }
+
+  if (!["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"].includes(input.status)) {
+    errors.push({
+      path: "status",
+      message: "Task status must be one of: draft, ready, in_progress, blocked, in_review, completed, canceled.",
+    });
+  }
+
+  if (!["P0", "P1", "P2", "P3", "P4"].includes(input.priority)) {
+    errors.push({ path: "priority", message: "Task priority must be one of: P0, P1, P2, P3, P4." });
+  }
+
+  if (!["user", "agent", "role", "unassigned"].includes(input.assigneeType)) {
+    errors.push({ path: "assigneeType", message: "Assignee type must be one of: user, agent, role, unassigned." });
+  }
+
+  return errors;
 }
 
 function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidationResult {
@@ -829,6 +1019,68 @@ export async function sendSessionMessage(sessionId: string, message: string, run
   }
 
   return invoke<QueuedSessionMessage>("send_session_message", { sessionId, message: trimmedMessage, runId });
+}
+
+export async function listTasks(includeArchived = false): Promise<TaskSummary[]> {
+  if (!isTauriAvailable()) {
+    return ensureMockTasks().filter((task) => includeArchived || !task.archived).map(summarizeTask);
+  }
+
+  return invoke<TaskSummary[]>("list_tasks", { includeArchived });
+}
+
+export async function getTask(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const task = ensureMockTasks().find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+    return task;
+  }
+
+  return invoke<TaskDetail>("get_task", { taskId });
+}
+
+export async function createTask(input: TaskUpsertInput): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const validation = validateMockTaskInput(input);
+    if (validation.length > 0) {
+      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+    }
+
+    const task = normalizeMockTaskInput(input);
+    saveMockTasks([task, ...ensureMockTasks()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+    appendMockLog("info", "task.created", `Created task ${task.id}`);
+    return task;
+  }
+
+  return invoke<TaskDetail>("create_task", { input });
+}
+
+export async function updateTask(taskId: string, input: TaskUpsertInput): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const validation = validateMockTaskInput(input);
+    if (validation.length > 0) {
+      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+    }
+
+    const tasks = ensureMockTasks();
+    const existing = tasks.find((task) => task.id === taskId);
+    if (!existing) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+
+    const updated = normalizeMockTaskInput(input, existing);
+    saveMockTasks(
+      tasks
+        .map((task) => (task.id === taskId ? updated : task))
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+    );
+    appendMockLog("info", "task.updated", `Updated task ${taskId}`);
+    return updated;
+  }
+
+  return invoke<TaskDetail>("update_task", { taskId, input });
 }
 
 export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {
