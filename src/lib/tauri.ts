@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getActiveProjectId } from "./projects";
+import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import type {
   AgentSummary,
   AppInfo,
@@ -388,7 +388,7 @@ function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
         ? {
             ...entry,
             mainSessionId: session.id,
-            runtimeCwd: (typeof entry.runtimeCwd === "string" && entry.runtimeCwd) ? entry.runtimeCwd : `/mock/projects/${CURRENT_PROJECT_ID}`,
+            runtimeCwd: (typeof entry.runtimeCwd === "string" && entry.runtimeCwd) ? entry.runtimeCwd : getProjectRuntimeCwd(CURRENT_PROJECT_ID),
             status: entry.currentQueueEntryId ? "running" : "idle",
             updatedAt: nowIso(),
           }
@@ -1525,7 +1525,7 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
     if (lane.assignedEntityType === "agent" && assignment.workerId) {
       const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
       assignment.sessionId = agentSession.id;
-      assignment.runtimeCwd = `/mock/projects/${CURRENT_PROJECT_ID}`;
+      assignment.runtimeCwd = getProjectRuntimeCwd(CURRENT_PROJECT_ID);
       const agentQueueEntryId = createId("agent-queue");
       saveStoredMockAgentQueue([
         ...getStoredMockAgentQueue(),
@@ -1681,7 +1681,9 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
           workerId: nextLane.assignedEntityId ?? null,
           status: "active",
           sessionId: createId("session"),
-          runtimeCwd: `/mock/runtime/${nextLane.assignedEntityType}/${nextLane.assignedEntityId ?? "user"}`,
+          runtimeCwd: nextLane.assignedEntityType === "agent"
+            ? getProjectRuntimeCwd(CURRENT_PROJECT_ID)
+            : `/mock/runtime/${nextLane.assignedEntityType}/${nextLane.assignedEntityId ?? "user"}`,
           roleQueueEntryId: nextLane.assignedEntityType === "role" ? createId("queue") : null,
           roleInstanceId: nextLane.assignedEntityType === "role" ? createId("instance") : null,
           prompt: `Work task ${task.number}: ${task.title}`,
