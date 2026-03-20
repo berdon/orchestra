@@ -9,6 +9,7 @@ Agent orchestration framework focused on getting project work done.
 - [Design draft](docs/design.md)
 - [Authorization model](docs/authorization-model.md)
 - [Frontend permission management design](docs/permission-management-fe.md)
+- [Permission management implementation plan](docs/permission-management-implementation-plan.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Session storage](docs/session-storage.md)
 - [Role runtime plan](docs/role-runtime-plan.md)
