@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     models::{AuthorizationContext, SessionModel, SessionModelState, SessionStreamEnvelope},
-    services::{command_authorization, database, pi_sessions::get_session_path},
+    services::{database, pi_sessions::get_session_path, task_runtime},
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -577,9 +577,36 @@ pub fn maybe_runtime(
 
 fn runtime_authorization_context(session_id: &str) -> Result<Option<AuthorizationContext>, String> {
     let connection = database::open_connection()?;
+    runtime_authorization_context_for_connection(&connection, session_id)
+}
+
+fn runtime_authorization_context_for_connection(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<AuthorizationContext>, String> {
+    if let Some(active_assignment) = task_runtime::get_active_assignment_for_session(connection, session_id)? {
+        if active_assignment.worker_type == "role" {
+            if let Some(role_instance_id) = active_assignment.role_instance_id {
+                return Ok(Some(AuthorizationContext {
+                    actor_type: "role_instance".into(),
+                    actor_id: role_instance_id,
+                }));
+            }
+        }
+
+        if active_assignment.worker_type == "agent" {
+            if let Some(agent_id) = active_assignment.worker_id {
+                return Ok(Some(AuthorizationContext {
+                    actor_type: "agent".into(),
+                    actor_id: agent_id,
+                }));
+            }
+        }
+    }
+
     let role_instance_id = connection
         .query_row(
-            "SELECT id FROM role_instances WHERE session_id = ?1 LIMIT 1",
+            "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
             [session_id],
             |row| row.get::<_, String>(0),
         )
@@ -659,6 +686,118 @@ fn parse_model_summary(value: &Value) -> Option<SessionModel> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::{params, Connection};
+
+    use crate::services::database;
+
+    fn in_memory_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("open in-memory db");
+        database::apply_migrations(&connection).expect("apply migrations");
+        connection
+    }
+
+    fn seed_role(connection: &Connection, role_id: &str) {
+        connection
+            .execute(
+                "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, direct_permissions, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, 'off', 1, '[]', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                params![role_id, role_id, role_id],
+            )
+            .expect("role should seed");
+    }
+
+    #[test]
+    fn runtime_authorization_prefers_active_role_assignment_over_stale_session_binding() {
+        let connection = in_memory_connection();
+        seed_role(&connection, "role-1");
+        seed_role(&connection, "role-2");
+
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-stale', 'role-1', 'Stale instance', 'failed', NULL, 'session-1', NULL, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("stale role instance should seed");
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-active', 'role-2', 'Active instance', 'running', NULL, 'session-1', NULL, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("active role instance should seed");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES ('task-1', 'orchestra', 1, 'ORC-1', 'Task 1', NULL, 'task', 'in_progress', 'P1', NULL, NULL, 'role', 'role-2', NULL, NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("task should seed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-1', 'task-1', 'workflow-1', 'lane-1', 'role', 'role-2', 'active',
+                    'session-1', '/tmp/runtime', NULL, 'instance-active', NULL,
+                    '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                )
+                "#,
+                [],
+            )
+            .expect("active assignment should seed");
+
+        let authorization = runtime_authorization_context_for_connection(&connection, "session-1")
+            .expect("authorization should resolve")
+            .expect("authorization should exist");
+        assert_eq!(authorization.actor_type, "role_instance");
+        assert_eq!(authorization.actor_id, "instance-active");
+    }
+
+    #[test]
+    fn runtime_authorization_prefers_active_agent_assignment_over_stale_role_binding() {
+        let connection = in_memory_connection();
+        seed_role(&connection, "role-1");
+
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-stale', 'role-1', 'Stale instance', 'failed', NULL, 'session-2', NULL, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("stale role instance should seed");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES ('task-2', 'orchestra', 2, 'ORC-2', 'Task 2', NULL, 'task', 'in_progress', 'P1', NULL, NULL, 'agent', 'agent-1', NULL, NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("task should seed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-2', 'task-2', 'workflow-1', 'lane-2', 'agent', 'agent-1', 'active',
+                    'session-2', '/tmp/runtime', NULL, NULL, NULL,
+                    '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                )
+                "#,
+                [],
+            )
+            .expect("agent assignment should seed");
+
+        let authorization = runtime_authorization_context_for_connection(&connection, "session-2")
+            .expect("authorization should resolve")
+            .expect("authorization should exist");
+        assert_eq!(authorization.actor_type, "agent");
+        assert_eq!(authorization.actor_id, "agent-1");
+    }
 }
 
 fn extract_rpc_error(payload: &Value) -> String {
