@@ -604,6 +604,11 @@ strong {
   min-height: 72px;
 }
 
+.session-transcript-wrap {
+  position: relative;
+  min-height: 0;
+}
+
 .session-transcript {
   display: grid;
   gap: 12px;
@@ -611,6 +616,41 @@ strong {
   overflow: auto;
   padding: 0 4px 18px 0;
   align-content: start;
+}
+
+.session-scroll-indicator {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 252, 249, 0.92);
+  border: 1px solid rgba(143, 79, 47, 0.18);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  box-shadow: 0 8px 22px rgba(55, 33, 23, 0.08);
+  pointer-events: none;
+  opacity: 0.72;
+  transition: opacity 140ms ease, transform 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.session-scroll-indicator::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.8;
+}
+
+.session-scroll-indicator--locked {
+  color: var(--accent);
+  background: rgba(255, 248, 244, 0.96);
+  opacity: 0.95;
 }
 
 .transcript-event--assistant {

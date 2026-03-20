@@ -1,5 +1,5 @@
-import type { ChangeEvent, FormEvent, KeyboardEvent, RefObject } from "react";
-import type { SessionEvent, SessionModelState, SessionRecord, SessionStatus } from "../types";
+import type { ChangeEvent, FormEvent, KeyboardEvent, RefObject, UIEvent } from "react";
+import type { SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
 interface SessionsPageProps {
   sessions: SessionRecord[];
@@ -16,6 +16,7 @@ interface SessionsPageProps {
   draftMessage: string;
   sessionActionError: string | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
+  scrollState: SessionScrollState;
   formatDateTime: (timestamp: string) => string;
   formatTimestamp: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
@@ -43,6 +44,7 @@ export function SessionsPage({
   draftMessage,
   sessionActionError,
   transcriptRef,
+  scrollState,
   formatDateTime,
   formatTimestamp,
   formatModelOptionLabel,
@@ -68,6 +70,22 @@ export function SessionsPage({
 
   function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
     onDraftChange(event.target.value);
+  }
+
+  function handleTranscriptScroll(event: UIEvent<HTMLDivElement>) {
+    const node = event.currentTarget;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    const shouldLockToBottom = distanceFromBottom <= 24;
+    const nextLockedState = shouldLockToBottom;
+
+    if (nextLockedState !== scrollState.lockedToBottom) {
+      node.dispatchEvent(
+        new CustomEvent("orchestra:session-scroll-lock-change", {
+          bubbles: true,
+          detail: { lockedToBottom: nextLockedState },
+        }),
+      );
+    }
   }
 
   return (
@@ -166,23 +184,42 @@ export function SessionsPage({
                 </div>
               </div>
 
-              <div className="session-transcript" data-role="session-transcript" ref={transcriptRef} role="log" aria-live="polite">
-                {displayedEvents.map((event) => (
-                  <article
-                    className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
-                    key={event.id}
-                  >
-                    <div className="transcript-event__meta">
-                      <span>{event.kind}</span>
-                      <div className="transcript-event__meta-group">
-                        {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
-                        {event.pending ? <span className="pending-badge">Pending</span> : null}
-                        <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+              <div className="session-transcript-wrap">
+                <div
+                  className="session-transcript"
+                  data-role="session-transcript"
+                  data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
+                  ref={transcriptRef}
+                  role="log"
+                  aria-live="polite"
+                  onScroll={handleTranscriptScroll}
+                >
+                  {displayedEvents.map((event) => (
+                    <article
+                      className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
+                      key={event.id}
+                    >
+                      <div className="transcript-event__meta">
+                        <span>{event.kind}</span>
+                        <div className="transcript-event__meta-group">
+                          {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
+                          {event.pending ? <span className="pending-badge">Pending</span> : null}
+                          <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+                        </div>
                       </div>
-                    </div>
-                    <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
-                  </article>
-                ))}
+                      <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
+                    </article>
+                  ))}
+                </div>
+                <div
+                  className={scrollState.lockedToBottom ? "session-scroll-indicator session-scroll-indicator--locked" : "session-scroll-indicator"}
+                  data-role="session-scroll-indicator"
+                  data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {scrollState.lockedToBottom ? "Auto-scroll on" : "Viewing older messages"}
+                </div>
               </div>
 
               <form className="composer" onSubmit={handleComposerSubmit}>
