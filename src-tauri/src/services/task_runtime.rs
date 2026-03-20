@@ -1219,16 +1219,17 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
     sections.push(
         [
             "Available Orchestra task tools and exactly how to use them:",
-            "- get_task_context(task_id): Call this when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
-            "- comment_on_task(task_id, input): Use this to leave a durable note in Orchestra. Write comments for findings, progress updates, reviewer notes, handoff details, blockers, or decisions another worker must see later.",
-            "- create_subtask(parent_task_id, input): Use this when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
-            "- add_task_dependency(blocker_task_id, blocked_task_id): Use this when another task must be completed before the current one can proceed safely.",
-            "- remove_task_dependency(dependency_id): Use this only when an existing blocking relationship is no longer true.",
-            "- add_task_attachment(task_id, input): Use this for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs.",
-            "- remove_task_attachment(attachment_id): Use this only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
-            "- complete_lane_as_success(task_id, notes?): Use this when you finished the lane's goal and the task should follow the workflow's success transition.",
-            "- complete_lane_as_failure(task_id, notes?): Use this when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition.",
-            "- request_user_intervention(task_id, notes?): Use this when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding.",
+            "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
+            "- get_task_context(task_id): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
+            "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Write comments for findings, progress updates, reviewer notes, handoff details, blockers, or decisions another worker must see later.",
+            "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
+            "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
+            "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
+            "- add_task_attachment(task_id, input): Call this tool for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs.",
+            "- remove_task_attachment(attachment_id): Call this tool only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
+            "- complete_lane_as_success(task_id, notes?): Call this tool when you finished the lane's goal and the task should follow the workflow's success transition.",
+            "- complete_lane_as_failure(task_id, notes?): Call this tool when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition.",
+            "- request_user_intervention(task_id, notes?): Call this tool when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding.",
         ]
         .join("\n"),
     );
@@ -1236,11 +1237,11 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
     sections.push(
         [
             "Critical completion rules:",
-            "- You must end this lane by calling exactly one of: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
-            "- You are not done and cannot stop until you have used one of those tools.",
+            "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
+            "- You are not done and cannot stop until you have actually called one of those tools.",
             "- If any completion or transition step fails, call request_user_intervention instead of silently stopping.",
             "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment if useful, and then choose the correct transition deliberately.",
-            "- Do not just summarize what you would do. Actually use the Orchestra tools to update the task state.",
+            "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state.",
         ]
         .join("\n"),
     );
@@ -1491,13 +1492,14 @@ mod tests {
         assert!(prompt.contains("How to work effectively in this session:"));
         assert!(prompt.contains("2. Immediately call get_task_context using the canonical task ID shown above"));
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
-        assert!(prompt.contains("- get_task_context(task_id):"));
-        assert!(prompt.contains("- comment_on_task(task_id, input):"));
-        assert!(prompt.contains("- complete_lane_as_success(task_id, notes?):"));
-        assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?):"));
-        assert!(prompt.contains("- request_user_intervention(task_id, notes?):"));
-        assert!(prompt.contains("You must end this lane by calling exactly one of: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention."));
-        assert!(prompt.contains("Do not just summarize what you would do. Actually use the Orchestra tools to update the task state."));
+        assert!(prompt.contains("These names are real Orchestra tools/functions exposed in this session."));
+        assert!(prompt.contains("- get_task_context(task_id): Call this tool"));
+        assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool"));
+        assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
+        assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
+        assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
+        assert!(prompt.contains("You must end this lane by invoking exactly one Orchestra completion tool"));
+        assert!(prompt.contains("Do not just summarize what you would do. Actually call the Orchestra tools to update the task state."));
     }
 
     #[test]

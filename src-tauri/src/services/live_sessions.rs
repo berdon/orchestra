@@ -381,6 +381,13 @@ impl SessionRuntime {
         self.close_if_idle();
     }
 
+    pub fn has_active_prompt(&self) -> bool {
+        self.current_run_id
+            .lock()
+            .map(|current| current.is_some())
+            .unwrap_or(false)
+    }
+
     pub fn shutdown(&self) {
         self.mark_closed();
         if let Ok(mut stdin) = self.stdin.lock() {
