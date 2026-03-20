@@ -14,6 +14,8 @@ import type {
   SessionStreamEnvelope,
   TaskAttachment,
   TaskAttachmentInput,
+  TaskComment,
+  TaskCommentInput,
   TaskDependency,
   TaskDetail,
   TaskLaneRun,
@@ -1384,6 +1386,55 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
   }
 
   return invoke<TaskDependency>("remove_task_dependency", { dependencyId });
+}
+
+export async function commentOnTask(taskId: string, input: TaskCommentInput): Promise<TaskComment> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+
+    const author = input.author.trim();
+    const message = input.message.trim();
+    if (!author) {
+      throw new Error("author: Comment author is required.");
+    }
+    if (!message) {
+      throw new Error("message: Comment message is required.");
+    }
+
+    const comment: TaskComment = {
+      id: createId("task-comment"),
+      taskId,
+      author,
+      message,
+      interruptAgent: input.interruptAgent,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? {
+              ...entry,
+              comments: [...entry.comments, comment],
+              updatedAt: comment.updatedAt,
+            }
+          : entry,
+      ),
+    );
+    appendMockLog(
+      "info",
+      input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
+      `Added comment ${comment.id} to task ${taskId}`,
+    );
+    return comment;
+  }
+
+  return invoke<TaskComment>("comment_on_task", { taskId, input });
 }
 
 export async function addTaskAttachment(taskId: string, input: TaskAttachmentInput): Promise<TaskAttachment> {

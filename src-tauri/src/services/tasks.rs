@@ -1105,6 +1105,31 @@ mod tests {
     }
 
     #[test]
+    fn adds_comments_with_interrupt_flag() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Comment target", "in_progress", None);
+        let comment = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Reviewer".into(),
+                message: "Please course-correct before continuing.".into(),
+                interrupt_agent: true,
+            },
+        )
+        .expect("add task comment");
+
+        assert!(comment.interrupt_agent);
+        let loaded = get_task(&connection, &task.id).expect("load task with comments");
+        assert_eq!(loaded.comment_count, 1);
+        assert_eq!(loaded.comments.len(), 1);
+        assert_eq!(loaded.comments[0].author, "Reviewer");
+        assert!(loaded.comments[0].interrupt_agent);
+    }
+
+    #[test]
     fn adds_dependencies_and_computes_blocked_state() {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);

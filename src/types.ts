@@ -349,6 +349,12 @@ export interface TaskComment {
   updatedAt: string;
 }
 
+export interface TaskCommentInput {
+  author: string;
+  message: string;
+  interruptAgent: boolean;
+}
+
 export interface TaskDependency {
   id: string;
   blockerTaskId: string;

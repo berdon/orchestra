@@ -150,3 +150,29 @@ test("tasks page uploads text and image attachments", async ({ page }) => {
   expect(storedState?.attachments?.length).toBe(2);
   expect(storedState?.attachmentCount).toBe(2);
 });
+
+test("tasks page adds comments and records interrupt intent", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("link", { name: /Implement task foundation shell/i }).click();
+  await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
+  await page.locator('[data-role="task-comment-message"]').fill("Pause and re-check the task context before you continue.");
+  await page.locator('[data-role="task-comment-interrupt"]').check();
+  await page.locator('[data-role="add-task-comment"]').click();
+
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Reviewer");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Interrupt requested");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Pause and re-check the task context before you continue.");
+
+  const storedState = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((task: { title: string }) => task.title === "Implement task foundation shell") ?? null;
+  });
+
+  expect(storedState?.comments?.some((comment: { author: string; interruptAgent: boolean }) => comment.author === "Reviewer" && comment.interruptAgent)).toBe(true);
+});

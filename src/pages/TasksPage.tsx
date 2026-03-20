@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { addTaskAttachment, addTaskDependency, createTask, getTask, listTasks, listWorkflows, removeTaskAttachment, removeTaskDependency, updateTask } from "../lib/tauri";
-import type { TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
+import { addTaskAttachment, addTaskDependency, commentOnTask, createTask, getTask, listTasks, listWorkflows, removeTaskAttachment, removeTaskDependency, updateTask } from "../lib/tauri";
+import type { TaskCommentInput, TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
 const TASK_STATUSES: TaskStatus[] = ["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"];
@@ -21,6 +21,14 @@ function createBlankTaskDraft(): TaskUpsertInput {
     repositoryId: null,
     parentTaskId: null,
     archived: false,
+  };
+}
+
+function createBlankCommentDraft(): TaskCommentInput {
+  return {
+    author: "User",
+    message: "",
+    interruptAgent: false,
   };
 }
 
@@ -87,6 +95,7 @@ export function TasksPage() {
   const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState<string>("");
+  const [commentDraft, setCommentDraft] = useState<TaskCommentInput>(createBlankCommentDraft);
 
   const selectedTaskSummary = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null,
@@ -136,6 +145,7 @@ export function TasksPage() {
       const task = await getTask(taskId);
       setTaskDetail(task);
       setTaskDraft(taskToDraft(task));
+      setCommentDraft(createBlankCommentDraft());
       setLoadedTaskId(task.id);
       setIsCreatingTask(false);
     } catch (error) {
@@ -157,6 +167,7 @@ export function TasksPage() {
     setTaskActionError(null);
     setTaskDetail(null);
     setTaskDraft(createBlankTaskDraft());
+    setCommentDraft(createBlankCommentDraft());
     setLoadedTaskId(null);
     setIsCreatingTask(true);
   }
@@ -173,6 +184,7 @@ export function TasksPage() {
       workflowId: taskDetail?.workflowId ?? selectedTaskSummary.workflowId ?? null,
       parentTaskId: selectedTaskSummary.id,
     });
+    setCommentDraft(createBlankCommentDraft());
     setLoadedTaskId(null);
     setIsCreatingTask(true);
   }
@@ -259,6 +271,22 @@ export function TasksPage() {
       await loadTaskDetail(selectedTaskSummary.id);
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to remove attachment.");
+    }
+  }
+
+  async function handleAddComment() {
+    if (!selectedTaskSummary) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      await commentOnTask(selectedTaskSummary.id, commentDraft);
+      setCommentDraft(createBlankCommentDraft());
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to add comment.");
     }
   }
 
@@ -695,20 +723,63 @@ export function TasksPage() {
                   </div>
                 </div>
 
+                {!isCreatingTask && selectedTaskSummary ? (
+                  <div className="task-comment-composer">
+                    <div className="task-comment-composer__grid">
+                      <label className="field-group">
+                        <span className="field-group__label">Author</span>
+                        <input
+                          className="text-input"
+                          data-role="task-comment-author"
+                          value={commentDraft.author}
+                          onChange={(event) => setCommentDraft((current) => ({ ...current, author: event.target.value }))}
+                        />
+                      </label>
+                      <label className="checkbox-row task-comment-composer__interrupt">
+                        <input
+                          data-role="task-comment-interrupt"
+                          type="checkbox"
+                          checked={commentDraft.interruptAgent}
+                          onChange={(event) => setCommentDraft((current) => ({ ...current, interruptAgent: event.target.checked }))}
+                        />
+                        Interrupt current worker now
+                      </label>
+                    </div>
+                    <label className="field-group">
+                      <span className="field-group__label">Add comment</span>
+                      <textarea
+                        className="text-area"
+                        data-role="task-comment-message"
+                        rows={4}
+                        value={commentDraft.message}
+                        onChange={(event) => setCommentDraft((current) => ({ ...current, message: event.target.value }))}
+                      />
+                    </label>
+                    <div className="task-comment-composer__actions">
+                      <button className="primary-button" data-role="add-task-comment" type="button" onClick={() => void handleAddComment()}>
+                        Add comment
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 {taskDetail?.comments.length ? (
-                  <div className="task-section-list">
+                  <div className="task-section-list" data-role="task-comments">
                     {taskDetail.comments.map((comment) => (
                       <article className="transcript-event transcript-event--system" key={comment.id}>
                         <div className="transcript-event__meta">
                           <span>{comment.author}</span>
-                          <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                          <div className="transcript-event__meta-group">
+                            {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                            <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                          </div>
                         </div>
                         <p>{comment.message}</p>
                       </article>
                     ))}
                   </div>
                 ) : (
-                  <p className="muted-copy">No comments yet. Comment delivery and interrupt controls land in the next slice.</p>
+                  <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>
                 )}
               </section>
 
