@@ -163,21 +163,28 @@ Only after the session-first slice is working should the rest of the orchestrati
 - projects
 - repositories
 - tasks
+- task hierarchy / epics
+- task dependencies
+- task attachments
 - workflows
 - lane runs
 - comments
 - agents
 - roles
 - policies and permission resolution
+- task-oriented Orchestra tools
 
 ### Initial implementation order after sessions
 1. projects + repositories
-2. tasks + workflows + lane history
-3. comments with interrupt checkbox behavior
-4. policies, direct permissions, and permission-gated Orchestra tools
-5. agents + queues
-6. roles + FIFO queues + manual reorder UI later
-7. disposable role worktrees
+2. task foundation + workflows + lane history
+3. task hierarchy / epics
+4. task dependencies and blocked-state dispatch rules
+5. task attachments and agent-readable task context
+6. comments with interrupt checkbox behavior
+7. policies, direct permissions, and permission-gated Orchestra tools
+8. agents + queues
+9. roles + FIFO queues + manual reorder UI later
+10. disposable role worktrees
 
 ## Concrete task breakdown
 
@@ -208,7 +215,15 @@ Only after the session-first slice is working should the rest of the orchestrati
 3. verify behavior when no frontend is subscribed
 4. validate logs are sufficient for debugging
 
-### Track E: Authorization and privileged orchestration
+### Track E: Task system foundation
+1. persist tasks, comments, lane runs, dependencies, and attachments
+2. implement task CRUD plus list/detail queries
+3. implement parent/child task hierarchy and epic rollups
+4. implement dependency validation and blocked/ready computation
+5. implement attachment import into Orchestra-managed project storage
+6. expose `get_task_context` with lineage, dependency summaries, and attachment manifests
+
+### Track F: Authorization and privileged orchestration
 1. persist policies plus direct permissions on roles and agents
 2. seed the immutable `supervisor` policy and protected system `supervisor` agent
 3. resolve effective permissions for agents and role instances

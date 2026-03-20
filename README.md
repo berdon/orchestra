@@ -12,6 +12,7 @@ Agent orchestration framework focused on getting project work done.
 - [Session storage](docs/session-storage.md)
 - [Role runtime plan](docs/role-runtime-plan.md)
 - [Agent runtime plan](docs/agent-runtime-plan.md)
+- [Task system plan](docs/task-system-plan.md)
 
 ## App scaffold
 

@@ -119,6 +119,9 @@ It should emphasize:
 - comments
 - lane history
 - retry/review/intervention state
+- explicit blocked-by dependency state
+- parent/child task context for epics and subtasks
+- attachments that provide working context to both humans and agents
 
 #### Agents
 The agents area should unify persistent agents and transient roles into one workforce view.
