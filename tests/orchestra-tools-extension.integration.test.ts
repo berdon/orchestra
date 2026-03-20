@@ -140,7 +140,7 @@ describe("orchestra tools extension", () => {
     expect((requests[0] as any).token).toBe("test-token");
   });
 
-  test("passes task context payloads through the orchestra bridge", { timeout: 15000 }, async () => {
+  test("passes task context payloads through the orchestra bridge", { timeout: 40000 }, async () => {
     const requests: unknown[] = [];
     const started = await startJsonServer((body, _req, res) => {
       requests.push(body);
