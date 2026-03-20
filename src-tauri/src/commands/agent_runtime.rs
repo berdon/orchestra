@@ -1,8 +1,8 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
-    models::{AgentOperationsDetail, AgentOperationsSnapshot, AgentQueueEntry, AgentQueueEntryInput},
-    services::{agent_runtime, database},
+    models::{AgentOperationsDetail, AgentOperationsSnapshot, AgentQueueEntry, AgentQueueEntryInput, SessionRecord},
+    services::{agent_dispatch, agent_runtime, database, live_sessions::ensure_runtime, pi_sessions::{detect_session_context, get_session}},
     state::AppState,
 };
 
@@ -29,4 +29,29 @@ pub fn enqueue_agent_work(
     let entry = agent_runtime::enqueue_agent_work(&connection, input)?;
     state.log("info", "agent.queue.updated", &format!("Queued agent work {}", entry.id));
     Ok(entry)
+}
+
+#[tauri::command]
+pub async fn ensure_agent_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> Result<SessionRecord, String> {
+    let context = detect_session_context(None)?;
+    let runtime_state = agent_dispatch::ensure_main_session(&context.project_root, &context.session_dir, &agent_id)?;
+    let session_id = runtime_state
+        .main_session_id
+        .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
+
+    state.set_session_subscription(&session_id, true)?;
+    let runtime = ensure_runtime(
+        &state.session_runtimes,
+        app,
+        context.project_root,
+        context.session_dir.clone(),
+        &session_id,
+    )?;
+    runtime.set_subscribed(true);
+
+    get_session(&context.session_dir, &session_id, true)
 }

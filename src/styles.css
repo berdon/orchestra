@@ -1418,3 +1418,113 @@ strong {
     padding: 20px;
   }
 }
+
+.command-palette-overlay,
+.quick-chat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: start center;
+  padding: 64px 24px 24px;
+  background: rgba(31, 23, 32, 0.16);
+  backdrop-filter: blur(8px);
+}
+
+.command-palette {
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(78vh, 720px);
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+}
+
+.command-palette__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.command-palette__input {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: white;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.command-palette__results {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.command-palette__group-label {
+  margin: 12px 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.command-palette__item {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text);
+}
+
+.command-palette__item:hover,
+.command-palette__item--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.command-palette__item-title {
+  font-weight: 650;
+}
+
+.command-palette__item-subtitle {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.quick-chat-modal {
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(84vh, 820px);
+  display: grid;
+  gap: 16px;
+}
+
+.quick-chat-transcript {
+  min-height: 260px;
+  max-height: min(48vh, 420px);
+}
+
+@media (max-width: 900px) {
+  .command-palette-overlay,
+  .quick-chat-overlay {
+    padding: 24px 12px 12px;
+  }
+
+  .command-palette,
+  .quick-chat-modal {
+    width: min(100%, calc(100vw - 24px));
+  }
+
+  .command-palette__header {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,4 +1,5 @@
 export type PrimaryPage = "tasks" | "agents" | "sessions" | "settings";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "logs";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 

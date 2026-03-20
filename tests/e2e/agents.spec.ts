@@ -8,6 +8,7 @@ test("settings agents panel creates a global agent definition with access contro
   await page.goto("/");
 
   await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("tab", { name: "Agents" })).toBeVisible();
   await page.getByRole("tab", { name: "Agents" }).click();
   await page.locator('[data-role="new-agent"]').click();
 
@@ -50,6 +51,7 @@ test("protected supervisor keeps access locked while allowing model and overlay 
   await page.goto("/");
 
   await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("tab", { name: "Agents" })).toBeVisible();
   await page.getByRole("tab", { name: "Agents" }).click();
   await page.getByRole("link", { name: /Supervisor/i }).click();
 
@@ -84,6 +86,31 @@ test("protected supervisor keeps access locked while allowing model and overlay 
   expect(storedState.agent?.immutable).toBe(true);
   expect(storedState.agent?.policyIds).toContain("policy-supervisor");
   expect(storedState.overlay?.prompt).toBe("Use this project as the operational source of truth.");
+});
+
+test("agents page launches and reuses a persistent agent session", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+  await page.locator('[data-role="open-agent-session"]').click();
+
+  await expect(page.getByRole("button", { name: "Sessions" })).toHaveClass(/nav-item--active/);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+  await page.locator('[data-role="open-agent-session"]').click();
+
+  const storedState = await page.evaluate(() => {
+    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
+    return sessions.filter((session: { title: string }) => session.title === "Data main session").length;
+  });
+
+  expect(storedState).toBe(1);
 });
 
 test("agents page shows project-scoped agent runtime state from dispatched task work", async ({ page }) => {

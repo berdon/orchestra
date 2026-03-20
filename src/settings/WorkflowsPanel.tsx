@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
@@ -138,7 +138,11 @@ function describeOwner(
   };
 }
 
-export function WorkflowsPanel() {
+interface WorkflowsPanelProps {
+  selectionRequest?: { workflowId: string; token: number } | null;
+}
+
+export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [selectedLaneId, setSelectedLaneId] = useState<string | null>(null);
@@ -154,6 +158,7 @@ export function WorkflowsPanel() {
   const [loadedWorkflowArchived, setLoadedWorkflowArchived] = useState(false);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const selectionRequestTokenRef = useRef<number>(0);
 
   const selectedWorkflowSummary = useMemo(
     () => workflows.find((workflow) => workflow.id === selectedWorkflowId) ?? workflows[0] ?? null,
@@ -248,6 +253,16 @@ export function WorkflowsPanel() {
 
     void loadWorkflowDetail(workflowId);
   }, [selectedWorkflowSummary?.id, isCreatingWorkflow, loadedWorkflowId]);
+
+  useEffect(() => {
+    if (!selectionRequest || selectionRequest.token === selectionRequestTokenRef.current) {
+      return;
+    }
+
+    selectionRequestTokenRef.current = selectionRequest.token;
+    setIsCreatingWorkflow(false);
+    setSelectedWorkflowId(selectionRequest.workflowId);
+  }, [selectionRequest]);
 
   async function refreshWorkflowValidation(nextDraft: WorkflowUpsertInput) {
     try {

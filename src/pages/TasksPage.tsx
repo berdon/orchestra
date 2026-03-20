@@ -91,14 +91,17 @@ interface TaskTimelineItem {
 }
 
 interface TasksPageProps {
+  projectId?: string | null;
   createTaskToken?: number;
+  createTaskProjectId?: string | null;
+  openTaskRequest?: { taskId: string; token: number; projectId: string | null } | null;
 }
 
 function sameData<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next);
 }
 
-export function TasksPage({ createTaskToken = 0 }: TasksPageProps) {
+export function TasksPage({ projectId = null, createTaskToken = 0, createTaskProjectId = null, openTaskRequest = null }: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [workflowSummaries, setWorkflowSummaries] = useState<WorkflowSummary[]>([]);
@@ -116,7 +119,8 @@ export function TasksPage({ createTaskToken = 0 }: TasksPageProps) {
   const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
-  const createTaskTokenRef = useRef(createTaskToken);
+  const createTaskTokenRef = useRef(0);
+  const openTaskTokenRef = useRef(0);
 
   const filteredTasks = useMemo(() => {
     switch (taskFilter) {
@@ -293,13 +297,22 @@ export function TasksPage({ createTaskToken = 0 }: TasksPageProps) {
   }, [route, taskDraftDirty, includeArchivedTasks]);
 
   useEffect(() => {
-    if (createTaskToken === createTaskTokenRef.current) {
+    if (createTaskProjectId !== projectId || createTaskToken === createTaskTokenRef.current) {
       return;
     }
 
     createTaskTokenRef.current = createTaskToken;
     openCreateTask();
-  }, [createTaskToken]);
+  }, [createTaskProjectId, createTaskToken, projectId]);
+
+  useEffect(() => {
+    if (!openTaskRequest || openTaskRequest.projectId !== projectId || openTaskRequest.token === openTaskTokenRef.current) {
+      return;
+    }
+
+    openTaskTokenRef.current = openTaskRequest.token;
+    openTaskDetail(openTaskRequest.taskId);
+  }, [openTaskRequest, projectId]);
 
   function openCreateTask(parentTaskId?: string | null, workflowId?: string | null) {
     setTaskDraft({

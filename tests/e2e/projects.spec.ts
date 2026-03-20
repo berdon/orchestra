@@ -40,7 +40,7 @@ test("project switcher isolates browser-mode task state by project", async ({ pa
   await page.locator('[data-role="project-name"]').fill("Second Project");
   await page.getByRole("button", { name: /Create project/i }).click();
 
-  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.locator('[data-role="new-task"]').click();
   await page.locator('[data-role="task-title"]').fill("Project one task");
   await page.locator('[data-role="save-task"]').click();
@@ -48,7 +48,7 @@ test("project switcher isolates browser-mode task state by project", async ({ pa
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project one task");
 
   await page.locator('[data-role="project-switcher"]').selectOption({ label: "Second Project" });
-  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
 
   await page.locator('[data-role="new-task"]').click();
@@ -59,7 +59,7 @@ test("project switcher isolates browser-mode task state by project", async ({ pa
   await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
 
   await page.locator('[data-role="project-switcher"]').selectOption({ label: "Orchestra" });
-  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project one task");
   await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project two task");
 });

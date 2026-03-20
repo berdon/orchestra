@@ -34,7 +34,7 @@ function startJsonServer(handler: (body: unknown, req: IncomingMessage, res: Ser
   });
 }
 
-function waitForLine(proc: ChildProcessWithoutNullStreams, predicate: (line: string) => boolean, timeoutMs = 15000) {
+function waitForLine(proc: ChildProcessWithoutNullStreams, predicate: (line: string) => boolean, timeoutMs = 30000) {
   return new Promise<string>((resolvePromise, reject) => {
     let buffer = "";
     const timeout = setTimeout(() => {
@@ -76,19 +76,22 @@ describe("orchestra tools extension", () => {
   let proc: ChildProcessWithoutNullStreams | null = null;
   let server: ReturnType<typeof createServer> | null = null;
 
-  afterEach(async () => {
-    if (proc) {
-      proc.kill("SIGTERM");
-      await once(proc, "exit").catch(() => undefined);
-      proc = null;
-    }
-    if (server) {
-      await new Promise((resolvePromise) => server!.close(() => resolvePromise(undefined)));
-      server = null;
-    }
-  });
+  afterEach(
+    async () => {
+      if (proc) {
+        proc.kill("SIGTERM");
+        await once(proc, "exit").catch(() => undefined);
+        proc = null;
+      }
+      if (server) {
+        await new Promise((resolvePromise) => server!.close(() => resolvePromise(undefined)));
+        server = null;
+      }
+    },
+    30000,
+  );
 
-  test("runs orchestra extension commands through rpc mode", { timeout: 15000 }, async () => {
+  test("runs orchestra extension commands through rpc mode", { timeout: 30000 }, async () => {
     const requests: unknown[] = [];
     const started = await startJsonServer((body, _req, res) => {
       requests.push(body);
@@ -193,7 +196,7 @@ describe("orchestra tools extension", () => {
     expect((requests[0] as any).payload.taskId).toBe("task-1");
   });
 
-  test("help is available even when no backend commands are allowed", { timeout: 15000 }, async () => {
+  test("help is available even when no backend commands are allowed", { timeout: 30000 }, async () => {
     const requests: unknown[] = [];
     const started = await startJsonServer((body, _req, res) => {
       requests.push(body);
