@@ -26,6 +26,26 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
 });
 
+test("sessions composer stays enabled while earlier messages are still pending", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  await page.locator('[data-role="composer-input"]').fill("First queued message");
+  await page.locator('[data-role="send-message"]').click();
+
+  await page.locator('[data-role="composer-input"]').fill("Second queued message");
+  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
+  await expect(page.locator('[data-role="send-message"]')).toContainText("Send message");
+  await page.locator('[data-role="send-message"]').click();
+
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("First queued message", { timeout: 10_000 });
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Second queued message", { timeout: 10_000 });
+});
+
 test("sessions UI shows tool invocations in the transcript", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -1271,7 +1271,7 @@ export function App() {
     }
 
     const trimmedMessage = (draftMessages[sessionId] ?? "").trim();
-    if (!trimmedMessage || pendingRuns[sessionId]) {
+    if (!trimmedMessage) {
       return;
     }
 

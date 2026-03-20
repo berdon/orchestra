@@ -122,8 +122,8 @@ export function SupervisorQuickChatModal({
           </label>
           <div className="composer__footer">
             <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
-            <button className="primary-button" data-role="supervisor-send-message" type="submit" disabled={pending || draftMessage.trim().length === 0}>
-              {pending ? "Sending…" : "Send"}
+            <button className="primary-button" data-role="supervisor-send-message" type="submit" disabled={draftMessage.trim().length === 0}>
+              Send
             </button>
           </div>
         </form>
