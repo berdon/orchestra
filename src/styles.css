@@ -987,6 +987,22 @@ strong {
   gap: 12px;
 }
 
+.task-comment-composer,
+.task-comment-composer__grid,
+.task-comment-composer__actions {
+  display: grid;
+  gap: 12px;
+}
+
+.task-comment-composer__grid {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.task-comment-composer__interrupt {
+  padding-bottom: 10px;
+}
+
 .task-attachment-upload {
   position: relative;
   overflow: hidden;
@@ -1102,6 +1118,7 @@ strong {
 
   .task-editor-grid,
   .task-dependency-grid,
+  .task-comment-composer__grid,
   .workflow-form-grid,
   .workflow-form-grid--compact {
     grid-template-columns: 1fr;
