@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getActiveProjectId } from "./projects";
 import type {
   AgentSummary,
   AppInfo,
@@ -40,6 +41,14 @@ const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
 const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 const CURRENT_PROJECT_ID = "orchestra";
+
+function sessionStorageKey() {
+  return `${SESSION_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+}
+
+function sessionModelStorageKey() {
+  return `${SESSION_MODEL_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+}
 
 const MOCK_MODELS: SessionModel[] = [
   {
@@ -225,13 +234,13 @@ function ensureMockLogs() {
 }
 
 function ensureMockSessions() {
-  const existing = getStoredValue<SessionRecord[]>(SESSION_STORAGE_KEY);
+  const existing = getStoredValue<SessionRecord[]>(sessionStorageKey());
   if (existing) {
     return existing;
   }
 
   const seeded = seedMockSessions();
-  setStoredValue(SESSION_STORAGE_KEY, seeded);
+  setStoredValue(sessionStorageKey(), seeded);
   return seeded;
 }
 
@@ -305,11 +314,11 @@ function saveMockWorkflows(workflows: WorkflowDefinition[]) {
 }
 
 function getMockSessionModels() {
-  return getStoredValue<Record<string, SessionModel>>(SESSION_MODEL_STORAGE_KEY) ?? {};
+  return getStoredValue<Record<string, SessionModel>>(sessionModelStorageKey()) ?? {};
 }
 
 function setMockSessionModels(models: Record<string, SessionModel>) {
-  setStoredValue(SESSION_MODEL_STORAGE_KEY, models);
+  setStoredValue(sessionModelStorageKey(), models);
 }
 
 function ensureMockSessionModel(sessionId: string) {
@@ -328,7 +337,7 @@ function appendMockLog(level: LogLevel, target: string, message: string) {
 }
 
 function saveMockSessions(sessions: SessionRecord[]) {
-  setStoredValue(SESSION_STORAGE_KEY, sessions);
+  setStoredValue(sessionStorageKey(), sessions);
 }
 
 function updateMockSession(sessionId: string, updater: (session: SessionRecord) => SessionRecord) {
@@ -701,7 +710,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
 
   return {
     id: existingTask?.id ?? createId("task"),
-    projectId: existingTask?.projectId ?? CURRENT_PROJECT_ID,
+    projectId: existingTask?.projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID,
     number: existingTask?.number ?? `ORC-${nextSequence}`,
     title: input.title.trim(),
     description: input.description?.trim() || null,
@@ -1296,7 +1305,11 @@ export async function sendSessionMessage(sessionId: string, message: string, run
 
 export async function listTasks(includeArchived = false): Promise<TaskSummary[]> {
   if (!isTauriAvailable()) {
-    return ensureMockTasks().filter((task) => includeArchived || !task.archived).map(summarizeTask);
+    const activeProjectId = getActiveProjectId();
+    return ensureMockTasks()
+      .filter((task) => task.projectId === activeProjectId)
+      .filter((task) => includeArchived || !task.archived)
+      .map(summarizeTask);
   }
 
   return invoke<TaskSummary[]>("list_tasks", { includeArchived });
@@ -1304,7 +1317,8 @@ export async function listTasks(includeArchived = false): Promise<TaskSummary[]>
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    const task = ensureMockTasks().find((entry) => entry.id === taskId);
+    const activeProjectId = getActiveProjectId();
+    const task = ensureMockTasks().find((entry) => entry.projectId === activeProjectId && entry.id === taskId);
     if (!task) {
       throw new Error(`Task ${taskId} was not found`);
     }

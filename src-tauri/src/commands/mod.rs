@@ -3,6 +3,7 @@ pub mod agents;
 pub mod app;
 pub mod dispatcher;
 pub mod policies;
+pub mod projects;
 pub mod project_settings;
 pub mod role_dispatch;
 pub mod role_runtime;

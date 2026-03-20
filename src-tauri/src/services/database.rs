@@ -48,6 +48,35 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             r#"
             PRAGMA foreign_keys = ON;
 
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                default_repository_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS repositories (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                slug TEXT NOT NULL,
+                name TEXT NOT NULL,
+                local_path TEXT,
+                remote_url TEXT,
+                default_branch TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_repositories_project_slug
+                ON repositories(project_id, slug);
+
+            CREATE INDEX IF NOT EXISTS idx_repositories_project_updated
+                ON repositories(project_id, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 slug TEXT NOT NULL,

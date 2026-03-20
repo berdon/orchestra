@@ -15,11 +15,13 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
+import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { AgentsPage } from "./agents/AgentsPage";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { AgentsPanel } from "./settings/AgentsPanel";
+import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
@@ -27,6 +29,7 @@ import type {
   JsonValue,
   LogEntry,
   PrimaryPage,
+  ProjectSummary,
   SessionEvent,
   SessionModelState,
   SessionRecord,
@@ -42,6 +45,7 @@ const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
 ];
 
 const SETTINGS_TABS = [
+  { id: "projects", label: "Projects" },
   { id: "agents", label: "Agents" },
   { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
@@ -204,7 +208,9 @@ function hasVisibleAssistantText(event?: SessionEvent) {
 
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("agents");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("projects");
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(getActiveProjectId());
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -223,6 +229,11 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
+
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
+    [activeProjectId, projects],
+  );
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
@@ -600,9 +611,35 @@ export function App() {
   );
 
   useEffect(() => {
+    const loadProjectCatalog = () => {
+      void listProjects().then((nextProjects) => {
+        setProjects(nextProjects);
+        setActiveProjectIdState((current) => {
+          if (current && nextProjects.some((project) => project.id === current)) {
+            return current;
+          }
+          const fallback = nextProjects[0]?.id ?? null;
+          if (fallback) {
+            setActiveProjectId(fallback);
+          }
+          return fallback;
+        });
+      });
+    };
+
     void getAppInfo().then(setAppInfo);
     void isCurrentLogsWindow().then(setIsLogsWindow);
+    loadProjectCatalog();
+    const onProjectsChanged = () => loadProjectCatalog();
+    window.addEventListener("orchestra:projects-changed", onProjectsChanged);
+    return () => window.removeEventListener("orchestra:projects-changed", onProjectsChanged);
   }, []);
+
+  useEffect(() => {
+    if (activeProjectId) {
+      setActiveProjectId(activeProjectId);
+    }
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -843,9 +880,18 @@ export function App() {
         <div className="sidebar__top">
           <div className="project-switcher">
             <span className="project-switcher__label">Project</span>
-            <button className="project-switcher__button" type="button">
-              Orchestra <span aria-hidden="true">▾</span>
-            </button>
+            <select
+              className="project-switcher__button"
+              data-role="project-switcher"
+              value={activeProject?.id ?? ""}
+              onChange={(event) => setActiveProjectIdState(event.target.value || null)}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <nav className="primary-nav" aria-label="Primary">
@@ -925,7 +971,9 @@ export function App() {
         </header>
 
         {activePage === "settings" ? (
-          settingsTab === "agents" ? (
+          settingsTab === "projects" ? (
+            <ProjectsPanel />
+          ) : settingsTab === "agents" ? (
             <AgentsPanel />
           ) : settingsTab === "roles" ? (
             <RolesPanel />
@@ -952,7 +1000,7 @@ export function App() {
             </section>
           )
         ) : activePage === "agents" ? (
-          <AgentsPage />
+          <AgentsPage key={activeProject?.id ?? "default"} />
         ) : activePage === "sessions" ? (
           <SessionsPage
             sessions={sessions}
@@ -979,7 +1027,7 @@ export function App() {
             onSendMessage={handleSendMessage}
           />
         ) : (
-          <TasksPage />
+          <TasksPage key={activeProject?.id ?? "default"} />
         )}
       </main>
     </div>

@@ -20,6 +20,44 @@ export interface AppInfo {
   backendStatus: "connected" | "mock";
 }
 
+export interface ProjectSummary {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  defaultRepositoryId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RepositoryRecord {
+  id: string;
+  projectId: string;
+  slug: string;
+  name: string;
+  localPath?: string | null;
+  remoteUrl?: string | null;
+  defaultBranch?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  repositories: RepositoryRecord[];
+}
+
+export interface ProjectUpsertInput {
+  name: string;
+  description?: string | null;
+}
+
+export interface RepositoryUpsertInput {
+  name: string;
+  localPath?: string | null;
+  remoteUrl?: string | null;
+  defaultBranch?: string | null;
+}
+
 export interface SessionModel {
   id: string;
   name: string;
