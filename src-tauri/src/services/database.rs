@@ -245,6 +245,22 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_dependencies_blocked
                 ON task_dependencies(blocked_task_id);
 
+            CREATE TABLE IF NOT EXISTS task_attachments (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                stored_path TEXT NOT NULL,
+                caption TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_attachments_task_id
+                ON task_attachments(task_id, created_at ASC);
+
             CREATE TABLE IF NOT EXISTS workflows (
                 id TEXT PRIMARY KEY,
                 slug TEXT NOT NULL UNIQUE,

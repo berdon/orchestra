@@ -50,6 +50,14 @@ pub fn project_settings_path(root: &Path, project_slug: &str) -> PathBuf {
     project_root(root, project_slug).join("settings.json")
 }
 
+pub fn project_attachments_dir(root: &Path, project_slug: &str) -> PathBuf {
+    project_root(root, project_slug).join("attachments")
+}
+
+pub fn task_attachments_dir(root: &Path, project_slug: &str, task_id: &str) -> PathBuf {
+    project_attachments_dir(root, project_slug).join(task_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

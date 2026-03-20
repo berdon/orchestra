@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::{
-    models::{TaskDependency, TaskDetail, TaskSummary, TaskUpsertInput},
-    services::{database, tasks},
+    models::{TaskAttachment, TaskAttachmentInput, TaskDependency, TaskDetail, TaskSummary, TaskUpsertInput},
+    services::{database, task_attachments, tasks},
     state::AppState,
 };
 
@@ -102,4 +102,51 @@ pub fn remove_task_dependency(
         "success",
     );
     Ok(dependency)
+}
+
+#[tauri::command]
+pub fn add_task_attachment(
+    state: State<'_, AppState>,
+    task_id: String,
+    input: TaskAttachmentInput,
+) -> Result<TaskAttachment, String> {
+    let mut connection = database::open_connection()?;
+    let attachment = task_attachments::add_task_attachment(&mut connection, &task_id, input)?;
+    state.log(
+        "info",
+        "task.attachment.added",
+        &format!("Added attachment {} to task {}", attachment.id, task_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "add_task_attachment",
+        None,
+        None,
+        &attachment.id,
+        "success",
+    );
+    Ok(attachment)
+}
+
+#[tauri::command]
+pub fn remove_task_attachment(
+    state: State<'_, AppState>,
+    attachment_id: String,
+) -> Result<TaskAttachment, String> {
+    let connection = database::open_connection()?;
+    let attachment = task_attachments::remove_task_attachment(&connection, &attachment_id)?;
+    state.log(
+        "info",
+        "task.attachment.removed",
+        &format!("Removed attachment {}", attachment_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "remove_task_attachment",
+        None,
+        None,
+        &attachment_id,
+        "success",
+    );
+    Ok(attachment)
 }

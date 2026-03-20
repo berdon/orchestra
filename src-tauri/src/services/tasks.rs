@@ -2,8 +2,12 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
-use crate::models::{
-    TaskComment, TaskDependency, TaskDetail, TaskLaneRun, TaskSummary, TaskUpsertInput,
+use crate::{
+    models::{
+        TaskAttachment, TaskComment, TaskDependency, TaskDetail, TaskLaneRun, TaskSummary,
+        TaskUpsertInput,
+    },
+    services::task_attachments,
 };
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
@@ -81,18 +85,20 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     blocked_child_count: row.get(19)?,
                     blocked_by_count: row.get(20)?,
                     blocking_count: row.get(21)?,
-                    dependency_blocked: row.get::<_, i64>(22)? != 0,
-                    ready_for_dispatch: row.get::<_, i64>(23)? != 0,
-                    repository_id: row.get(26)?,
+                    attachment_count: row.get(22)?,
+                    dependency_blocked: row.get::<_, i64>(23)? != 0,
+                    ready_for_dispatch: row.get::<_, i64>(24)? != 0,
+                    repository_id: row.get(27)?,
                     parent: None,
                     lineage: Vec::new(),
                     children: Vec::new(),
                     blocked_by: Vec::new(),
                     blocking: Vec::new(),
+                    attachments: Vec::new(),
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
-                    created_at: row.get(24)?,
-                    updated_at: row.get(25)?,
+                    created_at: row.get(25)?,
+                    updated_at: row.get(26)?,
                 })
             },
         )
@@ -105,6 +111,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.children = load_child_tasks(connection, task_id)?;
     task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
     task.blocking = load_blocking_dependencies(connection, task_id)?;
+    task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
     Ok(task)
@@ -822,6 +829,7 @@ fn task_summary_columns(alias: &str) -> String {
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'blocked'), 0) AS blocked_child_count,
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocked_task_id = {alias}.id), 0) AS blocked_by_count,
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocker_task_id = {alias}.id), 0) AS blocking_count,
+        COALESCE((SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = {alias}.id), 0) AS attachment_count,
         CASE WHEN {unresolved_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
         CASE WHEN {alias}.archived = 0 AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 THEN 1 ELSE 0 END AS ready_for_dispatch,
         {alias}.created_at,
@@ -861,10 +869,11 @@ fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
         blocked_child_count: row.get(19)?,
         blocked_by_count: row.get(20)?,
         blocking_count: row.get(21)?,
-        dependency_blocked: row.get::<_, i64>(22)? != 0,
-        ready_for_dispatch: row.get::<_, i64>(23)? != 0,
-        created_at: row.get(24)?,
-        updated_at: row.get(25)?,
+        attachment_count: row.get(22)?,
+        dependency_blocked: row.get::<_, i64>(23)? != 0,
+        ready_for_dispatch: row.get::<_, i64>(24)? != 0,
+        created_at: row.get(25)?,
+        updated_at: row.get(26)?,
     })
 }
 
