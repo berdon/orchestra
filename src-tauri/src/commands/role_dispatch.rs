@@ -69,5 +69,13 @@ pub fn dispose_role_instance(
         "role.worktree.disposed",
         &format!("Disposed role instance {}", instance_id),
     );
+    state.log_authorized_action(
+        "auth.audit",
+        "dispose_role_instance",
+        None,
+        None,
+        &instance_id,
+        "success",
+    );
     Ok(detail)
 }

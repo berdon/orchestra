@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    models::LogEntry,
+    models::{AuthorizationContext, LogEntry},
     services::{live_sessions::SessionRuntime, tool_bridge::ToolBridgeConfig},
 };
 
@@ -63,6 +63,29 @@ impl AppState {
         if let Ok(mut logs) = self.logs.lock() {
             logs.clear();
         }
+    }
+
+    pub fn log_authorized_action(
+        &self,
+        target: &str,
+        action: &str,
+        authorization: Option<&AuthorizationContext>,
+        permission: Option<&str>,
+        object: &str,
+        outcome: &str,
+    ) {
+        let actor = authorization
+            .map(|ctx| format!("{}:{}", ctx.actor_type, ctx.actor_id))
+            .unwrap_or_else(|| "unknown".into());
+        let permission = permission.unwrap_or("none");
+        self.log(
+            "info",
+            target,
+            &format!(
+                "action={} actor={} permission={} object={} outcome={}",
+                action, actor, permission, object, outcome
+            ),
+        );
     }
 
     pub fn set_session_subscription(

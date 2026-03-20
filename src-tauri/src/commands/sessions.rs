@@ -271,6 +271,14 @@ pub async fn set_session_model(
             session_id, provider, model_id
         ),
     );
+    state.log_authorized_action(
+        "auth.audit",
+        "set_session_model",
+        None,
+        None,
+        &session_id,
+        "success",
+    );
 
     Ok(result)
 }
@@ -324,6 +332,14 @@ pub async fn send_session_message(
                 "info",
                 "sessions.message.start",
                 &format!("Sent prompt to live pi RPC session {}", session_id),
+            );
+            state.log_authorized_action(
+                "auth.audit",
+                "send_session_message",
+                None,
+                None,
+                &session_id,
+                "success",
             );
             Ok(queued)
         }
