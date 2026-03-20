@@ -1,11 +1,11 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     models::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskDependency,
         TaskDetail, TaskSummary, TaskUpsertInput,
     },
-    services::{database, task_attachments, tasks},
+    services::{database, pi_sessions, task_attachments, task_runtime, tasks},
     state::AppState,
 };
 
@@ -87,13 +87,26 @@ pub fn update_task(
 }
 
 #[tauri::command]
-pub fn comment_on_task(
+pub async fn comment_on_task(
+    app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     input: TaskCommentInput,
 ) -> Result<TaskComment, String> {
+    let context = tauri::async_runtime::spawn_blocking(move || pi_sessions::detect_session_context(None))
+        .await
+        .map_err(|error| format!("Unable to join task comment context task: {error}"))??;
     let mut connection = database::open_connection()?;
     let comment = tasks::add_task_comment(&mut connection, &task_id, input)?;
+    if let Some(active_assignment) = task_runtime::get_active_lane_assignment(&connection, &task_id)? {
+        task_runtime::maybe_interrupt_with_comment(
+            app,
+            &state,
+            context.session_dir.clone(),
+            &active_assignment,
+            &comment,
+        )?;
+    }
     state.log("info", "task.commented", &format!("Added comment {} to task {}", comment.id, task_id));
     state.log_authorized_action(
         "auth.audit",
@@ -198,4 +211,108 @@ pub fn remove_task_attachment(
         "success",
     );
     Ok(attachment)
+}
+
+#[tauri::command]
+pub async fn dispatch_task_lane(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let context = tauri::async_runtime::spawn_blocking(move || pi_sessions::detect_session_context(None))
+        .await
+        .map_err(|error| format!("Unable to join task dispatch context task: {error}"))??;
+    let mut connection = database::open_connection()?;
+    let assignment = task_runtime::dispatch_task_lane(
+        &mut connection,
+        &context.project_root,
+        &context.session_dir,
+        &task_id,
+    )?;
+    task_runtime::start_assignment_run(app, &state, context.session_dir.clone(), &assignment)?;
+    let task = tasks::get_task_context(&connection, &task_id)?;
+    state.log("info", "task.dispatch", &format!("Dispatched task lane for task {}", task_id));
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn complete_lane_as_success(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    complete_lane_command(app, state, task_id, notes, "success").await
+}
+
+#[tauri::command]
+pub async fn complete_lane_as_failure(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    complete_lane_command(app, state, task_id, notes, "failure").await
+}
+
+#[tauri::command]
+pub async fn request_user_intervention(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    complete_lane_command(app, state, task_id, notes, "needs_user").await
+}
+
+async fn complete_lane_command(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+    outcome: &str,
+) -> Result<TaskDetail, String> {
+    let context = tauri::async_runtime::spawn_blocking(move || pi_sessions::detect_session_context(None))
+        .await
+        .map_err(|error| format!("Unable to join lane completion context task: {error}"))??;
+    let mut connection = database::open_connection()?;
+    let mut task = match outcome {
+        "success" => task_runtime::complete_lane_as_success(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &task_id,
+            notes,
+            None,
+        )?,
+        "failure" => task_runtime::complete_lane_as_failure(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &task_id,
+            notes,
+            None,
+        )?,
+        _ => task_runtime::request_user_intervention(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &task_id,
+            notes,
+            None,
+        )?,
+    };
+
+    if let Some(next_assignment) = task_runtime::maybe_auto_dispatch_task(
+        &mut connection,
+        &context.project_root,
+        &context.session_dir,
+        &task_id,
+    )? {
+        task_runtime::start_assignment_run(app, &state, context.session_dir.clone(), &next_assignment)?;
+        task = tasks::get_task_context(&connection, &task_id)?;
+    }
+
+    state.log("info", "task.transition", &format!("Completed task lane {} with outcome {}", task_id, outcome));
+    Ok(task)
 }

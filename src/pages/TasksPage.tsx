@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
-import { addTaskAttachment, addTaskDependency, commentOnTask, createTask, getTask, listTasks, listWorkflows, removeTaskAttachment, removeTaskDependency, updateTask } from "../lib/tauri";
+import { addTaskAttachment, addTaskDependency, commentOnTask, completeLaneAsFailure, completeLaneAsSuccess, createTask, dispatchTaskLane, getTask, listTasks, listWorkflows, removeTaskAttachment, removeTaskDependency, requestUserIntervention, updateTask } from "../lib/tauri";
 import type { AgentSummary, RoleSummary, TaskCommentInput, TaskDetail, TaskPriority, TaskStatus, TaskSummary, TaskType, TaskUpsertInput, WorkflowSummary } from "../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
@@ -316,6 +316,42 @@ export function TasksPage() {
     }
   }
 
+  async function handleDispatchTaskLane() {
+    if (!selectedTaskSummary) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      await dispatchTaskLane(selectedTaskSummary.id);
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to dispatch task lane.");
+    }
+  }
+
+  async function handleCompleteLane(outcome: "success" | "failure" | "needs_user") {
+    if (!selectedTaskSummary) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      if (outcome === "success") {
+        await completeLaneAsSuccess(selectedTaskSummary.id);
+      } else if (outcome === "failure") {
+        await completeLaneAsFailure(selectedTaskSummary.id);
+      } else {
+        await requestUserIntervention(selectedTaskSummary.id);
+      }
+      await loadTasks();
+      await loadTaskDetail(selectedTaskSummary.id);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to complete task lane.");
+    }
+  }
+
   useEffect(() => {
     void loadTasks();
   }, [includeArchivedTasks]);
@@ -560,6 +596,59 @@ export function TasksPage() {
             </div>
 
             <div className="task-detail-sections">
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Runtime</p>
+                    <h4>Lane execution</h4>
+                  </div>
+                  {!isCreatingTask && selectedTaskSummary ? (
+                    <div className="action-cluster">
+                      {selectedTaskSummary.readyForDispatch ? (
+                        <button className="primary-button" data-role="dispatch-task-lane" type="button" onClick={() => void handleDispatchTaskLane()}>
+                          Dispatch lane
+                        </button>
+                      ) : null}
+                      {taskDetail?.activeLaneAssignment || (taskDetail?.workflowId && taskDetail?.currentLaneId && taskDetail.assigneeType === "user") ? (
+                        <>
+                          <button className="secondary-button" data-role="complete-task-success" type="button" onClick={() => void handleCompleteLane("success")}>
+                            Mark success
+                          </button>
+                          <button className="secondary-button secondary-button--danger" data-role="complete-task-failure" type="button" onClick={() => void handleCompleteLane("failure")}>
+                            Mark failure
+                          </button>
+                          <button className="secondary-button" data-role="complete-task-needs-user" type="button" onClick={() => void handleCompleteLane("needs_user")}>
+                            Needs user
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                {taskDetail?.activeLaneAssignment ? (
+                  <div className="task-runtime-card" data-role="task-runtime-assignment">
+                    <div className="workflow-section__header">
+                      <strong>{taskDetail.activeLaneAssignment.workerType} · {taskDetail.activeLaneAssignment.workerId ?? "unassigned"}</strong>
+                      <span className={`status-badge status-badge--${taskDetail.activeLaneAssignment.status === "active" ? "success" : taskDetail.activeLaneAssignment.status === "queued" ? "warning" : "neutral"}`}>
+                        {taskDetail.activeLaneAssignment.status}
+                      </span>
+                    </div>
+                    <div className="workforce-meta-grid muted-copy">
+                      <span>Lane: {taskDetail.activeLaneAssignment.laneId}</span>
+                      <span>Session: {taskDetail.activeLaneAssignment.sessionId ?? "—"}</span>
+                      <span>Runtime cwd: {taskDetail.activeLaneAssignment.runtimeCwd ?? "—"}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted-copy">
+                    {selectedTaskSummary?.readyForDispatch
+                      ? "This lane is ready to dispatch into the assigned workflow worker."
+                      : "No active runtime assignment. User-owned lanes and blocked tasks stay here until they are actionable."}
+                  </p>
+                )}
+              </section>
+
               <section className="task-section">
                 <div className="task-section__header">
                   <div>

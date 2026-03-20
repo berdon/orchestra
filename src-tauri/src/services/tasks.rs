@@ -4,10 +4,10 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        TaskComment, TaskCommentInput, TaskDependency, TaskDetail, TaskLaneRun, TaskSummary,
+        TaskComment, TaskCommentInput, TaskDetail, TaskDependency, TaskLaneRun, TaskSummary,
         TaskUpsertInput,
     },
-    services::task_attachments,
+    services::{task_attachments, task_runtime},
 };
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
@@ -97,6 +97,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     attachments: Vec::new(),
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
+                    active_lane_assignment: None,
                     created_at: row.get(25)?,
                     updated_at: row.get(26)?,
                 })
@@ -114,6 +115,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
+    task.active_lane_assignment = task_runtime::get_active_lane_assignment(connection, task_id)?;
     Ok(task)
 }
 
@@ -122,7 +124,7 @@ pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDe
 }
 
 pub fn create_task(connection: &mut Connection, input: TaskUpsertInput) -> Result<TaskDetail, String> {
-    let normalized = normalize_input(input);
+    let normalized = apply_default_lane_if_needed(connection, normalize_input(input))?;
     validate_task_input(connection, &normalized, None)?;
 
     let project_id = DEFAULT_PROJECT_ID.to_string();
@@ -200,7 +202,7 @@ pub fn update_task(
     task_id: &str,
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
-    let normalized = normalize_input(input);
+    let normalized = apply_default_lane_if_needed(connection, normalize_input(input))?;
     let existing = get_task(connection, task_id)?;
     validate_task_input(connection, &normalized, Some(task_id))?;
     let now = now_iso();
@@ -751,6 +753,35 @@ fn lane_exists_for_workflow(
     Ok(exists.is_some())
 }
 
+fn first_lane_id(
+    connection: &Connection,
+    workflow_id: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT id FROM workflow_lanes WHERE workflow_id = ?1 ORDER BY lane_order ASC LIMIT 1",
+            [workflow_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to read first lane for workflow {workflow_id}: {error}"))
+}
+
+fn lane_owner_for_workflow(
+    connection: &Connection,
+    workflow_id: &str,
+    lane_id: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
+    connection
+        .query_row(
+            "SELECT assigned_entity_type, assigned_entity_id FROM workflow_lanes WHERE workflow_id = ?1 AND id = ?2 LIMIT 1",
+            params![workflow_id, lane_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to read workflow lane owner {lane_id}: {error}"))
+}
+
 fn dependency_exists(
     connection: &Connection,
     blocker_task_id: &str,
@@ -856,6 +887,28 @@ fn normalize_input(mut input: TaskUpsertInput) -> TaskUpsertInput {
     input
 }
 
+fn apply_default_lane_if_needed(
+    connection: &Connection,
+    mut input: TaskUpsertInput,
+) -> Result<TaskUpsertInput, String> {
+    if input.current_lane_id.is_none() {
+        if let Some(workflow_id) = input.workflow_id.as_deref() {
+            input.current_lane_id = first_lane_id(connection, workflow_id)?;
+        }
+    }
+
+    if let (Some(workflow_id), Some(current_lane_id)) = (
+        input.workflow_id.as_deref(),
+        input.current_lane_id.as_deref(),
+    ) {
+        if let Some((assignee_type, assignee_id)) = lane_owner_for_workflow(connection, workflow_id, current_lane_id)? {
+            input.assignee_type = assignee_type;
+            input.assignee_id = assignee_id;
+        }
+    }
+    Ok(input)
+}
+
 fn normalized_optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let trimmed = value.trim();
@@ -894,7 +947,7 @@ fn task_summary_columns(alias: &str) -> String {
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocker_task_id = {alias}.id), 0) AS blocking_count,
         COALESCE((SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = {alias}.id), 0) AS attachment_count,
         CASE WHEN {unresolved_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
-        CASE WHEN {alias}.archived = 0 AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 THEN 1 ELSE 0 END AS ready_for_dispatch,
+        CASE WHEN {alias}.archived = 0 AND {alias}.workflow_id IS NOT NULL AND {alias}.current_lane_id IS NOT NULL AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 AND NOT EXISTS (SELECT 1 FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active')) THEN 1 ELSE 0 END AS ready_for_dispatch,
         {alias}.created_at,
         {alias}.updated_at
         "#,

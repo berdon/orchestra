@@ -179,3 +179,88 @@ test("tasks page adds comments and records interrupt intent", async ({ page }) =
 
   expect(storedState?.comments?.some((comment: { author: string; interruptAgent: boolean }) => comment.author === "Reviewer" && comment.interruptAgent)).toBe(true);
 });
+
+test("tasks page dispatches a role-owned lane and completes it into the next workflow lane", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("link", { name: /Implement task foundation shell/i }).click();
+
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("role");
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("developer");
+
+  await page.locator('[data-role="complete-task-success"]').click();
+  await expect(page.getByText("Not dispatchable", { exact: true })).toBeVisible();
+
+  const storedState = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((task: { title: string }) => task.title === "Implement task foundation shell") ?? null;
+  });
+
+  expect(storedState?.activeLaneAssignment).toBeNull();
+  expect(storedState?.status).toBe("in_review");
+});
+
+test("tasks page dispatches an agent-owned lane and completes the workflow", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-agent",
+          slug: "agent-flow",
+          name: "Agent Flow",
+          description: "Single agent-owned lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent",
+              key: "agent",
+              name: "Agent",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Agent dispatched task");
+  await page.locator('[data-role="task-status"]').selectOption("ready");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("agent");
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("data");
+
+  await page.locator('[data-role="complete-task-success"]').click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
+
+  const storedState = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((task: { title: string }) => task.title === "Agent dispatched task") ?? null;
+  });
+
+  expect(storedState?.status).toBe("completed");
+  expect(storedState?.activeLaneAssignment).toBeNull();
+});

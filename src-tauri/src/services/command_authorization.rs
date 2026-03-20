@@ -121,6 +121,22 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("create_subtask", "Create a subtask", "tasks.create"),
     ("update_task", "Update a task", "tasks.update"),
     ("comment_on_task", "Comment on a task", "tasks.comment"),
+    ("dispatch_task_lane", "Dispatch the current task lane", "tasks.transition"),
+    (
+        "complete_lane_as_success",
+        "Complete the active lane as success",
+        "tasks.transition",
+    ),
+    (
+        "complete_lane_as_failure",
+        "Complete the active lane as failure",
+        "tasks.transition",
+    ),
+    (
+        "request_user_intervention",
+        "Request user intervention for the active lane",
+        "tasks.transition",
+    ),
     (
         "add_task_dependency",
         "Add a task dependency",

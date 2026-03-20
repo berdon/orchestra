@@ -574,6 +574,22 @@ fn runtime_authorization_context(session_id: &str) -> Result<Option<Authorizatio
         }));
     }
 
+    let agent_id = connection
+        .query_row(
+            "SELECT worker_id FROM task_lane_assignments WHERE session_id = ?1 AND worker_type = 'agent' AND status IN ('queued', 'active') LIMIT 1",
+            [session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to resolve agent session authorization context: {error}"))?;
+
+    if let Some(agent_id) = agent_id {
+        return Ok(Some(AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent_id,
+        }));
+    }
+
     Ok(Some(AuthorizationContext {
         actor_type: "user".into(),
         actor_id: "desktop-user".into(),
