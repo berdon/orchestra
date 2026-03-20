@@ -85,6 +85,15 @@ function readFileAsBase64(file: File) {
   });
 }
 
+interface TaskTimelineItem {
+  id: string;
+  kind: "comment" | "attachment" | "lane_run" | "dependency_in" | "dependency_out";
+  title: string;
+  description: string;
+  timestamp: string;
+  tone: "neutral" | "warning" | "success" | "error";
+}
+
 export function TasksPage() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
@@ -152,6 +161,61 @@ export function TasksPage() {
 
     return [];
   }, [agents, roles, taskDraft.assigneeType]);
+
+  const timelineItems = useMemo<TaskTimelineItem[]>(() => {
+    if (!taskDetail) {
+      return [];
+    }
+
+    const comments = taskDetail.comments.map<TaskTimelineItem>((comment) => ({
+      id: `comment-${comment.id}`,
+      kind: "comment",
+      title: `${comment.author} commented`,
+      description: comment.message,
+      timestamp: comment.updatedAt,
+      tone: comment.interruptAgent ? "warning" : "neutral",
+    }));
+
+    const attachments = taskDetail.attachments.map<TaskTimelineItem>((attachment) => ({
+      id: `attachment-${attachment.id}`,
+      kind: "attachment",
+      title: `Attachment added: ${attachment.fileName}`,
+      description: `${attachment.mediaType} · ${Math.max(1, Math.round(attachment.byteSize / 1024))} KB`,
+      timestamp: attachment.createdAt,
+      tone: "neutral",
+    }));
+
+    const laneRuns = taskDetail.laneRuns.map<TaskTimelineItem>((laneRun) => ({
+      id: `lane-run-${laneRun.id}`,
+      kind: "lane_run",
+      title: `Lane ${laneRun.laneId} ${laneRun.completedAt ? "completed" : "started"}`,
+      description: `${laneRun.result.replace(/_/g, " ")} · session ${laneRun.sessionId}`,
+      timestamp: laneRun.completedAt ?? laneRun.startedAt,
+      tone: laneRun.result === "success" ? "success" : laneRun.result === "failure" ? "error" : "neutral",
+    }));
+
+    const blockedBy = taskDetail.blockedBy.map<TaskTimelineItem>((dependency) => ({
+      id: `dependency-in-${dependency.id}`,
+      kind: "dependency_in",
+      title: `Blocked by ${dependency.blocker.number}`,
+      description: dependency.blocker.title,
+      timestamp: dependency.createdAt,
+      tone: "warning",
+    }));
+
+    const blocking = taskDetail.blocking.map<TaskTimelineItem>((dependency) => ({
+      id: `dependency-out-${dependency.id}`,
+      kind: "dependency_out",
+      title: `Blocking ${dependency.blocked.number}`,
+      description: dependency.blocked.title,
+      timestamp: dependency.createdAt,
+      tone: "neutral",
+    }));
+
+    return [...comments, ...attachments, ...laneRuns, ...blockedBy, ...blocking].sort(
+      (left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp),
+    );
+  }, [taskDetail]);
 
   async function loadTasks() {
     setLoadingTasks(true);
@@ -987,6 +1051,32 @@ export function TasksPage() {
                   </div>
                 ) : (
                   <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>
+                )}
+              </section>
+
+              <section className="task-section">
+                <div className="task-section__header">
+                  <div>
+                    <p className="eyebrow">Timeline</p>
+                    <h4>Task activity</h4>
+                  </div>
+                </div>
+
+                {timelineItems.length ? (
+                  <div className="task-timeline" data-role="task-timeline">
+                    {timelineItems.map((item) => (
+                      <article className="task-timeline-item" key={item.id}>
+                        <div className="workflow-section__header">
+                          <strong>{item.title}</strong>
+                          <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
+                        </div>
+                        <p>{item.description}</p>
+                        <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No activity recorded yet.</p>
                 )}
               </section>
 
