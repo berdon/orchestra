@@ -13,6 +13,7 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ open, items, loading, onClose, onSelect }: CommandPaletteProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -31,6 +32,19 @@ export function CommandPalette({ open, items, loading, onClose, onSelect }: Comm
   useEffect(() => {
     setSelectedIndex(0);
   }, [query, items]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const activeItem = itemRefs.current[selectedIndex];
+    if (!activeItem) {
+      return;
+    }
+
+    activeItem.scrollIntoView({ block: "nearest" });
+  }, [open, selectedIndex, matches]);
 
   if (!open) {
     return null;
@@ -92,9 +106,13 @@ export function CommandPalette({ open, items, loading, onClose, onSelect }: Comm
                   <div key={item.id}>
                     {showGroup ? <p className="command-palette__group-label">{item.group}</p> : null}
                     <button
+                      ref={(node) => {
+                        itemRefs.current[index] = node;
+                      }}
                       className={index === selectedIndex ? "command-palette__item command-palette__item--active" : "command-palette__item"}
                       data-role="command-palette-item"
                       data-command-id={item.id}
+                      data-active={index === selectedIndex ? "true" : "false"}
                       type="button"
                       onMouseEnter={() => setSelectedIndex(index)}
                       onClick={() => onSelect(item)}
