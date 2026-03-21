@@ -39,6 +39,7 @@ import type {
   LogEntry,
   PrimaryPage,
   ProjectSummary,
+  SessionActivityState,
   SessionEvent,
   SessionModelState,
   SessionRecord,
@@ -253,10 +254,14 @@ function formatJsonSummary(value: JsonValue | undefined | null, limit = 500) {
   return serialized.length > limit ? `${serialized.slice(0, limit)}…` : serialized;
 }
 
-function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue | undefined | null, result?: JsonValue | undefined | null) {
+function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue | undefined | null, result?: JsonValue | undefined | null, durationMs?: number | null) {
   const sections = [`${prefix}: ${toolName}`];
   const formattedArgs = formatJsonSummary(args);
   const formattedResult = formatJsonSummary(result);
+
+  if (durationMs && Number.isFinite(durationMs)) {
+    sections.push(`Duration\n${durationMs}ms`);
+  }
 
   if (formattedArgs) {
     sections.push(`Input\n${formattedArgs}`);
@@ -267,6 +272,23 @@ function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue
   }
 
   return sections.join("\n\n");
+}
+
+function deriveSessionActivityState(session: SessionRecord): SessionActivityState {
+  const latestEvent = session.events[session.events.length - 1];
+  if (session.status === "failed") {
+    return "error";
+  }
+  if (latestEvent?.pending && latestEvent?.message.includes("Running tools")) {
+    return "tool_running";
+  }
+  if (latestEvent?.thinking) {
+    return "thinking";
+  }
+  if (session.status === "streaming") {
+    return "streaming";
+  }
+  return "idle";
 }
 
 export function App() {
@@ -333,13 +355,18 @@ export function App() {
   const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
+    const normalizedSession: SessionRecord = {
+      ...updatedSession,
+      activityState: updatedSession.activityState ?? deriveSessionActivityState(updatedSession),
+      lastActivityAt: updatedSession.lastActivityAt ?? updatedSession.updatedAt,
+    };
     setSessions((current) => {
-      const withoutOld = current.filter((session) => session.id !== updatedSession.id);
-      return [updatedSession, ...withoutOld].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      const withoutOld = current.filter((session) => session.id !== normalizedSession.id);
+      return [normalizedSession, ...withoutOld].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     });
 
     if (options?.select !== false) {
-      setSelectedSessionId(updatedSession.id);
+      setSelectedSessionId(normalizedSession.id);
     }
   }, []);
 
@@ -761,6 +788,12 @@ export function App() {
         }
 
         if (eventType === "tool_execution_start") {
+          patchSessionRecord(payload.sessionId, (session) => ({
+            ...session,
+            activityState: "tool_running",
+            activeToolName: toolName,
+            lastActivityAt: eventTimestamp,
+          }));
           upsertSystemEvent(
             payload.sessionId,
             toolEventId,
@@ -772,6 +805,12 @@ export function App() {
         } else if (eventType === "tool_execution_update") {
           const partialResult = isObject(rpcEvent?.partialResult) ? rpcEvent?.partialResult : null;
           const partialContent = partialResult?.content;
+          patchSessionRecord(payload.sessionId, (session) => ({
+            ...session,
+            activityState: "tool_running",
+            activeToolName: toolName,
+            lastActivityAt: eventTimestamp,
+          }));
           upsertSystemEvent(
             payload.sessionId,
             toolEventId,
@@ -783,12 +822,19 @@ export function App() {
         } else {
           const result = rpcEvent?.result;
           const isError = rpcEvent?.isError === true;
+          const durationMs = Number(rpcEvent?.durationMs ?? 0) || undefined;
+          patchSessionRecord(payload.sessionId, (session) => ({
+            ...session,
+            activityState: isError ? "error" : "idle",
+            activeToolName: null,
+            lastActivityAt: eventTimestamp,
+          }));
           upsertSystemEvent(
             payload.sessionId,
             toolEventId,
             runId,
             eventTimestamp,
-            buildToolEventMessage(isError ? "Tool failed" : "Tool result", toolName, args, result),
+            buildToolEventMessage(isError ? "Tool failed" : "Tool result", toolName, args, result, durationMs),
             false,
           );
         }
@@ -853,6 +899,9 @@ export function App() {
         patchSessionRecord(payload.sessionId, (session) => ({
           ...session,
           status: "failed",
+          activityState: "error",
+          activeToolName: null,
+          lastActivityAt: eventTimestamp,
           updatedAt: eventTimestamp,
           events: session.events.filter((event) => event.runId !== runId),
         }));
