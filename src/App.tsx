@@ -991,6 +991,8 @@ export function App() {
       return;
     }
 
+    void loadSessions();
+
     const intervalId = window.setInterval(() => {
       void loadSessions();
     }, 15000);
