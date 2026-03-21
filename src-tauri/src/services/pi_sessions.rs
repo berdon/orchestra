@@ -550,18 +550,42 @@ fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
     let content = fs::read_to_string(path)
         .map_err(|error| format!("Unable to read session file {}: {error}", path.display()))?;
 
-    content
+    let non_empty_lines = content
         .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str::<Value>(line).map_err(|error| {
-                format!(
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some((index, trimmed))
+            }
+        })
+        .collect::<Vec<_>>();
+    let last_non_empty_index = non_empty_lines.last().map(|(index, _)| *index);
+    let content_ends_with_newline = content.ends_with('\n');
+
+    let mut parsed = Vec::with_capacity(non_empty_lines.len());
+    for (index, line) in non_empty_lines {
+        match serde_json::from_str::<Value>(line) {
+            Ok(value) => parsed.push(value),
+            Err(error)
+                if Some(index) == last_non_empty_index
+                    && error.classify() == serde_json::error::Category::Eof
+                    && !content_ends_with_newline =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(format!(
                     "Unable to parse session file {} as JSONL: {error}",
                     path.display()
-                )
-            })
-        })
-        .collect()
+                ));
+            }
+        }
+    }
+
+    Ok(parsed)
 }
 
 fn stream_prompt_session_with_executable<F>(
@@ -1580,6 +1604,51 @@ process.stdin.on('end', () => {
         assert!(parsed.record.events[1].message.contains("complete_lane_as_success tool result"));
         assert_eq!(parsed.record.events[2].kind, "assistant");
         assert_eq!(parsed.record.events[2].message, "Task completed.");
+    }
+
+    #[test]
+    fn tolerates_incomplete_trailing_json_while_session_is_being_written() {
+        let root = unique_temp_dir("orchestra-real-session-partial-tail");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_path = session_dir.join("partial.jsonl");
+        let content = format!(
+            "{}\n{}\n{}\n{{\"type\":\"message\",\"id\":\"msg-2\"",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "session-partial",
+                "timestamp": "2026-03-20T10:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "session_info",
+                "id": "info-1",
+                "parentId": Value::Null,
+                "timestamp": "2026-03-20T10:00:00Z",
+                "name": "Partially written session",
+            }),
+            json!({
+                "type": "message",
+                "id": "msg-1",
+                "timestamp": "2026-03-20T10:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Visible before tail write finishes" }],
+                    "timestamp": 1774000801000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let parsed = parse_session_file(&session_path, true).expect("session should parse despite partial tail");
+        assert_eq!(parsed.record.id, "session-partial");
+        assert_eq!(parsed.record.title, "Partially written session");
+        assert_eq!(parsed.record.events.len(), 1);
+        assert_eq!(parsed.record.events[0].message, "Visible before tail write finishes");
     }
 
     #[test]
