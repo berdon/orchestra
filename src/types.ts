@@ -6,6 +6,7 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type SessionStatus = "starting" | "active" | "idle" | "paused" | "failed" | "streaming" | "closed";
 export type SessionEventKind = "system" | "user" | "assistant";
+export type SessionActivityState = "idle" | "thinking" | "tool_running" | "streaming" | "error";
 
 export interface LogEntry {
   id: string;
@@ -92,6 +93,9 @@ export interface SessionRecord {
   updatedAt: string;
   subscribed: boolean;
   events: SessionEvent[];
+  activityState?: SessionActivityState;
+  activeToolName?: string | null;
+  lastActivityAt?: string | null;
 }
 
 export interface SessionScrollState {

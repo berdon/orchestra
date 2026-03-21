@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-JOBS="${DESKTOP_E2E_JOBS:-$(nproc)}"
+JOBS="${DESKTOP_E2E_JOBS:-2}"
 
 if [[ "$#" -eq 0 ]]; then
   echo "Usage: $0 <test-file> [<test-file> ...]" >&2

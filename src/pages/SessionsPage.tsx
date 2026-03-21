@@ -1,5 +1,20 @@
 import type { ChangeEvent, FormEvent, KeyboardEvent, RefObject, UIEvent } from "react";
-import type { SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
+import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
+
+function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
+  switch (activityState) {
+    case "thinking":
+      return "Thinking";
+    case "tool_running":
+      return activeToolName ? `Running ${activeToolName}` : "Running tool";
+    case "streaming":
+      return "Streaming";
+    case "error":
+      return "Error";
+    default:
+      return "Idle";
+  }
+}
 
 interface SessionsPageProps {
   sessions: SessionRecord[];
@@ -135,7 +150,8 @@ export function SessionsPage({
                     onSelectSession(session.id);
                   }}
                 >
-                  {session.title}
+                  <span>{session.title}</span>
+                  <span className="muted-copy">{formatActivityLabel(session.activityState, session.activeToolName)}</span>
                 </a>
                 <button
                   className="session-delete-button"
@@ -181,6 +197,7 @@ export function SessionsPage({
                   </label>
 
                   <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
+                  <span className="status-badge">{formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}</span>
                 </div>
               </div>
 
