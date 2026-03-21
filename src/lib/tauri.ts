@@ -754,7 +754,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
-function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetail): TaskDetail {
+function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetail, projectId?: string | null): TaskDetail {
   const timestamp = nowIso();
   const previousTasks = ensureMockTasks();
   const workflow = input.workflowId ? ensureMockWorkflows().find((entry) => entry.id === input.workflowId) : null;
@@ -769,7 +769,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
 
   return {
     id: existingTask?.id ?? createId("task"),
-    projectId: existingTask?.projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID,
+    projectId: existingTask?.projectId ?? projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID,
     number: existingTask?.number ?? `ORC-${nextSequence}`,
     title: input.title.trim(),
     description: input.description?.trim() || null,
@@ -1406,8 +1406,8 @@ export async function sendSessionMessage(sessionId: string, message: string, run
   return invoke<QueuedSessionMessage>("send_session_message", { sessionId, message: trimmedMessage, runId });
 }
 
-export async function listTasks(includeArchived = false): Promise<TaskSummary[]> {
-  const activeProjectId = getActiveProjectId();
+export async function listTasks(includeArchived = false, projectId?: string | null): Promise<TaskSummary[]> {
+  const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
     return ensureMockTasks()
       .filter((task) => task.projectId === activeProjectId)
@@ -1420,8 +1420,7 @@ export async function listTasks(includeArchived = false): Promise<TaskSummary[]>
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    const activeProjectId = getActiveProjectId();
-    const task = ensureMockTasks().find((entry) => entry.projectId === activeProjectId && entry.id === taskId);
+    const task = ensureMockTasks().find((entry) => entry.id === taskId);
     if (!task) {
       throw new Error(`Task ${taskId} was not found`);
     }
@@ -1431,15 +1430,15 @@ export async function getTask(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("get_task", { taskId });
 }
 
-export async function createTask(input: TaskUpsertInput): Promise<TaskDetail> {
-  const activeProjectId = getActiveProjectId();
+export async function createTask(input: TaskUpsertInput, projectId?: string | null): Promise<TaskDetail> {
+  const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
     const validation = validateMockTaskInput(input);
     if (validation.length > 0) {
       throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
     }
 
-    const task = normalizeMockTaskInput(input);
+    const task = normalizeMockTaskInput(input, undefined, activeProjectId ?? undefined);
     saveMockTasks([task, ...ensureMockTasks()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
     appendMockLog("info", "task.created", `Created task ${task.id}`);
     emitMockTaskChange({ taskIds: [task.id], reason: "task.created" });

@@ -252,7 +252,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     }
     try {
       const [nextTasks, nextWorkflows, nextAgents, nextRoles] = await Promise.all([
-        listTasks(includeArchivedTasks),
+        listTasks(includeArchivedTasks, projectId),
         listWorkflows(false),
         listAgents(false),
         listRoles(false),
@@ -302,7 +302,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
 
   useEffect(() => {
     void loadTasksData();
-  }, [includeArchivedTasks]);
+  }, [includeArchivedTasks, projectId]);
 
   useEffect(() => {
     if (route.kind === "detail") {
@@ -374,7 +374,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       disposeTaskChanges?.();
       disposeSessionStream?.();
     };
-  }, [route, taskDraftDirty, includeArchivedTasks]);
+  }, [route, taskDraftDirty, includeArchivedTasks, projectId]);
 
   useEffect(() => {
     if (createTaskProjectId !== projectId || createTaskToken === createTaskTokenRef.current) {
@@ -393,6 +393,16 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     openTaskTokenRef.current = openTaskRequest.token;
     openTaskDetail(openTaskRequest.taskId);
   }, [openTaskRequest, projectId]);
+
+  useEffect(() => {
+    setRoute({ kind: "overview" });
+    setTaskDetail(null);
+    setTaskDraft(createBlankTaskDraft());
+    setCommentDraft(createBlankCommentDraft());
+    setTaskDraftDirty(false);
+    setSelectedBlockerTaskId("");
+    setTaskActionError(null);
+  }, [projectId]);
 
   function openCreateTask(parentTaskId?: string | null, workflowId?: string | null) {
     setTaskDraft({
@@ -413,7 +423,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     setSavingTask(true);
     setTaskActionError(null);
     try {
-      const saved = await createTask(taskDraft);
+      const saved = await createTask(taskDraft, projectId);
       await loadTasksData();
       setRoute({ kind: "detail", taskId: saved.id });
       await loadTaskDetail(saved.id);
