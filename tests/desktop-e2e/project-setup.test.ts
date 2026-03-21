@@ -40,6 +40,7 @@ describe("desktop project and workflow setup", () => {
       await waitForText(sessionId, "Desktop Automation Project");
 
       const repoPath = join(testHome!, "workspace", "desktop-automation-repo");
+      const managedRepoPath = join(testHome!, ".orchestra", "projects", "desktop-automation-project", "repositories", "desktop-automation-repo", "repository");
       await setInputValue(sessionId, '[data-role="repository-name"]', "Desktop Automation Repo");
       await setInputValue(sessionId, '[data-role="repository-local-path"]', repoPath);
       await setInputValue(sessionId, '[data-role="repository-default-branch"]', "main");
@@ -99,7 +100,7 @@ describe("desktop project and workflow setup", () => {
         'get_project',
         { projectId: createdProject!.id },
       );
-      expect(projectDetail.repositories.some((repo) => repo.name === 'Desktop Automation Repo' && repo.localPath === repoPath)).toBe(true);
+      expect(projectDetail.repositories.some((repo) => repo.name === 'Desktop Automation Repo' && repo.localPath === managedRepoPath)).toBe(true);
 
       const roles = await invokeCommand<Array<{ name: string; slug: string }>>(sessionId, 'list_roles', { includeArchived: false });
       expect(roles.map((role) => role.slug)).toEqual(expect.arrayContaining(['architect', 'developer', 'qa']));

@@ -49,7 +49,9 @@ impl SessionRuntime {
         )?;
         let extension_path = project_root.join("extensions").join("orchestra-tools.ts");
 
-        let mut child = Command::new("pi")
+        let pi_executable = std::env::var("ORCHESTRA_PI_EXECUTABLE").unwrap_or_else(|_| "pi".to_string());
+        let mut child = Command::new(&pi_executable)
+            .arg("--offline")
             .arg("--mode")
             .arg("rpc")
             .arg("--session")

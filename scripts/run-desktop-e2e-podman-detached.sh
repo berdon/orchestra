@@ -15,9 +15,13 @@ fi
 RUN_ID="$(date +%s)-$RANDOM"
 CONTAINER_NAME="orchestra-desktop-e2e-${RUN_ID}"
 HOST_PI_DIR="${HOME}/.pi"
-PI_MOUNT_ARGS=()
+HOST_CODEX_DIR="${HOME}/.codex"
+SEED_MOUNT_ARGS=()
 if [[ -d "${HOST_PI_DIR}" ]]; then
-  PI_MOUNT_ARGS=(-v "${HOST_PI_DIR}:/seed-home/.pi:ro")
+  SEED_MOUNT_ARGS+=( -v "${HOST_PI_DIR}:/seed-home/.pi:ro" )
+fi
+if [[ -d "${HOST_CODEX_DIR}" ]]; then
+  SEED_MOUNT_ARGS+=( -v "${HOST_CODEX_DIR}:/seed-home/.codex:ro" )
 fi
 
 podman run -d \
@@ -28,7 +32,7 @@ podman run -d \
   -v orchestra-desktop-e2e-cargo-registry:/root/.cargo/registry \
   -v orchestra-desktop-e2e-cargo-git:/root/.cargo/git \
   -v orchestra-desktop-e2e-npm-cache:/root/.npm \
-  "${PI_MOUNT_ARGS[@]}" \
+  "${SEED_MOUNT_ARGS[@]}" \
   --workdir /workspace \
   "${IMAGE_NAME}" \
   bash /src/scripts/run-desktop-e2e-container-entry.sh "${TEST_FILE}"

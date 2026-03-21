@@ -6,12 +6,12 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AgentDefinition, AuthorizationContext, RoleDefinition, TaskComment, TaskDetail,
-        TaskLaneAssignment, WorkflowDefinition, WorkflowLane,
+        AgentDefinition, AuthorizationContext, RepositoryRecord, RoleDefinition, TaskComment,
+        TaskDetail, TaskLaneAssignment, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_runtime, agents, live_sessions, pi_sessions, role_dispatch, role_runtime, tasks,
-        workflows,
+        agent_runtime, agents, live_sessions, pi_sessions, projects, role_dispatch, role_runtime,
+        tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -202,6 +202,7 @@ pub fn dispatch_task_lane(
     let task = tasks::get_task_context(connection, task_id)?;
     let workflow = load_task_workflow(connection, &task)?;
     let lane = resolve_task_lane(&workflow, &task)?;
+    let runtime_project_root = resolve_task_runtime_project_root(connection, project_root, &task)?;
 
     if task.archived {
         return Err(format!("Task {task_id} is archived and cannot be dispatched"));
@@ -225,7 +226,7 @@ pub fn dispatch_task_lane(
     let assignment = match lane.assigned_entity_type.as_str() {
         "role" => dispatch_role_lane(
             connection,
-            project_root,
+            &runtime_project_root,
             session_dir,
             &task,
             &workflow,
@@ -236,7 +237,7 @@ pub fn dispatch_task_lane(
         )?,
         "agent" => dispatch_agent_lane(
             connection,
-            project_root,
+            &runtime_project_root,
             session_dir,
             &task,
             &workflow,
@@ -275,6 +276,30 @@ pub fn maybe_auto_dispatch_task(
     }
 
     dispatch_task_lane(connection, project_root, session_dir, task_id).map(Some)
+}
+
+fn resolve_task_runtime_project_root(
+    connection: &Connection,
+    fallback_project_root: &Path,
+    task: &TaskDetail,
+) -> Result<PathBuf, String> {
+    eprintln!("[task_runtime] resolve runtime root task={} repo_id={:?} fallback={}", task.id, task.repository_id, fallback_project_root.display());
+    let Some(repository_id) = task.repository_id.as_deref() else {
+        return Ok(fallback_project_root.to_path_buf());
+    };
+
+    let repository = projects::get_repository(connection, repository_id)?;
+    eprintln!("[task_runtime] repository {} local_path={:?}", repository.id, repository.local_path);
+    repository_runtime_root(&repository).ok_or_else(|| {
+        format!(
+            "Task {} references repository {} but it does not have a local path",
+            task.id, repository_id
+        )
+    })
+}
+
+fn repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
+    repository.local_path.as_ref().map(PathBuf::from)
 }
 
 pub fn start_assignment_run(

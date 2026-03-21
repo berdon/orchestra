@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
@@ -5,7 +7,9 @@ use uuid::Uuid;
 use crate::models::{
     ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryUpsertInput,
 };
-use crate::services::orchestra_paths::sanitize_slug;
+use crate::services::orchestra_paths::{
+    default_orchestra_root, managed_repository_checkout_dir, sanitize_slug,
+};
 
 pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, String> {
     ensure_default_project(connection)?;
@@ -164,8 +168,15 @@ pub fn create_repository(
         return Err("Repository local path is required.".into());
     }
 
+    let project = get_project(connection, project_id)?;
     let repository_id = format!("repo-{}", Uuid::new_v4().simple());
     let slug = unique_repository_slug(connection, project_id, &normalized.name, None)?;
+    let managed_checkout_dir = ensure_managed_repository_checkout(
+        &project,
+        &slug,
+        normalized.local_path.as_deref().expect("validated local path"),
+        normalized.default_branch.as_deref().unwrap_or("main"),
+    )?;
     let now = now_iso();
     connection
         .execute(
@@ -173,7 +184,7 @@ pub fn create_repository(
             INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
             "#,
-            params![repository_id, project_id, slug, normalized.name, normalized.local_path, normalized.remote_url, normalized.default_branch, now],
+            params![repository_id, project_id, slug, normalized.name, managed_checkout_dir.display().to_string(), normalized.remote_url, normalized.default_branch, now],
         )
         .map_err(|error| format!("Unable to create repository: {error}"))?;
 
@@ -186,16 +197,23 @@ pub fn update_repository(
     input: RepositoryUpsertInput,
 ) -> Result<RepositoryRecord, String> {
     let existing = get_repository(connection, repository_id)?;
+    let project = get_project(connection, &existing.project_id)?;
     let normalized = normalize_repository_input(input);
     let slug = if sanitize_slug(&normalized.name) == sanitize_slug(&existing.name) {
         existing.slug.clone()
     } else {
         unique_repository_slug(connection, &existing.project_id, &normalized.name, Some(repository_id))?
     };
+    let managed_checkout_dir = ensure_managed_repository_checkout(
+        &project,
+        &slug,
+        normalized.local_path.as_deref().expect("validated local path"),
+        normalized.default_branch.as_deref().unwrap_or("main"),
+    )?;
     connection
         .execute(
             "UPDATE repositories SET slug = ?2, name = ?3, local_path = ?4, remote_url = ?5, default_branch = ?6, updated_at = ?7 WHERE id = ?1",
-            params![repository_id, slug, normalized.name, normalized.local_path, normalized.remote_url, normalized.default_branch, now_iso()],
+            params![repository_id, slug, normalized.name, managed_checkout_dir.display().to_string(), normalized.remote_url, normalized.default_branch, now_iso()],
         )
         .map_err(|error| format!("Unable to update repository {repository_id}: {error}"))?;
     get_repository(connection, repository_id)
@@ -276,7 +294,11 @@ fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUps
     input.name = input.name.trim().to_string();
     input.local_path = input.local_path.and_then(|value| {
         let trimmed = value.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(normalize_repository_local_path(trimmed).display().to_string())
+        }
     });
     input.remote_url = input.remote_url.and_then(|value| {
         let trimmed = value.trim();
@@ -287,6 +309,95 @@ fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUps
         if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
     });
     input
+}
+
+fn normalize_repository_local_path(path: &str) -> PathBuf {
+    PathBuf::from(path)
+}
+
+fn ensure_managed_repository_checkout(
+    project: &ProjectDetail,
+    repository_slug: &str,
+    source_path: &str,
+    default_branch: &str,
+) -> Result<PathBuf, String> {
+    let orchestra_root = default_orchestra_root()?;
+    let managed_checkout_dir = managed_repository_checkout_dir(&orchestra_root, &project.slug, repository_slug);
+    if let Some(parent) = managed_checkout_dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Unable to create managed repository parent {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    if managed_checkout_dir.join(".git").exists() {
+        return Ok(managed_checkout_dir);
+    }
+
+    let source = PathBuf::from(source_path);
+    if source.join(".git").exists() {
+        let status = std::process::Command::new("git")
+            .arg("clone")
+            .arg(source.as_os_str())
+            .arg(&managed_checkout_dir)
+            .status()
+            .map_err(|error| format!("Unable to clone repository from {}: {error}", source.display()))?;
+        if !status.success() {
+            return Err(format!(
+                "Unable to clone repository from {} into {}",
+                source.display(),
+                managed_checkout_dir.display()
+            ));
+        }
+        return Ok(managed_checkout_dir);
+    }
+
+    std::fs::create_dir_all(&managed_checkout_dir).map_err(|error| {
+        format!(
+            "Unable to create managed repository directory {}: {error}",
+            managed_checkout_dir.display()
+        )
+    })?;
+    let init_status = std::process::Command::new("git")
+        .arg("init")
+        .arg("-b")
+        .arg(default_branch)
+        .current_dir(&managed_checkout_dir)
+        .status()
+        .map_err(|error| format!("Unable to initialize managed repository {}: {error}", managed_checkout_dir.display()))?;
+    if !init_status.success() {
+        return Err(format!(
+            "Unable to initialize managed repository {}",
+            managed_checkout_dir.display()
+        ));
+    }
+
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "orchestra@example.invalid"])
+        .current_dir(&managed_checkout_dir)
+        .status();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Orchestra"])
+        .current_dir(&managed_checkout_dir)
+        .status();
+    std::fs::write(managed_checkout_dir.join("README.md"), format!("# {}\n", project.name)).map_err(|error| {
+        format!(
+            "Unable to seed managed repository README in {}: {error}",
+            managed_checkout_dir.display()
+        )
+    })?;
+    let _ = std::process::Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&managed_checkout_dir)
+        .status();
+    let _ = std::process::Command::new("git")
+        .args(["commit", "-m", "Initialize managed repository"])
+        .current_dir(&managed_checkout_dir)
+        .status();
+
+    Ok(managed_checkout_dir)
 }
 
 fn unique_project_slug(connection: &Connection, name: &str, exclude_project_id: Option<&str>) -> Result<String, String> {
