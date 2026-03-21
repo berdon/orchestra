@@ -100,6 +100,35 @@ export function parseInputJson(inputJson: unknown) {
 }
 
 export function createBridgeTool(tool: OrchestraToolDefinition) {
+  if (tool.name === "comment_on_task") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, author, message, and optionally interruptAgent.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        author: Type.String({ description: "Comment author name to record on the task." }),
+        message: Type.String({ description: "Durable task comment text describing what happened and why." }),
+        interruptAgent: Type.Optional(Type.Boolean({ description: "Whether this comment should interrupt an active worker immediately." })),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; author: string; message: string; interruptAgent?: boolean }) {
+        const payload = {
+          taskId: params.taskId,
+          input: {
+            author: params.author,
+            message: params.message,
+            interruptAgent: params.interruptAgent ?? false,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
   return {
     name: tool.name,
     label: `Orchestra · ${tool.name}`,

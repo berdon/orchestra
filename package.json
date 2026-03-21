@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:desktop-e2e": "./scripts/run-desktop-e2e.sh tests/desktop-e2e/desktop-harness.test.ts && ./scripts/run-desktop-e2e.sh tests/desktop-e2e/project-setup.test.ts && ./scripts/run-desktop-e2e.sh tests/desktop-e2e/task-dispatch.test.ts && ./scripts/run-desktop-e2e.sh tests/desktop-e2e/workflow-lifecycle.test.ts && ./scripts/run-desktop-e2e.sh tests/desktop-e2e/file-workflow.test.ts"
+    "test:desktop-e2e:host": "./scripts/run-desktop-e2e-suite.sh tests/desktop-e2e/desktop-harness.test.ts tests/desktop-e2e/project-setup.test.ts tests/desktop-e2e/task-dispatch.test.ts tests/desktop-e2e/workflow-lifecycle.test.ts tests/desktop-e2e/autonomous-workflow.test.ts tests/desktop-e2e/file-workflow.test.ts",
+    "test:desktop-e2e": "./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/desktop-harness.test.ts tests/desktop-e2e/project-setup.test.ts tests/desktop-e2e/task-dispatch.test.ts tests/desktop-e2e/workflow-lifecycle.test.ts tests/desktop-e2e/autonomous-workflow.test.ts tests/desktop-e2e/file-workflow.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
