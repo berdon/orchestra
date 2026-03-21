@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REAL_HOME="${HOME}"
 LOG_ROOT="${ROOT_DIR}/.tmp/desktop-e2e"
+mkdir -p "${LOG_ROOT}"
 RUN_DIR="$(mktemp -d "${LOG_ROOT}/run-XXXXXX")"
 TEST_HOME="${RUN_DIR}/home"
 mkdir -p "${RUN_DIR}" "${TEST_HOME}"

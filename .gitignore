@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vite/
+.tmp/
 .DS_Store
 src-tauri/target/
 *.swp
