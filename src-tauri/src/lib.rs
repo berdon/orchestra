@@ -43,6 +43,7 @@ use commands::{
     },
 };
 use state::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -85,7 +86,7 @@ pub fn run() {
         &format!("Started Orchestra tool bridge at {}", tool_bridge.url),
     );
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(app_state)
         .setup(|app| {
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
@@ -174,6 +175,21 @@ pub fn run() {
             duplicate_workflow,
             archive_workflow
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
+            let state = app_handle.state::<AppState>();
+            if let Ok(shutdown_count) = state.shutdown_all_session_runtimes() {
+                if shutdown_count > 0 {
+                    state.log(
+                        "info",
+                        "sessions.runtime.shutdown",
+                        &format!("Shut down {} live pi runtimes during app exit", shutdown_count),
+                    );
+                }
+            }
+        }
+    });
 }
