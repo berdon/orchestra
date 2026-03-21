@@ -40,10 +40,15 @@ pub struct StoredSession {
 pub fn detect_session_context(
     project_slug_override: Option<&str>,
 ) -> Result<SessionContext, String> {
-    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "Unable to resolve Orchestra project root".to_string())?;
+    let project_root = env::var("ORCHESTRA_PROJECT_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        });
 
     let project_slug = project_slug_override
         .map(sanitize_slug)
@@ -902,7 +907,11 @@ fn run_rpc_process<F>(
 where
     F: FnMut(&Value),
 {
-    let mut child = Command::new(executable)
+    let pi_executable = std::env::var("ORCHESTRA_PI_EXECUTABLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| executable.to_path_buf());
+    let mut child = Command::new(&pi_executable)
+        .arg("--offline")
         .arg("--mode")
         .arg("rpc")
         .arg("--session")
@@ -965,8 +974,11 @@ where
             continue;
         }
 
-        let payload: Value = serde_json::from_str(trimmed)
-            .map_err(|error| format!("Unable to parse pi RPC output as JSON: {error}"))?;
+        let payload: Value = serde_json::from_str(trimmed).map_err(|error| {
+            format!(
+                "Unable to parse pi RPC output as JSON: {error}. Raw line: {trimmed}"
+            )
+        })?;
         on_payload(&payload);
         payloads.push(payload);
     }

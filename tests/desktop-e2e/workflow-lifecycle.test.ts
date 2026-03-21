@@ -48,11 +48,21 @@ describe("desktop workflow lifecycle", () => {
         },
       });
 
+      const repositoryRoot = join(testHome!, "workspace", "workflow-lifecycle-repo", "repository");
+      await invokeCommand(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Workflow Lifecycle Repo Seed",
+          localPath: repositoryRoot,
+          remoteUrl: null,
+          defaultBranch: "main",
+        },
+      }).catch(() => undefined);
       const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
         projectId: project.id,
         input: {
           name: "Workflow Lifecycle Repo",
-          localPath: join(testHome!, "workspace", "workflow-lifecycle-repo"),
+          localPath: repositoryRoot,
           remoteUrl: null,
           defaultBranch: "main",
         },
@@ -68,8 +78,8 @@ describe("desktop workflow lifecycle", () => {
           name: "Architect",
           description: "Plans the work.",
           systemPrompt: null,
-          provider: null,
-          model: null,
+          provider: "openai-codex",
+          model: "gpt-5.3-codex-spark",
           thinkingLevel: "off",
           capacity: 1,
           policyIds: [],
@@ -81,8 +91,8 @@ describe("desktop workflow lifecycle", () => {
           name: "Developer",
           description: "Implements the work.",
           systemPrompt: null,
-          provider: null,
-          model: null,
+          provider: "openai-codex",
+          model: "gpt-5.3-codex-spark",
           thinkingLevel: "off",
           capacity: 1,
           policyIds: [],
@@ -94,8 +104,8 @@ describe("desktop workflow lifecycle", () => {
           name: "QA",
           description: "Validates the work.",
           systemPrompt: null,
-          provider: null,
-          model: null,
+          provider: "openai-codex",
+          model: "gpt-5.3-codex-spark",
           thinkingLevel: "off",
           capacity: 1,
           policyIds: [],
@@ -173,6 +183,7 @@ describe("desktop workflow lifecycle", () => {
       });
 
       const task = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask.id });
+      expect(task.repositoryId).toBe(repository.id);
       const expectedPlanSessionTitle = `Architect · ${task.number} · ${task.title}`;
       const expectedImplementSessionTitle = `Developer · ${task.number} · ${task.title}`;
       const expectedValidateSessionTitle = `QA · ${task.number} · ${task.title}`;

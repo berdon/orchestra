@@ -50,6 +50,18 @@ pub fn project_settings_path(root: &Path, project_slug: &str) -> PathBuf {
     project_root(root, project_slug).join("settings.json")
 }
 
+pub fn project_repositories_dir(root: &Path, project_slug: &str) -> PathBuf {
+    project_root(root, project_slug).join("repositories")
+}
+
+pub fn managed_repository_root(root: &Path, project_slug: &str, repository_slug: &str) -> PathBuf {
+    project_repositories_dir(root, project_slug).join(sanitize_slug(repository_slug))
+}
+
+pub fn managed_repository_checkout_dir(root: &Path, project_slug: &str, repository_slug: &str) -> PathBuf {
+    managed_repository_root(root, project_slug, repository_slug).join("repository")
+}
+
 pub fn project_attachments_dir(root: &Path, project_slug: &str) -> PathBuf {
     project_root(root, project_slug).join("attachments")
 }

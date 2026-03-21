@@ -38,11 +38,22 @@ describe("desktop task dispatch", () => {
         },
       });
 
+      const repoHome = join(testHome!, "workspace", "dispatch-repo");
+      const repositoryRoot = join(repoHome, "repository");
+      await invokeCommand(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Dispatch Repo Seed",
+          localPath: repositoryRoot,
+          remoteUrl: null,
+          defaultBranch: "main",
+        },
+      }).catch(() => undefined);
       const repository = await invokeCommand<{ id: string; localPath: string | null }>(sessionId, "create_repository", {
         projectId: project.id,
         input: {
           name: "Dispatch Repo",
-          localPath: join(testHome!, "workspace", "dispatch-repo"),
+          localPath: repositoryRoot,
           remoteUrl: null,
           defaultBranch: "main",
         },
@@ -55,8 +66,8 @@ describe("desktop task dispatch", () => {
           name: "Developer",
           description: "Dispatch test developer role.",
           systemPrompt: null,
-          provider: null,
-          model: null,
+          provider: "openai-codex",
+          model: "gpt-5.3-codex-spark",
           thinkingLevel: "off",
           capacity: 1,
           policyIds: [],
@@ -104,6 +115,9 @@ describe("desktop task dispatch", () => {
           archived: false,
         },
       });
+
+      const createdTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: task.id });
+      expect(createdTask.repositoryId).toBe(repository.id);
 
       const taskSummaries = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
         projectId: project.id,

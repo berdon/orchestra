@@ -31,15 +31,40 @@ cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
 cp -a /src/src-tauri/icons "${WORKSPACE_DIR}/src-tauri/icons"
 cp -a /src/src-tauri/gen "${WORKSPACE_DIR}/src-tauri/gen"
 
+mkdir -p /root
 if [[ -d /seed-home/.pi ]]; then
-  echo "[desktop-e2e] wiring seed .pi"
-  mkdir -p /root
+  echo "[desktop-e2e] wiring writable .pi copy"
   rm -rf /root/.pi
-  ln -s /seed-home/.pi /root/.pi
+  cp -a /seed-home/.pi /root/.pi
+fi
+if [[ -d /seed-home/.codex ]]; then
+  echo "[desktop-e2e] wiring writable .codex copy"
+  rm -rf /root/.codex
+  cp -a /seed-home/.codex /root/.codex
 fi
 
-mkdir -p /home/openclaw/workspace/orchestra/worktrees
-ln -s /build /home/openclaw/workspace/orchestra/worktrees/agent-03
+mkdir -p "${WORKSPACE_DIR}/.tmp/desktop-e2e"
+mkdir -p "${WORKSPACE_DIR}/.tmp/desktop-e2e/shared-home/workspace/workflow-lifecycle-repo/repository"
+mkdir -p "${WORKSPACE_DIR}/.tmp/desktop-e2e/shared-home/workspace/dispatch-repo/repository"
+cd "${WORKSPACE_DIR}/.tmp/desktop-e2e/shared-home/workspace/workflow-lifecycle-repo/repository"
+git init -b main >/dev/null 2>&1
+git config user.email desktop-e2e@example.invalid >/dev/null 2>&1
+git config user.name "Desktop E2E" >/dev/null 2>&1
+if [[ ! -f README.md ]]; then
+  echo "workflow lifecycle repo" > README.md
+  git add README.md >/dev/null 2>&1
+  git commit -m "init" >/dev/null 2>&1 || true
+fi
+cd "${WORKSPACE_DIR}/.tmp/desktop-e2e/shared-home/workspace/dispatch-repo/repository"
+git init -b main >/dev/null 2>&1
+git config user.email desktop-e2e@example.invalid >/dev/null 2>&1
+git config user.name "Desktop E2E" >/dev/null 2>&1
+if [[ ! -f README.md ]]; then
+  echo "dispatch repo" > README.md
+  git add README.md >/dev/null 2>&1
+  git commit -m "init" >/dev/null 2>&1 || true
+fi
+cd "${WORKSPACE_DIR}"
 
 cd "${WORKSPACE_DIR}"
 echo "[desktop-e2e] workspace ready pwd=$(pwd)"
@@ -88,5 +113,7 @@ fi
 
 export DISPLAY="${XVFB_DISPLAY}"
 export ORCHESTRA_TAURI_BINARY="${HOST_BINARY_PATH}"
-echo "[desktop-e2e] launching isolated desktop harness with DISPLAY=${DISPLAY} and binary=${ORCHESTRA_TAURI_BINARY}"
+export ORCHESTRA_PROJECT_ROOT="${WORKSPACE_DIR}"
+export ORCHESTRA_PI_EXECUTABLE="/workspace/orchestra/node_modules/.bin/pi"
+echo "[desktop-e2e] launching isolated desktop harness with DISPLAY=${DISPLAY} binary=${ORCHESTRA_TAURI_BINARY} project_root=${ORCHESTRA_PROJECT_ROOT} pi=${ORCHESTRA_PI_EXECUTABLE}"
 ./scripts/run-desktop-e2e.sh "${TEST_FILE}"
