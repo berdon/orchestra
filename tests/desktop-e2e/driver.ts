@@ -30,13 +30,13 @@ async function webdriverRequest(path: string, init?: RequestInit) {
   return JSON.parse(stdout || "null");
 }
 
-export async function createWebdriverSession() {
+export async function createWebdriverSession(timeoutMs = 45_000) {
   if (!tauriBinary) {
     throw new Error("ORCHESTRA_TAURI_BINARY is required for desktop E2E runs.");
   }
 
-  const deadline = Date.now() + 30_000;
-  let lastError = "";
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "Unable to create WebDriver session before timeout.";
 
   while (Date.now() < deadline) {
     try {
@@ -68,7 +68,7 @@ export async function createWebdriverSession() {
     await sleep(1_000);
   }
 
-  throw new Error(lastError || "Unable to create WebDriver session before timeout.");
+  throw new Error(lastError);
 }
 
 export async function deleteWebdriverSession(sessionId: string) {

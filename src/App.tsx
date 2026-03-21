@@ -1234,7 +1234,7 @@ export function App() {
     try {
       const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows] = await Promise.all([
         listSessions(),
-        listTasks(false),
+        listTasks(false, activeProjectId),
         listAgentOperations(false),
         listRoleOperations(false),
         listWorkflows(false),
