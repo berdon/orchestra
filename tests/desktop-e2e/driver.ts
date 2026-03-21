@@ -1,21 +1,33 @@
-import { fetch as undiciFetch } from "undici";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 const webdriverUrl = process.env.ORCHESTRA_WEBDRIVER_URL ?? "http://127.0.0.1:4444";
 const tauriBinary = process.env.ORCHESTRA_TAURI_BINARY;
+const execFileAsync = promisify(execFile);
 
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function webdriverRequest(path: string, init?: RequestInit) {
-  const response = await undiciFetch(`${webdriverUrl}${path}`, {
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    ...init,
+  const args = ["-sS", "-X", init?.method ?? "GET", `${webdriverUrl}${path}`];
+  const headers = {
+    "content-type": "application/json",
+    ...(init?.headers ?? {}),
+  } as Record<string, string>;
+
+  for (const [key, value] of Object.entries(headers)) {
+    args.push("-H", `${key}: ${value}`);
+  }
+
+  if (typeof init?.body === "string") {
+    args.push("--data", init.body);
+  }
+
+  const { stdout } = await execFileAsync("curl", args, {
+    maxBuffer: 10 * 1024 * 1024,
   });
-  return response.json() as Promise<any>;
+  return JSON.parse(stdout || "null");
 }
 
 export async function createWebdriverSession() {
@@ -23,31 +35,44 @@ export async function createWebdriverSession() {
     throw new Error("ORCHESTRA_TAURI_BINARY is required for desktop E2E runs.");
   }
 
-  const response = await webdriverRequest("/session", {
-    method: "POST",
-    body: JSON.stringify({
-      capabilities: {
-        alwaysMatch: {
-          browserName: "wry",
-          "tauri:options": {
-            application: tauriBinary,
-          },
-        },
-      },
-    }),
-  });
+  const deadline = Date.now() + 30_000;
+  let lastError = "";
 
-  const sessionId = response?.value?.sessionId ?? response?.sessionId ?? null;
-  if (!sessionId) {
-    throw new Error(`Unable to create WebDriver session: ${JSON.stringify(response)}`);
+  while (Date.now() < deadline) {
+    try {
+      const response = await webdriverRequest("/session", {
+        method: "POST",
+        body: JSON.stringify({
+          capabilities: {
+            alwaysMatch: {
+              browserName: "wry",
+              "tauri:options": {
+                application: tauriBinary,
+              },
+            },
+          },
+        }),
+      });
+
+      const sessionId = response?.value?.sessionId ?? response?.sessionId ?? null;
+      if (sessionId) {
+        await sleep(3_000);
+        return sessionId as string;
+      }
+
+      lastError = `Unable to create WebDriver session: ${JSON.stringify(response)}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+
+    await sleep(1_000);
   }
 
-  await sleep(1_000);
-  return sessionId as string;
+  throw new Error(lastError || "Unable to create WebDriver session before timeout.");
 }
 
 export async function deleteWebdriverSession(sessionId: string) {
-  await undiciFetch(`${webdriverUrl}/session/${sessionId}`, { method: "DELETE" }).catch(() => undefined);
+  await webdriverRequest(`/session/${sessionId}`, { method: "DELETE" }).catch(() => undefined);
 }
 
 export async function executeScript<T>(sessionId: string, script: string, args: unknown[] = []) {

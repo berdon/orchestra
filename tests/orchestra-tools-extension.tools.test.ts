@@ -19,6 +19,11 @@ describe("orchestra tools extension tool registration", () => {
         description: "Read task context",
         requiredPermission: "tasks.read",
       },
+      {
+        name: "comment_on_task",
+        description: "Add a durable task comment",
+        requiredPermission: "tasks.comment",
+      },
     ]);
     process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({ actorType: "user", actorId: "tester" });
   });
@@ -56,7 +61,7 @@ describe("orchestra tools extension tool registration", () => {
 
     expect(registeredCommands).toEqual(expect.arrayContaining(["orchestra-tools", "orchestra-run"]));
     expect(registeredTools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["orchestra_help", "complete_lane_as_success", "get_task_context"]),
+      expect.arrayContaining(["orchestra_help", "complete_lane_as_success", "get_task_context", "comment_on_task"]),
     );
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
 
@@ -65,11 +70,31 @@ describe("orchestra tools extension tool registration", () => {
       inputJson: '{"taskId":"task-1","notes":"Ship it"}',
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const commentTool = registeredTools.find((tool) => tool.name === "comment_on_task");
+    const commentResult = await commentTool.execute("tool-call-2", {
+      taskId: "task-1",
+      author: "Worker",
+      message: "Completed a large action because it was required.",
+      interruptAgent: false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
     expect(request.payload).toEqual({ taskId: "task-1", notes: "Ship it" });
+    const commentRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(commentRequest.command).toBe("comment_on_task");
+    expect(commentRequest.payload).toEqual({
+      taskId: "task-1",
+      input: {
+        author: "Worker",
+        message: "Completed a large action because it was required.",
+        interruptAgent: false,
+      },
+    });
     expect(result.details.command).toBe("complete_lane_as_success");
     expect(result.content[0]?.text).toContain("complete_lane_as_success");
+    expect(commentResult.details.command).toBe("comment_on_task");
+    expect(commentResult.content[0]?.text).toContain("comment_on_task");
   });
 });

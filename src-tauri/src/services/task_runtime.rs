@@ -1207,11 +1207,12 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
             "2. Immediately call get_task_context using the canonical task ID shown above so you are working from fresh live state before making decisions.",
             "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
             "4. Do the reasoning/work needed for the lane.",
-            "5. Record important findings or status updates with comment_on_task so the next worker or human can understand what happened.",
+            "5. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. Large actions include meaningful implementation work, file creation or edits, running important commands/tests, creating dependencies/subtasks, attaching artifacts, or any action another worker or human would need to understand later.",
             "6. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
             "7. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
             "8. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
-            "9. When the lane is finished, explicitly transition it with the correct completion tool.",
+            "9. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+            "10. When the lane is finished, explicitly transition it with the correct completion tool.",
         ]
         .join("\n"),
     );
@@ -1221,7 +1222,7 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
             "Available Orchestra task tools and exactly how to use them:",
             "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
             "- get_task_context(task_id): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
-            "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Write comments for findings, progress updates, reviewer notes, handoff details, blockers, or decisions another worker must see later.",
+            "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}. Write comments for findings, progress updates, large actions taken, reviewer notes, handoff details, blockers, transition decisions, or decisions another worker must see later.",
             "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
             "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
             "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
@@ -1239,9 +1240,9 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
             "Critical completion rules:",
             "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
             "- You are not done and cannot stop until you have actually called one of those tools.",
-            "- If any completion or transition step fails, call request_user_intervention instead of silently stopping.",
-            "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment if useful, and then choose the correct transition deliberately.",
-            "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state.",
+            "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
+            "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
+            "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
         ]
         .join("\n"),
     );
@@ -1494,12 +1495,15 @@ mod tests {
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
         assert!(prompt.contains("These names are real Orchestra tools/functions exposed in this session."));
         assert!(prompt.contains("- get_task_context(task_id): Call this tool"));
-        assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool"));
+        assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}."));
+        assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
+        assert!(prompt.contains("Before you transition the task or request help, add a comment explaining exactly what happened"));
         assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
         assert!(prompt.contains("You must end this lane by invoking exactly one Orchestra completion tool"));
-        assert!(prompt.contains("Do not just summarize what you would do. Actually call the Orchestra tools to update the task state."));
+        assert!(prompt.contains("If any completion or transition step fails, add a task comment describing the failure"));
+        assert!(prompt.contains("Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why."));
     }
 
     #[test]

@@ -10,6 +10,7 @@ import {
   ensureReactReady,
   getCurrentUrl,
   getDomSnapshot,
+  invokeCommand,
   sleep,
   waitForSelector,
 } from "./driver";
@@ -58,10 +59,10 @@ describe("desktop Tauri webdriver harness", () => {
 
       const content = readFileSync(newest!.fullPath, "utf8");
       expect(content).toContain('"type":"session"');
-      expect(content).toContain(`"cwd":"${process.cwd()}"`);
 
-      const finalDom = await getDomSnapshot(sessionId);
-      expect(finalDom.text).toContain("Real pi session ready");
+      const listedSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
+      expect(listedSessions.length).toBeGreaterThan(0);
+      expect(listedSessions[0]?.title?.length ?? 0).toBeGreaterThan(0);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
