@@ -182,4 +182,21 @@ impl AppState {
             .map_err(|_| "Unable to access session runtime state".to_string())
             .map(|mut runtimes| runtimes.remove(session_id))
     }
+
+    pub fn shutdown_all_session_runtimes(&self) -> Result<usize, String> {
+        let runtimes = self
+            .session_runtimes
+            .lock()
+            .map_err(|_| "Unable to access session runtime state".to_string())?
+            .drain()
+            .map(|(_, runtime)| runtime)
+            .collect::<Vec<_>>();
+
+        let count = runtimes.len();
+        for runtime in runtimes {
+            runtime.shutdown();
+        }
+
+        Ok(count)
+    }
 }
