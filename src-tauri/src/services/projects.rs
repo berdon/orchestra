@@ -249,6 +249,9 @@ pub fn get_repository(connection: &Connection, repository_id: &str) -> Result<Re
         .ok_or_else(|| format!("Repository {repository_id} was not found"))
 }
 
+const DEFAULT_PROJECT_ID: &str = "orchestra";
+const DEFAULT_REPOSITORY_ID: &str = "repo-orchestra";
+
 fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
@@ -258,8 +261,6 @@ fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     }
 
     let now = now_iso();
-    let project_id = format!("project-{}", Uuid::new_v4().simple());
-    let repository_id = format!("repo-{}", Uuid::new_v4().simple());
     let default_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
@@ -269,13 +270,13 @@ fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     connection
         .execute(
             "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', ?2, ?3, ?3)",
-            params![project_id, repository_id, now],
+            params![DEFAULT_PROJECT_ID, DEFAULT_REPOSITORY_ID, now],
         )
         .map_err(|error| format!("Unable to seed default project: {error}"))?;
     connection
         .execute(
             "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'main', ?4, ?4)",
-            params![repository_id, project_id, default_path.display().to_string(), now],
+            params![DEFAULT_REPOSITORY_ID, DEFAULT_PROJECT_ID, default_path.display().to_string(), now],
         )
         .map_err(|error| format!("Unable to seed default repository: {error}"))?;
     Ok(())

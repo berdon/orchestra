@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { listAgents } from "../lib/agents";
+import { getProject } from "../lib/projects";
 import { listRoles } from "../lib/roles";
 import {
   addTaskAttachment,
   addTaskDependency,
+  addTaskFileReference,
   commentOnTask,
   completeLaneAsFailure,
   completeLaneAsSuccess,
@@ -18,15 +20,18 @@ import {
   listenToTaskChanges,
   removeTaskAttachment,
   removeTaskDependency,
+  removeTaskFileReference,
   requestUserIntervention,
   updateTask,
 } from "../lib/tauri";
 import type {
   AgentSummary,
+  RepositoryRecord,
   RoleSummary,
   SessionStreamEnvelope,
   TaskCommentInput,
   TaskDetail,
+  TaskFileReferenceInput,
   TaskSummary,
   TaskUpsertInput,
   WorkflowDefinition,
@@ -67,6 +72,13 @@ function createBlankCommentDraft(): TaskCommentInput {
   };
 }
 
+function createBlankFileReferenceDraft(): TaskFileReferenceInput {
+  return {
+    repositoryId: "",
+    relativePath: "",
+  };
+}
+
 function taskToDraft(task: TaskDetail): TaskUpsertInput {
   return {
     title: task.title,
@@ -86,7 +98,7 @@ function taskToDraft(task: TaskDetail): TaskUpsertInput {
 
 interface TaskTimelineItem {
   id: string;
-  kind: "comment" | "attachment" | "lane_run" | "dependency_in" | "dependency_out";
+  kind: "comment" | "attachment" | "file_reference" | "lane_run" | "dependency_in" | "dependency_out";
   title: string;
   description: string;
   timestamp: string;
@@ -147,9 +159,11 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
   const [workflowDefinitions, setWorkflowDefinitions] = useState<Record<string, WorkflowDefinition>>({});
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [repositories, setRepositories] = useState<RepositoryRecord[]>([]);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
   const [taskDraft, setTaskDraft] = useState<TaskUpsertInput>(createBlankTaskDraft);
   const [commentDraft, setCommentDraft] = useState<TaskCommentInput>(createBlankCommentDraft);
+  const [fileReferenceDraft, setFileReferenceDraft] = useState<TaskFileReferenceInput>(createBlankFileReferenceDraft);
   const [taskDraftDirty, setTaskDraftDirty] = useState(false);
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -208,6 +222,15 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       tone: "neutral",
     }));
 
+    const fileReferences = taskDetail.fileReferences.map<TaskTimelineItem>((reference) => ({
+      id: `file-reference-${reference.id}`,
+      kind: "file_reference",
+      title: `Project file referenced: ${reference.relativePath}`,
+      description: `${reference.repositoryName} · ${reference.exists ? "Available" : "Missing"}`,
+      timestamp: reference.createdAt,
+      tone: reference.exists ? "neutral" : "warning",
+    }));
+
     const laneRuns = taskDetail.laneRuns.map<TaskTimelineItem>((laneRun) => ({
       id: `lane-run-${laneRun.id}`,
       kind: "lane_run",
@@ -235,7 +258,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       tone: "neutral",
     }));
 
-    return [...comments, ...attachments, ...laneRuns, ...blockedBy, ...blocking].sort(
+    return [...comments, ...attachments, ...fileReferences, ...laneRuns, ...blockedBy, ...blocking].sort(
       (left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp),
     );
   }, [taskDetail]);
@@ -251,18 +274,26 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       setTaskActionError(null);
     }
     try {
-      const [nextTasks, nextWorkflows, nextAgents, nextRoles] = await Promise.all([
+      const [nextTasks, nextWorkflows, nextAgents, nextRoles, nextProject] = await Promise.all([
         listTasks(includeArchivedTasks, projectId),
         listWorkflows(false),
         listAgents(false),
         listRoles(false),
+        projectId ? getProject(projectId) : Promise.resolve(null),
       ]);
       setTasks((current) => (sameData(current, nextTasks) ? current : nextTasks));
       setWorkflowSummaries((current) => (sameData(current, nextWorkflows) ? current : nextWorkflows));
       setAgents((current) => (sameData(current, nextAgents) ? current : nextAgents));
       setRoles((current) => (sameData(current, nextRoles) ? current : nextRoles));
+      setRepositories((current) => (sameData(current, nextProject?.repositories ?? []) ? current : nextProject?.repositories ?? []));
 
-      const workflowIds = Array.from(new Set(nextTasks.filter((task) => task.workflowId && !isDraftTask(task)).map((task) => task.workflowId!)));
+      const workflowIds: string[] = Array.from(
+        new Set(
+          nextTasks
+            .filter((task: TaskSummary) => Boolean(task.workflowId) && !isDraftTask(task))
+            .map((task: TaskSummary) => task.workflowId as string),
+        ),
+      );
       const definitions = await Promise.all(workflowIds.map((workflowId) => getWorkflow(workflowId)));
       const nextDefinitions = Object.fromEntries(definitions.map((definition) => [definition.id, definition]));
       setWorkflowDefinitions((current) => (sameData(current, nextDefinitions) ? current : nextDefinitions));
@@ -285,6 +316,10 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       setTaskDetail((current) => (sameData(current, task) ? current : task));
       if (!options?.silent) {
         setCommentDraft(createBlankCommentDraft());
+        setFileReferenceDraft({
+          repositoryId: task.repositoryId ?? repositories[0]?.id ?? "",
+          relativePath: "",
+        });
       }
       if (!options?.preserveDraft) {
         const nextDraft = taskToDraft(task);
@@ -411,6 +446,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       workflowId: workflowId ?? null,
     });
     setCommentDraft(createBlankCommentDraft());
+    setFileReferenceDraft({ repositoryId: repositories[0]?.id ?? "", relativePath: "" });
     setTaskDraftDirty(false);
     setRoute({ kind: "create", parentTaskId: parentTaskId ?? null, workflowId: workflowId ?? null });
   }
@@ -527,6 +563,35 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     }
   }
 
+  async function handleAddFileReference() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await addTaskFileReference(route.taskId, fileReferenceDraft);
+      setFileReferenceDraft({ repositoryId: fileReferenceDraft.repositoryId || (repositories[0]?.id ?? ""), relativePath: "" });
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleRemoveFileReference(referenceId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await removeTaskFileReference(referenceId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to remove file reference.");
+    }
+  }
+
   async function handleAddComment() {
     if (route.kind !== "detail") {
       return;
@@ -614,10 +679,12 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
           commentDraft={commentDraft}
           dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
           draft={taskDraft}
+          fileReferenceDraft={fileReferenceDraft}
           loading={loadingTaskDetail}
           onAddAttachment={(files) => void handleAttachmentInputChange(files)}
           onAddComment={() => void handleAddComment()}
           onAddDependency={() => void handleAddDependency()}
+          onAddFileReference={() => void handleAddFileReference()}
           onBack={() => setRoute({ kind: "overview" })}
           onCommentDraftChange={setCommentDraft}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
@@ -627,12 +694,15 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
             setTaskDraft(draft);
             setTaskDraftDirty(true);
           }}
+          onFileReferenceDraftChange={setFileReferenceDraft}
           onOpenTask={openTaskDetail}
           onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
+          onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
           onSave={() => void handleSaveDetailTask()}
           onSelectBlocker={setSelectedBlockerTaskId}
           roles={roles}
+          repositories={repositories}
           saving={savingTask}
           selectedBlockerTaskId={selectedBlockerTaskId}
           task={taskDetail}

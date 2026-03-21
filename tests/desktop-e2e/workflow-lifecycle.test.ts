@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   clickByText,
   clickSelector,
-  createWebdriverSession,
+  createReadyWebdriverSession,
   deleteWebdriverSession,
   dispatchWindowEvent,
   ensureReactReady,

@@ -284,18 +284,30 @@ fn resolve_task_runtime_project_root(
     task: &TaskDetail,
 ) -> Result<PathBuf, String> {
     eprintln!("[task_runtime] resolve runtime root task={} repo_id={:?} fallback={}", task.id, task.repository_id, fallback_project_root.display());
-    let Some(repository_id) = task.repository_id.as_deref() else {
-        return Ok(fallback_project_root.to_path_buf());
-    };
+    if let Some(repository_id) = task.repository_id.as_deref() {
+        let repository = projects::get_repository(connection, repository_id)?;
+        eprintln!("[task_runtime] repository {} local_path={:?}", repository.id, repository.local_path);
+        return repository_runtime_root(&repository).ok_or_else(|| {
+            format!(
+                "Task {} references repository {} but it does not have a local path",
+                task.id, repository_id
+            )
+        });
+    }
 
-    let repository = projects::get_repository(connection, repository_id)?;
-    eprintln!("[task_runtime] repository {} local_path={:?}", repository.id, repository.local_path);
-    repository_runtime_root(&repository).ok_or_else(|| {
-        format!(
-            "Task {} references repository {} but it does not have a local path",
-            task.id, repository_id
-        )
-    })
+    for reference in &task.file_references {
+        let repository = projects::get_repository(connection, &reference.repository_id)?;
+        if let Some(runtime_root) = repository_runtime_root(&repository) {
+            eprintln!(
+                "[task_runtime] falling back to file reference repository {} local_path={}",
+                repository.id,
+                runtime_root.display()
+            );
+            return Ok(runtime_root);
+        }
+    }
+
+    Ok(fallback_project_root.to_path_buf())
 }
 
 fn repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
@@ -1198,6 +1210,22 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
         sections.push(format!("Blocking tasks:\n{}", blocked_lines));
     }
 
+    if !task.file_references.is_empty() {
+        let reference_lines = task
+            .file_references
+            .iter()
+            .map(|reference| {
+                let status = if reference.exists { "available" } else { "missing" };
+                match reference.absolute_path.as_deref() {
+                    Some(path) => format!("- {}/{} ({}) at {}", reference.repository_slug, reference.relative_path, status, path),
+                    None => format!("- {}/{} ({})", reference.repository_slug, reference.relative_path, status),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!("Referenced project files (live repository files, not imported snapshots):\n{}", reference_lines));
+    }
+
     if !task.attachments.is_empty() {
         let attachment_lines = task
             .attachments
@@ -1482,6 +1510,22 @@ mod tests {
         )
         .expect("agent should create");
         let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let repo_root = unique_temp_dir("task-runtime-file-reference");
+        std::fs::create_dir_all(repo_root.join("docs")).expect("docs dir should create");
+        std::fs::write(repo_root.join("docs/design.md"), "# Design\n").expect("design file should write");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'repo-prompt', ?1, ?1)",
+                params![now],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-prompt', 'orchestra', 'orchestra', 'Orchestra repository', ?1, NULL, 'main', ?2, ?2)",
+                params![repo_root.display().to_string(), now],
+            )
+            .expect("repository should insert");
         let task = tasks::create_task(
             &mut connection,
             Some("orchestra"),
@@ -1495,12 +1539,21 @@ mod tests {
                 current_lane_id: Some("lane-implement".into()),
                 assignee_type: "unassigned".into(),
                 assignee_id: None,
-                repository_id: None,
+                repository_id: Some("repo-prompt".into()),
                 parent_task_id: None,
                 archived: None,
             },
         )
         .expect("task should create");
+        crate::services::task_file_references::add_task_file_reference(
+            &mut connection,
+            &task.id,
+            crate::models::TaskFileReferenceInput {
+                repository_id: "repo-prompt".into(),
+                relative_path: "docs/design.md".into(),
+            },
+        )
+        .expect("file reference should add");
 
         let task = tasks::get_task_context(&connection, &task.id).expect("task context should load");
         let lane = workflow
@@ -1517,6 +1570,8 @@ mod tests {
         assert!(prompt.contains("- Lane: the current step of the workflow."));
         assert!(prompt.contains("How to work effectively in this session:"));
         assert!(prompt.contains("2. Immediately call get_task_context using the canonical task ID shown above"));
+        assert!(prompt.contains("Referenced project files (live repository files, not imported snapshots):"));
+        assert!(prompt.contains("docs/design.md"));
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
         assert!(prompt.contains("These names are real Orchestra tools/functions exposed in this session."));
         assert!(prompt.contains("- get_task_context(task_id): Call this tool"));

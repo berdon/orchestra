@@ -10,24 +10,34 @@ export function sleep(ms: number) {
 }
 
 async function webdriverRequest(path: string, init?: RequestInit) {
-  const args = ["-sS", "-X", init?.method ?? "GET", `${webdriverUrl}${path}`];
   const headers = {
     "content-type": "application/json",
     ...(init?.headers ?? {}),
   } as Record<string, string>;
 
-  for (const [key, value] of Object.entries(headers)) {
-    args.push("-H", `${key}: ${value}`);
+  let lastError = "";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const args = ["-sS", "--connect-timeout", "5", "--max-time", "15", "-X", init?.method ?? "GET", `${webdriverUrl}${path}`];
+    for (const [key, value] of Object.entries(headers)) {
+      args.push("-H", `${key}: ${value}`);
+    }
+
+    if (typeof init?.body === "string") {
+      args.push("--data", init.body);
+    }
+
+    try {
+      const { stdout } = await execFileAsync("curl", args, {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return JSON.parse(stdout || "null");
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await sleep(500 * (attempt + 1));
+    }
   }
 
-  if (typeof init?.body === "string") {
-    args.push("--data", init.body);
-  }
-
-  const { stdout } = await execFileAsync("curl", args, {
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return JSON.parse(stdout || "null");
+  throw new Error(lastError || `Unable to reach webdriver at ${webdriverUrl}${path}`);
 }
 
 export async function createWebdriverSession(timeoutMs = 45_000) {
@@ -56,7 +66,7 @@ export async function createWebdriverSession(timeoutMs = 45_000) {
 
       const sessionId = response?.value?.sessionId ?? response?.sessionId ?? null;
       if (sessionId) {
-        await sleep(3_000);
+        await sleep(5_000);
         return sessionId as string;
       }
 
@@ -66,6 +76,28 @@ export async function createWebdriverSession(timeoutMs = 45_000) {
     }
 
     await sleep(1_000);
+  }
+
+  throw new Error(lastError);
+}
+
+export async function createReadyWebdriverSession(timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "Unable to create a ready WebDriver session before timeout.";
+
+  while (Date.now() < deadline) {
+    let sessionId: string | null = null;
+    try {
+      sessionId = await createWebdriverSession(30_000);
+      await ensureReactReady(sessionId, 30_000);
+      return sessionId;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (sessionId) {
+        await deleteWebdriverSession(sessionId).catch(() => undefined);
+      }
+      await sleep(2_000);
+    }
   }
 
   throw new Error(lastError);
@@ -175,43 +207,55 @@ export async function waitForText(sessionId: string, text: string, timeoutMs = 3
   throw new Error(`Unable to locate text ${text}: ${JSON.stringify(lastState)}`);
 }
 
-export async function clickSelector(sessionId: string, selector: string) {
-  const clicked = await executeScript<boolean>(
-    sessionId,
-    `
-      const element = document.querySelector(arguments[0]);
-      if (!element) {
-        return false;
-      }
-      element.click();
-      return true;
-    `,
-    [selector],
-  );
+export async function clickSelector(sessionId: string, selector: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const clicked = await executeScript<boolean>(
+      sessionId,
+      `
+        const element = document.querySelector(arguments[0]);
+        if (!element) {
+          return false;
+        }
+        element.click();
+        return true;
+      `,
+      [selector],
+    );
 
-  if (!clicked) {
-    throw new Error(`Unable to click selector ${selector}`);
+    if (clicked) {
+      return;
+    }
+    await sleep(250);
   }
+
+  throw new Error(`Unable to click selector ${selector}`);
 }
 
-export async function clickByText(sessionId: string, selector: string, text: string) {
-  const clicked = await executeScript<boolean>(
-    sessionId,
-    `
-      const elements = Array.from(document.querySelectorAll(arguments[0]));
-      const match = elements.find((element) => (element.textContent || "").trim().includes(arguments[1]));
-      if (!match) {
-        return false;
-      }
-      match.click();
-      return true;
-    `,
-    [selector, text],
-  );
+export async function clickByText(sessionId: string, selector: string, text: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const clicked = await executeScript<boolean>(
+      sessionId,
+      `
+        const elements = Array.from(document.querySelectorAll(arguments[0]));
+        const match = elements.find((element) => (element.textContent || "").trim().includes(arguments[1]));
+        if (!match) {
+          return false;
+        }
+        match.click();
+        return true;
+      `,
+      [selector, text],
+    );
 
-  if (!clicked) {
-    throw new Error(`Unable to click text ${text} in ${selector}`);
+    if (clicked) {
+      return;
+    }
+    await sleep(250);
   }
+
+  throw new Error(`Unable to click text ${text} in ${selector}`);
 }
 
 export async function clickNthSelector(sessionId: string, selector: string, index: number) {
@@ -317,6 +361,17 @@ export async function setCheckbox(sessionId: string, selector: string, checked: 
   }
 }
 
+export async function getSelectedValue(sessionId: string, selector: string) {
+  return executeScript<string>(
+    sessionId,
+    `
+      const element = document.querySelector(arguments[0]);
+      return element ? String(element.value || '') : '';
+    `,
+    [selector],
+  );
+}
+
 export async function getSelectOptions(sessionId: string, selector: string) {
   return executeScript<Array<{ value: string; label: string }>>(
     sessionId,
@@ -392,6 +447,30 @@ export async function selectByLabel(sessionId: string, selector: string, label: 
   if (!updated) {
     throw new Error(`Unable to select label ${label} for ${selector}`);
   }
+}
+
+export async function waitForSelectedLabel(sessionId: string, selector: string, label: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastLabel = "";
+  while (Date.now() < deadline) {
+    lastLabel = await executeScript<string>(
+      sessionId,
+      `
+        const element = document.querySelector(arguments[0]);
+        if (!element) {
+          return '';
+        }
+        const option = element.options[element.selectedIndex];
+        return (option?.label || option?.textContent || '').trim();
+      `,
+      [selector],
+    );
+    if (lastLabel === label) {
+      return;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Expected selected label ${label} for ${selector}, got ${lastLabel}`);
 }
 
 export async function selectFieldByLabel(sessionId: string, labelText: string, optionLabel: string) {
@@ -492,23 +571,49 @@ export async function invokeCommand<T>(sessionId: string, command: string, args:
   return response?.value?.value as T;
 }
 
-export async function ensureReactReady(sessionId: string, timeoutMs = 30_000) {
+export async function ensureReactReady(sessionId: string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastDom = "";
+  let lastUrl = "";
   let lastError = "";
+  let recoveryAttempts = 0;
   while (Date.now() < deadline) {
     try {
-      const url = await getCurrentUrl(sessionId);
+      const currentUrl = await getCurrentUrl(sessionId);
+      lastUrl = currentUrl;
       const dom = await getDomSnapshot(sessionId);
       lastDom = dom.html;
-      if (url === "about:blank" || dom.html.trim() === "<html><head></head><body></body></html>" || dom.html.trim() === "") {
-        await navigateTo(sessionId, "http://tauri.localhost");
-        await sleep(500);
-        continue;
+      const normalizedText = dom.text.toLowerCase();
+      const hasAppShell = await executeScript<boolean>(
+        sessionId,
+        `
+          return Boolean(document.querySelector('[data-role="project-switcher"]'))
+            || Array.from(document.querySelectorAll('button')).some((entry) => (entry.textContent || '').trim().includes('Settings'));
+        `,
+      );
+
+      if (hasAppShell) {
+        return dom;
       }
 
-      if (dom.html.includes('<div id="root">') || dom.html.includes('<div id="root"></div>') || dom.text.length > 0) {
-        return dom;
+      if (
+        dom.html.trim() === "<html><head></head><body></body></html>"
+        || dom.html.trim() === ""
+        || normalizedText.includes("could not connect to localhost")
+        || normalizedText.includes("could not connect to tauri.localhost")
+        || normalizedText.includes("asset not found")
+      ) {
+        if (recoveryAttempts === 0) {
+          console.error(`[desktop-e2e] waiting for app shell at ${currentUrl}: ${dom.text.trim()}`);
+        }
+        if (recoveryAttempts < 3 && (currentUrl.startsWith('http://localhost') || currentUrl.startsWith('http://tauri.localhost'))) {
+          recoveryAttempts += 1;
+          try {
+            await navigateTo(sessionId, 'tauri://localhost/index.html');
+          } catch {}
+        }
+        await sleep(1000);
+        continue;
       }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
@@ -517,5 +622,5 @@ export async function ensureReactReady(sessionId: string, timeoutMs = 30_000) {
     await sleep(500);
   }
 
-  throw new Error(`React app did not become ready: ${lastDom.slice(0, 1000)} ${lastError}`.trim());
+  throw new Error(`React app did not become ready at ${lastUrl}: ${lastDom.slice(0, 1000)} ${lastError}`.trim());
 }
