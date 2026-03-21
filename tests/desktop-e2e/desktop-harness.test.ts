@@ -58,7 +58,7 @@ describe("desktop Tauri webdriver harness", () => {
 
       const content = readFileSync(newest!.fullPath, "utf8");
       expect(content).toContain('"type":"session"');
-      expect(content).toContain('"cwd":"/home/openclaw/workspace/orchestra/worktrees/data-01"');
+      expect(content).toContain(`"cwd":"${process.cwd()}"`);
 
       const finalDom = await getDomSnapshot(sessionId);
       expect(finalDom.text).toContain("Real pi session ready");
