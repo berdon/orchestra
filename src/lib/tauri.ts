@@ -16,6 +16,8 @@ import type {
   SessionStreamEnvelope,
   TaskAttachment,
   TaskAttachmentInput,
+  TaskFileReference,
+  TaskFileReferenceInput,
   TaskComment,
   TaskChangeEvent,
   TaskCommentInput,
@@ -481,6 +483,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedBy: [],
       blocking: [],
       attachments: [],
+      fileReferences: [],
       activeLaneAssignment: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -520,6 +523,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedBy: [],
       blocking: [],
       attachments: [],
+      fileReferences: [],
       activeLaneAssignment: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -582,6 +586,7 @@ function seedMockTasks(): TaskDetail[] {
       blockedBy: [],
       blocking: [],
       attachments: [],
+      fileReferences: [],
       activeLaneAssignment: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -800,6 +805,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     blockedBy: [],
     blocking: [],
     attachments: existingTask?.attachments ?? [],
+    fileReferences: existingTask?.fileReferences ?? [],
     activeLaneAssignment: existingTask?.activeLaneAssignment ?? null,
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
@@ -1406,6 +1412,20 @@ export async function sendSessionMessage(sessionId: string, message: string, run
   return invoke<QueuedSessionMessage>("send_session_message", { sessionId, message: trimmedMessage, runId });
 }
 
+async function resolveTauriProjectId(projectId?: string | null) {
+  const requestedProjectId = projectId ?? getActiveProjectId();
+  if (!isTauriAvailable()) {
+    return requestedProjectId;
+  }
+
+  const projects = await invoke<Array<{ id: string }>>("list_projects");
+  if (requestedProjectId && projects.some((entry) => entry.id === requestedProjectId)) {
+    return requestedProjectId;
+  }
+
+  return projects[0]?.id ?? requestedProjectId ?? null;
+}
+
 export async function listTasks(includeArchived = false, projectId?: string | null): Promise<TaskSummary[]> {
   const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
@@ -1415,7 +1435,8 @@ export async function listTasks(includeArchived = false, projectId?: string | nu
       .map(summarizeTask);
   }
 
-  return invoke<TaskSummary[]>("list_tasks", { projectId: activeProjectId, includeArchived });
+  const resolvedProjectId = await resolveTauriProjectId(projectId);
+  return invoke<TaskSummary[]>("list_tasks", { projectId: resolvedProjectId, includeArchived });
 }
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
@@ -1445,7 +1466,9 @@ export async function createTask(input: TaskUpsertInput, projectId?: string | nu
     return task;
   }
 
-  return invoke<TaskDetail>("create_task", { projectId: activeProjectId, input });
+  const resolvedProjectId = await resolveTauriProjectId(projectId);
+  console.debug("createTask resolvedProjectId", { projectId, resolvedProjectId, input });
+  return invoke<TaskDetail>("create_task", { projectId: resolvedProjectId, input });
 }
 
 export async function updateTask(taskId: string, input: TaskUpsertInput): Promise<TaskDetail> {
@@ -1946,6 +1969,95 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
   }
 
   return invoke<TaskComment>("comment_on_task", { taskId, input });
+}
+
+export async function addTaskFileReference(taskId: string, input: TaskFileReferenceInput): Promise<TaskFileReference> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+
+    const projects = getStoredValue<Array<{ id: string; repositories: Array<{ id: string; name: string; slug: string; localPath?: string | null }> }>>("orchestra.mock.projects") ?? [];
+    const project = projects.find((entry) => entry.id === task.projectId) ?? null;
+    const repository = project?.repositories.find((entry) => entry.id === input.repositoryId) ?? null;
+    if (!repository) {
+      throw new Error(`Repository ${input.repositoryId} was not found`);
+    }
+
+    const relativePath = input.relativePath.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!relativePath || relativePath.startsWith("/") || relativePath.split("/").includes("..")) {
+      throw new Error("relativePath: File path must stay inside the repository root.");
+    }
+
+    const reference: TaskFileReference = {
+      id: createId("task-file-reference"),
+      taskId,
+      repositoryId: repository.id,
+      repositoryName: repository.name,
+      repositorySlug: repository.slug,
+      relativePath,
+      absolutePath: repository.localPath ? `${repository.localPath.replace(/\/$/, "")}/${relativePath}` : null,
+      exists: false,
+      createdAt: nowIso(),
+    };
+
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? { ...entry, fileReferences: [...entry.fileReferences, reference], updatedAt: reference.createdAt }
+          : entry,
+      ),
+    );
+    appendMockLog("info", "task.file_reference.added", `Added file reference ${reference.id} to task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.file_reference.added" });
+    return reference;
+  }
+
+  return invoke<TaskFileReference>("add_task_file_reference", { taskId, input });
+}
+
+export async function listTaskFileReferences(taskId: string): Promise<TaskFileReference[]> {
+  if (!isTauriAvailable()) {
+    const task = ensureMockTasks().find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+    return task.fileReferences;
+  }
+
+  return invoke<TaskFileReference[]>("list_task_file_references", { taskId });
+}
+
+export async function removeTaskFileReference(referenceId: string): Promise<TaskFileReference> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    let removed: TaskFileReference | null = null;
+    const updated = tasks.map((task) => {
+      const match = task.fileReferences.find((reference) => reference.id === referenceId) ?? null;
+      if (!match) {
+        return task;
+      }
+      removed = match;
+      return {
+        ...task,
+        fileReferences: task.fileReferences.filter((reference) => reference.id !== referenceId),
+      };
+    });
+
+    if (!removed) {
+      throw new Error(`Task file reference ${referenceId} was not found`);
+    }
+
+    const removedReference = removed as TaskFileReference;
+    saveMockTasks(updated);
+    appendMockLog("info", "task.file_reference.removed", `Removed file reference ${referenceId}`);
+    emitMockTaskChange({ taskIds: [removedReference.taskId], reason: "task.file_reference.removed" });
+    return removedReference;
+  }
+
+  return invoke<TaskFileReference>("remove_task_file_reference", { referenceId });
 }
 
 export async function addTaskAttachment(taskId: string, input: TaskAttachmentInput): Promise<TaskAttachment> {

@@ -22,6 +22,7 @@ choose_unused_port() {
 
 SCRIPT_LOG="${RUN_DIR}/runner.log"
 DRIVER_LOG="${RUN_DIR}/tauri-driver.log"
+PREVIEW_LOG="${RUN_DIR}/vite-preview.log"
 BINARY_PATH="${ROOT_DIR}/src-tauri/target/debug/orchestra"
 WEBDRIVER_PORT="$(choose_unused_port 30000)"
 NATIVE_WEBDRIVER_PORT="$(choose_unused_port 45000)"
@@ -56,6 +57,28 @@ run_inner() {
     ln -s "${REAL_HOME}/.pi" "${TEST_HOME}/.pi"
   fi
 
+  setsid npx vite preview --host 127.0.0.1 --port 1420 --strictPort >"${PREVIEW_LOG}" 2>&1 &
+  PREVIEW_PID=$!
+  PREVIEW_PGID="${PREVIEW_PID}"
+
+  for _ in $(seq 1 60); do
+    if curl -sf "http://127.0.0.1:1420" >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "${PREVIEW_PID}" 2>/dev/null; then
+      echo "vite preview exited unexpectedly" >&2
+      cat "${PREVIEW_LOG}" >&2 || true
+      exit 1
+    fi
+    sleep 1
+  done
+
+  if ! curl -sf "http://127.0.0.1:1420" >/dev/null 2>&1; then
+    echo "vite preview did not become ready" >&2
+    cat "${PREVIEW_LOG}" >&2 || true
+    exit 1
+  fi
+
   setsid tauri-driver --port "${WEBDRIVER_PORT}" --native-port "${NATIVE_WEBDRIVER_PORT}" --native-driver /usr/bin/WebKitWebDriver >"${DRIVER_LOG}" 2>&1 &
   DRIVER_PID=$!
   DRIVER_PGID="${DRIVER_PID}"
@@ -64,6 +87,10 @@ run_inner() {
     if [[ -n "${DRIVER_PGID:-}" ]]; then
       kill -TERM -- "-${DRIVER_PGID}" 2>/dev/null || true
       wait "${DRIVER_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${PREVIEW_PGID:-}" ]]; then
+      kill -TERM -- "-${PREVIEW_PGID}" 2>/dev/null || true
+      wait "${PREVIEW_PID}" 2>/dev/null || true
     fi
   }
   trap cleanup EXIT

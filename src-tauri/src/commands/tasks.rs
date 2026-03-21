@@ -3,9 +3,9 @@ use tauri::{AppHandle, State};
 use crate::{
     models::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskDependency,
-        TaskDetail, TaskSummary, TaskUpsertInput,
+        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskUpsertInput,
     },
-    services::{app_events, database, pi_sessions, task_attachments, task_runtime, tasks},
+    services::{app_events, database, pi_sessions, task_attachments, task_file_references, task_runtime, tasks},
     state::AppState,
 };
 
@@ -44,6 +44,12 @@ pub fn get_task(task_id: String) -> Result<TaskDetail, String> {
 pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
     let connection = database::open_connection()?;
     tasks::get_task_context(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn list_task_file_references(task_id: String) -> Result<Vec<TaskFileReference>, String> {
+    let connection = database::open_connection()?;
+    task_file_references::load_task_file_references(&connection, &task_id)
 }
 
 #[tauri::command]
@@ -232,6 +238,57 @@ pub fn remove_task_dependency(
         ],
     );
     Ok(dependency)
+}
+
+#[tauri::command]
+pub fn add_task_file_reference(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    input: TaskFileReferenceInput,
+) -> Result<TaskFileReference, String> {
+    let mut connection = database::open_connection()?;
+    let reference = task_file_references::add_task_file_reference(&mut connection, &task_id, input)?;
+    state.log(
+        "info",
+        "task.file_reference.added",
+        &format!("Added file reference {} to task {}", reference.id, task_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "add_task_file_reference",
+        None,
+        None,
+        &reference.id,
+        "success",
+    );
+    emit_task_change(&app, "task.file_reference.added", [task_id]);
+    Ok(reference)
+}
+
+#[tauri::command]
+pub fn remove_task_file_reference(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    reference_id: String,
+) -> Result<TaskFileReference, String> {
+    let connection = database::open_connection()?;
+    let reference = task_file_references::remove_task_file_reference(&connection, &reference_id)?;
+    state.log(
+        "info",
+        "task.file_reference.removed",
+        &format!("Removed file reference {}", reference_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "remove_task_file_reference",
+        None,
+        None,
+        &reference_id,
+        "success",
+    );
+    emit_task_change(&app, "task.file_reference.removed", [reference.task_id.clone()]);
+    Ok(reference)
 }
 
 #[tauri::command]

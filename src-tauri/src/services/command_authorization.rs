@@ -114,7 +114,12 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("get_task", "Get a task", "tasks.read"),
     (
         "get_task_context",
-        "Get a task with hierarchy, dependencies, attachments, and lane context",
+        "Get a task with hierarchy, dependencies, attachments, file references, and lane context",
+        "tasks.read",
+    ),
+    (
+        "list_task_file_references",
+        "List task project file references",
         "tasks.read",
     ),
     ("create_task", "Create a task", "tasks.create"),

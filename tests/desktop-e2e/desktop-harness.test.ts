@@ -5,14 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickSelector,
-  createWebdriverSession,
+  createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
   getCurrentUrl,
-  getDomSnapshot,
-  invokeCommand,
   sleep,
   waitForSelector,
+  waitForText,
 } from "./driver";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
@@ -28,7 +27,7 @@ describe("desktop Tauri webdriver harness", () => {
     const debugSourcePath = join(testHome!, "desktop-source.html");
     const beforeFiles = existsSync(expectedSessionDir) ? readdirSync(expectedSessionDir).length : 0;
 
-    const sessionId = await createWebdriverSession();
+    const sessionId = await createReadyWebdriverSession();
     try {
       const initialUrl = await getCurrentUrl(sessionId);
       const initialDom = await ensureReactReady(sessionId);
@@ -59,10 +58,7 @@ describe("desktop Tauri webdriver harness", () => {
 
       const content = readFileSync(newest!.fullPath, "utf8");
       expect(content).toContain('"type":"session"');
-
-      const listedSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
-      expect(listedSessions.length).toBeGreaterThan(0);
-      expect(listedSessions[0]?.title?.length ?? 0).toBeGreaterThan(0);
+      await waitForText(sessionId, "Real pi session ready");
     } finally {
       await deleteWebdriverSession(sessionId);
     }

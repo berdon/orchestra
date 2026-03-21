@@ -7,7 +7,7 @@ use crate::{
         TaskComment, TaskCommentInput, TaskDetail, TaskDependency, TaskLaneRun, TaskSummary,
         TaskUpsertInput,
     },
-    services::{task_attachments, task_runtime},
+    services::{task_attachments, task_file_references, task_runtime},
 };
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
@@ -99,6 +99,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     blocked_by: Vec::new(),
                     blocking: Vec::new(),
                     attachments: Vec::new(),
+                    file_references: Vec::new(),
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
                     active_lane_assignment: None,
@@ -117,6 +118,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
     task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
+    task.file_references = task_file_references::load_task_file_references(connection, task_id)?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
     task.active_lane_assignment = task_runtime::get_active_lane_assignment(connection, task_id)?;

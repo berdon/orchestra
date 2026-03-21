@@ -6,7 +6,6 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type SessionStatus = "starting" | "active" | "idle" | "paused" | "failed" | "streaming" | "closed";
 export type SessionEventKind = "system" | "user" | "assistant";
-export type SessionActivityState = "idle" | "thinking" | "tool_running" | "streaming" | "error";
 
 export interface LogEntry {
   id: string;
@@ -84,6 +83,8 @@ export interface SessionEvent {
   thinking?: boolean;
   runId?: string;
 }
+
+export type SessionActivityState = "idle" | "thinking" | "streaming" | "tool_running" | "error";
 
 export interface SessionRecord {
   id: string;
@@ -500,6 +501,23 @@ export interface TaskAttachmentInput {
   caption?: string | null;
 }
 
+export interface TaskFileReference {
+  id: string;
+  taskId: string;
+  repositoryId: string;
+  repositoryName: string;
+  repositorySlug: string;
+  relativePath: string;
+  absolutePath?: string | null;
+  exists: boolean;
+  createdAt: string;
+}
+
+export interface TaskFileReferenceInput {
+  repositoryId: string;
+  relativePath: string;
+}
+
 export interface TaskLaneRun {
   id: string;
   taskId: string;
@@ -568,6 +586,7 @@ export interface TaskDetail extends TaskSummary {
   blockedBy: TaskDependency[];
   blocking: TaskDependency[];
   attachments: TaskAttachment[];
+  fileReferences: TaskFileReference[];
   comments: TaskComment[];
   laneRuns: TaskLaneRun[];
   activeLaneAssignment?: TaskLaneAssignment | null;

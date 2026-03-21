@@ -13,7 +13,7 @@ use crate::{
     },
     services::{
         agents, authorization, command_authorization, database, pi_sessions, policies,
-        project_settings, role_dispatch, role_runtime, roles, task_attachments, tasks,
+        project_settings, role_dispatch, role_runtime, roles, task_attachments, task_file_references, tasks,
         workflows,
     },
 };

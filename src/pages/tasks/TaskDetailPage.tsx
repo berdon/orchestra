@@ -1,9 +1,9 @@
-import type { AgentSummary, RoleSummary, TaskCommentInput, TaskDetail, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReferenceInput, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
   id: string;
-  kind: "comment" | "attachment" | "lane_run" | "dependency_in" | "dependency_out";
+  kind: "comment" | "attachment" | "file_reference" | "lane_run" | "dependency_in" | "dependency_out";
   title: string;
   description: string;
   timestamp: string;
@@ -14,9 +14,11 @@ interface TaskDetailPageProps {
   task: TaskDetail;
   draft: TaskUpsertInput;
   commentDraft: TaskCommentInput;
+  fileReferenceDraft: TaskFileReferenceInput;
   workflows: WorkflowSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
+  repositories: RepositoryRecord[];
   timelineItems: TaskTimelineItem[];
   dependencyCandidates: Array<{ id: string; number: string; title: string }>;
   selectedBlockerTaskId: string;
@@ -35,6 +37,9 @@ interface TaskDetailPageProps {
   onSelectBlocker: (taskId: string) => void;
   onAddAttachment: (files: FileList | null) => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onFileReferenceDraftChange: (draft: TaskFileReferenceInput) => void;
+  onAddFileReference: () => void;
+  onRemoveFileReference: (referenceId: string) => void;
   onAddComment: () => void;
 }
 
@@ -61,9 +66,11 @@ export function TaskDetailPage({
   task,
   draft,
   commentDraft,
+  fileReferenceDraft,
   workflows,
   agents,
   roles,
+  repositories,
   timelineItems,
   dependencyCandidates,
   selectedBlockerTaskId,
@@ -82,6 +89,9 @@ export function TaskDetailPage({
   onSelectBlocker,
   onAddAttachment,
   onRemoveAttachment,
+  onFileReferenceDraftChange,
+  onAddFileReference,
+  onRemoveFileReference,
   onAddComment,
 }: TaskDetailPageProps) {
   return (
@@ -261,6 +271,52 @@ export function TaskDetailPage({
               ) : <p className="muted-copy">No downstream blocked tasks yet.</p>}
             </div>
           </div>
+        </section>
+
+        <section className="task-section">
+          <div className="task-section__header">
+            <div>
+              <p className="eyebrow">Project files</p>
+              <h4>Live repository references</h4>
+            </div>
+          </div>
+
+          <div className="task-editor-grid">
+            <label className="field-group">
+              <span className="field-group__label">Repository</span>
+              <select className="select-input" data-role="task-file-reference-repository" value={fileReferenceDraft.repositoryId} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, repositoryId: event.target.value })}>
+                <option value="">Select repository…</option>
+                {repositories.map((repository) => (
+                  <option key={repository.id} value={repository.id}>{repository.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field-group">
+              <span className="field-group__label">Relative path</span>
+              <input className="text-input" data-role="task-file-reference-path" value={fileReferenceDraft.relativePath} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, relativePath: event.target.value })} placeholder="docs/design.md" />
+            </label>
+            <div className="task-editor-grid__full">
+              <button className="secondary-button" data-role="add-task-file-reference" type="button" disabled={!fileReferenceDraft.repositoryId || !fileReferenceDraft.relativePath.trim()} onClick={onAddFileReference}>Add file reference</button>
+            </div>
+          </div>
+
+          {task.fileReferences.length ? (
+            <div className="task-section-list" data-role="task-file-references">
+              {task.fileReferences.map((reference) => (
+                <article className="task-history-card" key={reference.id}>
+                  <div className="workflow-section__header">
+                    <strong>{reference.repositoryName} · {reference.relativePath}</strong>
+                    <div className="action-cluster">
+                      <span className={`status-badge status-badge--${reference.exists ? "success" : "warning"}`}>{reference.exists ? "Available" : "Missing"}</span>
+                      <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveFileReference(reference.id)}>Remove</button>
+                    </div>
+                  </div>
+                  <p className="muted-copy">Repository slug: {reference.repositorySlug}</p>
+                  <p className="muted-copy">Absolute path: {reference.absolutePath ?? "Unavailable"}</p>
+                </article>
+              ))}
+            </div>
+          ) : <p className="muted-copy">No project files referenced yet. Add a repository file to give sessions direct live context.</p>}
         </section>
 
         <section className="task-section">

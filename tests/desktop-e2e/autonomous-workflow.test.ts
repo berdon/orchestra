@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
-  createWebdriverSession,
+  createReadyWebdriverSession,
   deleteWebdriverSession,
   dispatchWindowEvent,
   ensureReactReady,
@@ -43,7 +43,7 @@ describe("desktop autonomous workflow", () => {
     const expectedContents = "AUTONOMOUS_DESKTOP_E2E_OK\n";
     rmSync(targetFile, { force: true });
 
-    const sessionId = await createWebdriverSession();
+    const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 

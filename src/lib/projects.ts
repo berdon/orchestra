@@ -77,12 +77,21 @@ function ensureMockProjects() {
 }
 
 export function getActiveProjectId() {
-  const projects = ensureMockProjects();
   const stored = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
+  if (isTauriAvailable()) {
+    return stored ?? null;
+  }
+
+  const projects = ensureMockProjects();
   return stored && projects.some((project) => project.id === stored) ? stored : projects[0]?.id ?? null;
 }
 
 export function getProjectRuntimeCwd(projectId?: string | null) {
+  if (isTauriAvailable()) {
+    const resolvedProjectId = projectId ?? getActiveProjectId();
+    return `/mock/projects/${resolvedProjectId ?? DEFAULT_PROJECT_ID}`;
+  }
+
   const projects = ensureMockProjects();
   const resolvedProjectId = projectId ?? getActiveProjectId();
   const project = resolvedProjectId ? projects.find((entry) => entry.id === resolvedProjectId) ?? null : null;

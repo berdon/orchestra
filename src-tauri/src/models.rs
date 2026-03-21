@@ -561,6 +561,27 @@ pub struct TaskAttachmentInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskFileReference {
+    pub id: String,
+    pub task_id: String,
+    pub repository_id: String,
+    pub repository_name: String,
+    pub repository_slug: String,
+    pub relative_path: String,
+    pub absolute_path: Option<String>,
+    pub exists: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskFileReferenceInput {
+    pub repository_id: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskCommentInput {
     pub author: String,
     pub message: String,
@@ -681,6 +702,7 @@ pub struct TaskDetail {
     pub blocked_by: Vec<TaskDependency>,
     pub blocking: Vec<TaskDependency>,
     pub attachments: Vec<TaskAttachment>,
+    pub file_references: Vec<TaskFileReference>,
     pub comments: Vec<TaskComment>,
     pub lane_runs: Vec<TaskLaneRun>,
     pub active_lane_assignment: Option<TaskLaneAssignment>,
