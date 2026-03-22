@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import hljs from "highlight.js/lib/common";
+import hljs from "highlight.js";
 import { marked } from "marked";
 
 import { buildCollapsedPreview, detectTranscriptContent, isFoldableTranscriptEvent, isToolCallTranscriptEvent } from "../lib/sessionTranscript";
