@@ -1504,6 +1504,32 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
   return invoke<TaskDetail>("update_task", { taskId, input });
 }
 
+export async function deleteTask(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const existing = tasks.find((task) => task.id === taskId);
+    if (!existing) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+
+    saveMockTaskDependencies(
+      ensureMockTaskDependencies().filter(
+        (dependency) => dependency.blockerTaskId !== taskId && dependency.blockedTaskId !== taskId,
+      ),
+    );
+    saveMockTasks(
+      tasks
+        .filter((task) => task.id !== taskId)
+        .map((task) => (task.parentTaskId === taskId ? { ...task, parentTaskId: null } : task)),
+    );
+    appendMockLog("info", "task.deleted", `Deleted task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.deleted" });
+    return existing;
+  }
+
+  return invoke<TaskDetail>("delete_task", { taskId });
+}
+
 export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();

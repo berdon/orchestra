@@ -130,6 +130,7 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("create_task", "Create a task", "tasks.create"),
     ("create_subtask", "Create a subtask", "tasks.create"),
     ("update_task", "Update a task", "tasks.update"),
+    ("delete_task", "Delete a task", "tasks.delete"),
     ("comment_on_task", "Comment on a task", "tasks.comment"),
     ("dispatch_task_lane", "Dispatch the current task lane", "tasks.transition"),
     (

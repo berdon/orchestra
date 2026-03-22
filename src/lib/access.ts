@@ -40,6 +40,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   { key: "tasks.read", group: "Tasks", label: "View tasks", description: "List and inspect tasks." },
   { key: "tasks.create", group: "Tasks", label: "Create tasks", description: "Create tasks and subtasks." },
   { key: "tasks.update", group: "Tasks", label: "Edit tasks", description: "Update task fields and metadata." },
+  { key: "tasks.delete", group: "Tasks", label: "Delete tasks", description: "Permanently delete tasks and their related records.", risk: "sensitive" },
   { key: "tasks.comment", group: "Tasks", label: "Comment on tasks", description: "Add comments to tasks." },
   { key: "tasks.transition", group: "Tasks", label: "Advance task lanes", description: "Dispatch and transition workflow lanes.", risk: "sensitive" },
   { key: "tasks.dependencies.write", group: "Tasks", label: "Edit dependencies", description: "Add and remove task dependencies." },

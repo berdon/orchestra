@@ -244,6 +244,18 @@ Do not block the initial prototype on:
 
 These should be planned next, but only after session interaction is working.
 
+## Desktop E2E policy
+
+Desktop end-to-end coverage should run through the dedicated desktop runner only.
+
+Use the checked-in runner scripts:
+- `scripts/run-desktop-e2e.sh`
+- `scripts/run-desktop-e2e-suite.sh`
+- `scripts/run-desktop-e2e-podman.sh`
+- `scripts/run-desktop-e2e-suite-podman.sh`
+
+Do not treat desktop specs as generic browser Playwright tests, and do not replace the runner with ad hoc cargo/Tauri launch flows in docs or implementation guidance.
+
 ## Summary
 
 The immediate implementation strategy is:

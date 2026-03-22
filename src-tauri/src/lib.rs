@@ -33,7 +33,7 @@ use commands::{
     },
     tasks::{
         add_task_attachment, add_task_dependency, add_task_file_reference, comment_on_task, complete_lane_as_failure,
-        complete_lane_as_success, create_subtask, create_task, dispatch_task_lane, get_task,
+        complete_lane_as_success, create_subtask, create_task, delete_task, dispatch_task_lane, get_task,
         get_task_context, list_task_file_references, list_task_repositories, list_tasks, remove_task_attachment, remove_task_dependency,
         remove_task_file_reference, request_user_intervention, update_task,
     },
@@ -145,6 +145,7 @@ pub fn run() {
             create_task,
             create_subtask,
             update_task,
+            delete_task,
             comment_on_task,
             dispatch_task_lane,
             complete_lane_as_success,

@@ -11,6 +11,7 @@ import {
   completeLaneAsFailure,
   completeLaneAsSuccess,
   createTask,
+  deleteTask,
   dispatchTaskLane,
   getTask,
   getWorkflow,
@@ -22,6 +23,7 @@ import {
   removeTaskDependency,
   removeTaskFileReference,
   requestUserIntervention,
+  sendSessionMessage,
   updateTask,
 } from "../lib/tauri";
 import type {
@@ -40,7 +42,7 @@ import type {
 import { TaskCreatePage } from "./tasks/TaskCreatePage";
 import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { buildTaskBoardModel, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
-import { TasksOverviewPage, type TaskBoardFilter } from "./tasks/TasksOverviewPage";
+import { TasksOverviewPage, type TaskBoardFilter, type TaskBoardViewMode } from "./tasks/TasksOverviewPage";
 
 type TasksRoute =
   | { kind: "overview" }
@@ -172,8 +174,10 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [loadingTaskDetail, setLoadingTaskDetail] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
-  const [includeArchivedTasks, setIncludeArchivedTasks] = useState(false);
+  const [publishingTask, setPublishingTask] = useState(false);
+  const [deletingTask, setDeletingTask] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
+  const [taskBoardViewMode, setTaskBoardViewMode] = useState<TaskBoardViewMode>("cards");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
@@ -188,6 +192,8 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
         return tasks.filter((task) => task.status === "blocked" || task.dependencyBlocked);
       case "active":
         return tasks.filter((task) => task.status === "in_progress" || task.readyForDispatch);
+      case "done":
+        return tasks.filter((task) => task.status === "completed" || task.status === "canceled");
       case "epics":
         return tasks.filter((task) => task.type === "epic");
       default:
@@ -278,7 +284,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     }
     try {
       const [nextTasks, nextWorkflows, nextAgents, nextRoles, nextProject] = await Promise.all([
-        listTasks(includeArchivedTasks, projectId),
+        listTasks(false, projectId),
         listWorkflows(false),
         listAgents(false),
         listRoles(false),
@@ -341,7 +347,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
 
   useEffect(() => {
     void loadTasksData();
-  }, [includeArchivedTasks, projectId]);
+  }, [projectId]);
 
   useEffect(() => {
     if (route.kind === "detail") {
@@ -413,7 +419,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       disposeTaskChanges?.();
       disposeSessionStream?.();
     };
-  }, [route, taskDraftDirty, includeArchivedTasks, projectId]);
+  }, [route, taskDraftDirty, projectId]);
 
   useEffect(() => {
     if (createTaskProjectId !== projectId || createTaskToken === createTaskTokenRef.current) {
@@ -441,6 +447,8 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     setTaskDraftDirty(false);
     setSelectedBlockerTaskId("");
     setTaskActionError(null);
+    setPublishingTask(false);
+    setDeletingTask(false);
   }, [projectId]);
 
   function openCreateTask(parentTaskId?: string | null, workflowId?: string | null) {
@@ -461,23 +469,45 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     setRoute({ kind: "detail", taskId });
   }
 
+  async function maybeDispatchPublishedTask(taskId: string) {
+    const latest = await getTask(taskId);
+    if (latest.readyForDispatch) {
+      await dispatchTaskLane(taskId);
+    }
+  }
+
   async function handleSaveCreateTask() {
     setSavingTask(true);
     setTaskActionError(null);
     try {
-      const saved = await createTask(taskDraft, projectId);
+      const saved = await createTask({ ...taskDraft, status: "draft" }, projectId);
       await loadTasksData();
-      setRoute({ kind: "overview" });
-      setTaskDetail(null);
-      setTaskDraft(createBlankTaskDraft());
-      setCommentDraft(createBlankCommentDraft());
+      setRoute({ kind: "detail", taskId: saved.id });
+      await loadTaskDetail(saved.id);
       setTaskDraftDirty(false);
       setSelectedBlockerTaskId("");
-      void loadTaskDetail(saved.id, { silent: true });
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to create task.");
     } finally {
       setSavingTask(false);
+    }
+  }
+
+  async function handlePublishCreateTask() {
+    setPublishingTask(true);
+    setTaskActionError(null);
+    try {
+      const saved = await createTask({ ...taskDraft, status: "ready" }, projectId);
+      await maybeDispatchPublishedTask(saved.id);
+      await loadTasksData();
+      setRoute({ kind: "detail", taskId: saved.id });
+      await loadTaskDetail(saved.id);
+      setTaskDraftDirty(false);
+      setSelectedBlockerTaskId("");
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to publish task.");
+    } finally {
+      setPublishingTask(false);
     }
   }
 
@@ -496,6 +526,48 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       setTaskActionError(error instanceof Error ? error.message : "Unable to save task.");
     } finally {
       setSavingTask(false);
+    }
+  }
+
+  async function handlePublishDetailTask() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setPublishingTask(true);
+    setTaskActionError(null);
+    try {
+      const saved = await updateTask(route.taskId, { ...taskDraft, status: "ready" });
+      await maybeDispatchPublishedTask(saved.id);
+      await loadTasksData();
+      await loadTaskDetail(saved.id);
+      setTaskDraftDirty(false);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to publish task.");
+    } finally {
+      setPublishingTask(false);
+    }
+  }
+
+  async function handleDeleteDetailTask() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setDeletingTask(true);
+    setTaskActionError(null);
+    try {
+      await deleteTask(route.taskId);
+      await loadTasksData();
+      setRoute({ kind: "overview" });
+      setTaskDetail(null);
+      setTaskDraft(createBlankTaskDraft());
+      setCommentDraft(createBlankCommentDraft());
+      setFileReferenceDraft(createBlankFileReferenceDraft());
+      setTaskDraftDirty(false);
+      setSelectedBlockerTaskId("");
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to delete task.");
+    } finally {
+      setDeletingTask(false);
     }
   }
 
@@ -652,6 +724,36 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     }
   }
 
+  async function handleRetryTaskLane() {
+    if (route.kind !== "detail" || !taskDetail || !taskDetail.workflowId || !taskDetail.currentLaneId) {
+      return;
+    }
+
+    setTaskActionError(null);
+    try {
+      const activeSessionId = taskDetail.activeLaneAssignment?.sessionId ?? null;
+      if (activeSessionId) {
+        await sendSessionMessage(
+          activeSessionId,
+          "Keep working this ticket and use the tools complete_lane_as_success, complete_lane_as_failure, and request_user_intervention to mark the work as completed.",
+          `retry-task-${taskDetail.id}-${Date.now()}`,
+        );
+        return;
+      }
+
+      if (taskDetail.readyForDispatch) {
+        await dispatchTaskLane(taskDetail.id);
+        await loadTasksData();
+        await loadTaskDetail(taskDetail.id);
+        return;
+      }
+
+      throw new Error("This task is not currently dispatchable for retry.");
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to retry task lane.");
+    }
+  }
+
   return (
     <section className="panel-stack task-page-stack">
       {taskActionError ? <p className="error-copy">{taskActionError}</p> : null}
@@ -664,11 +766,11 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
           attentionTasks={attentionTasks}
           board={boardModel}
           filter={taskFilter}
-          includeArchived={includeArchivedTasks}
           onFilterChange={setTaskFilter}
-          onIncludeArchivedChange={setIncludeArchivedTasks}
           onOpenTask={openTaskDetail}
+          onViewModeChange={setTaskBoardViewMode}
           roles={roles}
+          viewMode={taskBoardViewMode}
         />
       ) : route.kind === "create" ? (
         <TaskCreatePage
@@ -679,16 +781,18 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
             setTaskDraft(draft);
             setTaskDraftDirty(true);
           }}
+          onPublish={() => void handlePublishCreateTask()}
           onSave={() => void handleSaveCreateTask()}
           repositories={repositories}
           roles={roles}
-          saving={savingTask}
+          saving={savingTask || publishingTask}
           workflows={workflowSummaries}
         />
       ) : taskDetail ? (
         <TaskDetailPage
           agents={agents}
           commentDraft={commentDraft}
+          deleting={deletingTask}
           dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
           draft={taskDraft}
           fileReferenceDraft={fileReferenceDraft}
@@ -700,7 +804,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
           onBack={() => setRoute({ kind: "overview" })}
           onCommentDraftChange={setCommentDraft}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
-          onCreateSubtask={() => openCreateTask(taskDetail.id, taskDetail.workflowId ?? null)}
+          onDelete={() => void handleDeleteDetailTask()}
           onDispatch={() => void handleDispatchTaskLane()}
           onDraftChange={(draft) => {
             setTaskDraft(draft);
@@ -708,11 +812,14 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
           }}
           onFileReferenceDraftChange={setFileReferenceDraft}
           onOpenTask={openTaskDetail}
+          onPublish={() => void handlePublishDetailTask()}
           onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
+          onRetry={() => void handleRetryTaskLane()}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
           onSave={() => void handleSaveDetailTask()}
           onSelectBlocker={setSelectedBlockerTaskId}
+          publishing={publishingTask}
           roles={roles}
           repositories={repositories}
           saving={savingTask}

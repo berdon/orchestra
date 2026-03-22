@@ -133,6 +133,27 @@ pub fn update_task(
 }
 
 #[tauri::command]
+pub fn delete_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let mut connection = database::open_connection()?;
+    let task = tasks::delete_task(&mut connection, &task_id)?;
+    state.log("info", "task.deleted", &format!("Deleted task {}", task.id));
+    state.log_authorized_action(
+        "auth.audit",
+        "delete_task",
+        None,
+        None,
+        &task_id,
+        "success",
+    );
+    emit_task_change(&app, "task.deleted", [task.id.clone()]);
+    Ok(task)
+}
+
+#[tauri::command]
 pub async fn comment_on_task(
     app: AppHandle,
     state: State<'_, AppState>,

@@ -1,3 +1,5 @@
+use std::fs;
+
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
@@ -7,7 +9,10 @@ use crate::{
         TaskComment, TaskCommentInput, TaskDetail, TaskDependency, TaskLaneRun, TaskSummary,
         TaskUpsertInput,
     },
-    services::{task_attachments, task_file_references, task_repositories, task_runtime},
+    services::{
+        orchestra_paths::{default_orchestra_root, task_attachments_dir},
+        task_attachments, task_file_references, task_repositories, task_runtime,
+    },
 };
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
@@ -286,6 +291,48 @@ pub fn update_task(
         .map_err(|error| format!("Unable to commit task update: {error}"))?;
 
     get_task(connection, task_id)
+}
+
+pub fn delete_task(connection: &mut Connection, task_id: &str) -> Result<TaskDetail, String> {
+    let task = get_task(connection, task_id)?;
+    let attachments = task_attachments::load_task_attachments(connection, task_id)?;
+    let orchestra_root = default_orchestra_root()?;
+    let attachment_dir = task_attachments_dir(&orchestra_root, &task.project_id, task_id);
+
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start task deletion transaction: {error}"))?;
+
+    let deleted = tx
+        .execute("DELETE FROM tasks WHERE id = ?1", [task_id])
+        .map_err(|error| format!("Unable to delete task {task_id}: {error}"))?;
+
+    if deleted == 0 {
+        return Err(format!("Task {task_id} was not found"));
+    }
+
+    tx.commit()
+        .map_err(|error| format!("Unable to commit task deletion: {error}"))?;
+
+    for attachment in attachments {
+        let path = std::path::PathBuf::from(&attachment.stored_path);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|error| {
+                format!("Unable to remove task attachment file {}: {error}", path.display())
+            })?;
+        }
+    }
+
+    if attachment_dir.exists() {
+        fs::remove_dir_all(&attachment_dir).map_err(|error| {
+            format!(
+                "Unable to remove task attachment directory {}: {error}",
+                attachment_dir.display()
+            )
+        })?;
+    }
+
+    Ok(task)
 }
 
 pub fn add_task_dependency(
