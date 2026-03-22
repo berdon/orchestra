@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { TranscriptEventCard } from "./TranscriptEventCard";
 import type { SessionEvent, SessionRecord } from "../types";
 
 interface SupervisorQuickChatModalProps {
@@ -73,21 +74,14 @@ export function SupervisorQuickChatModal({
 
         {error ? <p className="error-copy">{error}</p> : null}
 
-        <div className="quick-chat-transcript session-transcript" data-role="supervisor-transcript" ref={transcriptRef} role="log" aria-live="polite">
+        <div className="quick-chat-transcript session-transcript session-transcript--wrapped" data-role="supervisor-transcript" ref={transcriptRef} role="log" aria-live="polite">
           {events.map((event) => (
-            <article
-              className={`transcript-event transcript-event--${event.kind}${event.pending ? " transcript-event--pending" : ""}`}
+            <TranscriptEventCard
               key={event.id}
-            >
-              <div className="transcript-event__meta">
-                <span>{event.kind}</span>
-                <div className="transcript-event__meta-group">
-                  {event.pending ? <span className="pending-badge">Pending</span> : null}
-                  <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
-                </div>
-              </div>
-              <p>{event.message || (event.kind === "assistant" ? "…" : "Queued…")}</p>
-            </article>
+              event={event}
+              formatTimestamp={formatTimestamp}
+              tone={event.kind}
+            />
           ))}
         </div>
 

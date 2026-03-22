@@ -241,34 +241,94 @@ function hasVisibleAssistantText(event?: SessionEvent) {
   return Boolean(event?.message.trim() && event.message.trim() !== "Running tools…");
 }
 
-function formatJsonSummary(value: JsonValue | undefined | null, limit = 500) {
+function formatJsonSummary(value: JsonValue | undefined | null) {
   if (value === undefined || value === null) {
     return "";
   }
 
-  const serialized = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  if (!serialized) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (isObject(value) && Array.isArray(value.content)) {
+    const extracted = value.content
+      .map((block) => {
+        if (!isObject(block)) {
+          return "";
+        }
+        return asString(block.text) || asString(block.thinking);
+      })
+      .filter(Boolean)
+      .join("\n\n");
+
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return JSON.stringify(value, null, 2);
+}
+
+function inferCodeFenceLanguage(value: JsonValue | undefined | null, formatted?: string) {
+  if (value === undefined || value === null) {
+    return "text";
+  }
+
+  const trimmed = (formatted ?? (typeof value === "string" ? value : "")).trim();
+  if (!trimmed) {
+    return typeof value === "string" ? "text" : "json";
+  }
+
+  try {
+    JSON.parse(trimmed);
+    return "json";
+  } catch {
+    // continue
+  }
+
+  if (/^<\/?[a-z][\s\S]*>/i.test(trimmed)) {
+    return "html";
+  }
+
+  if (/^#{1,6}\s|```|^[-*+]\s|^\d+\.\s/m.test(trimmed)) {
+    return "markdown";
+  }
+
+  if (/(^|\n)(\$ |npm |pnpm |yarn |cargo |git |bash |sh )/.test(trimmed)) {
+    return "bash";
+  }
+
+  if (typeof value !== "string" && !formatted) {
+    return "json";
+  }
+
+  return "text";
+}
+
+function buildCodeFence(value: JsonValue | undefined | null) {
+  const formatted = formatJsonSummary(value);
+  if (!formatted) {
     return "";
   }
 
-  return serialized.length > limit ? `${serialized.slice(0, limit)}…` : serialized;
+  return `\`\`\`${inferCodeFenceLanguage(value, formatted)}\n${formatted}\n\`\`\``;
 }
 
 function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue | undefined | null, result?: JsonValue | undefined | null, durationMs?: number | null) {
-  const sections = [`${prefix}: ${toolName}`];
-  const formattedArgs = formatJsonSummary(args);
-  const formattedResult = formatJsonSummary(result);
+  const sections = [`### ${prefix}: \`${toolName}\``];
+  const formattedArgs = buildCodeFence(args);
+  const formattedResult = buildCodeFence(result);
 
   if (durationMs && Number.isFinite(durationMs)) {
-    sections.push(`Duration\n${durationMs}ms`);
+    sections.push(`- Duration: ${durationMs}ms`);
   }
 
   if (formattedArgs) {
-    sections.push(`Input\n${formattedArgs}`);
+    sections.push(["#### Input", formattedArgs].join("\n\n"));
   }
 
   if (formattedResult) {
-    sections.push(`Output\n${formattedResult}`);
+    sections.push(["#### Output", formattedResult].join("\n\n"));
   }
 
   return sections.join("\n\n");

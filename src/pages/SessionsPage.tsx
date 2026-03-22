@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { TranscriptEventCard } from "../components/TranscriptEventCard";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
@@ -231,20 +232,12 @@ export function SessionsPage({
                     onScroll={handleTranscriptScroll}
                   >
                     {displayedEvents.map((event) => (
-                      <article
-                        className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
+                      <TranscriptEventCard
                         key={event.id}
-                      >
-                        <div className="transcript-event__meta">
-                          <span>{event.kind}</span>
-                          <div className="transcript-event__meta-group">
-                            {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
-                            {event.pending ? <span className="pending-badge">Pending</span> : null}
-                            <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
-                          </div>
-                        </div>
-                        <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
-                      </article>
+                        event={event}
+                        formatTimestamp={formatTimestamp}
+                        tone={getEventTone(event.kind)}
+                      />
                     ))}
                   </div>
                   <div
