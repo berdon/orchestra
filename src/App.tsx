@@ -314,14 +314,40 @@ function buildCodeFence(value: JsonValue | undefined | null) {
   return `\`\`\`${inferCodeFenceLanguage(value, formatted)}\n${formatted}\n\`\`\``;
 }
 
-function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue | undefined | null, result?: JsonValue | undefined | null, durationMs?: number | null) {
-  const sections = [`### ${prefix}: \`${toolName}\``];
+function summarizeToolArgument(value: JsonValue | undefined | null) {
+  if (value === undefined || value === null) {
+    return "null";
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length > 48 ? `${normalized.slice(0, 45)}…` : normalized;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const normalized = JSON.stringify(value);
+    return normalized.length > 48 ? `${normalized.slice(0, 45)}…` : normalized;
+  }
+  const normalized = JSON.stringify(value);
+  return normalized.length > 48 ? `${normalized.slice(0, 45)}…` : normalized;
+}
+
+function formatToolCallLabel(toolName: string, args: JsonValue | undefined | null) {
+  const argValues = Array.isArray(args)
+    ? args
+    : isObject(args)
+      ? Object.values(args)
+      : args === undefined || args === null
+        ? []
+        : [args];
+  return `${toolName}(${argValues.map((value) => summarizeToolArgument(value)).join(", ")})`;
+}
+
+function buildToolEventMessage(args: JsonValue | undefined | null, result?: JsonValue | undefined | null, durationMs?: number | null) {
+  const sections: string[] = [];
   const formattedArgs = buildCodeFence(args);
   const formattedResult = buildCodeFence(result);
-
-  if (durationMs && Number.isFinite(durationMs)) {
-    sections.push(`- Duration: ${durationMs}ms`);
-  }
 
   if (formattedArgs) {
     sections.push(["#### Input", formattedArgs].join("\n\n"));
@@ -329,6 +355,10 @@ function buildToolEventMessage(prefix: string, toolName: string, args: JsonValue
 
   if (formattedResult) {
     sections.push(["#### Output", formattedResult].join("\n\n"));
+  }
+
+  if (durationMs && Number.isFinite(durationMs)) {
+    sections.push(["#### Duration", `\`\`\`text\n${durationMs}ms\n\`\`\``].join("\n\n"));
   }
 
   return sections.join("\n\n");
@@ -369,7 +399,9 @@ function areSessionEventsEqual(left: SessionEvent[], right: SessionEvent[]) {
       && event.timestamp === other.timestamp
       && event.pending === other.pending
       && event.thinking === other.thinking
-      && event.runId === other.runId;
+      && event.runId === other.runId
+      && event.label === other.label
+      && event.presentation === other.presentation;
   });
 }
 
@@ -551,7 +583,15 @@ export function App() {
   );
 
   const upsertSystemEvent = useCallback(
-    (sessionId: string, eventId: string, runId: string, timestamp: string, message: string, pending = false) => {
+    (
+      sessionId: string,
+      eventId: string,
+      runId: string,
+      timestamp: string,
+      message: string,
+      pending = false,
+      options?: Pick<SessionEvent, "label" | "presentation">,
+    ) => {
       patchSessionRecord(sessionId, (session) => {
         const existingIndex = session.events.findIndex((event) => event.id === eventId);
         const nextEvent: SessionEvent = {
@@ -561,6 +601,8 @@ export function App() {
           timestamp,
           pending,
           runId,
+          label: options?.label,
+          presentation: options?.presentation,
         };
         const nextEvents = existingIndex >= 0
           ? session.events.map((event, index) => (index === existingIndex ? nextEvent : event))
@@ -922,6 +964,8 @@ export function App() {
           }));
         }
 
+        const toolCallLabel = formatToolCallLabel(toolName, args);
+
         if (eventType === "tool_execution_start") {
           patchSessionRecord(payload.sessionId, (session) => ({
             ...session,
@@ -934,8 +978,9 @@ export function App() {
             toolEventId,
             runId,
             eventTimestamp,
-            buildToolEventMessage("Tool running", toolName, args),
+            buildToolEventMessage(args),
             true,
+            { label: toolCallLabel, presentation: "tool_call" },
           );
         } else if (eventType === "tool_execution_update") {
           const partialResult = isObject(rpcEvent?.partialResult) ? rpcEvent?.partialResult : null;
@@ -951,8 +996,9 @@ export function App() {
             toolEventId,
             runId,
             eventTimestamp,
-            buildToolEventMessage("Tool running", toolName, args, partialContent ?? partialResult),
+            buildToolEventMessage(args, partialContent ?? partialResult),
             true,
+            { label: toolCallLabel, presentation: "tool_call" },
           );
         } else {
           const result = rpcEvent?.result;
@@ -969,8 +1015,9 @@ export function App() {
             toolEventId,
             runId,
             eventTimestamp,
-            buildToolEventMessage(isError ? "Tool failed" : "Tool result", toolName, args, result, durationMs),
+            buildToolEventMessage(args, result, durationMs),
             false,
+            { label: toolCallLabel, presentation: "tool_call" },
           );
         }
         return;

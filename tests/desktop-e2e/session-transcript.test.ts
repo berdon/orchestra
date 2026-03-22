@@ -78,24 +78,27 @@ describe("desktop session transcript rendering", () => {
         };
       `);
       expect(collapsedState.collapsed).toBe('true');
-      expect(collapsedState.preview).toContain('final line visible');
-      expect(collapsedState.preview).toContain('…');
+      expect(collapsedState.preview).toContain('write_file(');
+      expect(collapsedState.preview).not.toContain('final line visible');
 
       await clickSelector(sessionId, '[data-role="transcript-entry-toggle"][data-event-id="tool-execution-desktop-call-1"]');
 
-      const expandedState = await executeScript<{ collapsed: string | null; text: string; codeLabel: string }>(sessionId, `
+      const expandedState = await executeScript<{ collapsed: string | null; text: string; label: string; codeLabel: string }>(sessionId, `
         const eventCard = document.querySelector('[data-role="transcript-event"][data-event-id="tool-execution-desktop-call-1"]');
         const rendered = eventCard?.querySelector('[data-role="transcript-entry-rendered-markdown"]');
         const codeLabel = eventCard?.querySelector('.transcript-code-block figcaption');
+        const label = eventCard?.querySelector('.transcript-event__label');
         return {
           collapsed: eventCard instanceof HTMLElement ? eventCard.dataset.eventCollapsed ?? null : null,
           text: rendered?.textContent || eventCard?.textContent || '',
+          label: label?.textContent || '',
           codeLabel: codeLabel?.textContent || '',
         };
       `);
       expect(expandedState.collapsed).toBe('false');
-      expect(expandedState.text).toContain('Tool result');
+      expect(expandedState.label).toContain('write_file(');
       expect(expandedState.text).toContain('src/desktop.ts');
+      expect(expandedState.text).toContain('final line visible');
       expect(expandedState.codeLabel).toBeTruthy();
 
       await clickSelector(sessionId, '[data-role="transcript-entry-copy"][data-event-id="tool-execution-desktop-call-1"]');

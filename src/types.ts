@@ -82,6 +82,8 @@ export interface SessionEvent {
   pending?: boolean;
   thinking?: boolean;
   runId?: string;
+  label?: string;
+  presentation?: "default" | "tool_call";
 }
 
 export type SessionActivityState = "idle" | "thinking" | "streaming" | "tool_running" | "error";

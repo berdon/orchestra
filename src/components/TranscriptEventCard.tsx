@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import { marked } from "marked";
 
-import { buildCollapsedPreview, detectTranscriptContent, isFoldableTranscriptEvent } from "../lib/sessionTranscript";
+import { buildCollapsedPreview, detectTranscriptContent, isFoldableTranscriptEvent, isToolCallTranscriptEvent } from "../lib/sessionTranscript";
 import type { SessionEvent } from "../types";
 
 interface TranscriptEventCardProps {
@@ -136,6 +136,7 @@ export function TranscriptEventCard({ event, formatTimestamp, tone }: Transcript
   const [copied, setCopied] = useState(false);
   const message = event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…");
   const foldable = isFoldableTranscriptEvent(event);
+  const toolCall = isToolCallTranscriptEvent(event);
   const preview = useMemo(() => buildCollapsedPreview(message), [message]);
   const descriptor = useMemo(() => detectTranscriptContent(message), [message]);
 
@@ -182,15 +183,15 @@ export function TranscriptEventCard({ event, formatTimestamp, tone }: Transcript
       </div>
       <div className="transcript-event__body">
         <div className="transcript-event__meta">
-          <span>{event.kind}</span>
-          <div className="transcript-event__meta-group">
+          <div className="transcript-event__meta-main">
+            <span>{event.kind}</span>
             {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
             {event.pending ? <span className="pending-badge">Pending</span> : null}
-            <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
           </div>
+          {event.label ? <code className="transcript-event__label">{event.label}</code> : null}
         </div>
         {foldable && !expanded ? (
-          <pre className="transcript-event__preview" data-role="transcript-entry-preview">{preview.text}</pre>
+          toolCall ? <pre className="transcript-event__preview" data-role="transcript-entry-preview">{event.label ?? preview.text}</pre> : <pre className="transcript-event__preview" data-role="transcript-entry-preview">{preview.text}</pre>
         ) : descriptor.mode === "markdown" ? (
           <div className="transcript-render transcript-render--markdown" data-role="transcript-entry-rendered-markdown">
             {renderMarkdown(message)}
@@ -200,6 +201,9 @@ export function TranscriptEventCard({ event, formatTimestamp, tone }: Transcript
         ) : (
           <p className="transcript-event__paragraph">{message}</p>
         )}
+        <div className="transcript-event__footer">
+          <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+        </div>
       </div>
     </article>
   );
