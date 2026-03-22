@@ -40,6 +40,24 @@ npm run dev
 npm test
 ```
 
+### Desktop E2E policy
+
+Desktop end-to-end tests must use the desktop runner scripts only. Do not run desktop specs directly with generic `npx playwright test` invocations or ad hoc Tauri/cargo commands.
+
+Use:
+
+```bash
+./scripts/run-desktop-e2e.sh tests/desktop-e2e/<spec>.test.ts
+./scripts/run-desktop-e2e-suite.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
+```
+
+For containerized runs, use the Podman wrappers:
+
+```bash
+./scripts/run-desktop-e2e-podman.sh tests/desktop-e2e/<spec>.test.ts
+./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
+```
+
 ### Tauri desktop app
 
 The repository includes a `src-tauri/` scaffold and matching session command surface, but building/running the desktop app requires a Rust toolchain and Tauri system prerequisites to be installed locally.

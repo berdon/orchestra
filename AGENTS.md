@@ -50,3 +50,4 @@ tail -f /tmp/orchestra-dev.log
 
 - The Vite dev server is expected on `http://localhost:1420`.
 - Tauri icons live under `src-tauri/icons/`.
+- Desktop E2E tests must use the desktop runner scripts (`scripts/run-desktop-e2e.sh`, `scripts/run-desktop-e2e-suite.sh`, and the Podman variants). Do not run desktop specs directly with generic Playwright commands.
