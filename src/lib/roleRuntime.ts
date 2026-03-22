@@ -99,10 +99,6 @@ function normalizeQueueInput(input: RoleQueueEntryInput): RoleQueueEntryInput {
   };
 }
 
-function chooseReusableInstance(instances: RoleInstance[]) {
-  return instances.find((instance) => instance.status === "idle") ?? null;
-}
-
 async function runMockDispatch(roleId: string) {
   const role = await getRole(roleId);
   let queueEntries = getMockQueueEntries();
@@ -116,8 +112,7 @@ async function runMockDispatch(roleId: string) {
     }
 
     const nextEntry = roleQueue[0]!;
-    const reusable = chooseReusableInstance(instances.filter((instance) => instance.roleId === roleId));
-    const instance = reusable ?? {
+    const instance = {
       id: createId("instance"),
       roleId,
       displayName: `${role.name} ${instances.filter((entry) => entry.roleId === roleId).length + 1}`,
@@ -131,29 +126,23 @@ async function runMockDispatch(roleId: string) {
       updatedAt: nowIso(),
     } satisfies RoleInstance;
 
-    const createdSession = instance.sessionId
-      ? null
-      : createMockSessionRecord(
-          `${role.name} · ${nextEntry.title}`,
-          `${role.name} runtime is active and ready to continue ${nextEntry.title}.`,
-        );
+    const createdSession = createMockSessionRecord(
+      `${role.name} · ${nextEntry.title}`,
+      `${role.name} runtime is active and ready to continue ${nextEntry.title}.`,
+    );
     const assignedInstance: RoleInstance = {
       ...instance,
       status: "running",
       currentQueueEntryId: nextEntry.id,
-      sessionId: instance.sessionId ?? createdSession?.id ?? buildMockSessionId(),
-      worktreePath: instance.worktreePath ?? buildMockWorktreePath(role, instance.id),
+      sessionId: createdSession.id,
+      worktreePath: buildMockWorktreePath(role, instance.id),
       updatedAt: nowIso(),
     };
 
-    instances = reusable
-      ? instances.map((entry) => (entry.id === assignedInstance.id ? assignedInstance : entry))
-      : [assignedInstance, ...instances];
+    instances = [assignedInstance, ...instances];
 
-    if (createdSession) {
-      upsertMockSession(createdSession);
-      emitMockSessionChange({ sessionIds: [createdSession.id], reason: "sessions.role_runtime.created" });
-    }
+    upsertMockSession(createdSession);
+    emitMockSessionChange({ sessionIds: [createdSession.id], reason: "sessions.role_runtime.created" });
 
     queueEntries = queueEntries.map((entry) =>
       entry.id === nextEntry.id
@@ -266,7 +255,7 @@ export async function releaseRoleInstance(instanceId: string, outcome: "success"
       entry.id === instanceId
         ? {
             ...entry,
-            status: outcome === "failure" ? "failed" : "idle",
+            status: outcome === "failure" ? "failed" : outcome === "canceled" ? "canceled" : "completed",
             currentQueueEntryId: null,
             lastError: outcome === "failure" ? errorMessage ?? "Marked failed by operator." : null,
             updatedAt: nowIso(),
@@ -277,16 +266,7 @@ export async function releaseRoleInstance(instanceId: string, outcome: "success"
     setMockQueueEntries(nextQueueEntries);
     setMockRoleInstances(nextInstances);
 
-    if (outcome !== "failure") {
-      return runMockDispatch(instance.roleId);
-    }
-
-    const role = await getRole(instance.roleId);
-    return toRoleOperationsDetail(
-      role,
-      nextQueueEntries.filter((entry) => entry.roleId === instance.roleId),
-      nextInstances.filter((entry) => entry.roleId === instance.roleId),
-    );
+    return runMockDispatch(instance.roleId);
   }
 
   return invoke<RoleOperationsDetail>("release_role_instance", { instanceId, outcome, errorMessage: errorMessage ?? null });

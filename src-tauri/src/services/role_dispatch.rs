@@ -32,23 +32,19 @@ pub fn dispatch_role_queue(
         }
 
         let queue_entry = role_runtime::get_role_queue_entry(connection, &queue_entry_id)?;
-        let instance = if let Some(existing) = find_reusable_instance(connection, role_id)? {
-            existing
-        } else {
-            role_runtime::create_role_instance(
-                connection,
-                crate::models::RoleInstanceInput {
-                    role_id: role.id.clone(),
-                    display_name: None,
-                    status: Some("idle".into()),
-                    current_queue_entry_id: None,
-                    session_id: None,
-                    worktree_path: None,
-                    last_heartbeat_at: None,
-                    last_error: None,
-                },
-            )?
-        };
+        let instance = role_runtime::create_role_instance(
+            connection,
+            crate::models::RoleInstanceInput {
+                role_id: role.id.clone(),
+                display_name: None,
+                status: Some("idle".into()),
+                current_queue_entry_id: None,
+                session_id: None,
+                worktree_path: None,
+                last_heartbeat_at: None,
+                last_error: None,
+            },
+        )?;
 
         if !claim_queue_entry_for_instance(connection, &queue_entry.id, &instance.id)? {
             continue;
@@ -123,7 +119,8 @@ pub fn release_role_instance(
             instance.id,
             match normalized_outcome.as_str() {
                 "failure" => "failed",
-                _ => "idle",
+                "canceled" => "canceled",
+                _ => "completed",
             },
             if normalized_outcome == "failure" {
                 normalized_error.clone()
@@ -138,9 +135,7 @@ pub fn release_role_instance(
     tx.commit()
         .map_err(|error| format!("Unable to commit role release transaction: {error}"))?;
 
-    if normalized_outcome != "failure" {
-        let _ = dispatch_role_queue(connection, project_root, session_dir, &instance.role_id)?;
-    }
+    let _ = dispatch_role_queue(connection, project_root, session_dir, &instance.role_id)?;
 
     role_runtime::get_role_operations(connection, &instance.role_id)
 }
@@ -224,16 +219,6 @@ fn active_instance_count(connection: &Connection, role_id: &str) -> Result<i64, 
         .map_err(|error| format!("Unable to count active role instances for {role_id}: {error}"))
 }
 
-fn find_reusable_instance(
-    connection: &Connection,
-    role_id: &str,
-) -> Result<Option<RoleInstance>, String> {
-    let instances = role_runtime::list_role_instances(connection, Some(role_id))?;
-    Ok(instances
-        .into_iter()
-        .find(|instance| instance.status == "idle"))
-}
-
 fn ensure_instance_worktree(
     connection: &Connection,
     session_dir: &Path,
@@ -280,32 +265,6 @@ fn ensure_instance_session(
     queue_entry: &crate::models::RoleQueueEntry,
     instance: &RoleInstance,
 ) -> Result<String, String> {
-    let prefers_lane_specific_session = queue_entry.source_type == "workflow_lane"
-        && queue_entry.source_task_id.is_some()
-        && queue_entry.source_lane_id.is_some();
-
-    if let Some(preferred_session_id) = preferred_lane_session_id(connection, queue_entry, &role.id)? {
-        if pi_sessions::get_session(session_dir, &preferred_session_id, false).is_ok() {
-            connection
-                .execute(
-                    "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![instance.id, preferred_session_id, crate::state::now_iso()],
-                )
-                .map_err(|error| format!("Unable to update preferred role session for instance {}: {error}", instance.id))?;
-            apply_role_session_defaults(runtime_cwd, session_dir, &preferred_session_id, role)?;
-            return Ok(preferred_session_id);
-        }
-    }
-
-    if !prefers_lane_specific_session {
-        if let Some(session_id) = instance.session_id.as_deref() {
-            if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
-                apply_role_session_defaults(runtime_cwd, session_dir, session_id, role)?;
-                return Ok(session_id.to_string());
-            }
-        }
-    }
-
     let created = pi_sessions::create_session_file(
         runtime_cwd,
         session_dir,
@@ -328,27 +287,6 @@ fn ensure_instance_session(
     apply_role_session_defaults(runtime_cwd, session_dir, &created.record.id, role)?;
 
     Ok(created.record.id)
-}
-
-fn preferred_lane_session_id(
-    connection: &Connection,
-    queue_entry: &crate::models::RoleQueueEntry,
-    role_id: &str,
-) -> Result<Option<String>, String> {
-    let Some(task_id) = queue_entry.source_task_id.as_deref() else {
-        return Ok(None);
-    };
-    let Some(lane_id) = queue_entry.source_lane_id.as_deref() else {
-        return Ok(None);
-    };
-
-    crate::services::task_runtime::preferred_lane_session_id(
-        connection,
-        task_id,
-        lane_id,
-        "role",
-        Some(role_id),
-    )
 }
 
 fn apply_role_session_defaults(
@@ -463,8 +401,9 @@ fn release_claimed_queue_entry(
         .execute(
             r#"
             UPDATE role_instances
-            SET status = 'idle',
+            SET status = 'failed',
                 current_queue_entry_id = NULL,
+                last_error = COALESCE(last_error, 'Failed to provision single-use role runtime instance'),
                 updated_at = ?2
             WHERE id = ?1
             "#,
@@ -758,16 +697,18 @@ mod tests {
 
         let detail = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
             .expect("dispatch should succeed");
-        let updated_instance = detail
+        let running_instance = detail
             .instances
             .iter()
-            .find(|entry| entry.id == instance.id)
-            .expect("existing instance should be reused");
-        assert_ne!(updated_instance.session_id.as_deref(), Some(old_session.record.id.as_str()));
+            .find(|entry| entry.status == "running")
+            .expect("fresh running instance should exist");
+        assert_ne!(running_instance.id, instance.id);
+        assert_ne!(running_instance.session_id.as_deref(), Some(old_session.record.id.as_str()));
+        assert_eq!(detail.instances.iter().filter(|entry| entry.role_id == role.id).count(), 2);
     }
 
     #[test]
-    fn workflow_lane_reentry_reuses_the_previous_lane_session() {
+    fn workflow_lane_reentry_creates_a_fresh_role_session() {
         let mut connection = open_test_connection("role-dispatch-reentry-session");
         let role = create_role(&mut connection, "Builder", 1);
         let project_root = init_test_repo("role-dispatch-reentry-session-project");
@@ -848,12 +789,80 @@ mod tests {
 
         let detail = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
             .expect("dispatch should succeed");
-        let updated_instance = detail
+        let running_instance = detail
             .instances
             .iter()
-            .find(|entry| entry.id == instance.id)
-            .expect("existing instance should be reused");
-        assert_eq!(updated_instance.session_id.as_deref(), Some(prior_lane_session.record.id.as_str()));
+            .find(|entry| entry.status == "running")
+            .expect("fresh running instance should exist");
+        assert_ne!(running_instance.id, instance.id);
+        assert_ne!(running_instance.session_id.as_deref(), Some(stale_session.record.id.as_str()));
+        assert_ne!(running_instance.session_id.as_deref(), Some(prior_lane_session.record.id.as_str()));
+    }
+
+    #[test]
+    fn creates_a_fresh_role_instance_for_each_assignment() {
+        let mut connection = open_test_connection("role-dispatch-single-use");
+        let role = create_role(&mut connection, "Reviewer", 1);
+        let project_root = init_test_repo("role-dispatch-single-use-project");
+        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        role_runtime::enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                title: "First assignment".into(),
+                summary: None,
+                entry_prompt: None,
+            },
+        )
+        .expect("first queue work should succeed");
+
+        let first_dispatch = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+            .expect("first dispatch should succeed");
+        let first_instance = first_dispatch.instances.first().expect("first instance should exist").clone();
+        let first_session = first_instance.session_id.clone().expect("first session should exist");
+        let first_worktree = first_instance.worktree_path.clone().expect("first worktree should exist");
+
+        release_role_instance(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &first_instance.id,
+            "success",
+            None,
+        )
+        .expect("first release should succeed");
+
+        role_runtime::enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                title: "Second assignment".into(),
+                summary: None,
+                entry_prompt: None,
+            },
+        )
+        .expect("second queue work should succeed");
+
+        let second_dispatch = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+            .expect("second dispatch should succeed");
+        let second_instance = second_dispatch
+            .instances
+            .iter()
+            .find(|entry| entry.status == "running")
+            .expect("second running instance should exist");
+        assert_ne!(second_instance.id, first_instance.id);
+        assert_ne!(second_instance.session_id.as_deref(), Some(first_session.as_str()));
+        assert_ne!(second_instance.worktree_path.as_deref(), Some(first_worktree.as_str()));
     }
 
     #[test]
@@ -901,7 +910,7 @@ mod tests {
         )
         .expect("release should succeed");
         assert_eq!(released.assigned_count, 0);
-        assert_eq!(released.instances[0].status, "idle");
+        assert_eq!(released.instances[0].status, "completed");
 
         let disposed = dispose_role_instance(&mut connection, &project_root, &instance.id)
             .expect("dispose should succeed");
