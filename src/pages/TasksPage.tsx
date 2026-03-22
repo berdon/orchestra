@@ -63,6 +63,7 @@ function createBlankTaskDraft(): TaskUpsertInput {
     repositoryId: null,
     repositoryIds: [],
     parentTaskId: null,
+    whipMaxAttempts: 10,
     archived: false,
   };
 }
@@ -96,6 +97,7 @@ function taskToDraft(task: TaskDetail): TaskUpsertInput {
     repositoryId: task.repositoryId ?? null,
     repositoryIds: task.repositoryIds ?? [],
     parentTaskId: task.parentTaskId ?? null,
+    whipMaxAttempts: task.whipMaxAttempts ?? 10,
     archived: task.archived,
   };
 }

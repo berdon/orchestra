@@ -94,13 +94,77 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
         }
     }
 
+    let whip_results = process_task_whips(app.clone(), state)?;
+
     state.log(
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} agent dispatches and {} activated role assignments",
-            agent_dispatches, activated_roles
+            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} whip actions",
+            agent_dispatches, activated_roles, whip_results
         ),
     );
     Ok(())
+}
+
+fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String> {
+    let connection = database::open_connection()?;
+    let candidates = task_runtime::find_task_whip_candidates(&connection)?;
+    drop(connection);
+
+    let mut actions = 0;
+    for candidate in candidates {
+        let context = pi_sessions::session_context_for_project_id(&candidate.project_id)?;
+        let mut connection = database::open_connection()?;
+
+        if candidate.whip_count >= candidate.whip_max_attempts {
+            let task = task_runtime::escalate_task_whip_limit_exceeded(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &candidate,
+            )?;
+            state.log(
+                "warn",
+                "task.whip.escalated",
+                &format!(
+                    "Escalated task {} after {} whip attempts",
+                    candidate.task_id, candidate.whip_count
+                ),
+            );
+            let _ = app_events::emit_task_change(&app, "task.whip.escalated", [task.id.clone()]);
+            let _ = app_events::emit_session_change(
+                &app,
+                "task.whip.escalated",
+                [candidate.session_id.clone()],
+            );
+            actions += 1;
+            continue;
+        }
+
+        let _ = task_runtime::send_task_whip(&connection, &candidate)?;
+        let _ = agent_dispatch::dispatch_agent_queue(
+            app.clone(),
+            state,
+            &context.project_root,
+            &context.session_dir,
+            &candidate.project_id,
+            &candidate.agent_id,
+        )?;
+        state.log(
+            "info",
+            "task.whip.sent",
+            &format!(
+                "Sent whip {} of {} for task {}",
+                candidate.whip_count + 1,
+                candidate.whip_max_attempts,
+                candidate.task_id
+            ),
+        );
+        let _ = app_events::emit_task_change(&app, "task.whip.sent", [candidate.task_id.clone()]);
+        let _ = app_events::emit_session_change(&app, "task.whip.sent", [candidate.session_id.clone()]);
+        actions += 1;
+    }
+
+    Ok(actions)
 }

@@ -215,6 +215,8 @@ export function TaskDetailPage({
                   <span>Lane: {task.activeLaneAssignment.laneId}</span>
                   <span>Session: {task.activeLaneAssignment.sessionId ?? "—"}</span>
                   <span>Runtime cwd: {task.activeLaneAssignment.runtimeCwd ?? "—"}</span>
+                  <span>Whips: {task.activeLaneAssignment.whipCount ?? 0} / {task.whipMaxAttempts ?? 10}</span>
+                  <span>Last whip: {task.activeLaneAssignment.lastWhipAt ?? "—"}</span>
                 </div>
               </div>
             ) : (

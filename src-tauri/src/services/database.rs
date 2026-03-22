@@ -255,6 +255,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 assignee_id TEXT,
                 repository_id TEXT,
                 parent_task_id TEXT,
+                whip_max_attempts INTEGER NOT NULL DEFAULT 10,
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -385,6 +386,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 role_queue_entry_id TEXT,
                 role_instance_id TEXT,
                 prompt TEXT,
+                whip_count INTEGER NOT NULL DEFAULT 0,
+                last_whip_at TEXT,
                 started_at TEXT NOT NULL,
                 completed_at TEXT,
                 created_at TEXT NOT NULL,
@@ -444,6 +447,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_roles_table_columns(connection)?;
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
+    ensure_tasks_table_columns(connection)?;
+    ensure_task_lane_assignments_table_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
@@ -700,6 +705,65 @@ fn ensure_roles_slug_index(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to create unique roles slug index: {error}"))?;
+    Ok(())
+}
+
+fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "tasks")?;
+
+    if !columns.contains("whip_max_attempts") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN whip_max_attempts INTEGER NOT NULL DEFAULT 10",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add whip_max_attempts column to tasks table: {error}")
+            })?;
+    }
+
+    connection
+        .execute(
+            "UPDATE tasks SET whip_max_attempts = 10 WHERE whip_max_attempts IS NULL OR whip_max_attempts < 0",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill whip_max_attempts for tasks: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "task_lane_assignments")?;
+
+    if !columns.contains("whip_count") {
+        connection
+            .execute(
+                "ALTER TABLE task_lane_assignments ADD COLUMN whip_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add whip_count column to task_lane_assignments: {error}")
+            })?;
+    }
+
+    if !columns.contains("last_whip_at") {
+        connection
+            .execute(
+                "ALTER TABLE task_lane_assignments ADD COLUMN last_whip_at TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add last_whip_at column to task_lane_assignments: {error}")
+            })?;
+    }
+
+    connection
+        .execute(
+            "UPDATE task_lane_assignments SET whip_count = 0 WHERE whip_count IS NULL OR whip_count < 0",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill whip_count for task_lane_assignments: {error}"))?;
+
     Ok(())
 }
 
