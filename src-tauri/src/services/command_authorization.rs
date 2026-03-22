@@ -127,6 +127,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "List task project file references",
         "tasks.read",
     ),
+    (
+        "add_task_file_reference",
+        "Add a task project file reference",
+        "tasks.update",
+    ),
+    (
+        "remove_task_file_reference",
+        "Remove a task project file reference",
+        "tasks.update",
+    ),
     ("create_task", "Create a task", "tasks.create"),
     ("create_subtask", "Create a subtask", "tasks.create"),
     ("update_task", "Update a task", "tasks.update"),
