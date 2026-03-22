@@ -112,7 +112,7 @@ impl SessionRuntime {
             stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(Some(child)),
             pending: Mutex::new(HashMap::new()),
-            subscribed: Mutex::new(true),
+            subscribed: Mutex::new(false),
             current_run_id: Mutex::new(None),
             closed: Mutex::new(false),
             app,
@@ -242,7 +242,6 @@ impl SessionRuntime {
     }
 
     fn handle_process_end(&self, message: impl Into<String>) {
-        self.mark_closed();
         let error_message = message.into();
         if let Ok(mut pending) = self.pending.lock() {
             for (_, sender) in pending.drain() {
@@ -266,6 +265,8 @@ impl SessionRuntime {
                 "source": "orchestra",
             }));
         }
+
+        self.teardown_process();
     }
 
     fn emit_stream_event(&self, event: Value) {
@@ -396,16 +397,7 @@ impl SessionRuntime {
     }
 
     pub fn shutdown(&self) {
-        self.mark_closed();
-        if let Ok(mut stdin) = self.stdin.lock() {
-            *stdin = None;
-        }
-        if let Ok(mut child) = self.child.lock() {
-            if let Some(child) = child.as_mut() {
-                let _ = child.kill();
-            }
-            *child = None;
-        }
+        self.teardown_process();
     }
 
     pub fn start_run(&self, run_id: &str, message: &str) -> Result<(), String> {
@@ -524,16 +516,7 @@ impl SessionRuntime {
             return;
         }
 
-        self.mark_closed();
-        if let Ok(mut stdin) = self.stdin.lock() {
-            *stdin = None;
-        }
-        if let Ok(mut child) = self.child.lock() {
-            if let Some(child) = child.as_mut() {
-                let _ = child.kill();
-            }
-            *child = None;
-        }
+        self.teardown_process();
     }
 
     fn is_closed(&self) -> bool {
@@ -543,6 +526,32 @@ impl SessionRuntime {
     fn mark_closed(&self) {
         if let Ok(mut closed) = self.closed.lock() {
             *closed = true;
+        }
+    }
+
+    fn teardown_process(&self) {
+        self.app.state::<crate::state::AppState>().log(
+            "info",
+            "sessions.runtime.teardown",
+            &format!("Tearing down live pi RPC runtime for session {}", self.session_id),
+        );
+        self.mark_closed();
+        if let Ok(mut stdin) = self.stdin.lock() {
+            *stdin = None;
+        }
+        if let Ok(mut child_guard) = self.child.lock() {
+            if let Some(mut child) = child_guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+        if let Ok(mut runtimes) = self
+            .app
+            .state::<crate::state::AppState>()
+            .session_runtimes
+            .lock()
+        {
+            runtimes.remove(&self.session_id);
         }
     }
 }
@@ -562,7 +571,6 @@ pub fn ensure_runtime(
                     "sessions.runtime.reuse",
                     &format!("Reusing live pi RPC runtime for session {}", session_id),
                 );
-                existing.set_subscribed(true);
                 return Ok(Arc::clone(existing));
             }
             runtimes.remove(session_id);

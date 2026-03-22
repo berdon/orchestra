@@ -433,10 +433,7 @@ pub async fn get_session_model_state(
     .await
     .map_err(|error| format!("Unable to join get_session_model_state context task: {error}"))??;
 
-    state.set_session_subscription(&session_id, true)?;
-
     let runtime = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
-        runtime.set_subscribed(true);
         runtime
     } else {
         ensure_runtime(
@@ -466,10 +463,7 @@ pub async fn set_session_model(
     .await
     .map_err(|error| format!("Unable to join set_session_model context task: {error}"))??;
 
-    state.set_session_subscription(&session_id, true)?;
-
     let result = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
-        runtime.set_subscribed(true);
         let provider_for_task = provider.clone();
         let model_id_for_task = model_id.clone();
         spawn_blocking(move || runtime.set_model(&provider_for_task, &model_id_for_task))
@@ -481,7 +475,7 @@ pub async fn set_session_model(
         let session_id_for_task = session_id.clone();
         let provider_for_task = provider.clone();
         let model_id_for_task = model_id.clone();
-        let result = spawn_blocking(move || {
+        spawn_blocking(move || {
             apply_session_model(
                 &project_root_for_task,
                 &session_dir_for_task,
@@ -491,15 +485,7 @@ pub async fn set_session_model(
             )
         })
         .await
-        .map_err(|error| format!("Unable to join set_session_model file task: {error}"))??;
-        let _ = ensure_runtime(
-            &state.session_runtimes,
-            app,
-            project_root,
-            session_dir,
-            &session_id,
-        )?;
-        result
+        .map_err(|error| format!("Unable to join set_session_model file task: {error}"))??
     };
 
     state.log(

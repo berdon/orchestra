@@ -4,7 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    models::ProjectWorkerOverlay,
+    models::{ProjectSessionPromptSettings, ProjectWorkerOverlay, SessionPromptToken},
     services::orchestra_paths::{default_orchestra_root, project_settings_path, sanitize_slug},
 };
 
@@ -15,6 +15,15 @@ struct StoredProjectSettings {
     agent_overlays: HashMap<String, StoredWorkerOverlay>,
     #[serde(default)]
     role_overlays: HashMap<String, StoredWorkerOverlay>,
+    #[serde(default)]
+    general: StoredGeneralSettings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredGeneralSettings {
+    task_session_context_template: Option<String>,
+    updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -22,6 +31,71 @@ struct StoredProjectSettings {
 struct StoredWorkerOverlay {
     prompt: Option<String>,
     updated_at: Option<String>,
+}
+
+pub fn default_task_session_context_template() -> String {
+    [
+        "You are an agent working inside Orchestra on task {TASK.NUMBER} — {TASK.NAME}.",
+        "Canonical task ID: {TASK.ID}",
+        "Task slug: {TASK.SLUG}",
+        "Orchestra is the project orchestration system. It tracks tasks, workflows, worker ownership, runtime sessions, comments, attachments, and transitions between steps of work. You are operating as a worker inside that system, so your job is not just to do good work — it is to keep Orchestra's state accurate as you work.",
+        "Orchestra concepts you need to understand:\n- Task: the tracked unit of work you are responsible for right now. Tasks can have descriptions, comments, attachments, subtasks, dependencies, and workflow history.\n- Workflow: the overall process definition attached to a task. A workflow contains ordered lanes and transition rules.\n- Lane: the current step of the workflow. Each lane has an owner type (user, role, or agent) and defines what should happen on success or failure.\n- Session: the running conversation/runtime for a worker. This session is the place where you reason, inspect task context, and decide how to move the task forward.\n- Transition: the explicit tool call that moves the task out of the current lane. You must always end your work by choosing the correct transition tool.",
+        "Workflow: {WORKFLOW.NAME}",
+        "Current lane: {LANE.NAME}",
+        "Lane owner: {LANE.OWNER}",
+        "Task status: {TASK.STATUS}",
+        "Task assignee: {TASK.ASSIGNEE}",
+        "Runtime cwd: {RUNTIME.CWD}",
+        "",
+        "{WORKER.CONTEXT}",
+        "{TASK.DESCRIPTION}",
+        "{TASK.BLOCKED_BY}",
+        "{TASK.REPOSITORIES}",
+        "{TASK.FILE_REFERENCES}",
+        "{TASK.ATTACHMENTS}",
+        "{TASK.COMMENTS}",
+        "{LANE.INSTRUCTION}",
+        "{ORCHESTRA.WORKING_RULES}",
+        "{ORCHESTRA.TOOL_HELP}",
+        "{ORCHESTRA.COMPLETION_RULES}",
+    ]
+    .join("\n")
+}
+
+pub fn available_session_prompt_tokens() -> Vec<SessionPromptToken> {
+    vec![
+        SessionPromptToken { token: "{TASK.ID}".into(), description: "Canonical Orchestra task id.".into() },
+        SessionPromptToken { token: "{TASK.NUMBER}".into(), description: "Human-readable task number such as ORC-42.".into() },
+        SessionPromptToken { token: "{TASK.SLUG}".into(), description: "Slugified task title for prompt customization.".into() },
+        SessionPromptToken { token: "{TASK.NAME}".into(), description: "Task title/name.".into() },
+        SessionPromptToken { token: "{TASK.STATUS}".into(), description: "Current task status.".into() },
+        SessionPromptToken { token: "{TASK.ASSIGNEE}".into(), description: "Current assignee label.".into() },
+        SessionPromptToken { token: "{TASK.DESCRIPTION}".into(), description: "Task description block when present.".into() },
+        SessionPromptToken { token: "{TASK.COMMENTS}".into(), description: "Recent task comments block.".into() },
+        SessionPromptToken { token: "{TASK.BLOCKED_BY}".into(), description: "Blocking tasks block.".into() },
+        SessionPromptToken { token: "{TASK.REPOSITORIES}".into(), description: "Task repositories block.".into() },
+        SessionPromptToken { token: "{TASK.FILE_REFERENCES}".into(), description: "Tracked project file references block.".into() },
+        SessionPromptToken { token: "{TASK.ATTACHMENTS}".into(), description: "Task attachments block.".into() },
+        SessionPromptToken { token: "{WORKFLOW.NAME}".into(), description: "Workflow name.".into() },
+        SessionPromptToken { token: "{LANE.NAME}".into(), description: "Current lane name.".into() },
+        SessionPromptToken { token: "{LANE.OWNER}".into(), description: "Current lane owner type.".into() },
+        SessionPromptToken { token: "{LANE.INSTRUCTION}".into(), description: "Lane entry instruction block.".into() },
+        SessionPromptToken { token: "{WORKER.CONTEXT}".into(), description: "Worker-specific prompt context block including base and overlay prompts.".into() },
+        SessionPromptToken { token: "{RUNTIME.CWD}".into(), description: "Resolved runtime cwd for the session.".into() },
+        SessionPromptToken { token: "{ORCHESTRA.WORKING_RULES}".into(), description: "Standard Orchestra working rules block.".into() },
+        SessionPromptToken { token: "{ORCHESTRA.TOOL_HELP}".into(), description: "Standard Orchestra task tool help block.".into() },
+        SessionPromptToken { token: "{ORCHESTRA.COMPLETION_RULES}".into(), description: "Standard Orchestra completion rules block.".into() },
+    ]
+}
+
+pub fn get_session_prompt_settings(project_slug: &str) -> Result<ProjectSessionPromptSettings, String> {
+    let orchestra_root = default_orchestra_root()?;
+    get_session_prompt_settings_in(&orchestra_root, project_slug)
+}
+
+pub fn update_session_prompt_settings(project_slug: &str, template: Option<String>) -> Result<ProjectSessionPromptSettings, String> {
+    let orchestra_root = default_orchestra_root()?;
+    update_session_prompt_settings_in(&orchestra_root, project_slug, template)
 }
 
 pub fn get_worker_overlay(
@@ -71,6 +145,39 @@ pub fn get_worker_overlay_in(
         prompt: overlay.prompt,
         updated_at: overlay.updated_at,
     })
+}
+
+pub fn get_session_prompt_settings_in(
+    orchestra_root: &Path,
+    project_slug: &str,
+) -> Result<ProjectSessionPromptSettings, String> {
+    let normalized_project_slug = sanitize_slug(project_slug);
+    let settings = load_project_settings(orchestra_root, &normalized_project_slug)?;
+    let default_template = default_task_session_context_template();
+    Ok(ProjectSessionPromptSettings {
+        project_slug: normalized_project_slug,
+        template: settings
+            .general
+            .task_session_context_template
+            .clone()
+            .unwrap_or_else(|| default_template.clone()),
+        default_template,
+        available_tokens: available_session_prompt_tokens(),
+        updated_at: settings.general.updated_at,
+    })
+}
+
+pub fn update_session_prompt_settings_in(
+    orchestra_root: &Path,
+    project_slug: &str,
+    template: Option<String>,
+) -> Result<ProjectSessionPromptSettings, String> {
+    let normalized_project_slug = sanitize_slug(project_slug);
+    let mut settings = load_project_settings(orchestra_root, &normalized_project_slug)?;
+    settings.general.task_session_context_template = normalize_optional_string(template);
+    settings.general.updated_at = Some(Utc::now().to_rfc3339());
+    save_project_settings(orchestra_root, &normalized_project_slug, &settings)?;
+    get_session_prompt_settings_in(orchestra_root, &normalized_project_slug)
 }
 
 pub fn update_worker_overlay_in(
@@ -212,6 +319,26 @@ mod tests {
                 .as_millis()
         );
         env::temp_dir().join(suffix)
+    }
+
+    #[test]
+    fn stores_and_loads_session_prompt_settings() {
+        let root = unique_temp_dir("project-session-prompt-settings");
+
+        let saved = update_session_prompt_settings_in(
+            &root,
+            "Orchestra",
+            Some("Task {TASK.ID} {TASK.NAME}".into()),
+        )
+        .expect("session prompt settings should save");
+        assert_eq!(saved.project_slug, "orchestra");
+        assert_eq!(saved.template, "Task {TASK.ID} {TASK.NAME}");
+        assert!(saved.available_tokens.iter().any(|token| token.token == "{TASK.ID}"));
+
+        let loaded = get_session_prompt_settings_in(&root, "Orchestra")
+            .expect("session prompt settings should load");
+        assert_eq!(loaded.template, "Task {TASK.ID} {TASK.NAME}");
+        assert!(loaded.default_template.contains("{TASK.NUMBER}"));
     }
 
     #[test]

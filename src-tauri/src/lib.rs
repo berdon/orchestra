@@ -20,7 +20,7 @@ use commands::{
         get_agent_permissions, get_policy, get_role_instance_permissions, get_role_permissions,
         list_orchestra_tools, list_policies,
     },
-    project_settings::{get_worker_overlay, update_worker_overlay},
+    project_settings::{get_session_prompt_settings, get_worker_overlay, update_session_prompt_settings, update_worker_overlay},
     projects::{
         create_project, create_repository, delete_project, get_project, list_projects,
         list_repositories, set_project_default_repository, update_project, update_repository,
@@ -153,6 +153,8 @@ pub fn run() {
             set_project_default_repository,
             get_worker_overlay,
             update_worker_overlay,
+            get_session_prompt_settings,
+            update_session_prompt_settings,
             list_sessions,
             get_session_record,
             create_session,
