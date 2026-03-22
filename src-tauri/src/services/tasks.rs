@@ -7,7 +7,7 @@ use crate::{
         TaskComment, TaskCommentInput, TaskDetail, TaskDependency, TaskLaneRun, TaskSummary,
         TaskUpsertInput,
     },
-    services::{task_attachments, task_file_references, task_runtime},
+    services::{task_attachments, task_file_references, task_repositories, task_runtime},
 };
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
@@ -93,12 +93,14 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     dependency_blocked: row.get::<_, i64>(23)? != 0,
                     ready_for_dispatch: row.get::<_, i64>(24)? != 0,
                     repository_id: row.get(27)?,
+                    repository_ids: Vec::new(),
                     parent: None,
                     lineage: Vec::new(),
                     children: Vec::new(),
                     blocked_by: Vec::new(),
                     blocking: Vec::new(),
                     attachments: Vec::new(),
+                    task_repositories: Vec::new(),
                     file_references: Vec::new(),
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
@@ -118,10 +120,22 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
     task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
+    task.active_lane_assignment = task_runtime::get_active_lane_assignment(connection, task_id)?;
+    task.task_repositories = task_repositories::load_task_repositories(
+        connection,
+        task_id,
+        task.active_lane_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.runtime_cwd.as_deref()),
+    )?;
+    task.repository_ids = task
+        .task_repositories
+        .iter()
+        .map(|repository| repository.repository_id.clone())
+        .collect();
     task.file_references = task_file_references::load_task_file_references(connection, task_id)?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
-    task.active_lane_assignment = task_runtime::get_active_lane_assignment(connection, task_id)?;
     Ok(task)
 }
 
@@ -134,10 +148,13 @@ pub fn create_task(
     project_id: Option<&str>,
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
-    let normalized = apply_default_lane_if_needed(connection, normalize_input(input))?;
-    validate_task_input(connection, &normalized, None)?;
-
     let project_id = project_id.unwrap_or(DEFAULT_PROJECT_ID).to_string();
+    let normalized = apply_default_task_repositories(
+        connection,
+        &project_id,
+        apply_default_lane_if_needed(connection, normalize_input(input))?,
+    )?;
+    validate_task_input(connection, &normalized, None)?;
     let sequence_number = next_task_sequence_number(connection, &project_id)?;
     let number = format!("ORC-{sequence_number}");
     let task_id = task_id();
@@ -184,13 +201,15 @@ pub fn create_task(
             normalized.current_lane_id,
             normalized.assignee_type,
             normalized.assignee_id,
-            normalized.repository_id,
+            normalized.repository_ids.first().cloned(),
             normalized.parent_task_id,
             if normalized.archived.unwrap_or(false) { 1 } else { 0 },
             now,
         ],
     )
     .map_err(|error| format!("Unable to create task: {error}"))?;
+
+    sync_task_repository_links(&tx, &task_id, &project_id, &normalized.repository_ids, &now)?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit task creation: {error}"))?;
@@ -253,13 +272,15 @@ pub fn update_task(
             normalized.current_lane_id,
             normalized.assignee_type,
             normalized.assignee_id,
-            normalized.repository_id,
+            normalized.repository_ids.first().cloned(),
             normalized.parent_task_id,
             if normalized.archived.unwrap_or(existing.archived) { 1 } else { 0 },
             now,
         ],
     )
     .map_err(|error| format!("Unable to update task {task_id}: {error}"))?;
+
+    sync_task_repository_links(&tx, task_id, &existing.project_id, &normalized.repository_ids, &now)?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit task update: {error}"))?;
@@ -896,8 +917,45 @@ fn normalize_input(mut input: TaskUpsertInput) -> TaskUpsertInput {
     input.assignee_type = input.assignee_type.trim().to_string();
     input.assignee_id = normalized_optional_string(input.assignee_id);
     input.repository_id = normalized_optional_string(input.repository_id);
+    input.repository_ids = input
+        .repository_ids
+        .into_iter()
+        .filter_map(|value| normalized_optional_string(Some(value)))
+        .collect();
+    if input.repository_ids.is_empty() {
+        if let Some(repository_id) = input.repository_id.clone() {
+            input.repository_ids.push(repository_id);
+        }
+    }
+    input.repository_ids.sort();
+    input.repository_ids.dedup();
+    input.repository_id = input.repository_ids.first().cloned();
     input.parent_task_id = normalized_optional_string(input.parent_task_id);
     input
+}
+
+fn apply_default_task_repositories(
+    connection: &Connection,
+    project_id: &str,
+    mut input: TaskUpsertInput,
+) -> Result<TaskUpsertInput, String> {
+    if input.repository_ids.is_empty() {
+        let default_repository_id = connection
+            .query_row(
+                "SELECT default_repository_id FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to resolve default repository for project {project_id}: {error}"))?
+            .flatten();
+        if let Some(default_repository_id) = default_repository_id {
+            input.repository_ids.push(default_repository_id.clone());
+            input.repository_id = Some(default_repository_id);
+        }
+    }
+
+    Ok(input)
 }
 
 fn apply_default_lane_if_needed(
@@ -931,6 +989,44 @@ fn normalized_optional_string(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn sync_task_repository_links(
+    connection: &rusqlite::Transaction<'_>,
+    task_id: &str,
+    project_id: &str,
+    repository_ids: &[String],
+    created_at: &str,
+) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM task_repositories WHERE task_id = ?1", [task_id])
+        .map_err(|error| format!("Unable to clear task repositories for {task_id}: {error}"))?;
+
+    for repository_id in repository_ids {
+        let repository_project_id = connection
+            .query_row(
+                "SELECT project_id FROM repositories WHERE id = ?1",
+                [repository_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| format!("Unable to validate task repository {repository_id}: {error}"))?;
+
+        if repository_project_id != project_id {
+            return Err(format!(
+                "Repository {} does not belong to project {}",
+                repository_id, project_id
+            ));
+        }
+
+        connection
+            .execute(
+                "INSERT INTO task_repositories (task_id, repository_id, created_at) VALUES (?1, ?2, ?3)",
+                params![task_id, repository_id, created_at],
+            )
+            .map_err(|error| format!("Unable to link task repository {repository_id}: {error}"))?;
+    }
+
+    Ok(())
 }
 
 fn task_summary_columns(alias: &str) -> String {
@@ -1065,6 +1161,7 @@ mod tests {
                 assignee_type: "user".into(),
                 assignee_id: None,
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id,
                 archived: None,
             },
@@ -1092,6 +1189,7 @@ mod tests {
                 assignee_type: "role".into(),
                 assignee_id: Some("developer".into()),
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: Some(epic.id.clone()),
                 archived: None,
             },
@@ -1135,6 +1233,7 @@ mod tests {
                 assignee_type: "user".into(),
                 assignee_id: None,
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: None,
                 archived: None,
             },
@@ -1154,6 +1253,7 @@ mod tests {
                 assignee_type: "user".into(),
                 assignee_id: None,
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: None,
                 archived: None,
             },
@@ -1168,6 +1268,63 @@ mod tests {
         assert_eq!(project_b[0].id, task_b.id);
         assert_eq!(task_a.number, "ORC-1");
         assert_eq!(task_b.number, "ORC-1");
+    }
+
+    #[test]
+    fn defaults_new_task_repositories_from_project_default_repository() {
+        let mut connection = in_memory_connection();
+        crate::services::projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: "Project With Default Repo".into(),
+                description: None,
+            },
+        )
+        .expect("project should create");
+        let project = connection
+            .query_row(
+                "SELECT id FROM projects WHERE name = 'Project With Default Repo'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("project id should load");
+        let repository = crate::services::projects::create_repository(
+            &connection,
+            &project,
+            crate::models::RepositoryUpsertInput {
+                name: "Default Repo".into(),
+                repository_path: Some(std::env::temp_dir().display().to_string()),
+                default_branch: Some("main".into()),
+            },
+        )
+        .expect("repository should create");
+        crate::services::projects::set_project_default_repository(&connection, &project, Some(&repository.id))
+            .expect("default repository should set");
+
+        let task = create_task(
+            &mut connection,
+            Some(&project),
+            TaskUpsertInput {
+                title: "Repo default task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "draft".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        assert_eq!(task.repository_id.as_deref(), Some(repository.id.as_str()));
+        assert_eq!(task.repository_ids, vec![repository.id]);
+        assert_eq!(task.task_repositories.len(), 1);
     }
 
     #[test]
@@ -1187,6 +1344,7 @@ mod tests {
                 assignee_type: "unassigned".into(),
                 assignee_id: None,
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: None,
                 archived: None,
             },
@@ -1218,6 +1376,7 @@ mod tests {
                 assignee_type: parent.assignee_type.clone(),
                 assignee_id: parent.assignee_id.clone(),
                 repository_id: parent.repository_id.clone(),
+                repository_ids: parent.repository_ids.clone(),
                 parent_task_id: Some(child.id.clone()),
                 archived: Some(false),
             },
@@ -1282,6 +1441,7 @@ mod tests {
                 assignee_type: blocker.assignee_type.clone(),
                 assignee_id: blocker.assignee_id.clone(),
                 repository_id: blocker.repository_id.clone(),
+                repository_ids: blocker.repository_ids.clone(),
                 parent_task_id: blocker.parent_task_id.clone(),
                 archived: Some(false),
             },

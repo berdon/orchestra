@@ -1,4 +1,4 @@
-import type { AgentSummary, RoleSummary, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, RepositoryRecord, RoleSummary, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskCreatePageProps {
@@ -6,13 +6,14 @@ interface TaskCreatePageProps {
   workflows: WorkflowSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
+  repositories: RepositoryRecord[];
   saving: boolean;
   onChange: (draft: TaskUpsertInput) => void;
   onSave: () => void;
   onBack: () => void;
 }
 
-export function TaskCreatePage({ draft, workflows, agents, roles, saving, onChange, onSave, onBack }: TaskCreatePageProps) {
+export function TaskCreatePage({ draft, workflows, agents, roles, repositories, saving, onChange, onSave, onBack }: TaskCreatePageProps) {
   return (
     <section className="task-page task-create-page panel">
       <div className="panel__header panel__header--session-detail">
@@ -31,7 +32,7 @@ export function TaskCreatePage({ draft, workflows, agents, roles, saving, onChan
         </div>
       </div>
 
-      <TaskEditorForm agents={agents} draft={draft} onChange={onChange} roles={roles} workflows={workflows} />
+      <TaskEditorForm agents={agents} draft={draft} onChange={onChange} repositories={repositories} roles={roles} workflows={workflows} />
     </section>
   );
 }

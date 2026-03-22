@@ -21,6 +21,7 @@ pub mod role_runtime;
 pub mod roles;
 pub mod task_attachments;
 pub mod task_file_references;
+pub mod task_repositories;
 pub mod task_runtime;
 pub mod tasks;
 pub mod tool_bridge;

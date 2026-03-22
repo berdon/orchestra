@@ -9,7 +9,7 @@ use crate::{
 
 pub fn dispatch_role_queue(
     connection: &mut Connection,
-    project_root: &Path,
+    _project_root: &Path,
     session_dir: &Path,
     role_id: &str,
 ) -> Result<RoleOperationsDetail, String> {
@@ -56,7 +56,7 @@ pub fn dispatch_role_queue(
 
         let setup_result = (|| -> Result<(), String> {
             let worktree_path =
-                ensure_instance_worktree(connection, project_root, &role.slug, &instance)?;
+                ensure_instance_worktree(connection, session_dir, &role.slug, &instance)?;
             let session_id = ensure_instance_session(
                 connection,
                 &worktree_path,
@@ -145,7 +145,7 @@ pub fn release_role_instance(
 
 pub fn dispose_role_instance(
     connection: &mut Connection,
-    project_root: &Path,
+    _project_root: &Path,
     instance_id: &str,
 ) -> Result<RoleOperationsDetail, String> {
     let instance = role_runtime::get_role_instance(connection, instance_id)?;
@@ -157,7 +157,7 @@ pub fn dispose_role_instance(
     }
 
     if let Some(worktree_path) = instance.worktree_path.as_deref() {
-        git_worktrees::dispose_worktree(project_root, Path::new(worktree_path))?;
+        git_worktrees::dispose_runtime_dir(Path::new(worktree_path))?;
     }
 
     let now = crate::state::now_iso();
@@ -215,7 +215,7 @@ fn find_reusable_instance(
 
 fn ensure_instance_worktree(
     connection: &Connection,
-    project_root: &Path,
+    session_dir: &Path,
     role_slug: &str,
     instance: &RoleInstance,
 ) -> Result<std::path::PathBuf, String> {
@@ -229,7 +229,7 @@ fn ensure_instance_worktree(
     let path = if let Some(path) = existing {
         path
     } else {
-        let created = git_worktrees::ensure_role_worktree(project_root, role_slug, &instance.id)?;
+        let created = git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?;
         connection
             .execute(
                 "UPDATE role_instances SET worktree_path = ?2, updated_at = ?3 WHERE id = ?1",
@@ -713,6 +713,7 @@ mod tests {
                 assignee_type: "role".into(),
                 assignee_id: Some(role.id.clone()),
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: None,
                 archived: None,
             },
@@ -785,6 +786,7 @@ mod tests {
                 assignee_type: "role".into(),
                 assignee_id: Some(role.id.clone()),
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: None,
                 archived: None,
             },

@@ -1,4 +1,4 @@
-import type { AgentSummary, RoleSummary, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, RepositoryRecord, RoleSummary, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
 const TASK_STATUSES: TaskStatus[] = ["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"];
@@ -9,10 +9,11 @@ interface TaskEditorFormProps {
   workflows: WorkflowSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
+  repositories: RepositoryRecord[];
   onChange: (nextDraft: TaskUpsertInput) => void;
 }
 
-export function TaskEditorForm({ draft, workflows, agents, roles, onChange }: TaskEditorFormProps) {
+export function TaskEditorForm({ draft, workflows, agents, roles, repositories, onChange }: TaskEditorFormProps) {
   const availableAssignees = draft.assigneeType === "agent"
     ? agents.map((agent) => ({ value: agent.slug, label: agent.name }))
     : draft.assigneeType === "role"
@@ -94,6 +95,28 @@ export function TaskEditorForm({ draft, workflows, agents, roles, onChange }: Ta
           </select>
         </label>
       ) : null}
+
+      <label className="field-group task-editor-grid__full">
+        <span className="field-group__label">Task repositories</span>
+        <select
+          className="select-input"
+          data-role="task-repositories"
+          multiple
+          value={draft.repositoryIds ?? []}
+          onChange={(event) => {
+            const repositoryIds = Array.from(event.target.selectedOptions).map((option) => option.value);
+            onChange({
+              ...draft,
+              repositoryIds,
+              repositoryId: repositoryIds[0] ?? null,
+            });
+          }}
+        >
+          {repositories.map((repository) => (
+            <option key={repository.id} value={repository.id}>{repository.name}</option>
+          ))}
+        </select>
+      </label>
 
       <label className="field-group task-editor-grid__full">
         <span className="field-group__label">Description</span>

@@ -7,6 +7,21 @@ use std::{
 
 use crate::services::orchestra_paths::sanitize_slug;
 
+pub fn ensure_role_runtime_dir(
+    session_dir: &Path,
+    role_slug: &str,
+    instance_id: &str,
+) -> Result<PathBuf, String> {
+    let path = role_runtime_path(session_dir, role_slug, instance_id);
+    fs::create_dir_all(&path).map_err(|error| {
+        format!(
+            "Unable to create role runtime dir {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok(path)
+}
+
 pub fn ensure_role_worktree(
     project_root: &Path,
     role_slug: &str,
@@ -57,6 +72,15 @@ pub fn ensure_role_worktree(
     Ok(path)
 }
 
+pub fn dispose_runtime_dir(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    fs::remove_dir_all(path)
+        .map_err(|error| format!("Unable to remove runtime dir {}: {error}", path.display()))
+}
+
 pub fn dispose_worktree(project_root: &Path, worktree_path: &Path) -> Result<(), String> {
     if !worktree_path.exists() {
         return Ok(());
@@ -77,6 +101,21 @@ pub fn dispose_worktree(project_root: &Path, worktree_path: &Path) -> Result<(),
             worktree_path.display()
         )
     })
+}
+
+fn role_runtime_path(session_dir: &Path, role_slug: &str, instance_id: &str) -> PathBuf {
+    let suffix = instance_id
+        .rsplit('-')
+        .next()
+        .unwrap_or(instance_id)
+        .chars()
+        .take(8)
+        .collect::<String>();
+    session_dir
+        .parent()
+        .map(|parent| parent.join("role-runtimes"))
+        .unwrap_or_else(|| session_dir.join("role-runtimes"))
+        .join(format!("{}-{}", sanitize_slug(role_slug), suffix))
 }
 
 fn runtime_worktree_path(project_root: &Path, role_slug: &str, instance_id: &str) -> PathBuf {

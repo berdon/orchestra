@@ -11,6 +11,7 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  invokeCommand,
   selectByLabel,
   selectValue,
   setFieldByLabel,
@@ -88,6 +89,14 @@ describe("desktop file workflow", () => {
       await clickSelector(sessionId, '[data-role="add-repository"]');
       await waitForText(sessionId, 'File Workflow Repo');
 
+      const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+      const project = projects.find((entry) => entry.name === 'File Workflow Project');
+      expect(project).toBeTruthy();
+      const projectDetail = await invokeCommand<{ repositories: Array<{ id: string; name: string }> }>(sessionId, 'get_project', { projectId: project!.id });
+      const repository = projectDetail.repositories.find((entry) => entry.name === 'File Workflow Repo');
+      expect(repository).toBeTruthy();
+      await invokeCommand(sessionId, 'set_project_default_repository', { projectId: project!.id, repositoryId: repository!.id });
+
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await sleep(1_500);
@@ -118,10 +127,21 @@ describe("desktop file workflow", () => {
       await waitForText(sessionId, 'new task');
       await setInputValue(sessionId, '[data-role="task-title"]', 'Create /tmp/file.md');
       await setInputValue(sessionId, '[data-role="task-description"]', 'Read the referenced project file and do exactly what it says.');
+      const selectedTaskRepositories = await executeScript<string[]>(sessionId, `
+        const select = document.querySelector('[data-role="task-repositories"]');
+        if (!(select instanceof HTMLSelectElement)) {
+          return [];
+        }
+        return Array.from(select.selectedOptions).map((option) => option.textContent || '');
+      `);
+      expect(selectedTaskRepositories).toContain('File Workflow Repo');
       await selectValue(sessionId, '[data-role="task-status"]', 'ready');
       await selectByLabel(sessionId, '[data-role="task-workflow"]', 'File Creation Flow');
       await clickSelector(sessionId, '[data-role="save-task"]');
       await waitForText(sessionId, 'Create /tmp/file.md');
+      const savedTasks = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', { projectId: project!.id, includeArchived: false });
+      const savedTask = savedTasks.find((task) => task.title === 'Create /tmp/file.md');
+      expect(savedTask).toBeTruthy();
       await clickByText(sessionId, '[data-role="task-card"]', 'Create /tmp/file.md');
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
@@ -139,6 +159,16 @@ describe("desktop file workflow", () => {
 
       await waitForDispatchButton(sessionId);
       await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
+      const worktreeDeadline = Date.now() + 30_000;
+      let taskRepositories: Array<{ taskWorktreePath?: string | null }> = [];
+      while (Date.now() < worktreeDeadline) {
+        taskRepositories = await invokeCommand<Array<{ taskWorktreePath?: string | null }>>(sessionId, 'list_task_repositories', { taskId: savedTask!.id });
+        if (taskRepositories.some((entry) => typeof entry.taskWorktreePath === 'string' && entry.taskWorktreePath.length > 0)) {
+          break;
+        }
+        await sleep(500);
+      }
+      expect(taskRepositories.some((entry) => typeof entry.taskWorktreePath === 'string' && entry.taskWorktreePath.length > 0)).toBe(true);
 
       const deadline = Date.now() + 180_000;
       while (Date.now() < deadline && !existsSync(targetFile)) {

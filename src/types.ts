@@ -526,6 +526,18 @@ export interface TaskFileReferenceInput {
   relativePath: string;
 }
 
+export interface TaskRepository {
+  taskId: string;
+  repositoryId: string;
+  repositoryName: string;
+  repositorySlug: string;
+  managedRepositoryPath?: string | null;
+  sourcePath?: string | null;
+  sourceKind?: "local" | "remote" | null;
+  taskWorktreePath?: string | null;
+  createdAt: string;
+}
+
 export interface TaskLaneRun {
   id: string;
   taskId: string;
@@ -588,12 +600,14 @@ export interface TaskSummary {
 
 export interface TaskDetail extends TaskSummary {
   repositoryId?: string | null;
+  repositoryIds: string[];
   parent?: TaskSummary | null;
   lineage: TaskSummary[];
   children: TaskSummary[];
   blockedBy: TaskDependency[];
   blocking: TaskDependency[];
   attachments: TaskAttachment[];
+  taskRepositories: TaskRepository[];
   fileReferences: TaskFileReference[];
   comments: TaskComment[];
   laneRuns: TaskLaneRun[];
@@ -611,6 +625,7 @@ export interface TaskUpsertInput {
   assigneeType: TaskAssigneeType | string;
   assigneeId?: string | null;
   repositoryId?: string | null;
+  repositoryIds?: string[];
   parentTaskId?: string | null;
   archived?: boolean;
 }

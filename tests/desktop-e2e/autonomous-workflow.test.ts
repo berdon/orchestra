@@ -127,6 +127,7 @@ describe("desktop autonomous workflow", () => {
           assigneeType: "unassigned",
           assigneeId: null,
           repositoryId: repository.id,
+          repositoryIds: [repository.id],
           parentTaskId: null,
           archived: false,
         },
@@ -137,6 +138,8 @@ describe("desktop autonomous workflow", () => {
 
       const dispatchedTask = await invokeCommand<any>(sessionId, "dispatch_task_lane", { taskId: createdTask.id });
       expect(dispatchedTask.activeLaneAssignment?.workerType).toBe("agent");
+      const taskRepositories = await invokeCommand<Array<{ repositoryId: string; taskWorktreePath?: string | null }>>(sessionId, "list_task_repositories", { taskId: createdTask.id });
+      expect(taskRepositories.some((entry) => entry.repositoryId === repository.id && Boolean(entry.taskWorktreePath))).toBe(true);
 
       await waitForCondition(
         () => invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions"),

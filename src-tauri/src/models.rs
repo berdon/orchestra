@@ -593,6 +593,20 @@ pub struct TaskFileReferenceInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskRepository {
+    pub task_id: String,
+    pub repository_id: String,
+    pub repository_name: String,
+    pub repository_slug: String,
+    pub managed_repository_path: Option<String>,
+    pub source_path: Option<String>,
+    pub source_kind: Option<String>,
+    pub task_worktree_path: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskCommentInput {
     pub author: String,
     pub message: String,
@@ -694,6 +708,8 @@ pub struct TaskDetail {
     pub assignee_type: String,
     pub assignee_id: Option<String>,
     pub repository_id: Option<String>,
+    #[serde(default)]
+    pub repository_ids: Vec<String>,
     pub parent_task_id: Option<String>,
     pub archived: bool,
     pub comment_count: i64,
@@ -713,6 +729,7 @@ pub struct TaskDetail {
     pub blocked_by: Vec<TaskDependency>,
     pub blocking: Vec<TaskDependency>,
     pub attachments: Vec<TaskAttachment>,
+    pub task_repositories: Vec<TaskRepository>,
     pub file_references: Vec<TaskFileReference>,
     pub comments: Vec<TaskComment>,
     pub lane_runs: Vec<TaskLaneRun>,
@@ -735,6 +752,8 @@ pub struct TaskUpsertInput {
     pub assignee_type: String,
     pub assignee_id: Option<String>,
     pub repository_id: Option<String>,
+    #[serde(default)]
+    pub repository_ids: Vec<String>,
     pub parent_task_id: Option<String>,
     pub archived: Option<bool>,
 }
