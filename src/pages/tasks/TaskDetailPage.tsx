@@ -1,4 +1,6 @@
-import type { AgentSummary, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReferenceInput, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+
+import type { AgentSummary, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -9,6 +11,16 @@ interface TaskTimelineItem {
   timestamp: string;
   tone: "neutral" | "warning" | "success" | "error";
 }
+
+type TaskDetailTab =
+  | "runtime"
+  | "hierarchy"
+  | "dependencies"
+  | "files"
+  | "attachments"
+  | "comments"
+  | "timeline"
+  | "history";
 
 interface TaskDetailPageProps {
   task: TaskDetail;
@@ -23,14 +35,18 @@ interface TaskDetailPageProps {
   dependencyCandidates: Array<{ id: string; number: string; title: string }>;
   selectedBlockerTaskId: string;
   saving: boolean;
+  publishing: boolean;
+  deleting: boolean;
   loading: boolean;
   onDraftChange: (draft: TaskUpsertInput) => void;
   onCommentDraftChange: (draft: TaskCommentInput) => void;
   onSave: () => void;
+  onPublish: () => void;
+  onDelete: () => void;
   onBack: () => void;
-  onCreateSubtask: () => void;
   onOpenTask: (taskId: string) => void;
   onDispatch: () => void;
+  onRetry: () => void;
   onComplete: (outcome: "success" | "failure" | "needs_user") => void;
   onAddDependency: () => void;
   onRemoveDependency: (dependencyId: string) => void;
@@ -62,6 +78,19 @@ function getStatusTone(status: string) {
   }
 }
 
+const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
+  { id: "runtime", label: "Runtime" },
+  { id: "hierarchy", label: "Hierarchy" },
+  { id: "dependencies", label: "Dependencies" },
+  { id: "files", label: "Project files" },
+  { id: "attachments", label: "Attachments" },
+  { id: "comments", label: "Comments" },
+  { id: "timeline", label: "Timeline" },
+  { id: "history", label: "Lane history" },
+];
+
+const DELETE_HOLD_MS = 2000;
+
 export function TaskDetailPage({
   task,
   draft,
@@ -75,14 +104,18 @@ export function TaskDetailPage({
   dependencyCandidates,
   selectedBlockerTaskId,
   saving,
+  publishing,
+  deleting,
   loading,
   onDraftChange,
   onCommentDraftChange,
   onSave,
+  onPublish,
+  onDelete,
   onBack,
-  onCreateSubtask,
   onOpenTask,
   onDispatch,
+  onRetry,
   onComplete,
   onAddDependency,
   onRemoveDependency,
@@ -94,356 +127,482 @@ export function TaskDetailPage({
   onRemoveFileReference,
   onAddComment,
 }: TaskDetailPageProps) {
-  return (
-    <section className="task-page task-detail-page panel">
-      <div className="panel__header panel__header--session-detail">
-        <div>
-          <p className="eyebrow">Task detail</p>
-          <h2 data-role="task-title-heading">{draft.title.trim() || task.title}</h2>
-          <div className="session-detail__meta">
-            <span>{task.number}</span>
-            <span>{task.commentCount} comments</span>
-            <span>{task.laneRunCount} lane runs</span>
-            {task.childCount ? <span>{task.childCount} children</span> : null}
-            {task.attachmentCount ? <span>{task.attachmentCount} attachments</span> : null}
-            {task.blockedByCount ? <span>{task.blockedByCount} blockers</span> : null}
-            <span>{task.readyForDispatch ? "Dispatchable" : "Not dispatchable"}</span>
-          </div>
-        </div>
+  const [activeTab, setActiveTab] = useState<TaskDetailTab>("runtime");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteHolding, setDeleteHolding] = useState(false);
+  const deleteHoldTimerRef = useRef<number | null>(null);
 
-        <div className="action-cluster">
-          <button className="secondary-button" type="button" onClick={onBack}>
-            Back to tasks
-          </button>
-          <button className="secondary-button" data-role="new-subtask" type="button" onClick={onCreateSubtask}>
-            New subtask
-          </button>
-          {task.readyForDispatch ? (
-            <button className="primary-button" data-role="dispatch-task-lane" type="button" onClick={onDispatch}>
-              Dispatch lane
-            </button>
-          ) : null}
-          {task.activeLaneAssignment || (task.workflowId && task.currentLaneId && task.assigneeType === "user") ? (
-            <>
-              <button className="secondary-button" data-role="complete-task-success" type="button" onClick={() => onComplete("success")}>
-                Mark success
-              </button>
-              <button className="secondary-button secondary-button--danger" data-role="complete-task-failure" type="button" onClick={() => onComplete("failure")}>
-                Mark failure
-              </button>
-              <button className="secondary-button" data-role="complete-task-needs-user" type="button" onClick={() => onComplete("needs_user")}>
-                Needs user
-              </button>
-            </>
-          ) : null}
-          <button className="primary-button" data-role="save-task" type="button" disabled={saving || loading} onClick={onSave}>
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </div>
-      </div>
+  const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
 
-      <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} repositories={repositories} roles={roles} workflows={workflows} />
+  useEffect(() => {
+    return () => {
+      if (deleteHoldTimerRef.current !== null) {
+        window.clearTimeout(deleteHoldTimerRef.current);
+      }
+    };
+  }, []);
 
-      <div className="task-detail-sections">
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Runtime</p>
-              <h4>Lane execution</h4>
-            </div>
-          </div>
-          {task.activeLaneAssignment ? (
-            <div className="task-runtime-card" data-role="task-runtime-assignment">
-              <div className="workflow-section__header">
-                <strong>{task.activeLaneAssignment.workerType} · {task.activeLaneAssignment.workerId ?? "unassigned"}</strong>
-                <span className={`status-badge status-badge--${task.activeLaneAssignment.status === "active" ? "success" : task.activeLaneAssignment.status === "queued" ? "warning" : "neutral"}`}>
-                  {task.activeLaneAssignment.status}
-                </span>
+  function clearDeleteHold() {
+    if (deleteHoldTimerRef.current !== null) {
+      window.clearTimeout(deleteHoldTimerRef.current);
+      deleteHoldTimerRef.current = null;
+    }
+    setDeleteHolding(false);
+  }
+
+  function handleDeletePointerDown() {
+    if (deleting) {
+      return;
+    }
+    clearDeleteHold();
+    setDeleteHolding(true);
+    deleteHoldTimerRef.current = window.setTimeout(() => {
+      deleteHoldTimerRef.current = null;
+      setDeleteHolding(false);
+      setShowDeleteConfirm(true);
+    }, DELETE_HOLD_MS);
+  }
+
+  function handleDeletePointerEnd(_event?: ReactPointerEvent<HTMLButtonElement>) {
+    clearDeleteHold();
+  }
+
+  function renderTabPanel() {
+    switch (activeTab) {
+      case "runtime":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-runtime">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Runtime</p>
+                <h4>Lane execution</h4>
               </div>
-              <div className="workforce-meta-grid muted-copy">
-                <span>Lane: {task.activeLaneAssignment.laneId}</span>
-                <span>Session: {task.activeLaneAssignment.sessionId ?? "—"}</span>
-                <span>Runtime cwd: {task.activeLaneAssignment.runtimeCwd ?? "—"}</span>
+              <div className="action-cluster action-cluster--wrap">
+                {task.readyForDispatch ? (
+                  <button className="primary-button" data-role="dispatch-task-lane" type="button" onClick={onDispatch}>
+                    Dispatch lane
+                  </button>
+                ) : null}
+                {task.workflowId && task.currentLaneId && ["agent", "role"].includes(task.assigneeType) ? (
+                  <button className="secondary-button" data-role="retry-task-lane" type="button" onClick={onRetry}>
+                    Retry
+                  </button>
+                ) : null}
+                {task.activeLaneAssignment || (task.workflowId && task.currentLaneId && task.assigneeType === "user") ? (
+                  <>
+                    <button className="secondary-button" data-role="complete-task-success" type="button" onClick={() => onComplete("success")}>
+                      Mark success
+                    </button>
+                    <button className="secondary-button secondary-button--danger" data-role="complete-task-failure" type="button" onClick={() => onComplete("failure")}>
+                      Mark failure
+                    </button>
+                    <button className="secondary-button" data-role="complete-task-needs-user" type="button" onClick={() => onComplete("needs_user")}>
+                      Needs user
+                    </button>
+                  </>
+                ) : null}
               </div>
             </div>
-          ) : (
-            <p className="muted-copy">No active runtime assignment for this task.</p>
-          )}
-        </section>
-
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Hierarchy</p>
-              <h4>Lineage and rollups</h4>
-            </div>
-          </div>
-
-          {task.lineage.length ? (
-            <div className="task-lineage" data-role="task-lineage">
-              {task.lineage.map((ancestor) => (
-                <button className="task-lineage__crumb" key={ancestor.id} type="button" onClick={() => onOpenTask(ancestor.id)}>
-                  {ancestor.number} · {ancestor.title}
-                </button>
-              ))}
-              {task.parent ? <span className="task-lineage__current">Parent: {task.parent.number}</span> : null}
-            </div>
-          ) : (
-            <p className="muted-copy">No parent task. This task is currently a top-level item.</p>
-          )}
-
-          {task.childCount ? (
-            <div className="task-rollup-grid">
-              <article className="status-card"><span className="status-card__label">Children</span><strong>{task.childCount}</strong></article>
-              <article className="status-card"><span className="status-card__label">In progress</span><strong>{task.inProgressChildCount}</strong></article>
-              <article className="status-card"><span className="status-card__label">Blocked</span><strong>{task.blockedChildCount}</strong></article>
-              <article className="status-card"><span className="status-card__label">Completed</span><strong>{task.completedChildCount}</strong></article>
-            </div>
-          ) : null}
-
-          {task.children.length ? (
-            <div className="task-section-list" data-role="task-children">
-              {task.children.map((child) => (
-                <button className="task-child-card" key={child.id} type="button" onClick={() => onOpenTask(child.id)}>
-                  <div className="workflow-section__header">
-                    <strong>{child.number} · {child.title}</strong>
-                    <span className={`status-badge status-badge--${getStatusTone(child.status)}`}>{formatStatusLabel(child.status)}</span>
-                  </div>
-                  <p className="muted-copy">{child.type} · {child.priority}</p>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="muted-copy">No child tasks yet. Use “New subtask” to break work down under this task.</p>
-          )}
-        </section>
-
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Dependencies</p>
-              <h4>Blocked by and blocking</h4>
-            </div>
-            <div className="task-dependency-actions">
-              <select className="select-input" data-role="dependency-blocker-select" value={selectedBlockerTaskId} onChange={(event) => onSelectBlocker(event.target.value)}>
-                <option value="">Select blocker task…</option>
-                {dependencyCandidates.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.title}</option>
-                ))}
-              </select>
-              <button className="secondary-button" data-role="add-dependency" type="button" disabled={!selectedBlockerTaskId} onClick={onAddDependency}>Add dependency</button>
-            </div>
-          </div>
-
-          {task.dependencyBlocked ? <p className="error-copy">This task is currently blocked by unresolved dependencies and is not dispatchable.</p> : null}
-          <div className="task-dependency-grid">
-            <div className="task-dependency-column">
-              <p className="eyebrow">Blocked by</p>
-              {task.blockedBy.length ? (
-                <div className="task-section-list" data-role="task-blocked-by">
-                  {task.blockedBy.map((dependency) => (
-                    <article className="task-history-card" key={dependency.id}>
-                      <div className="workflow-section__header">
-                        <strong>{dependency.blocker.number} · {dependency.blocker.title}</strong>
-                        <span className={`status-badge status-badge--${getStatusTone(dependency.blocker.status)}`}>{formatStatusLabel(dependency.blocker.status)}</span>
-                      </div>
-                      <p className="muted-copy">{dependency.blocker.priority} · {dependency.blocker.type}</p>
-                      <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveDependency(dependency.id)}>Remove dependency</button>
-                    </article>
-                  ))}
+            {task.activeLaneAssignment ? (
+              <div className="task-runtime-card" data-role="task-runtime-assignment">
+                <div className="workflow-section__header">
+                  <strong>{task.activeLaneAssignment.workerType} · {task.activeLaneAssignment.workerId ?? "unassigned"}</strong>
+                  <span className={`status-badge status-badge--${task.activeLaneAssignment.status === "active" ? "success" : task.activeLaneAssignment.status === "queued" ? "warning" : "neutral"}`}>
+                    {task.activeLaneAssignment.status}
+                  </span>
                 </div>
-              ) : <p className="muted-copy">No blockers. This task can proceed unless workflow state says otherwise.</p>}
-            </div>
-            <div className="task-dependency-column">
-              <p className="eyebrow">Blocking</p>
-              {task.blocking.length ? (
-                <div className="task-section-list" data-role="task-blocking">
-                  {task.blocking.map((dependency) => (
-                    <article className="task-history-card" key={dependency.id}>
-                      <div className="workflow-section__header">
-                        <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
-                        <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
-                      </div>
-                      <p className="muted-copy">This task will stay blocked until the current task is resolved.</p>
-                    </article>
-                  ))}
+                <div className="workforce-meta-grid muted-copy">
+                  <span>Lane: {task.activeLaneAssignment.laneId}</span>
+                  <span>Session: {task.activeLaneAssignment.sessionId ?? "—"}</span>
+                  <span>Runtime cwd: {task.activeLaneAssignment.runtimeCwd ?? "—"}</span>
                 </div>
-              ) : <p className="muted-copy">No downstream blocked tasks yet.</p>}
+              </div>
+            ) : (
+              <p className="muted-copy">No active runtime assignment for this task.</p>
+            )}
+          </section>
+        );
+      case "hierarchy":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-hierarchy">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Hierarchy</p>
+                <h4>Lineage and rollups</h4>
+              </div>
             </div>
-          </div>
-        </section>
 
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Project files</p>
-              <h4>Live repository references</h4>
-            </div>
-          </div>
-
-          <div className="task-editor-grid">
-            <label className="field-group">
-              <span className="field-group__label">Repository</span>
-              <select className="select-input" data-role="task-file-reference-repository" value={fileReferenceDraft.repositoryId} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, repositoryId: event.target.value })}>
-                <option value="">Select repository…</option>
-                {repositories.map((repository) => (
-                  <option key={repository.id} value={repository.id}>{repository.name}</option>
+            {task.lineage.length ? (
+              <div className="task-lineage" data-role="task-lineage">
+                {task.lineage.map((ancestor) => (
+                  <button className="task-lineage__crumb" key={ancestor.id} type="button" onClick={() => onOpenTask(ancestor.id)}>
+                    {ancestor.number} · {ancestor.title}
+                  </button>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span className="field-group__label">Relative path</span>
-              <input className="text-input" data-role="task-file-reference-path" value={fileReferenceDraft.relativePath} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, relativePath: event.target.value })} placeholder="docs/design.md" />
-            </label>
-            <div className="task-editor-grid__full">
-              <button className="secondary-button" data-role="add-task-file-reference" type="button" disabled={!fileReferenceDraft.repositoryId || !fileReferenceDraft.relativePath.trim()} onClick={onAddFileReference}>Add file reference</button>
-            </div>
-          </div>
+                {task.parent ? <span className="task-lineage__current">Parent: {task.parent.number}</span> : null}
+              </div>
+            ) : (
+              <p className="muted-copy">No parent task. This task is currently a top-level item.</p>
+            )}
 
-          {task.fileReferences.length ? (
-            <div className="task-section-list" data-role="task-file-references">
-              {task.fileReferences.map((reference) => (
-                <article className="task-history-card" key={reference.id}>
-                  <div className="workflow-section__header">
-                    <strong>{reference.repositoryName} · {reference.relativePath}</strong>
-                    <div className="action-cluster">
-                      <span className={`status-badge status-badge--${reference.exists ? "success" : "warning"}`}>{reference.exists ? "Available" : "Missing"}</span>
-                      <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveFileReference(reference.id)}>Remove</button>
+            {task.childCount ? (
+              <div className="task-rollup-grid">
+                <article className="status-card"><span className="status-card__label">Children</span><strong>{task.childCount}</strong></article>
+                <article className="status-card"><span className="status-card__label">In progress</span><strong>{task.inProgressChildCount}</strong></article>
+                <article className="status-card"><span className="status-card__label">Blocked</span><strong>{task.blockedChildCount}</strong></article>
+                <article className="status-card"><span className="status-card__label">Completed</span><strong>{task.completedChildCount}</strong></article>
+              </div>
+            ) : null}
+
+            {task.children.length ? (
+              <div className="task-section-list" data-role="task-children">
+                {task.children.map((child) => (
+                  <button className="task-child-card" key={child.id} type="button" onClick={() => onOpenTask(child.id)}>
+                    <div className="workflow-section__header">
+                      <strong>{child.number} · {child.title}</strong>
+                      <span className={`status-badge status-badge--${getStatusTone(child.status)}`}>{formatStatusLabel(child.status)}</span>
                     </div>
+                    <p className="muted-copy">{child.type} · {child.priority}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-copy">No child tasks yet.</p>
+            )}
+          </section>
+        );
+      case "dependencies":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-dependencies">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Dependencies</p>
+                <h4>Blocked by and blocking</h4>
+              </div>
+              <div className="task-dependency-actions">
+                <select className="select-input" data-role="dependency-blocker-select" value={selectedBlockerTaskId} onChange={(event) => onSelectBlocker(event.target.value)}>
+                  <option value="">Select blocker task…</option>
+                  {dependencyCandidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.title}</option>
+                  ))}
+                </select>
+                <button className="secondary-button" data-role="add-dependency" type="button" disabled={!selectedBlockerTaskId} onClick={onAddDependency}>Add dependency</button>
+              </div>
+            </div>
+
+            {task.dependencyBlocked ? <p className="error-copy">This task is currently blocked by unresolved dependencies and is not dispatchable.</p> : null}
+            <div className="task-dependency-grid">
+              <div className="task-dependency-column">
+                <p className="eyebrow">Blocked by</p>
+                {task.blockedBy.length ? (
+                  <div className="task-section-list" data-role="task-blocked-by">
+                    {task.blockedBy.map((dependency) => (
+                      <article className="task-history-card" key={dependency.id}>
+                        <div className="workflow-section__header">
+                          <strong>{dependency.blocker.number} · {dependency.blocker.title}</strong>
+                          <span className={`status-badge status-badge--${getStatusTone(dependency.blocker.status)}`}>{formatStatusLabel(dependency.blocker.status)}</span>
+                        </div>
+                        <p className="muted-copy">{dependency.blocker.priority} · {dependency.blocker.type}</p>
+                        <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveDependency(dependency.id)}>Remove dependency</button>
+                      </article>
+                    ))}
                   </div>
-                  <p className="muted-copy">Repository slug: {reference.repositorySlug}</p>
-                  <p className="muted-copy">Absolute path: {reference.absolutePath ?? "Unavailable"}</p>
-                </article>
-              ))}
-            </div>
-          ) : <p className="muted-copy">No project files referenced yet. Add a repository file to give sessions direct live context.</p>}
-        </section>
-
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Attachments</p>
-              <h4>Task materials</h4>
-            </div>
-            <label className="secondary-button task-attachment-upload">
-              <input data-role="task-attachment-input" type="file" multiple onChange={(event) => onAddAttachment(event.target.files)} />
-              Add attachment
-            </label>
-          </div>
-
-          {task.attachments.length ? (
-            <div className="task-attachment-grid" data-role="task-attachments">
-              {task.attachments.map((attachment) => (
-                <article className="task-attachment-card" key={attachment.id}>
-                  <div className="workflow-section__header">
-                    <strong>{attachment.fileName}</strong>
-                    <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
+                ) : <p className="muted-copy">No blockers. This task can proceed unless workflow state says otherwise.</p>}
+              </div>
+              <div className="task-dependency-column">
+                <p className="eyebrow">Blocking</p>
+                {task.blocking.length ? (
+                  <div className="task-section-list" data-role="task-blocking">
+                    {task.blocking.map((dependency) => (
+                      <article className="task-history-card" key={dependency.id}>
+                        <div className="workflow-section__header">
+                          <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
+                          <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
+                        </div>
+                        <p className="muted-copy">This task will stay blocked until the current task is resolved.</p>
+                      </article>
+                    ))}
                   </div>
-                  <p className="muted-copy">{attachment.mediaType} · {Math.max(1, Math.round(attachment.byteSize / 1024))} KB</p>
-                  {attachment.imageDataUrl ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl} /> : null}
-                  {attachment.previewText ? <pre className="task-attachment-card__text">{attachment.previewText}</pre> : null}
-                </article>
-              ))}
+                ) : <p className="muted-copy">No downstream blocked tasks yet.</p>}
+              </div>
             </div>
-          ) : <p className="muted-copy">No attachments yet. Upload text or image files to give agents richer task context.</p>}
-        </section>
-
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Comments</p>
-              <h4>Task conversation</h4>
+          </section>
+        );
+      case "files":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-files">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Project files</p>
+                <h4>Live repository references</h4>
+              </div>
             </div>
-          </div>
 
-          <div className="task-comment-composer">
-            <div className="task-comment-composer__grid">
+            <div className="task-editor-grid">
               <label className="field-group">
-                <span className="field-group__label">Author</span>
-                <input className="text-input" data-role="task-comment-author" value={commentDraft.author} onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })} />
+                <span className="field-group__label">Repository</span>
+                <select className="select-input" data-role="task-file-reference-repository" value={fileReferenceDraft.repositoryId} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, repositoryId: event.target.value })}>
+                  <option value="">Select repository…</option>
+                  {repositories.map((repository) => (
+                    <option key={repository.id} value={repository.id}>{repository.name}</option>
+                  ))}
+                </select>
               </label>
-              <label className="checkbox-row task-comment-composer__interrupt">
-                <input data-role="task-comment-interrupt" type="checkbox" checked={commentDraft.interruptAgent} onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })} />
-                Interrupt current worker now
+              <label className="field-group">
+                <span className="field-group__label">Relative path</span>
+                <input className="text-input" data-role="task-file-reference-path" value={fileReferenceDraft.relativePath} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, relativePath: event.target.value })} placeholder="docs/design.md" />
               </label>
+              <div className="task-editor-grid__full">
+                <button className="secondary-button" data-role="add-task-file-reference" type="button" disabled={!fileReferenceDraft.repositoryId || !fileReferenceDraft.relativePath.trim()} onClick={onAddFileReference}>Add file reference</button>
+              </div>
             </div>
-            <label className="field-group">
-              <span className="field-group__label">Add comment</span>
-              <textarea className="text-area" data-role="task-comment-message" rows={4} value={commentDraft.message} onChange={(event) => onCommentDraftChange({ ...commentDraft, message: event.target.value })} />
-            </label>
-            <div className="task-comment-composer__actions">
-              <button className="primary-button" data-role="add-task-comment" type="button" onClick={onAddComment}>Add comment</button>
-            </div>
-          </div>
 
-          {task.comments.length ? (
-            <div className="task-section-list" data-role="task-comments">
-              {task.comments.map((comment) => (
-                <article className="transcript-event transcript-event--system" key={comment.id}>
-                  <div className="transcript-event__meta">
-                    <span>{comment.author}</span>
-                    <div className="transcript-event__meta-group">
-                      {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                      <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+            {task.fileReferences.length ? (
+              <div className="task-section-list" data-role="task-file-references">
+                {task.fileReferences.map((reference) => (
+                  <article className="task-history-card task-history-card--file-reference" key={reference.id}>
+                    <div className="workflow-section__header">
+                      <strong>{reference.repositoryName} · {reference.relativePath}</strong>
+                      <div className="action-cluster">
+                        <span className={`status-badge status-badge--${reference.exists ? "success" : "warning"}`}>{reference.exists ? "Available" : "Missing"}</span>
+                        <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveFileReference(reference.id)}>Remove</button>
+                      </div>
                     </div>
-                  </div>
-                  <p>{comment.message}</p>
-                </article>
-              ))}
+                    <p className="muted-copy">Repository slug: {reference.repositorySlug}</p>
+                    <p className="muted-copy">Absolute path: {reference.absolutePath ?? "Unavailable"}</p>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted-copy">No project files referenced yet. Add a repository file to give sessions direct live context.</p>}
+          </section>
+        );
+      case "attachments":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-attachments">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Attachments</p>
+                <h4>Task materials</h4>
+              </div>
+              <label className="secondary-button task-attachment-upload">
+                <input data-role="task-attachment-input" type="file" multiple onChange={(event) => onAddAttachment(event.target.files)} />
+                Add attachment
+              </label>
             </div>
-          ) : <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>}
-        </section>
 
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Timeline</p>
-              <h4>Task activity</h4>
+            {task.attachments.length ? (
+              <div className="task-attachment-grid" data-role="task-attachments">
+                {task.attachments.map((attachment) => (
+                  <article className="task-attachment-card" key={attachment.id}>
+                    <div className="workflow-section__header">
+                      <strong>{attachment.fileName}</strong>
+                      <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
+                    </div>
+                    <p className="muted-copy">{attachment.mediaType} · {Math.max(1, Math.round(attachment.byteSize / 1024))} KB</p>
+                    {attachment.imageDataUrl ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl} /> : null}
+                    {attachment.previewText ? <pre className="task-attachment-card__text">{attachment.previewText}</pre> : null}
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted-copy">No attachments yet. Upload text or image files to give agents richer task context.</p>}
+          </section>
+        );
+      case "comments":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-comments">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Comments</p>
+                <h4>Task conversation</h4>
+              </div>
+            </div>
+
+            <div className="task-comment-composer">
+              <div className="task-comment-composer__grid">
+                <label className="field-group">
+                  <span className="field-group__label">Author</span>
+                  <input className="text-input" data-role="task-comment-author" value={commentDraft.author} onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })} />
+                </label>
+                <label className="checkbox-row task-comment-composer__interrupt">
+                  <input data-role="task-comment-interrupt" type="checkbox" checked={commentDraft.interruptAgent} onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })} />
+                  Interrupt current worker now
+                </label>
+              </div>
+              <label className="field-group">
+                <span className="field-group__label">Add comment</span>
+                <textarea className="text-area" data-role="task-comment-message" rows={4} value={commentDraft.message} onChange={(event) => onCommentDraftChange({ ...commentDraft, message: event.target.value })} />
+              </label>
+              <div className="task-comment-composer__actions">
+                <button className="primary-button" data-role="add-task-comment" type="button" onClick={onAddComment}>Add comment</button>
+              </div>
+            </div>
+
+            {task.comments.length ? (
+              <div className="task-section-list" data-role="task-comments">
+                {task.comments.map((comment) => (
+                  <article className="transcript-event transcript-event--system" key={comment.id}>
+                    <div className="transcript-event__meta">
+                      <span>{comment.author}</span>
+                      <div className="transcript-event__meta-group">
+                        {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                        <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                      </div>
+                    </div>
+                    <p>{comment.message}</p>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>}
+          </section>
+        );
+      case "timeline":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-timeline">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Timeline</p>
+                <h4>Task activity</h4>
+              </div>
+            </div>
+
+            {timelineItems.length ? (
+              <div className="task-timeline" data-role="task-timeline">
+                {timelineItems.map((item) => (
+                  <article className="task-timeline-item" key={item.id}>
+                    <div className="workflow-section__header">
+                      <strong>{item.title}</strong>
+                      <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
+                    </div>
+                    <p>{item.description}</p>
+                    <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted-copy">No activity recorded yet.</p>}
+          </section>
+        );
+      case "history":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-history">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Lane history</p>
+                <h4>Execution continuity</h4>
+              </div>
+            </div>
+
+            {task.laneRuns.length ? (
+              <div className="task-section-list" data-role="task-lane-history">
+                {task.laneRuns.map((laneRun) => (
+                  <article className="task-history-card" key={laneRun.id}>
+                    <div className="workflow-section__header">
+                      <strong>{laneRun.laneId}</strong>
+                      <span className={`status-badge status-badge--${laneRun.result === "success" ? "success" : laneRun.result === "failure" ? "error" : "neutral"}`}>
+                        {laneRun.result.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <p className="muted-copy">Session {laneRun.sessionId}</p>
+                    {laneRun.notes ? <p>{laneRun.notes}</p> : null}
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted-copy">No lane runs recorded yet.</p>}
+          </section>
+        );
+    }
+  }
+
+  return (
+    <>
+      <section className="task-page task-detail-page panel">
+        <div className="panel__header panel__header--session-detail">
+          <div>
+            <p className="eyebrow">Task detail</p>
+            <h2 data-role="task-title-heading">{draft.title.trim() || task.title}</h2>
+            <div className="session-detail__meta">
+              <span>{task.number}</span>
+              <span>{task.commentCount} comments</span>
+              <span>{task.laneRunCount} lane runs</span>
+              {task.childCount ? <span>{task.childCount} children</span> : null}
+              {task.attachmentCount ? <span>{task.attachmentCount} attachments</span> : null}
+              {task.blockedByCount ? <span>{task.blockedByCount} blockers</span> : null}
+              <span>{task.readyForDispatch ? "Dispatchable" : "Not dispatchable"}</span>
             </div>
           </div>
 
-          {timelineItems.length ? (
-            <div className="task-timeline" data-role="task-timeline">
-              {timelineItems.map((item) => (
-                <article className="task-timeline-item" key={item.id}>
-                  <div className="workflow-section__header">
-                    <strong>{item.title}</strong>
-                    <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
-                  </div>
-                  <p>{item.description}</p>
-                  <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
-                </article>
-              ))}
-            </div>
-          ) : <p className="muted-copy">No activity recorded yet.</p>}
-        </section>
-
-        <section className="task-section">
-          <div className="task-section__header">
-            <div>
-              <p className="eyebrow">Lane history</p>
-              <h4>Execution continuity</h4>
-            </div>
+          <div className="action-cluster action-cluster--wrap">
+            <button className="secondary-button" type="button" onClick={onBack}>
+              Back to tasks
+            </button>
+            {task.status === "draft" ? (
+              <button className="secondary-button" data-role="publish-task" type="button" disabled={!canPublish} onClick={onPublish}>
+                {publishing ? "Publishing…" : "Publish"}
+              </button>
+            ) : null}
+            <button className="primary-button" data-role="save-task" type="button" disabled={saving || loading || !draft.title.trim()} onClick={onSave}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+            <button
+              className={deleteHolding ? "secondary-button secondary-button--danger task-delete-button task-delete-button--holding" : "secondary-button secondary-button--danger task-delete-button"}
+              data-role="delete-task"
+              data-delete-holding={deleteHolding ? "true" : "false"}
+              type="button"
+              disabled={deleting}
+              onPointerDown={handleDeletePointerDown}
+              onPointerUp={handleDeletePointerEnd}
+              onPointerLeave={handleDeletePointerEnd}
+              onPointerCancel={handleDeletePointerEnd}
+            >
+              <span className="task-delete-button__pulse" aria-hidden="true" />
+              <span>{deleting ? "Deleting…" : "Delete"}</span>
+            </button>
           </div>
+        </div>
 
-          {task.laneRuns.length ? (
-            <div className="task-section-list">
-              {task.laneRuns.map((laneRun) => (
-                <article className="task-history-card" key={laneRun.id}>
-                  <div className="workflow-section__header">
-                    <strong>{laneRun.laneId}</strong>
-                    <span className={`status-badge status-badge--${laneRun.result === "success" ? "success" : laneRun.result === "failure" ? "error" : "neutral"}`}>
-                      {laneRun.result.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                  <p className="muted-copy">Session {laneRun.sessionId}</p>
-                  {laneRun.notes ? <p>{laneRun.notes}</p> : null}
-                </article>
-              ))}
+        <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} repositories={repositories} roles={roles} workflows={workflows} />
+      </section>
+
+      <section className="panel task-detail-tabs-panel">
+        <div className="task-detail-tabs" role="tablist" aria-label="Task detail panels">
+          {TAB_OPTIONS.map((tab) => (
+            <button
+              key={tab.id}
+              className={activeTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
+              data-role={`task-detail-tab-${tab.id}`}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="task-detail-tabs__body">{renderTabPanel()}</div>
+      </section>
+
+      {showDeleteConfirm ? (
+        <div className="quick-chat-overlay" data-role="task-delete-confirm-overlay" onClick={() => !deleting && setShowDeleteConfirm(false)}>
+          <section className="quick-chat-modal panel task-delete-confirm" data-role="task-delete-confirm" onClick={(event) => event.stopPropagation()}>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Delete task</p>
+                <h3>Delete {task.number}?</h3>
+              </div>
             </div>
-          ) : <p className="muted-copy">No lane runs recorded yet.</p>}
-        </section>
-      </div>
-    </section>
+            <p>This permanently deletes the task, its comments, attachments, dependencies, and lane history.</p>
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" disabled={deleting} onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </button>
+              <button className="secondary-button secondary-button--danger" data-role="confirm-delete-task" type="button" disabled={deleting} onClick={onDelete}>
+                {deleting ? "Deleting…" : "Delete task"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
   );
 }

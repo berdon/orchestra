@@ -10,10 +10,11 @@ interface TaskEditorFormProps {
   agents: AgentSummary[];
   roles: RoleSummary[];
   repositories: RepositoryRecord[];
+  showStatusField?: boolean;
   onChange: (nextDraft: TaskUpsertInput) => void;
 }
 
-export function TaskEditorForm({ draft, workflows, agents, roles, repositories, onChange }: TaskEditorFormProps) {
+export function TaskEditorForm({ draft, workflows, agents, roles, repositories, showStatusField = true, onChange }: TaskEditorFormProps) {
   const availableAssignees = draft.assigneeType === "agent"
     ? agents.map((agent) => ({ value: agent.slug, label: agent.name }))
     : draft.assigneeType === "role"
@@ -36,14 +37,16 @@ export function TaskEditorForm({ draft, workflows, agents, roles, repositories, 
         </select>
       </label>
 
-      <label className="field-group">
-        <span className="field-group__label">Status</span>
-        <select className="select-input" data-role="task-status" value={draft.status} onChange={(event) => onChange({ ...draft, status: event.target.value as TaskStatus })}>
-          {TASK_STATUSES.map((status) => (
-            <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
-          ))}
-        </select>
-      </label>
+      {showStatusField ? (
+        <label className="field-group">
+          <span className="field-group__label">Status</span>
+          <select className="select-input" data-role="task-status" value={draft.status} onChange={(event) => onChange({ ...draft, status: event.target.value as TaskStatus })}>
+            {TASK_STATUSES.map((status) => (
+              <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <label className="field-group">
         <span className="field-group__label">Priority</span>
@@ -99,7 +102,7 @@ export function TaskEditorForm({ draft, workflows, agents, roles, repositories, 
       <label className="field-group task-editor-grid__full">
         <span className="field-group__label">Task repositories</span>
         <select
-          className="select-input"
+          className="select-input task-repositories-input"
           data-role="task-repositories"
           multiple
           value={draft.repositoryIds ?? []}
