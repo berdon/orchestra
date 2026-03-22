@@ -1077,11 +1077,11 @@ strong {
 }
 
 .session-model-field {
-  min-width: min(300px, 100%);
+  min-width: min(220px, 100%);
 }
 
 .session-model-field--composer {
-  min-width: min(260px, 100%);
+  min-width: min(180px, 100%);
 }
 
 .workflow-stack {

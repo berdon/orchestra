@@ -276,7 +276,7 @@ export function SessionsPage({
 
                 <form className="composer" onSubmit={handleComposerSubmit}>
                   <label className="field-group field-group--composer">
-                    <span className="field-group__label">Send message</span>
+                    <span className="field-group__label">Send</span>
                     <textarea
                       className="text-area"
                       data-role="composer-input"
@@ -335,7 +335,7 @@ export function SessionsPage({
                         type="submit"
                         disabled={draftMessage.trim().length === 0}
                       >
-                        Send message
+                        Send
                       </button>
                     </div>
                   </div>
