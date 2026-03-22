@@ -291,6 +291,64 @@ function deriveSessionActivityState(session: SessionRecord): SessionActivityStat
   return "idle";
 }
 
+function normalizeSessionRecord(session: SessionRecord): SessionRecord {
+  return {
+    ...session,
+    activityState: session.activityState ?? deriveSessionActivityState(session),
+    lastActivityAt: session.lastActivityAt ?? session.updatedAt,
+  };
+}
+
+function areSessionEventsEqual(left: SessionEvent[], right: SessionEvent[]) {
+  return left.length === right.length && left.every((event, index) => {
+    const other = right[index];
+    return Boolean(other)
+      && event.id === other.id
+      && event.kind === other.kind
+      && event.message === other.message
+      && event.timestamp === other.timestamp
+      && event.pending === other.pending
+      && event.thinking === other.thinking
+      && event.runId === other.runId;
+  });
+}
+
+function areSessionDebugInfoEqual(left?: SessionRecord["debugInfo"], right?: SessionRecord["debugInfo"]) {
+  if (!left && !right) {
+    return true;
+  }
+
+  return left?.projectRoot === right?.projectRoot
+    && left?.managedRepositoryPath === right?.managedRepositoryPath
+    && left?.worktreePath === right?.worktreePath
+    && left?.sessionCwd === right?.sessionCwd;
+}
+
+function areSessionRecordsEqual(left: SessionRecord, right: SessionRecord) {
+  return left.id === right.id
+    && left.title === right.title
+    && left.status === right.status
+    && left.createdAt === right.createdAt
+    && left.updatedAt === right.updatedAt
+    && left.subscribed === right.subscribed
+    && left.activityState === right.activityState
+    && left.activeToolName === right.activeToolName
+    && left.lastActivityAt === right.lastActivityAt
+    && areSessionDebugInfoEqual(left.debugInfo, right.debugInfo)
+    && areSessionEventsEqual(left.events, right.events);
+}
+
+function areSessionListsEqual(left: SessionRecord[], right: SessionRecord[]) {
+  return left.length === right.length && left.every((session, index) => {
+    const other = right[index];
+    return Boolean(other) && areSessionRecordsEqual(session, other);
+  });
+}
+
+function sortSessionRecords(sessions: SessionRecord[]) {
+  return [...sessions].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+}
+
 export function App() {
   const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
   const [sessionFilter, setSessionFilter] = useState<"active" | "closed">("active");
@@ -355,18 +413,17 @@ export function App() {
   const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
-    const normalizedSession: SessionRecord = {
-      ...updatedSession,
-      activityState: updatedSession.activityState ?? deriveSessionActivityState(updatedSession),
-      lastActivityAt: updatedSession.lastActivityAt ?? updatedSession.updatedAt,
-    };
+    const normalizedSession = normalizeSessionRecord(updatedSession);
     setSessions((current) => {
-      const withoutOld = current.filter((session) => session.id !== normalizedSession.id);
-      return [normalizedSession, ...withoutOld].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      const nextSessions = sortSessionRecords([
+        normalizedSession,
+        ...current.filter((session) => session.id !== normalizedSession.id),
+      ]);
+      return areSessionListsEqual(current, nextSessions) ? current : nextSessions;
     });
 
     if (options?.select !== false) {
-      setSelectedSessionId(normalizedSession.id);
+      setSelectedSessionId((current) => (current === normalizedSession.id ? current : normalizedSession.id));
     }
   }, []);
 
@@ -388,7 +445,22 @@ export function App() {
   }, []);
 
   const patchSessionRecord = useCallback((sessionId: string, patch: (session: SessionRecord) => SessionRecord) => {
-    setSessions((current) => current.map((session) => (session.id === sessionId ? patch(session) : session)));
+    setSessions((current) => {
+      const currentSession = current.find((session) => session.id === sessionId);
+      if (!currentSession) {
+        return current;
+      }
+
+      const patchedSession = normalizeSessionRecord(patch(currentSession));
+      if (areSessionRecordsEqual(currentSession, patchedSession)) {
+        return current;
+      }
+
+      const nextSessions = sortSessionRecords(
+        current.map((session) => (session.id === sessionId ? patchedSession : session)),
+      );
+      return areSessionListsEqual(current, nextSessions) ? current : nextSessions;
+    });
   }, []);
 
   const updateDraftMessage = useCallback((sessionId: string, value: string) => {
@@ -504,24 +576,27 @@ export function App() {
     await openLogsWindow();
   }
 
-  async function loadSessions() {
-    setLoadingSessions(true);
+  async function loadSessions(options?: { background?: boolean }) {
+    if (!options?.background) {
+      setLoadingSessions(true);
+    }
     setSessionActionError(null);
 
     try {
-      const nextSessions = await listSessions();
-      setSessions(nextSessions);
+      const nextSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
+      setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
       setSelectedSessionId((current) => {
-        if (current && nextSessions.some((session) => session.id === current)) {
-          return current;
-        }
-
-        return nextSessions[0]?.id ?? null;
+        const nextSelectedSessionId = current && nextSessions.some((session) => session.id === current)
+          ? current
+          : nextSessions[0]?.id ?? null;
+        return current === nextSelectedSessionId ? current : nextSelectedSessionId;
       });
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to load sessions.");
     } finally {
-      setLoadingSessions(false);
+      if (!options?.background) {
+        setLoadingSessions(false);
+      }
     }
   }
 
@@ -993,7 +1068,7 @@ export function App() {
         if (current.some((session) => session.id === payload.sessionId)) {
           return current;
         }
-        void loadSessions();
+        void loadSessions({ background: true });
         return current;
       });
     }).then((dispose) => {
@@ -1005,7 +1080,7 @@ export function App() {
     });
 
     void listenToSessionChanges(() => {
-      void loadSessions();
+      void loadSessions({ background: true });
     }).then((dispose) => {
       if (cancelled) {
         void dispose();
@@ -1040,14 +1115,14 @@ export function App() {
       return;
     }
 
-    void loadSessions();
+    void loadSessions({ background: true });
 
     const intervalId = window.setInterval(() => {
-      void loadSessions();
+      void loadSessions({ background: true });
     }, 15000);
 
     const refreshOnFocus = () => {
-      void loadSessions();
+      void loadSessions({ background: true });
     };
 
     window.addEventListener("focus", refreshOnFocus);

@@ -54,7 +54,11 @@ fn load_session_debug_info(
         let project_root = project_slug.and_then(|slug| {
             crate::services::orchestra_paths::default_orchestra_root()
                 .ok()
-                .map(|root| crate::services::orchestra_paths::project_root(&root, &slug).display().to_string())
+                .map(|root| {
+                    crate::services::orchestra_paths::project_root(&root, &slug)
+                        .display()
+                        .to_string()
+                })
         });
         return Ok(Some(SessionDebugInfo {
             project_root,
@@ -86,18 +90,21 @@ fn load_session_debug_info(
         })
         .map_err(|error| format!("Unable to load role session debug info {session_id}: {error}"))?;
 
-    Ok(role_assignment.flatten().map(|runtime_cwd| SessionDebugInfo {
-        project_root: None,
-        managed_repository_path: None,
-        worktree_path: Some(runtime_cwd.clone()),
-        session_cwd: Some(runtime_cwd),
-    }))
+    Ok(role_assignment
+        .flatten()
+        .map(|runtime_cwd| SessionDebugInfo {
+            project_root: None,
+            managed_repository_path: None,
+            worktree_path: Some(runtime_cwd.clone()),
+            session_cwd: Some(runtime_cwd),
+        }))
 }
 
-fn decorate_session_record(mut record: SessionRecord) -> Result<SessionRecord, String> {
-    let connection = database::open_connection()?;
-
-    record.debug_info = load_session_debug_info(&connection, &record.id)?;
+fn decorate_session_record_with_connection(
+    connection: &rusqlite::Connection,
+    mut record: SessionRecord,
+) -> Result<SessionRecord, String> {
+    record.debug_info = load_session_debug_info(connection, &record.id)?;
 
     let is_persistent_agent_session = connection
         .query_row(
@@ -106,11 +113,16 @@ fn decorate_session_record(mut record: SessionRecord) -> Result<SessionRecord, S
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|error| format!("Unable to query agent runtime session {}: {error}", record.id))?
+        .map_err(|error| {
+            format!(
+                "Unable to query agent runtime session {}: {error}",
+                record.id
+            )
+        })?
         .is_some();
 
     if !is_persistent_agent_session
-        && task_runtime::get_active_assignment_for_session(&connection, &record.id)?.is_none()
+        && task_runtime::get_active_assignment_for_session(connection, &record.id)?.is_none()
     {
         let task_status = connection
             .query_row(
@@ -126,7 +138,9 @@ fn decorate_session_record(mut record: SessionRecord) -> Result<SessionRecord, S
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|error| format!("Unable to query session task status {}: {error}", record.id))?;
+            .map_err(|error| {
+                format!("Unable to query session task status {}: {error}", record.id)
+            })?;
 
         if matches!(task_status.as_deref(), Some("completed") | Some("canceled")) {
             record.status = "closed".into();
@@ -134,6 +148,20 @@ fn decorate_session_record(mut record: SessionRecord) -> Result<SessionRecord, S
     }
 
     Ok(record)
+}
+
+fn decorate_session_record(record: SessionRecord) -> Result<SessionRecord, String> {
+    let connection = database::open_connection()?;
+    decorate_session_record_with_connection(&connection, record)
+}
+
+fn load_decorated_session_record(
+    session_dir: &std::path::Path,
+    session_id: &str,
+    subscribed: bool,
+) -> Result<SessionRecord, String> {
+    let record = get_session(session_dir, session_id, subscribed)?;
+    decorate_session_record(record)
 }
 
 #[tauri::command]
@@ -160,8 +188,7 @@ pub async fn get_session_record(
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
         let context = detect_session_context(None)?;
-        let record = get_session(&context.session_dir, &session_id_for_task, subscribed)?;
-        decorate_session_record(record)
+        load_decorated_session_record(&context.session_dir, &session_id_for_task, subscribed)
     })
     .await
     .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
@@ -192,7 +219,7 @@ pub async fn create_session(
         &state.session_runtimes,
         app.clone(),
         project_root,
-        session_dir,
+        session_dir.clone(),
         &created.record.id,
     )?;
     state.log(
@@ -206,7 +233,13 @@ pub async fn create_session(
     );
     let _ = app_events::emit_session_change(&app, "sessions.create", [created.record.id.clone()]);
 
-    Ok(created.record)
+    let decorated_record = spawn_blocking(move || {
+        load_decorated_session_record(&session_dir, &created.record.id, true)
+    })
+    .await
+    .map_err(|error| format!("Unable to join create_session record task: {error}"))??;
+
+    Ok(decorated_record)
 }
 
 #[tauri::command]
@@ -258,9 +291,11 @@ pub async fn resume_session(
     )?;
 
     let session_id_for_task = session_id.clone();
-    let record = spawn_blocking(move || get_session(&session_dir, &session_id_for_task, true))
-        .await
-        .map_err(|error| format!("Unable to join resume_session record task: {error}"))??;
+    let record = spawn_blocking(move || {
+        load_decorated_session_record(&session_dir, &session_id_for_task, true)
+    })
+    .await
+    .map_err(|error| format!("Unable to join resume_session record task: {error}"))??;
     state.log(
         "info",
         "sessions.resume",
@@ -293,9 +328,11 @@ pub async fn subscribe_session(
     runtime.set_subscribed(true);
 
     let session_id_for_task = session_id.clone();
-    let record = spawn_blocking(move || get_session(&session_dir, &session_id_for_task, true))
-        .await
-        .map_err(|error| format!("Unable to join subscribe_session record task: {error}"))??;
+    let record = spawn_blocking(move || {
+        load_decorated_session_record(&session_dir, &session_id_for_task, true)
+    })
+    .await
+    .map_err(|error| format!("Unable to join subscribe_session record task: {error}"))??;
     state.log(
         "info",
         "sessions.subscribe",
@@ -317,7 +354,7 @@ pub async fn unsubscribe_session(
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
         let context = detect_session_context(None)?;
-        get_session(&context.session_dir, &session_id_for_task, false)
+        load_decorated_session_record(&context.session_dir, &session_id_for_task, false)
     })
     .await
     .map_err(|error| format!("Unable to join unsubscribe_session task: {error}"))??;
@@ -497,9 +534,11 @@ pub async fn send_session_message(
     let run_id_for_task = run_id.clone();
     let message_for_task = trimmed_message.clone();
     let delivery_mode_for_task = delivery_mode.to_string();
-    match spawn_blocking(move || runtime.start_delivery(&run_id_for_task, &delivery_mode_for_task, &message_for_task))
-        .await
-        .map_err(|error| format!("Unable to join send_session_message runtime task: {error}"))?
+    match spawn_blocking(move || {
+        runtime.start_delivery(&run_id_for_task, &delivery_mode_for_task, &message_for_task)
+    })
+    .await
+    .map_err(|error| format!("Unable to join send_session_message runtime task: {error}"))?
     {
         Ok(()) => {
             let log_target = if delivery_mode == "prompt" {
@@ -510,7 +549,10 @@ pub async fn send_session_message(
             let log_message = if delivery_mode == "prompt" {
                 format!("Sent prompt to live pi RPC session {}", session_id)
             } else {
-                format!("Queued follow-up message for live pi RPC session {}", session_id)
+                format!(
+                    "Queued follow-up message for live pi RPC session {}",
+                    session_id
+                )
             };
             state.log("info", log_target, &log_message);
             state.log_authorized_action(
@@ -529,5 +571,151 @@ pub async fn send_session_message(
             }
             Err(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{models::SessionEvent, services::database};
+
+    fn make_session_record(session_id: &str) -> SessionRecord {
+        SessionRecord {
+            id: session_id.to_string(),
+            title: "Test session".into(),
+            status: "active".into(),
+            created_at: "2026-03-21T00:00:00Z".into(),
+            updated_at: "2026-03-21T00:00:00Z".into(),
+            subscribed: false,
+            events: vec![SessionEvent {
+                id: "event-1".into(),
+                kind: "system".into(),
+                message: "hello".into(),
+                timestamp: "2026-03-21T00:00:00Z".into(),
+            }],
+            debug_info: None,
+        }
+    }
+
+    #[test]
+    fn decorates_completed_task_sessions_as_closed() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, NULL, ?9, NULL, NULL, NULL, 0, ?10, ?11)
+                "#,
+                rusqlite::params![
+                    "task-1",
+                    "project-1",
+                    1,
+                    "ORC-1",
+                    "Closable task",
+                    "task",
+                    "completed",
+                    "P1",
+                    "role",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("task insert should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)
+                "#,
+                rusqlite::params![
+                    "lane-run-1",
+                    "task-1",
+                    "lane-1",
+                    "session-1",
+                    "success",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:01:00Z",
+                ],
+            )
+            .expect("lane run insert should succeed");
+
+        let decorated =
+            decorate_session_record_with_connection(&connection, make_session_record("session-1"))
+                .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "closed");
+    }
+
+    #[test]
+    fn keeps_active_assignment_sessions_open() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, ?9, ?10, ?11, NULL, NULL, 0, ?12, ?13)
+                "#,
+                rusqlite::params![
+                    "task-1",
+                    "project-1",
+                    1,
+                    "ORC-1",
+                    "In-flight task",
+                    "task",
+                    "in_progress",
+                    "P1",
+                    "lane-1",
+                    "role",
+                    "role-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("task insert should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id,
+                    runtime_cwd, role_queue_entry_id, role_instance_id, prompt, started_at,
+                    completed_at, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, NULL, ?9, NULL, ?10, ?11)
+                "#,
+                rusqlite::params![
+                    "assignment-1",
+                    "task-1",
+                    "workflow-1",
+                    "lane-1",
+                    "role",
+                    "role-1",
+                    "active",
+                    "session-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("assignment insert should succeed");
+
+        let decorated =
+            decorate_session_record_with_connection(&connection, make_session_record("session-1"))
+                .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "active");
     }
 }

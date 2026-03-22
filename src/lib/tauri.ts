@@ -1239,7 +1239,6 @@ export async function subscribeSession(sessionId: string): Promise<SessionRecord
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
       subscribed: true,
-      updatedAt: nowIso(),
     }));
 
     if (!session) {
@@ -1258,7 +1257,6 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
       subscribed: false,
-      updatedAt: nowIso(),
     }));
 
     if (!session) {

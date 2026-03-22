@@ -20,7 +20,7 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
 
   await page.locator('[data-role="composer-input"]').fill("Hello from Playwright");
-  await page.locator('[data-role="send-message"]').click();
+  await page.locator('[data-role="composer-input"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from Playwright", { timeout: 10_000 });
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
@@ -35,12 +35,12 @@ test("sessions composer stays enabled while earlier messages are still pending",
   await page.locator('[data-role="create-session"]').click();
 
   await page.locator('[data-role="composer-input"]').fill("First queued message");
-  await page.locator('[data-role="send-message"]').click();
+  await page.locator('[data-role="composer-input"]').press("Control+Enter");
 
   await page.locator('[data-role="composer-input"]').fill("Second queued message");
   await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
   await expect(page.locator('[data-role="send-message"]')).toContainText("Send message");
-  await page.locator('[data-role="send-message"]').click();
+  await page.locator('[data-role="composer-input"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("First queued message", { timeout: 10_000 });
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Second queued message", { timeout: 10_000 });
@@ -290,6 +290,7 @@ test("sessions page filters active and closed task sessions", async ({ page }) =
   await page.locator('[data-role="task-status"]').selectOption("ready");
   await page.locator('[data-role="task-workflow"]').selectOption("workflow-role-terminal");
   await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Closable session task" }).click();
   await page.locator('[data-role="dispatch-task-lane"]').click();
   await page.locator('[data-role="complete-task-success"]').click();
 
@@ -297,9 +298,19 @@ test("sessions page filters active and closed task sessions", async ({ page }) =
   await expect(page.locator('[data-role="session-filter-active"]')).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
 
+  const closedSessionLinks = page.locator('[data-role="session-link"]');
   await page.locator('[data-role="session-filter-closed"]').click();
-  await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
-  await expect(page.locator('[data-role="session-link"]')).toContainText("Implementation · Closable session task");
+  await expect(closedSessionLinks).toHaveCount(1);
+  await expect(closedSessionLinks).toContainText("Implementation · Closable session task");
+  await page.waitForTimeout(500);
+  await expect(page.locator('[data-role="session-filter-closed"]')).toHaveAttribute("aria-selected", "true");
+  await expect(closedSessionLinks).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await page.locator('[data-role="session-filter-closed"]').click();
+  await expect(closedSessionLinks).toHaveCount(1);
+  await expect(closedSessionLinks).toContainText("Implementation · Closable session task");
 });
 
 test("sessions transcript unlocks on manual scroll and relocks at bottom", async ({ page }) => {
