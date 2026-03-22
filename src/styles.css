@@ -658,9 +658,42 @@ strong {
 .session-transcript-wrap {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 240px;
   overflow: hidden;
+}
+
+.session-transcript-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.transcript-wrap-toggle {
+  border: 1px solid rgba(143, 79, 47, 0.18);
+  background: rgba(255, 252, 249, 0.96);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.transcript-wrap-toggle:hover,
+.transcript-wrap-toggle:focus-visible {
+  color: var(--accent);
+  border-color: rgba(143, 79, 47, 0.3);
+  background: rgba(255, 248, 244, 0.98);
+}
+
+.transcript-wrap-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  background: rgba(255, 248, 244, 0.98);
 }
 
 .session-transcript {
@@ -671,6 +704,23 @@ strong {
   overflow: auto;
   padding: 0 4px 18px 0;
   align-content: start;
+}
+
+.session-transcript--wrapped .transcript-event p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.session-transcript--nowrap .transcript-event {
+  min-width: 100%;
+  width: max-content;
+}
+
+.session-transcript--nowrap .transcript-event p {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .session-scroll-indicator {
