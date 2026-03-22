@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -9,6 +10,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   selectByLabel,
   selectValue,
@@ -44,9 +46,9 @@ describe("desktop project and workflow setup", () => {
 
       const repoPath = join(testHome!, "workspace", "desktop-automation-repo");
       const managedRepoPath = join(testHome!, ".orchestra", "projects", "desktop-automation-project", "repositories", "desktop-automation-repo", "repository");
-      await setInputValue(sessionId, '[data-role="repository-name"]', "Desktop Automation Repo");
-      await setInputValue(sessionId, '[data-role="repository-path"]', repoPath);
-      await setInputValue(sessionId, '[data-role="repository-default-branch"]', "main");
+      await setFieldByLabel(sessionId, 'Repository name', 'Desktop Automation Repo');
+      await setFieldByLabel(sessionId, 'Repository Path', repoPath);
+      await setFieldByLabel(sessionId, 'Default branch', 'main');
       await clickSelector(sessionId, '[data-role="add-repository"]');
       await waitForText(sessionId, 'Desktop Automation Repo');
 
@@ -133,4 +135,38 @@ describe("desktop project and workflow setup", () => {
       await deleteWebdriverSession(sessionId);
     }
   }, 180_000);
+
+  it.skipIf(!isDesktopE2E)("deletes a project through project settings UI and removes its Orchestra storage", async () => {
+    expect(testHome).toBeTruthy();
+
+    const projectRoot = join(testHome!, ".orchestra", "projects", "delete-me-project");
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+      await executeScript(sessionId, "window.confirm = () => true;");
+
+      await clickByText(sessionId, "button", "Settings");
+      await waitForText(sessionId, "Project catalog");
+      await sleep(500);
+      await clickByText(sessionId, "button", "New project");
+      await sleep(500);
+      await setInputValue(sessionId, '[data-role="project-name"]', "Delete Me Project");
+      await setInputValue(sessionId, '[data-role="project-description"]', "Project deletion regression test.");
+      await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
+      await waitForText(sessionId, 'Delete Me Project');
+
+      const createdProjects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+      expect(createdProjects.some((project) => project.name === 'Delete Me Project')).toBe(true);
+      expect(existsSync(projectRoot)).toBe(true);
+
+      await clickSelector(sessionId, '[data-role="delete-project"]');
+      await waitForText(sessionId, 'Orchestra');
+
+      const remainingProjects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+      expect(remainingProjects.some((project) => project.name === 'Delete Me Project')).toBe(false);
+      expect(existsSync(projectRoot)).toBe(false);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 120_000);
 });

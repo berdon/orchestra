@@ -29,6 +29,33 @@ test("settings projects panel creates a project and repository", async ({ page }
   expect(storedState?.repositories?.[0]?.name).toBe("Client repo");
 });
 
+test("settings projects panel deletes a non-default project and falls back cleanly", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.confirm = () => true;
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.locator('[data-role="project-name"]').fill("Disposable Project");
+  await page.getByRole("button", { name: /Create project/i }).click();
+  await expect(page.getByRole("heading", { name: "Disposable Project" })).toBeVisible();
+
+  await page.locator('[data-role="delete-project"]').click();
+  await expect(page.getByRole("heading", { name: "Orchestra" })).toBeVisible();
+  await expect(page.locator('nav[aria-label="Projects"]')).not.toContainText("Disposable Project");
+
+  const storedState = await page.evaluate(() => ({
+    activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),
+    projects: JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]"),
+  }));
+
+  expect(storedState.activeProjectId).toBe("orchestra");
+  expect(storedState.projects.some((project: { name: string }) => project.name === "Disposable Project")).toBe(false);
+});
+
 test("project switcher isolates browser-mode task state by project", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -44,7 +71,6 @@ test("project switcher isolates browser-mode task state by project", async ({ pa
   await page.locator('[data-role="new-task"]').click();
   await page.locator('[data-role="task-title"]').fill("Project one task");
   await page.locator('[data-role="save-task"]').click();
-  await page.getByRole("button", { name: "Back to tasks" }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project one task");
 
   await page.locator('[data-role="project-switcher"]').selectOption({ label: "Second Project" });
@@ -54,7 +80,6 @@ test("project switcher isolates browser-mode task state by project", async ({ pa
   await page.locator('[data-role="new-task"]').click();
   await page.locator('[data-role="task-title"]').fill("Project two task");
   await page.locator('[data-role="save-task"]').click();
-  await page.getByRole("button", { name: "Back to tasks" }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project two task");
   await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
 

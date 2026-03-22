@@ -51,7 +51,15 @@ pub fn ensure_agent_runtime_state(
     connection: &Connection,
     agent_id: &str,
 ) -> Result<AgentRuntimeState, String> {
-    if let Some(existing) = get_agent_runtime_state(connection, agent_id)? {
+    ensure_agent_runtime_state_for_project(connection, DEFAULT_PROJECT_ID, agent_id)
+}
+
+pub fn ensure_agent_runtime_state_for_project(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<AgentRuntimeState, String> {
+    if let Some(existing) = get_agent_runtime_state_for_project(connection, project_id, agent_id)? {
         return Ok(existing);
     }
 
@@ -73,16 +81,24 @@ pub fn ensure_agent_runtime_state(
             )
             VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, ?4, ?4)
             "#,
-            params![DEFAULT_PROJECT_ID, agent_id, RUNTIME_STATUS_IDLE, now],
+            params![project_id, agent_id, RUNTIME_STATUS_IDLE, now],
         )
-        .map_err(|error| format!("Unable to create agent runtime state for {agent_id}: {error}"))?;
+        .map_err(|error| format!("Unable to create agent runtime state for {agent_id} in project {project_id}: {error}"))?;
 
-    get_agent_runtime_state(connection, agent_id)?
+    get_agent_runtime_state_for_project(connection, project_id, agent_id)?
         .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after creation"))
 }
 
 pub fn get_agent_runtime_state(
     connection: &Connection,
+    agent_id: &str,
+) -> Result<Option<AgentRuntimeState>, String> {
+    get_agent_runtime_state_for_project(connection, DEFAULT_PROJECT_ID, agent_id)
+}
+
+pub fn get_agent_runtime_state_for_project(
+    connection: &Connection,
+    project_id: &str,
     agent_id: &str,
 ) -> Result<Option<AgentRuntimeState>, String> {
     connection
@@ -92,15 +108,24 @@ pub fn get_agent_runtime_state(
             FROM agent_runtime_states
             WHERE project_id = ?1 AND agent_id = ?2
             "#,
-            params![DEFAULT_PROJECT_ID, agent_id],
+            params![project_id, agent_id],
             read_agent_runtime_state,
         )
         .optional()
-        .map_err(|error| format!("Unable to query agent runtime state for {agent_id}: {error}"))
+        .map_err(|error| format!("Unable to query agent runtime state for {agent_id} in project {project_id}: {error}"))
 }
 
 pub fn list_agent_queue_entries(
     connection: &Connection,
+    agent_id: Option<&str>,
+    include_terminal: bool,
+) -> Result<Vec<AgentQueueEntry>, String> {
+    list_agent_queue_entries_for_project(connection, DEFAULT_PROJECT_ID, agent_id, include_terminal)
+}
+
+pub fn list_agent_queue_entries_for_project(
+    connection: &Connection,
+    project_id: &str,
     agent_id: Option<&str>,
     include_terminal: bool,
 ) -> Result<Vec<AgentQueueEntry>, String> {
@@ -142,12 +167,12 @@ pub fn list_agent_queue_entries(
 
     let rows = if let Some(agent_id) = agent_id {
         statement
-            .query_map(params![DEFAULT_PROJECT_ID, agent_id], read_agent_queue_entry)
-            .map_err(|error| format!("Unable to query agent queue entries for {agent_id}: {error}"))?
+            .query_map(params![project_id, agent_id], read_agent_queue_entry)
+            .map_err(|error| format!("Unable to query agent queue entries for {agent_id} in project {project_id}: {error}"))?
     } else {
         statement
-            .query_map(params![DEFAULT_PROJECT_ID], read_agent_queue_entry)
-            .map_err(|error| format!("Unable to query agent queue entries: {error}"))?
+            .query_map(params![project_id], read_agent_queue_entry)
+            .map_err(|error| format!("Unable to query agent queue entries for project {project_id}: {error}"))?
     };
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -158,13 +183,21 @@ pub fn enqueue_agent_work(
     connection: &Connection,
     input: AgentQueueEntryInput,
 ) -> Result<AgentQueueEntry, String> {
+    enqueue_agent_work_for_project(connection, DEFAULT_PROJECT_ID, input)
+}
+
+pub fn enqueue_agent_work_for_project(
+    connection: &Connection,
+    project_id: &str,
+    input: AgentQueueEntryInput,
+) -> Result<AgentQueueEntry, String> {
     let normalized = normalize_agent_queue_entry_input(input)?;
     let agent = agents::get_agent(connection, &normalized.agent_id)?;
     if agent.archived {
         return Err(format!("Agent {} is archived and cannot accept runtime work", agent.name));
     }
 
-    ensure_agent_runtime_state(connection, &normalized.agent_id)?;
+    ensure_agent_runtime_state_for_project(connection, project_id, &normalized.agent_id)?;
 
     let entry_id = format!("agent-queue-{}", Uuid::new_v4().simple());
     let now = now_iso();
@@ -194,7 +227,7 @@ pub fn enqueue_agent_work(
             "#,
             params![
                 entry_id,
-                DEFAULT_PROJECT_ID,
+                project_id,
                 normalized.agent_id,
                 QUEUE_STATUS_QUEUED,
                 normalized.source_type,
@@ -207,9 +240,29 @@ pub fn enqueue_agent_work(
                 now,
             ],
         )
-        .map_err(|error| format!("Unable to enqueue agent work: {error}"))?;
+        .map_err(|error| format!("Unable to enqueue agent work in project {project_id}: {error}"))?;
 
     get_agent_queue_entry(connection, &entry_id)
+}
+
+pub fn list_agent_queue_targets(connection: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT DISTINCT project_id, agent_id
+            FROM agent_queue_entries
+            WHERE status IN ('queued', 'dispatched')
+            ORDER BY project_id ASC, agent_id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare agent queue target query: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|error| format!("Unable to query agent queue targets: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read agent queue targets: {error}"))
 }
 
 pub fn get_agent_queue_entry(
@@ -325,6 +378,28 @@ pub fn update_agent_runtime_dispatch_state(
     status: &str,
     last_error: Option<&str>,
 ) -> Result<AgentRuntimeState, String> {
+    update_agent_runtime_dispatch_state_for_project(
+        connection,
+        DEFAULT_PROJECT_ID,
+        agent_id,
+        session_id,
+        runtime_cwd,
+        current_queue_entry_id,
+        status,
+        last_error,
+    )
+}
+
+pub fn update_agent_runtime_dispatch_state_for_project(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+    session_id: Option<&str>,
+    runtime_cwd: Option<&str>,
+    current_queue_entry_id: Option<&str>,
+    status: &str,
+    last_error: Option<&str>,
+) -> Result<AgentRuntimeState, String> {
     let now = now_iso();
     connection
         .execute(
@@ -340,7 +415,7 @@ pub fn update_agent_runtime_dispatch_state(
             WHERE project_id = ?1 AND agent_id = ?2
             "#,
             params![
-                DEFAULT_PROJECT_ID,
+                project_id,
                 agent_id,
                 status,
                 session_id,
@@ -350,9 +425,9 @@ pub fn update_agent_runtime_dispatch_state(
                 last_error,
             ],
         )
-        .map_err(|error| format!("Unable to update agent runtime state for {agent_id}: {error}"))?;
+        .map_err(|error| format!("Unable to update agent runtime state for {agent_id} in project {project_id}: {error}"))?;
 
-    get_agent_runtime_state(connection, agent_id)?
+    get_agent_runtime_state_for_project(connection, project_id, agent_id)?
         .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after update"))
 }
 

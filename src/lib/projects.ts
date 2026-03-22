@@ -179,6 +179,32 @@ export async function updateProject(projectId: string, input: ProjectUpsertInput
   return project;
 }
 
+export async function deleteProject(projectId: string): Promise<ProjectDetail> {
+  if (!isTauriAvailable()) {
+    const projects = ensureMockProjects();
+    const existing = projects.find((project) => project.id === projectId);
+    if (!existing) {
+      throw new Error(`Project ${projectId} was not found`);
+    }
+    if (projectId === DEFAULT_PROJECT_ID) {
+      throw new Error("The default Orchestra project cannot be deleted.");
+    }
+    const activeProjectId = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
+    const nextProjects = projects.filter((project) => project.id !== projectId);
+    if (activeProjectId === projectId) {
+      const fallback = nextProjects[0]?.id ?? DEFAULT_PROJECT_ID;
+      window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, fallback);
+    }
+    saveStoredProjects(nextProjects);
+    emitProjectsChanged();
+    return existing;
+  }
+
+  const project = await invoke<ProjectDetail>("delete_project", { projectId });
+  emitProjectsChanged();
+  return project;
+}
+
 export async function createRepository(projectId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();

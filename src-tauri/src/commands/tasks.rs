@@ -22,6 +22,12 @@ fn emit_session_change(
     let _ = app_events::emit_session_change(app, reason.to_string(), session_ids);
 }
 
+fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
+    let connection = database::open_connection()?;
+    let task = tasks::get_task_context(&connection, task_id)?;
+    pi_sessions::session_context_for_project_id(&task.project_id)
+}
+
 #[tauri::command]
 pub fn list_tasks(
     project_id: Option<String>,
@@ -139,11 +145,13 @@ pub async fn comment_on_task(
     task_id: String,
     input: TaskCommentInput,
 ) -> Result<TaskComment, String> {
-    let context = tauri::async_runtime::spawn_blocking(move || pi_sessions::detect_session_context(None))
+    let task_id_for_context = task_id.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
         .await
         .map_err(|error| format!("Unable to join task comment context task: {error}"))??;
     let mut connection = database::open_connection()?;
     let comment = tasks::add_task_comment(&mut connection, &task_id, input)?;
+    let task = tasks::get_task_context(&connection, &task_id)?;
     if let Some(active_assignment) = task_runtime::get_active_lane_assignment(&connection, &task_id)? {
         task_runtime::queue_comment_delivery(&connection, &active_assignment, &comment)?;
         if active_assignment.worker_type == "agent" {
@@ -153,6 +161,7 @@ pub async fn comment_on_task(
                     &state,
                     &context.project_root,
                     &context.session_dir,
+                    &task.project_id,
                     agent_id,
                 )?;
             }
@@ -366,7 +375,8 @@ pub async fn dispatch_task_lane(
     state: State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDetail, String> {
-    let context = tauri::async_runtime::spawn_blocking(move || pi_sessions::detect_session_context(None))
+    let task_id_for_context = task_id.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
         .await
         .map_err(|error| format!("Unable to join task dispatch context task: {error}"))??;
     let mut connection = database::open_connection()?;
@@ -427,7 +437,8 @@ async fn complete_lane_command(
     notes: Option<String>,
     outcome: &str,
 ) -> Result<TaskDetail, String> {
-    let context = tauri::async_runtime::spawn_blocking(move || pi_sessions::detect_session_context(None))
+    let task_id_for_context = task_id.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
         .await
         .map_err(|error| format!("Unable to join lane completion context task: {error}"))??;
     let mut connection = database::open_connection()?;

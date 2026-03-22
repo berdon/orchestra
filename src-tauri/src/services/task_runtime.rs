@@ -472,8 +472,18 @@ pub fn queue_comment_delivery(
             let Some(agent_id) = assignment.worker_id.as_deref() else {
                 return Err("Agent assignment is missing an agent id".into());
             };
-            let _ = agent_runtime::enqueue_agent_work(
+            let project_id = connection
+                .query_row(
+                    "SELECT project_id FROM tasks WHERE id = ?1",
+                    [assignment.task_id.as_str()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|error| format!("Unable to resolve task project {}: {error}", assignment.task_id))?
+                .unwrap_or_else(|| "orchestra".to_string());
+            let _ = agent_runtime::enqueue_agent_work_for_project(
                 connection,
+                &project_id,
                 crate::models::AgentQueueEntryInput {
                     agent_id: agent_id.to_string(),
                     source_type: "task_comment".into(),
@@ -743,7 +753,7 @@ fn dispatch_agent_lane(
         project_overlay_prompt: load_worker_overlay_prompt(connection, task, "agent", &agent.slug)?,
     };
 
-    let runtime_state = agent_runtime::ensure_agent_runtime_state(connection, &agent.id)?;
+    let runtime_state = agent_runtime::ensure_agent_runtime_state_for_project(connection, &task.project_id, &agent.id)?;
     let runtime_cwd = runtime_state
         .runtime_cwd
         .clone()
@@ -780,8 +790,9 @@ fn dispatch_agent_lane(
     );
 
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
-    let _ = agent_runtime::update_agent_runtime_dispatch_state(
+    let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         connection,
+        &task.project_id,
         &agent.id,
         Some(&session_id),
         Some(&runtime_cwd),
@@ -789,15 +800,10 @@ fn dispatch_agent_lane(
         &runtime_state.status,
         runtime_state.last_error.as_deref(),
     )?;
-    ensure_lane_run(
+    ensure_lane_run(connection, task.id.as_str(), lane.id.as_str(), &session_id, now)?;
+    let queue_entry = agent_runtime::enqueue_agent_work_for_project(
         connection,
-        task.id.as_str(),
-        lane.id.as_str(),
-        &session_id,
-        now,
-    )?;
-    let queue_entry = agent_runtime::enqueue_agent_work(
-        connection,
+        &task.project_id,
         crate::models::AgentQueueEntryInput {
             agent_id: agent.id.clone(),
             source_type: "workflow_lane".into(),
@@ -816,14 +822,10 @@ fn dispatch_agent_lane(
         &session_id,
         &run_id,
     )?
-    .ok_or_else(|| {
-        format!(
-            "Unable to mark agent queue entry {} dispatched",
-            queue_entry.id
-        )
-    })?;
-    let _ = agent_runtime::update_agent_runtime_dispatch_state(
+    .ok_or_else(|| format!("Unable to mark agent queue entry {} dispatched", queue_entry.id))?;
+    let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         connection,
+        &task.project_id,
         &agent.id,
         Some(&session_id),
         Some(&runtime_cwd),
@@ -926,9 +928,7 @@ fn complete_lane(
 
         if assignment.worker_type == "agent" {
             if let Some(agent_id) = assignment.worker_id.as_deref() {
-                if let Some(runtime_state) =
-                    agent_runtime::get_agent_runtime_state(connection, agent_id)?
-                {
+                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(connection, &task.project_id, agent_id)? {
                     if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
                         if outcome == "failure" {
                             agent_runtime::mark_agent_queue_entry_failed(
@@ -942,8 +942,9 @@ fn complete_lane(
                             )?;
                         }
                     }
-                    let _ = agent_runtime::update_agent_runtime_dispatch_state(
+                    let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
                         connection,
+                        &task.project_id,
                         agent_id,
                         assignment.session_id.as_deref(),
                         assignment.runtime_cwd.as_deref(),
@@ -2316,6 +2317,113 @@ mod tests {
                 .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
+    }
+
+    #[test]
+    fn agent_lane_uses_project_scoped_runtime_state_instead_of_default_project_runtime() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Project Agent".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let _role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Unused Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Agent-only flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-agent-project".into()),
+                    key: "agent".into(),
+                    name: "Agent".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some("Handle the task.".into()),
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-project-scoped-agent");
+        let wrong_runtime = unique_temp_dir("wrong-agent-runtime");
+        fs::create_dir_all(&wrong_runtime).expect("wrong runtime dir should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-client', 'client-project', 'Client Project', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-client', 'project-client', 'client-repo', 'Client Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![project_root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', ?1, 'idle', 'session-old', ?2, NULL, NULL, NULL, ?3, ?3)",
+                params![agent.id.as_str(), wrong_runtime.display().to_string(), now.as_str()],
+            )
+            .expect("default-project runtime state should insert");
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-client"),
+            TaskUpsertInput {
+                title: "Project-scoped agent task".into(),
+                description: Some("Ensure runtime cwd comes from the task project.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-agent-project".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-client".into()),
+                repository_ids: vec!["repo-client".into()],
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent lane should dispatch with project-scoped runtime");
+        assert_eq!(assignment.runtime_cwd.as_deref(), Some(project_root.to_string_lossy().as_ref()));
+        assert_ne!(assignment.runtime_cwd.as_deref(), Some(wrong_runtime.to_string_lossy().as_ref()));
     }
 
     #[test]

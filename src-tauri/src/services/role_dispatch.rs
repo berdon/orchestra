@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     models::{RoleInstance, RoleOperationsDetail},
-    services::{git_worktrees, pi_sessions, role_runtime, roles},
+    services::{git_worktrees, pi_sessions, role_runtime, roles, tasks},
 };
 
 pub fn dispatch_role_queue(
@@ -55,12 +55,14 @@ pub fn dispatch_role_queue(
         }
 
         let setup_result = (|| -> Result<(), String> {
+            let (_entry_project_root, entry_session_dir) =
+                resolve_queue_entry_context(connection, _project_root, session_dir, &queue_entry)?;
             let worktree_path =
-                ensure_instance_worktree(connection, session_dir, &role.slug, &instance)?;
+                ensure_instance_worktree(connection, &entry_session_dir, &role.slug, &instance)?;
             let session_id = ensure_instance_session(
                 connection,
                 &worktree_path,
-                session_dir,
+                &entry_session_dir,
                 &role,
                 &queue_entry,
                 &instance,
@@ -174,6 +176,25 @@ pub fn dispose_role_instance(
         })?;
 
     role_runtime::get_role_operations(connection, &instance.role_id)
+}
+
+fn resolve_queue_entry_context(
+    connection: &Connection,
+    fallback_project_root: &Path,
+    fallback_session_dir: &Path,
+    queue_entry: &crate::models::RoleQueueEntry,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    let Some(task_id) = queue_entry.source_task_id.as_deref() else {
+        return Ok((fallback_project_root.to_path_buf(), fallback_session_dir.to_path_buf()));
+    };
+
+    let Ok(task) = tasks::get_task_context(connection, task_id) else {
+        return Ok((fallback_project_root.to_path_buf(), fallback_session_dir.to_path_buf()));
+    };
+    let Ok(context) = pi_sessions::session_context_for_project_id(&task.project_id) else {
+        return Ok((fallback_project_root.to_path_buf(), fallback_session_dir.to_path_buf()));
+    };
+    Ok((context.project_root, context.session_dir))
 }
 
 fn next_queued_entry_id(connection: &Connection, role_id: &str) -> Result<Option<String>, String> {

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -8,7 +8,7 @@ use crate::models::{
     ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryUpsertInput,
 };
 use crate::services::orchestra_paths::{
-    default_orchestra_root, managed_repository_checkout_dir, sanitize_slug,
+    default_orchestra_root, managed_repository_checkout_dir, project_root, sanitize_slug,
 };
 
 pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, String> {
@@ -93,6 +93,8 @@ pub fn create_project(
             params![project_id, slug, normalized.name, normalized.description, now],
         )
         .map_err(|error| format!("Unable to create project: {error}"))?;
+
+    ensure_project_root_exists(&slug)?;
 
     get_project(connection, &project_id)
 }
@@ -241,6 +243,26 @@ pub fn set_project_default_repository(
     get_project(connection, project_id)
 }
 
+pub fn delete_project(connection: &Connection, project_id: &str) -> Result<ProjectDetail, String> {
+    let project = get_project(connection, project_id)?;
+    if project.id == DEFAULT_PROJECT_ID {
+        return Err("The default Orchestra project cannot be deleted.".into());
+    }
+
+    connection
+        .execute("DELETE FROM projects WHERE id = ?1", [project_id])
+        .map_err(|error| format!("Unable to delete project {project_id}: {error}"))?;
+
+    let orchestra_root = default_orchestra_root()?;
+    let root = project_root(&orchestra_root, &project.slug);
+    if root.exists() {
+        fs::remove_dir_all(&root)
+            .map_err(|error| format!("Unable to remove project directory {}: {error}", root.display()))?;
+    }
+
+    Ok(project)
+}
+
 pub fn get_repository(connection: &Connection, repository_id: &str) -> Result<RepositoryRecord, String> {
     connection
         .query_row(
@@ -328,6 +350,14 @@ pub fn is_remote_repository_path(path: &str) -> bool {
         || path.starts_with("ssh://")
         || path.starts_with("git://")
         || (path.contains('@') && path.contains(':') && !path.starts_with('/'))
+}
+
+fn ensure_project_root_exists(project_slug: &str) -> Result<PathBuf, String> {
+    let orchestra_root = default_orchestra_root()?;
+    let root = project_root(&orchestra_root, project_slug);
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("Unable to create project directory {}: {error}", root.display()))?;
+    Ok(root)
 }
 
 fn ensure_managed_repository_checkout(
