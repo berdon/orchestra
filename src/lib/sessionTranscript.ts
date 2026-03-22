@@ -30,6 +30,10 @@ export function isFoldableTranscriptEvent(event: SessionEvent) {
   return event.kind === "system";
 }
 
+export function isToolCallTranscriptEvent(event: SessionEvent) {
+  return event.presentation === "tool_call";
+}
+
 export function buildCollapsedPreview(message: string, lineCount = TRANSCRIPT_PREVIEW_LINE_COUNT) {
   const normalized = message.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
