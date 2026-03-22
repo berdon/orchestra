@@ -16,6 +16,7 @@ Agent orchestration framework focused on getting project work done.
 - [Single-use role runtime plan](docs/role-runtime-single-use-plan.md)
 - [Agent runtime plan](docs/agent-runtime-plan.md)
 - [Task system plan](docs/task-system-plan.md)
+- [Bridge hardening plan](docs/bridge-hardening-plan.md)
 
 ## App scaffold
 

@@ -116,6 +116,9 @@ describe("orchestra tools extension", () => {
           ...process.env,
           ORCHESTRA_BRIDGE_URL: started.url,
           ORCHESTRA_BRIDGE_TOKEN: "test-token",
+          ORCHESTRA_BRIDGE_INSTANCE_ID: "bridge-instance-test",
+          ORCHESTRA_BRIDGE_CLIENT_ID: "bridge-client-test",
+          ORCHESTRA_BRIDGE_SESSION_ID: "session-test",
           ORCHESTRA_ALLOWED_COMMANDS_JSON: JSON.stringify([
             { name: "list_agents", description: "List Orchestra agents", requiredPermission: "agents.read" },
           ]),
@@ -141,6 +144,10 @@ describe("orchestra tools extension", () => {
     expect(requests).toHaveLength(1);
     expect((requests[0] as any).command).toBe("list_agents");
     expect((requests[0] as any).token).toBe("test-token");
+    expect((requests[0] as any).clientId).toBe("bridge-client-test");
+    expect((requests[0] as any).sessionId).toBe("session-test");
+    expect((requests[0] as any).bridgeInstanceId).toBe("bridge-instance-test");
+    expect(typeof (requests[0] as any).requestId).toBe("string");
   });
 
   test("passes task context payloads through the orchestra bridge", { timeout: 40000 }, async () => {

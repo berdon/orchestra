@@ -103,6 +103,14 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       keywords: ["settings", "workflows", "lanes"],
       action: { type: "navigate-settings", tab: "workflows" },
     }),
+    commandItem({
+      id: "settings-general",
+      title: "Open Settings → General",
+      subtitle: "Bridge diagnostics and runtime logs",
+      group: "Pages",
+      keywords: ["settings", "general", "bridge", "diagnostics", "logs"],
+      action: { type: "navigate-settings", tab: "general" },
+    }),
   ];
 
   const actionItems: CommandPaletteItem[] = [

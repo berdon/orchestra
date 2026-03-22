@@ -47,9 +47,11 @@ impl SessionRuntime {
             &database::open_connection()?,
             authorization_context.as_ref(),
         )?;
+        let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
         let extension_path = project_root.join("extensions").join("orchestra-tools.ts");
 
-        let pi_executable = std::env::var("ORCHESTRA_PI_EXECUTABLE").unwrap_or_else(|_| "pi".to_string());
+        let pi_executable =
+            std::env::var("ORCHESTRA_PI_EXECUTABLE").unwrap_or_else(|_| "pi".to_string());
         let mut child = Command::new(&pi_executable)
             .arg("--offline")
             .arg("--mode")
@@ -63,6 +65,9 @@ impl SessionRuntime {
             .arg(&extension_path)
             .env("ORCHESTRA_BRIDGE_URL", &bridge_config.url)
             .env("ORCHESTRA_BRIDGE_TOKEN", &bridge_config.token)
+            .env("ORCHESTRA_BRIDGE_INSTANCE_ID", &bridge_config.instance_id)
+            .env("ORCHESTRA_BRIDGE_CLIENT_ID", &bridge_client_id)
+            .env("ORCHESTRA_BRIDGE_SESSION_ID", &session_id)
             .env(
                 "ORCHESTRA_ALLOWED_COMMANDS_JSON",
                 serde_json::to_string(&allowed_tools)
@@ -407,7 +412,12 @@ impl SessionRuntime {
         self.start_delivery(run_id, "prompt", message)
     }
 
-    pub fn start_delivery(&self, run_id: &str, delivery_type: &str, message: &str) -> Result<(), String> {
+    pub fn start_delivery(
+        &self,
+        run_id: &str,
+        delivery_type: &str,
+        message: &str,
+    ) -> Result<(), String> {
         self.app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.start_run",
@@ -593,7 +603,9 @@ fn runtime_authorization_context_for_connection(
     connection: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<Option<AuthorizationContext>, String> {
-    if let Some(active_assignment) = task_runtime::get_active_assignment_for_session(connection, session_id)? {
+    if let Some(active_assignment) =
+        task_runtime::get_active_assignment_for_session(connection, session_id)?
+    {
         if active_assignment.worker_type == "role" {
             if let Some(role_instance_id) = active_assignment.role_instance_id {
                 return Ok(Some(AuthorizationContext {

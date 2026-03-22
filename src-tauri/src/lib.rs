@@ -4,14 +4,16 @@ mod services;
 mod state;
 
 use commands::{
-    agent_runtime::{enqueue_agent_work, ensure_agent_session, get_agent_operations, list_agent_operations},
+    agent_runtime::{
+        enqueue_agent_work, ensure_agent_session, get_agent_operations, list_agent_operations,
+    },
     agents::{
         archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent,
         validate_agent,
     },
     app::{
-        clear_logs, get_app_info, get_logs, get_session_storage_info, list_pi_models,
-        open_logs_window,
+        cleanup_stale_bridge_instances, clear_logs, get_app_info, get_bridge_diagnostics, get_logs,
+        get_session_storage_info, list_pi_models, open_logs_window,
     },
     dispatcher::run_dispatcher_tick,
     policies::{
@@ -20,21 +22,22 @@ use commands::{
     },
     project_settings::{get_worker_overlay, update_worker_overlay},
     projects::{
-        create_project, create_repository, delete_project, get_project, list_projects, list_repositories,
-        set_project_default_repository, update_project, update_repository,
+        create_project, create_repository, delete_project, get_project, list_projects,
+        list_repositories, set_project_default_repository, update_project, update_repository,
     },
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
-        create_session, delete_session, get_session_model_state, get_session_record,
-        list_sessions, resume_session, send_session_message, set_session_model,
-        subscribe_session, unsubscribe_session,
+        create_session, delete_session, get_session_model_state, get_session_record, list_sessions,
+        resume_session, send_session_message, set_session_model, subscribe_session,
+        unsubscribe_session,
     },
     tasks::{
-        add_task_attachment, add_task_dependency, add_task_file_reference, comment_on_task, complete_lane_as_failure,
-        complete_lane_as_success, create_subtask, create_task, delete_task, dispatch_task_lane, get_task,
-        get_task_context, list_task_file_references, list_task_repositories, list_tasks, remove_task_attachment, remove_task_dependency,
+        add_task_attachment, add_task_dependency, add_task_file_reference, comment_on_task,
+        complete_lane_as_failure, complete_lane_as_success, create_subtask, create_task,
+        delete_task, dispatch_task_lane, get_task, get_task_context, list_task_file_references,
+        list_task_repositories, list_tasks, remove_task_attachment, remove_task_dependency,
         remove_task_file_reference, request_user_intervention, update_task,
     },
     workflows::{
@@ -89,6 +92,26 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(app_state)
         .setup(|app| {
+            let state = app.state::<AppState>();
+            state.tool_bridge.attach_app_handle(app.handle().clone());
+            state.log(
+                "info",
+                "tool.bridge",
+                &format!(
+                    "Bridge instance {} attached to app handle at {}",
+                    state.tool_bridge.instance_id, state.tool_bridge.url
+                ),
+            );
+            for event in state.tool_bridge.diagnostics().recent_cleanup_events {
+                state.log(
+                    if event.success { "info" } else { "warn" },
+                    "tool.bridge.cleanup",
+                    &format!(
+                        "startup action={} reason={} instance={:?} pid={:?}",
+                        event.action, event.reason, event.instance_id, event.pid
+                    ),
+                );
+            }
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
             Ok(())
         })
@@ -96,6 +119,8 @@ pub fn run() {
             get_app_info,
             get_logs,
             clear_logs,
+            get_bridge_diagnostics,
+            cleanup_stale_bridge_instances,
             open_logs_window,
             run_dispatcher_tick,
             get_session_storage_info,
@@ -182,14 +207,20 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
             let state = app_handle.state::<AppState>();
             if let Ok(shutdown_count) = state.shutdown_all_session_runtimes() {
                 if shutdown_count > 0 {
                     state.log(
                         "info",
                         "sessions.runtime.shutdown",
-                        &format!("Shut down {} live pi runtimes during app exit", shutdown_count),
+                        &format!(
+                            "Shut down {} live pi runtimes during app exit",
+                            shutdown_count
+                        ),
                     );
                 }
             }

@@ -1,0 +1,65 @@
+import { expect, test } from "@playwright/test";
+
+test("settings general renders bridge diagnostics and cleanup controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.bridge-diagnostics",
+      JSON.stringify({
+        instance: {
+          instanceId: "bridge-instance-browser",
+          url: "http://127.0.0.1:43123",
+          ownerPid: 4321,
+          startedAt: timestamp,
+          heartbeatAt: timestamp,
+          metadataPath: "/mock/.orchestra/bridge/bridge-instance-browser.json",
+          activeClientCount: 2,
+          inFlightRequestCount: 1,
+        },
+        clients: [
+          {
+            clientId: "client-1",
+            sessionId: "session-1",
+            actorType: "role",
+            actorId: "developer",
+            requestCount: 3,
+            inFlightRequestCount: 1,
+            lastSeenAt: timestamp,
+            lastCommand: "get_task_context",
+            lastError: null,
+            active: true,
+            bridgeInstanceId: "bridge-instance-browser",
+          },
+        ],
+        recentRequests: [
+          {
+            requestId: "request-1",
+            clientId: "client-1",
+            sessionId: "session-1",
+            command: "get_task_context",
+            startedAt: timestamp,
+            finishedAt: timestamp,
+            durationMs: 12,
+            success: true,
+            error: null,
+          },
+        ],
+        recentCleanupEvents: [],
+      }),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: "General" }).click();
+
+  await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toBeVisible();
+  await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");
+  await expect(page.locator('[data-role="bridge-active-client-count"]')).toContainText("2");
+  await expect(page.locator('[data-role="bridge-clients-table"]')).toContainText("client-1");
+  await expect(page.locator('[data-role="bridge-requests-table"]')).toContainText("get_task_context");
+
+  await page.locator('[data-role="cleanup-stale-bridges"]').click();
+  await expect(page.locator('[data-role="bridge-cleanup-table"]')).toContainText("cleanup_requested");
+});

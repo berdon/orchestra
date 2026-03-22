@@ -328,6 +328,16 @@ strong {
   flex-wrap: wrap;
 }
 
+.general-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.bridge-diagnostics-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .log-entry,
 .transcript-event {
   border: 1px solid var(--border);

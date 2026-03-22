@@ -74,6 +74,70 @@ pub struct LogEntry {
     pub timestamp: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeClientDiagnostics {
+    pub client_id: String,
+    pub session_id: Option<String>,
+    pub actor_type: Option<String>,
+    pub actor_id: Option<String>,
+    pub request_count: i64,
+    pub in_flight_request_count: i64,
+    pub last_seen_at: String,
+    pub last_command: Option<String>,
+    pub last_error: Option<String>,
+    pub active: bool,
+    pub bridge_instance_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRequestDiagnostics {
+    pub request_id: String,
+    pub client_id: Option<String>,
+    pub session_id: Option<String>,
+    pub command: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeCleanupEvent {
+    pub id: String,
+    pub instance_id: Option<String>,
+    pub pid: Option<u32>,
+    pub action: String,
+    pub reason: String,
+    pub success: bool,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeInstanceDiagnostics {
+    pub instance_id: String,
+    pub url: String,
+    pub owner_pid: u32,
+    pub started_at: String,
+    pub heartbeat_at: String,
+    pub metadata_path: String,
+    pub active_client_count: i64,
+    pub in_flight_request_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeDiagnostics {
+    pub instance: BridgeInstanceDiagnostics,
+    pub clients: Vec<BridgeClientDiagnostics>,
+    pub recent_requests: Vec<BridgeRequestDiagnostics>,
+    pub recent_cleanup_events: Vec<BridgeCleanupEvent>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStorageInfo {

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  cleanupStaleBridgeInstances,
   clearLogs,
   createSession,
   deleteSession,
   getAppInfo,
+  getBridgeDiagnostics,
   getLogs,
   getSessionModelState,
   getSessionRecord,
@@ -32,9 +34,11 @@ import { TasksPage } from "./pages/TasksPage";
 import { AgentsPanel } from "./settings/AgentsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
+import { GeneralPanel } from "./settings/GeneralPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AppInfo,
+  BridgeDiagnostics,
   JsonValue,
   LogEntry,
   PrimaryPage,
@@ -61,7 +65,7 @@ const SETTINGS_TABS = [
   { id: "agents", label: "Agents" },
   { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
-  { id: "logs", label: "Logs" },
+  { id: "general", label: "General" },
 ] as const;
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
@@ -449,8 +453,11 @@ export function App() {
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(getActiveProjectId());
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
+  const [loadingBridgeDiagnostics, setLoadingBridgeDiagnostics] = useState(false);
+  const [refreshingBridgeDiagnostics, setRefreshingBridgeDiagnostics] = useState(false);
   const [isLogsWindow, setIsLogsWindow] = useState(false);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -676,6 +683,34 @@ export function App() {
 
   async function handleOpenLogsWindow() {
     await openLogsWindow();
+  }
+
+  async function loadBridgeDiagnostics(options?: { background?: boolean }) {
+    if (options?.background) {
+      setRefreshingBridgeDiagnostics(true);
+    } else {
+      setLoadingBridgeDiagnostics(true);
+    }
+    try {
+      setBridgeDiagnostics(await getBridgeDiagnostics());
+    } finally {
+      if (options?.background) {
+        setRefreshingBridgeDiagnostics(false);
+      } else {
+        setLoadingBridgeDiagnostics(false);
+      }
+    }
+  }
+
+  async function handleCleanupStaleBridges() {
+    setRefreshingBridgeDiagnostics(true);
+    try {
+      await cleanupStaleBridgeInstances();
+      setLogs(await getLogs());
+      setBridgeDiagnostics(await getBridgeDiagnostics());
+    } finally {
+      setRefreshingBridgeDiagnostics(false);
+    }
   }
 
   async function loadSessions(options?: { background?: boolean }) {
@@ -1240,6 +1275,22 @@ export function App() {
   }, [activePage, isLogsWindow]);
 
   useEffect(() => {
+    if (isLogsWindow || activePage !== "settings" || settingsTab !== "general") {
+      return;
+    }
+
+    void loadLogs();
+    void loadBridgeDiagnostics();
+
+    const intervalId = window.setInterval(() => {
+      void loadLogs();
+      void loadBridgeDiagnostics({ background: true });
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activePage, settingsTab, isLogsWindow]);
+
+  useEffect(() => {
     if (isLogsWindow) {
       return;
     }
@@ -1710,7 +1761,7 @@ export function App() {
                     aria-selected={settingsTab === tab.id}
                     onClick={() => setSettingsTab(tab.id)}
                   >
-                    {tab.id === "logs" ? "General" : tab.label}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -1779,24 +1830,19 @@ export function App() {
           ) : settingsTab === "workflows" ? (
             <WorkflowsPanel selectionRequest={workflowsSelectionRequest} />
           ) : (
-            <section className="panel panel--split">
-              <div>
-                <p className="eyebrow">General</p>
-                <h3>Open runtime logs in a separate window</h3>
-                <p>
-                  Keep the log window open while testing sessions so backend/runtime events stay visible without covering the main UI.
-                </p>
-              </div>
-
-              <div className="settings-log-actions">
-                <button className="primary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
-                  Open logs window
-                </button>
-                <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleClearLogs()} disabled={clearingLogs}>
-                  {clearingLogs ? "Clearing…" : "Clear logs"}
-                </button>
-              </div>
-            </section>
+            <GeneralPanel
+              bridgeDiagnostics={bridgeDiagnostics}
+              loadingBridgeDiagnostics={loadingBridgeDiagnostics}
+              refreshingBridgeDiagnostics={refreshingBridgeDiagnostics}
+              logs={logs}
+              loadingLogs={loadingLogs}
+              clearingLogs={clearingLogs}
+              onRefreshBridgeDiagnostics={() => void loadBridgeDiagnostics({ background: true })}
+              onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
+              onOpenLogsWindow={() => void handleOpenLogsWindow()}
+              onRefreshLogs={() => void loadLogs()}
+              onClearLogs={() => void handleClearLogs()}
+            />
           )
         ) : activePage === "agents" ? (
           <AgentsPage
