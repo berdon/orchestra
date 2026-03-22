@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
 import { TranscriptEventCard } from "../components/TranscriptEventCard";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
@@ -73,6 +73,34 @@ export function SessionsPage({
   onSendMessage,
 }: SessionsPageProps) {
   const [wrapTranscript, setWrapTranscript] = useState(true);
+  const [transcriptScrollMetrics, setTranscriptScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
+
+  const transcriptScrollIndicator = useMemo(() => {
+    const { scrollTop, scrollHeight, clientHeight } = transcriptScrollMetrics;
+    if (scrollHeight <= clientHeight) {
+      return { visible: false, heightPercent: 100, offsetPercent: 0 };
+    }
+
+    const heightPercent = Math.max((clientHeight / scrollHeight) * 100, 12);
+    const maxOffset = Math.max(100 - heightPercent, 0);
+    const scrollRange = Math.max(scrollHeight - clientHeight, 1);
+    const offsetPercent = Math.min((scrollTop / scrollRange) * maxOffset, maxOffset);
+
+    return { visible: true, heightPercent, offsetPercent };
+  }, [transcriptScrollMetrics]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+
+    setTranscriptScrollMetrics({
+      scrollTop: node.scrollTop,
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+    });
+  }, [displayedEvents, selectedSession?.id, transcriptRef, wrapTranscript]);
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,6 +123,12 @@ export function SessionsPage({
     const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
     const shouldLockToBottom = distanceFromBottom <= 24;
     const nextLockedState = shouldLockToBottom;
+
+    setTranscriptScrollMetrics({
+      scrollTop: node.scrollTop,
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight,
+    });
 
     if (nextLockedState !== scrollState.lockedToBottom) {
       node.dispatchEvent(
@@ -177,50 +211,25 @@ export function SessionsPage({
                   <h3 data-role="selected-session-title">{selectedSession.title}</h3>
 
                   <div className="action-cluster action-cluster--session-tools">
-                    <label className="field-group field-group--compact session-model-field">
-                      <span className="field-group__label">Model</span>
-                      <select
-                        className="select-input"
-                        value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
-                        disabled={
-                          loadingModelSessionId === selectedSession.id ||
-                          changingModelSessionId === selectedSession.id ||
-                          selectedSessionPending
-                        }
-                        onChange={(event) => onModelChange(event.target.value)}
-                      >
-                        {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
-                          <option value="">{formatModelOptionLabel(selectedModelState)}</option>
-                        ) : null}
-                        {selectedModelState?.availableModels.map((model) => (
-                          <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-                            {model.name} · {model.provider}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
                     <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
                     <span className="status-badge">{formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}</span>
                   </div>
                 </div>
 
                 <div className="session-transcript-wrap">
-                  <div className="session-transcript-toolbar">
-                    <button
-                      type="button"
-                      className="transcript-wrap-toggle"
-                      data-role="session-wrap-toggle"
-                      data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
-                      aria-pressed={wrapTranscript}
-                      aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-                      title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-                      onClick={() => setWrapTranscript((current) => !current)}
-                    >
-                      <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
-                      <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="transcript-wrap-toggle transcript-wrap-toggle--floating"
+                    data-role="session-wrap-toggle"
+                    data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
+                    aria-pressed={wrapTranscript}
+                    aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+                    title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+                    onClick={() => setWrapTranscript((current) => !current)}
+                  >
+                    <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
+                    <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
+                  </button>
                   <div
                     className={wrapTranscript ? "session-transcript session-transcript--wrapped" : "session-transcript session-transcript--nowrap"}
                     data-role="session-transcript"
@@ -240,6 +249,18 @@ export function SessionsPage({
                       />
                     ))}
                   </div>
+                  {transcriptScrollIndicator.visible ? (
+                    <div className="session-transcript-scrollbar" aria-hidden="true">
+                      <div
+                        className="session-transcript-scrollbar__thumb"
+                        data-role="session-transcript-scroll-thumb"
+                        style={{
+                          height: `${transcriptScrollIndicator.heightPercent}%`,
+                          transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
+                        }}
+                      />
+                    </div>
+                  ) : null}
                   <div
                     className={scrollState.lockedToBottom ? "session-scroll-indicator session-scroll-indicator--locked" : "session-scroll-indicator"}
                     data-role="session-scroll-indicator"
@@ -274,14 +295,38 @@ export function SessionsPage({
                         <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
                       </div>
                     </div>
-                    <button
-                      className="primary-button"
-                      data-role="send-message"
-                      type="submit"
-                      disabled={draftMessage.trim().length === 0}
-                    >
-                      Send message
-                    </button>
+                    <div className="composer__actions">
+                      <label className="field-group field-group--compact session-model-field session-model-field--composer">
+                        <span className="field-group__label">Model</span>
+                        <select
+                          className="select-input"
+                          value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
+                          disabled={
+                            loadingModelSessionId === selectedSession.id ||
+                            changingModelSessionId === selectedSession.id ||
+                            selectedSessionPending
+                          }
+                          onChange={(event) => onModelChange(event.target.value)}
+                        >
+                          {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
+                            <option value="">{formatModelOptionLabel(selectedModelState)}</option>
+                          ) : null}
+                          {selectedModelState?.availableModels.map((model) => (
+                            <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                              {model.name} · {model.provider}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        className="primary-button"
+                        data-role="send-message"
+                        type="submit"
+                        disabled={draftMessage.trim().length === 0}
+                      >
+                        Send message
+                      </button>
+                    </div>
                   </div>
                 </form>
               </>
