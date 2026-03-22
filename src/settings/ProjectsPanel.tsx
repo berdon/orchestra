@@ -16,7 +16,7 @@ function createBlankProjectDraft(): ProjectUpsertInput {
 }
 
 function createBlankRepositoryDraft(): RepositoryUpsertInput {
-  return { name: "", localPath: "", remoteUrl: "", defaultBranch: "main" };
+  return { name: "", repositoryPath: "", defaultBranch: "main" };
 }
 
 export function ProjectsPanel() {
@@ -207,9 +207,10 @@ export function ProjectsPanel() {
                       <strong>{repository.name}</strong>
                       {projectDetail.defaultRepositoryId === repository.id ? <span className="status-badge status-badge--success">Default</span> : null}
                     </div>
-                    <p className="muted-copy">{repository.localPath ?? "No local path"}</p>
+                    <p className="muted-copy">{repository.repositoryPath ?? "No repository path"}</p>
                     <div className="workforce-meta-grid muted-copy">
-                      <span>Remote: {repository.remoteUrl ?? "—"}</span>
+                      <span>Source: {repository.sourcePath ?? "—"}</span>
+                      <span>Kind: {repository.sourceKind ?? "—"}</span>
                       <span>Default branch: {repository.defaultBranch ?? "—"}</span>
                     </div>
                     {projectDetail.defaultRepositoryId !== repository.id ? (
@@ -226,13 +227,9 @@ export function ProjectsPanel() {
                   <span className="field-group__label">Repository name</span>
                   <input className="text-input" data-role="repository-name" value={repositoryDraft.name ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, name: event.target.value }))} />
                 </label>
-                <label className="field-group">
-                  <span className="field-group__label">Local path</span>
-                  <input className="text-input" data-role="repository-local-path" value={repositoryDraft.localPath ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, localPath: event.target.value }))} />
-                </label>
-                <label className="field-group">
-                  <span className="field-group__label">Remote URL</span>
-                  <input className="text-input" data-role="repository-remote-url" value={repositoryDraft.remoteUrl ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, remoteUrl: event.target.value }))} />
+                <label className="field-group task-editor-grid__full">
+                  <span className="field-group__label">Repository Path</span>
+                  <input className="text-input" data-role="repository-path" value={repositoryDraft.repositoryPath ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, repositoryPath: event.target.value }))} />
                 </label>
                 <label className="field-group">
                   <span className="field-group__label">Default branch</span>

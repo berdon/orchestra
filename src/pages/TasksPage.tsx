@@ -461,8 +461,13 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     try {
       const saved = await createTask(taskDraft, projectId);
       await loadTasksData();
-      setRoute({ kind: "detail", taskId: saved.id });
-      await loadTaskDetail(saved.id);
+      setRoute({ kind: "overview" });
+      setTaskDetail(null);
+      setTaskDraft(createBlankTaskDraft());
+      setCommentDraft(createBlankCommentDraft());
+      setTaskDraftDirty(false);
+      setSelectedBlockerTaskId("");
+      void loadTaskDetail(saved.id, { silent: true });
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to create task.");
     } finally {

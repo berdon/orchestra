@@ -2,7 +2,7 @@ use rusqlite::OptionalExtension;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
-    models::{QueuedSessionMessage, SessionModelState, SessionRecord},
+    models::{QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord},
     services::{
         app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
@@ -15,8 +15,89 @@ use crate::{
     state::AppState,
 };
 
+fn load_session_debug_info(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<SessionDebugInfo>, String> {
+    let task_assignment = connection
+        .query_row(
+            r#"
+            SELECT tla.runtime_cwd, r.local_path, p.slug
+            FROM task_lane_assignments tla
+            LEFT JOIN tasks t ON t.id = tla.task_id
+            LEFT JOIN repositories r ON r.id = t.repository_id
+            LEFT JOIN projects p ON p.id = t.project_id
+            WHERE tla.session_id = ?1
+            ORDER BY tla.updated_at DESC, tla.id DESC
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .or_else(|error| {
+            if error.to_string().contains("no such table") {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        })
+        .map_err(|error| format!("Unable to load task session debug info {session_id}: {error}"))?;
+
+    if let Some((runtime_cwd, managed_repository_path, project_slug)) = task_assignment {
+        let project_root = project_slug.and_then(|slug| {
+            crate::services::orchestra_paths::default_orchestra_root()
+                .ok()
+                .map(|root| crate::services::orchestra_paths::project_root(&root, &slug).display().to_string())
+        });
+        return Ok(Some(SessionDebugInfo {
+            project_root,
+            managed_repository_path: managed_repository_path.clone(),
+            worktree_path: runtime_cwd.clone(),
+            session_cwd: runtime_cwd,
+        }));
+    }
+
+    let role_assignment = connection
+        .query_row(
+            r#"
+            SELECT runtime_cwd
+            FROM role_session_assignments
+            WHERE session_id = ?1
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .or_else(|error| {
+            if error.to_string().contains("no such table") {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        })
+        .map_err(|error| format!("Unable to load role session debug info {session_id}: {error}"))?;
+
+    Ok(role_assignment.flatten().map(|runtime_cwd| SessionDebugInfo {
+        project_root: None,
+        managed_repository_path: None,
+        worktree_path: Some(runtime_cwd.clone()),
+        session_cwd: Some(runtime_cwd),
+    }))
+}
+
 fn decorate_session_record(mut record: SessionRecord) -> Result<SessionRecord, String> {
     let connection = database::open_connection()?;
+
+    record.debug_info = load_session_debug_info(&connection, &record.id)?;
 
     let is_persistent_agent_session = connection
         .query_row(

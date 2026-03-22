@@ -10,6 +10,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   selectByLabel,
   selectValue,
   setFieldByLabel,
@@ -24,6 +25,29 @@ const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 const targetFile = "/tmp/file.md";
 const targetContents = "desktop-e2e-ok\n";
+
+async function waitForDispatchButton(sessionId: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastState: unknown = null;
+
+  while (Date.now() < deadline) {
+    lastState = await executeScript(sessionId, `
+      const button = document.querySelector('[data-role="dispatch-task-lane"]');
+      return {
+        present: Boolean(button),
+        text: document.body ? document.body.innerText : "",
+      };
+    `);
+
+    if ((lastState as { present?: boolean }).present) {
+      return;
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(`Dispatch button did not appear: ${JSON.stringify(lastState)}`);
+}
 
 describe("desktop file workflow", () => {
   it.skipIf(!isDesktopE2E)("creates /tmp/file.md from a UI-defined task and referenced project file", async () => {
@@ -59,7 +83,7 @@ describe("desktop file workflow", () => {
       await waitForSelector(sessionId, '[data-role="repository-name"]');
 
       await setInputValue(sessionId, '[data-role="repository-name"]', 'File Workflow Repo');
-      await setInputValue(sessionId, '[data-role="repository-local-path"]', repoPath);
+      await setInputValue(sessionId, '[data-role="repository-path"]', repoPath);
       await setInputValue(sessionId, '[data-role="repository-default-branch"]', 'main');
       await clickSelector(sessionId, '[data-role="add-repository"]');
       await waitForText(sessionId, 'File Workflow Repo');
@@ -98,6 +122,8 @@ describe("desktop file workflow", () => {
       await selectByLabel(sessionId, '[data-role="task-workflow"]', 'File Creation Flow');
       await clickSelector(sessionId, '[data-role="save-task"]');
       await waitForText(sessionId, 'Create /tmp/file.md');
+      await clickByText(sessionId, '[data-role="task-card"]', 'Create /tmp/file.md');
+
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await sleep(250);
@@ -111,6 +137,7 @@ describe("desktop file workflow", () => {
       await waitForText(sessionId, 'Available');
       await waitForText(sessionId, 'Absolute path:');
 
+      await waitForDispatchButton(sessionId);
       await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
 
       const deadline = Date.now() + 180_000;

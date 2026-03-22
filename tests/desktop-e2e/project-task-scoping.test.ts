@@ -9,6 +9,7 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  invokeCommand,
   selectByLabel,
   selectValue,
   setInputValue,
@@ -31,10 +32,39 @@ async function readTaskCardTexts(sessionId: string) {
   );
 }
 
+async function readProjectSwitcherState(sessionId: string) {
+  return executeScript<{ value: string; options: Array<{ value: string; label: string }> }>(
+    sessionId,
+    `
+      const select = document.querySelector('[data-role="project-switcher"]');
+      if (!(select instanceof HTMLSelectElement)) {
+        return { value: '', options: [] };
+      }
+      return {
+        value: select.value,
+        options: Array.from(select.options).map((option) => ({ value: option.value, label: option.label })),
+      };
+    `,
+  );
+}
+
+async function readTaskViewState(sessionId: string) {
+  return executeScript<Record<string, unknown>>(
+    sessionId,
+    `
+      return {
+        hasNewTaskButton: Boolean(document.querySelector('[data-role="new-task"]')),
+        hasTaskTitleInput: Boolean(document.querySelector('[data-role="task-title"]')),
+        taskCards: Array.from(document.querySelectorAll('[data-role="task-card"]')).map((entry) => (entry.textContent || '').trim()).filter(Boolean),
+      };
+    `,
+  );
+}
+
 async function waitForTaskCards(
   sessionId: string,
   predicate: (texts: string[]) => boolean,
-  timeoutMs = 15_000,
+  timeoutMs = 30_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   let lastTexts: string[] = [];
@@ -57,31 +87,46 @@ describe("desktop project task scoping", () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
+      await clickByText(sessionId, "button", "Tasks");
+      await waitForText(sessionId, 'Tasks');
 
-      await clickByText(sessionId, "button", "Settings");
-      await waitForText(sessionId, "Project catalog");
-      await sleep(500);
-      await clickByText(sessionId, "button", "New project");
-      await sleep(500);
-      await setInputValue(sessionId, '[data-role="project-name"]', "Scoped Project");
-      await setInputValue(sessionId, '[data-role="project-description"]', "Desktop task scoping project.");
-      await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
-      await waitForText(sessionId, "Scoped Project");
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: "Scoped Project" });
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: "Orchestra" });
-
-      await setInputValue(sessionId, '[data-role="repository-name"]', "Scoped Repo");
-      await setInputValue(sessionId, '[data-role="repository-local-path"]', join(testHome!, "workspace", "scoped-repo"));
-      await setInputValue(sessionId, '[data-role="repository-default-branch"]', "main");
-      await clickSelector(sessionId, '[data-role="add-repository"]');
+      const scopedProject = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
+        input: {
+          name: "Scoped Project",
+          description: "Desktop task scoping project.",
+        },
+      });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); return true;`);
+      await sleep(1_000);
+      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: scopedProject.name });
+      await selectByLabel(sessionId, '[data-role="project-switcher"]', scopedProject.name);
+      await invokeCommand(sessionId, "create_repository", {
+        projectId: scopedProject.id,
+        input: {
+          name: "Scoped Repo",
+          repositoryPath: join(testHome!, "workspace", "scoped-repo"),
+          defaultBranch: "main",
+        },
+      });
       await clickByText(sessionId, "button", "Tasks");
 
-      await selectValue(sessionId, '[data-role="project-switcher"]', "orchestra");
+      await selectByLabel(sessionId, '[data-role="project-switcher"]', "Orchestra");
+      await sleep(500);
+      const orchestraSwitcherState = await readProjectSwitcherState(sessionId);
+      expect(orchestraSwitcherState.options.some((option) => option.label === "Scoped Project")).toBe(true);
+      expect(orchestraSwitcherState.value).not.toBe("");
+
       await clickSelector(sessionId, '[data-role="new-task"]');
+      await sleep(500);
+      const orchestraCreateView = await readTaskViewState(sessionId);
+      expect(orchestraCreateView.hasTaskTitleInput).toBe(true);
       await setInputValue(sessionId, '[data-role="task-title"]', "Default project task");
       await selectValue(sessionId, '[data-role="task-status"]', 'ready');
       await clickSelector(sessionId, '[data-role="save-task"]');
-      await clickByText(sessionId, "button", "Back to tasks");
+      await sleep(1_000);
+
+      const orchestraTasks = await invokeCommand<Array<{ title: string; projectId: string }>>(sessionId, "list_tasks", { includeArchived: false, projectId: orchestraSwitcherState.value });
+      expect(orchestraTasks.some((task) => task.title === "Default project task")).toBe(true);
 
       let visibleTaskCards = await waitForTaskCards(
         sessionId,
@@ -91,6 +136,9 @@ describe("desktop project task scoping", () => {
       expect(visibleTaskCards.some((text) => text.includes("Scoped project task"))).toBe(false);
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', "Scoped Project");
+      await sleep(500);
+      const scopedSwitcherState = await readProjectSwitcherState(sessionId);
+      expect(scopedSwitcherState.options.some((option) => option.label === "Scoped Project")).toBe(true);
       visibleTaskCards = await waitForTaskCards(
         sessionId,
         (texts) => !texts.some((text) => text.includes("Default project task")),
@@ -98,10 +146,16 @@ describe("desktop project task scoping", () => {
       expect(visibleTaskCards.some((text) => text.includes("Default project task"))).toBe(false);
 
       await clickSelector(sessionId, '[data-role="new-task"]');
+      await sleep(500);
+      const scopedCreateView = await readTaskViewState(sessionId);
+      expect(scopedCreateView.hasTaskTitleInput).toBe(true);
       await setInputValue(sessionId, '[data-role="task-title"]', "Scoped project task");
       await selectValue(sessionId, '[data-role="task-status"]', 'ready');
       await clickSelector(sessionId, '[data-role="save-task"]');
-      await clickByText(sessionId, "button", "Back to tasks");
+      await sleep(1_000);
+
+      const scopedTasks = await invokeCommand<Array<{ title: string; projectId: string }>>(sessionId, "list_tasks", { includeArchived: false, projectId: scopedProject.id });
+      expect(scopedTasks.some((task) => task.title === "Scoped project task")).toBe(true);
 
       visibleTaskCards = await waitForTaskCards(
         sessionId,

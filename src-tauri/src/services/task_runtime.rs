@@ -283,13 +283,11 @@ fn resolve_task_runtime_project_root(
     fallback_project_root: &Path,
     task: &TaskDetail,
 ) -> Result<PathBuf, String> {
-    eprintln!("[task_runtime] resolve runtime root task={} repo_id={:?} fallback={}", task.id, task.repository_id, fallback_project_root.display());
     if let Some(repository_id) = task.repository_id.as_deref() {
         let repository = projects::get_repository(connection, repository_id)?;
-        eprintln!("[task_runtime] repository {} local_path={:?}", repository.id, repository.local_path);
         return repository_runtime_root(&repository).ok_or_else(|| {
             format!(
-                "Task {} references repository {} but it does not have a local path",
+                "Task {} references repository {} but it does not have a managed repository path",
                 task.id, repository_id
             )
         });
@@ -298,11 +296,6 @@ fn resolve_task_runtime_project_root(
     for reference in &task.file_references {
         let repository = projects::get_repository(connection, &reference.repository_id)?;
         if let Some(runtime_root) = repository_runtime_root(&repository) {
-            eprintln!(
-                "[task_runtime] falling back to file reference repository {} local_path={}",
-                repository.id,
-                runtime_root.display()
-            );
             return Ok(runtime_root);
         }
     }
@@ -311,7 +304,7 @@ fn resolve_task_runtime_project_root(
 }
 
 fn repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
-    repository.local_path.as_ref().map(PathBuf::from)
+    repository.repository_path.as_ref().map(PathBuf::from)
 }
 
 pub fn start_assignment_run(

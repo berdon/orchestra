@@ -51,8 +51,9 @@ function seedMockProjects(): ProjectDetail[] {
           projectId: DEFAULT_PROJECT_ID,
           slug: "orchestra",
           name: "Orchestra repository",
-          localPath: "/home/openclaw/workspace/orchestra/repository",
-          remoteUrl: null,
+          repositoryPath: "/home/openclaw/workspace/orchestra/repository",
+          sourcePath: "/home/openclaw/workspace/orchestra/repository",
+          sourceKind: "local",
           defaultBranch: "main",
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -99,7 +100,7 @@ export function getProjectRuntimeCwd(projectId?: string | null) {
     ? project.repositories.find((repository) => repository.id === project.defaultRepositoryId) ?? null
     : project?.repositories[0] ?? null;
 
-  return defaultRepository?.localPath ?? `/mock/projects/${project?.slug ?? resolvedProjectId ?? DEFAULT_PROJECT_ID}`;
+  return defaultRepository?.repositoryPath ?? `/mock/projects/${project?.slug ?? resolvedProjectId ?? DEFAULT_PROJECT_ID}`;
 }
 
 export function setActiveProjectId(projectId: string) {
@@ -190,8 +191,9 @@ export async function createRepository(projectId: string, input: RepositoryUpser
       projectId,
       slug: slugify(input.name),
       name: input.name.trim(),
-      localPath: input.localPath?.trim() || null,
-      remoteUrl: input.remoteUrl?.trim() || null,
+      repositoryPath: input.repositoryPath?.trim() || null,
+      sourcePath: input.repositoryPath?.trim() || null,
+      sourceKind: null,
       defaultBranch: input.defaultBranch?.trim() || null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -229,8 +231,9 @@ export async function updateRepository(repositoryId: string, input: RepositoryUp
             ...repository,
             slug: slugify(input.name),
             name: input.name.trim(),
-            localPath: input.localPath?.trim() || null,
-            remoteUrl: input.remoteUrl?.trim() || null,
+            repositoryPath: input.repositoryPath?.trim() || null,
+            sourcePath: input.repositoryPath?.trim() || null,
+            sourceKind: repository.sourceKind ?? null,
             defaultBranch: input.defaultBranch?.trim() || null,
             updatedAt: nowIso(),
           };

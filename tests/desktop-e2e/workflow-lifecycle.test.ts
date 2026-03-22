@@ -37,7 +37,7 @@ describe("desktop workflow lifecycle", () => {
   it.skipIf(!isDesktopE2E)("follows a multi-role task from creation to completion with visible runtime sessions", async () => {
     expect(testHome).toBeTruthy();
 
-    const sessionId = await createWebdriverSession();
+    const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 
@@ -53,8 +53,7 @@ describe("desktop workflow lifecycle", () => {
         projectId: project.id,
         input: {
           name: "Workflow Lifecycle Repo Seed",
-          localPath: repositoryRoot,
-          remoteUrl: null,
+          repositoryPath: repositoryRoot,
           defaultBranch: "main",
         },
       }).catch(() => undefined);
@@ -62,8 +61,7 @@ describe("desktop workflow lifecycle", () => {
         projectId: project.id,
         input: {
           name: "Workflow Lifecycle Repo",
-          localPath: repositoryRoot,
-          remoteUrl: null,
+          repositoryPath: repositoryRoot,
           defaultBranch: "main",
         },
       });

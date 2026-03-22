@@ -14,7 +14,7 @@ test("settings projects panel creates a project and repository", async ({ page }
   await page.getByRole("button", { name: /Create project/i }).click();
 
   await page.locator('[data-role="repository-name"]').fill("Client repo");
-  await page.locator('[data-role="repository-local-path"]').fill("/tmp/client-repo");
+  await page.locator('[data-role="repository-path"]').fill("/tmp/client-repo");
   await page.locator('[data-role="repository-default-branch"]').fill("main");
   await page.locator('[data-role="add-repository"]').click();
 
