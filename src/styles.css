@@ -407,12 +407,63 @@ strong {
   align-content: start;
 }
 
+.session-detail-column {
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+  min-width: 0;
+  align-content: start;
+  overflow-y: auto;
+}
+
 .session-detail-panel {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   height: 100%;
   min-width: 0;
   padding: 20px;
+}
+
+.session-chat-panel {
+  grid-template-rows: auto minmax(240px, 1fr) auto;
+  min-height: 560px;
+  height: clamp(560px, 68vh, 780px);
+  resize: vertical;
+  overflow: hidden;
+}
+
+.session-debug-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px;
+}
+
+.session-debug-panel h4,
+.session-debug-item p {
+  margin: 0;
+}
+
+.session-debug-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.session-debug-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(251, 246, 242, 0.72);
+}
+
+.session-debug-value {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 
 .session-list {
@@ -608,14 +659,14 @@ strong {
   position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  min-height: 0;
+  min-height: 240px;
   overflow: hidden;
 }
 
 .session-transcript {
   display: grid;
   gap: 12px;
-  min-height: 0;
+  min-height: 240px;
   height: 100%;
   overflow: auto;
   padding: 0 4px 18px 0;
