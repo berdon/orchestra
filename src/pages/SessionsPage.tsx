@@ -43,6 +43,7 @@ interface SessionsPageProps {
   onModelChange: (value: string) => void;
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
+  onStopSession: () => void;
 }
 
 export function SessionsPage({
@@ -71,6 +72,7 @@ export function SessionsPage({
   onModelChange,
   onDraftChange,
   onSendMessage,
+  onStopSession,
 }: SessionsPageProps) {
   const [wrapTranscript, setWrapTranscript] = useState(true);
   const [transcriptScrollMetrics, setTranscriptScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
@@ -318,6 +320,15 @@ export function SessionsPage({
                           ))}
                         </select>
                       </label>
+                      <button
+                        className="secondary-button"
+                        data-role="stop-session-runtime"
+                        type="button"
+                        disabled={!selectedSessionPending}
+                        onClick={onStopSession}
+                      >
+                        Stop
+                      </button>
                       <button
                         className="primary-button"
                         data-role="send-message"

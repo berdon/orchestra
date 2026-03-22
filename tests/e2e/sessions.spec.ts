@@ -46,6 +46,28 @@ test("sessions composer stays enabled while earlier messages are still pending",
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Second queued message", { timeout: 10_000 });
 });
 
+test("sessions stop button stops an active mock run", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  const longMessage = "Please keep thinking for a while ".repeat(40).trim();
+  await page.locator('[data-role="composer-input"]').fill(longMessage);
+  await page.locator('[data-role="composer-input"]').press("Control+Enter");
+
+  await expect(page.locator('[data-role="stop-session-runtime"]')).toBeEnabled();
+  await page.locator('[data-role="stop-session-runtime"]').click();
+
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session run stopped by operator.");
+  await expect(page.locator('[data-role="stop-session-runtime"]')).toBeDisabled();
+
+  await page.waitForTimeout(1200);
+  await expect(page.locator('[data-role="session-transcript"]')).not.toContainText(`Acknowledged: ${longMessage}`);
+});
+
 test("sessions UI shows tool invocations in the transcript", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

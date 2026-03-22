@@ -400,6 +400,20 @@ impl SessionRuntime {
         self.teardown_process();
     }
 
+    pub fn abort_active_run(&self) {
+        let _ = self.take_current_run_id();
+        self.mark_closed();
+        if let Ok(mut stdin) = self.stdin.lock() {
+          *stdin = None;
+        }
+        if let Ok(mut child) = self.child.lock() {
+          if let Some(child) = child.as_mut() {
+            let _ = child.kill();
+          }
+          *child = None;
+        }
+    }
+
     pub fn start_run(&self, run_id: &str, message: &str) -> Result<(), String> {
         self.start_delivery(run_id, "prompt", message)
     }

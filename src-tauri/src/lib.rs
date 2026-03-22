@@ -30,8 +30,8 @@ use commands::{
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
         create_session, delete_session, get_session_model_state, get_session_record, list_sessions,
-        resume_session, send_session_message, set_session_model, subscribe_session,
-        unsubscribe_session,
+        resume_session, send_session_message, set_session_model, stop_session_runtime,
+        subscribe_session, unsubscribe_session,
     },
     tasks::{
         add_task_attachment, add_task_dependency, add_task_file_reference, comment_on_task,
@@ -162,6 +162,7 @@ pub fn run() {
             resume_session,
             subscribe_session,
             unsubscribe_session,
+            stop_session_runtime,
             get_session_model_state,
             set_session_model,
             send_session_message,
