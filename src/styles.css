@@ -691,15 +691,8 @@ strong {
 .session-transcript-wrap {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   min-height: 240px;
   overflow: hidden;
-}
-
-.session-transcript-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 10px;
 }
 
 .transcript-wrap-toggle {
@@ -729,14 +722,28 @@ strong {
   background: rgba(255, 248, 244, 0.98);
 }
 
+.transcript-wrap-toggle--floating {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 3;
+}
+
 .session-transcript {
   display: grid;
   gap: 12px;
   min-height: 240px;
   height: 100%;
   overflow: auto;
-  padding: 0 4px 18px 0;
+  padding: 52px 14px 18px 0;
   align-content: start;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.session-transcript::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .session-transcript--wrapped .transcript-event p,
@@ -762,9 +769,28 @@ strong {
   word-break: normal;
 }
 
+.session-transcript-scrollbar {
+  position: absolute;
+  top: 52px;
+  right: 4px;
+  bottom: 18px;
+  width: 8px;
+  border-radius: 999px;
+  background: rgba(143, 79, 47, 0.08);
+  pointer-events: none;
+}
+
+.session-transcript-scrollbar__thumb {
+  width: 100%;
+  min-height: 32px;
+  border-radius: 999px;
+  background: rgba(143, 79, 47, 0.34);
+  box-shadow: 0 2px 8px rgba(55, 33, 23, 0.12);
+}
+
 .session-scroll-indicator {
   position: absolute;
-  right: 12px;
+  right: 20px;
   bottom: 12px;
   display: inline-flex;
   align-items: center;
@@ -1030,6 +1056,13 @@ strong {
   gap: 6px;
 }
 
+.composer__actions {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .session-detail__meta--footer {
   gap: 10px;
   letter-spacing: 0;
@@ -1039,6 +1072,10 @@ strong {
 
 .session-model-field {
   min-width: min(300px, 100%);
+}
+
+.session-model-field--composer {
+  min-width: min(260px, 100%);
 }
 
 .workflow-stack {
