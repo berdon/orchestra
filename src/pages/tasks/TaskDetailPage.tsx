@@ -338,6 +338,27 @@ export function TaskDetailPage({
               </div>
             </div>
 
+            {task.taskRepositories.length ? (
+              <div className="task-section-list" data-role="task-repositories-info">
+                {task.taskRepositories.map((repository) => (
+                  <article className="task-history-card" key={repository.repositoryId}>
+                    <div className="workflow-section__header">
+                      <strong>{repository.repositoryName}</strong>
+                      <span className="status-badge status-badge--neutral">{repository.sourceKind ?? "managed"}</span>
+                    </div>
+                    <div className="workforce-meta-grid muted-copy">
+                      <span>Repository slug: {repository.repositorySlug}</span>
+                      <span>Managed path: {repository.managedRepositoryPath ?? "Unavailable"}</span>
+                      <span>Source path: {repository.sourcePath ?? "Unavailable"}</span>
+                      <span>Task worktree: {repository.taskWorktreePath ?? "Not materialized yet"}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-copy">No repositories are currently associated with this task.</p>
+            )}
+
             <div className="task-editor-grid">
               <label className="field-group">
                 <span className="field-group__label">Repository</span>
