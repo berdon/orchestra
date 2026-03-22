@@ -1,17 +1,29 @@
-use std::{sync::Arc, thread};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs,
+    io::{Read, Write},
+    net::TcpStream,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
+use serde_json::Value;
+use tauri::{AppHandle, Manager};
 use tiny_http::{Method, Response, Server, StatusCode};
 use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, OrchestraToolDefinition, RoleQueueEntryInput, TaskAttachmentInput,
-        TaskCommentInput, TaskLaneAssignment, TaskUpsertInput,
+        AuthorizationContext, BridgeCleanupEvent, BridgeClientDiagnostics, BridgeDiagnostics,
+        BridgeInstanceDiagnostics, BridgeRequestDiagnostics, OrchestraToolDefinition,
+        RoleQueueEntryInput, TaskAttachmentInput, TaskCommentInput, TaskLaneAssignment,
+        TaskUpsertInput,
     },
     services::{
         agents, authorization, command_authorization, database, pi_sessions, policies,
@@ -19,10 +31,32 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ToolBridgeConfig {
     pub url: String,
     pub token: String,
+    pub instance_id: String,
+    started_at: String,
+    metadata_path: PathBuf,
+    owner_pid: u32,
+    app_handle: Mutex<Option<AppHandle>>,
+    clients: Mutex<HashMap<String, BridgeClientDiagnostics>>,
+    recent_requests: Mutex<VecDeque<BridgeRequestDiagnostics>>,
+    recent_cleanup_events: Mutex<VecDeque<BridgeCleanupEvent>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeInstanceRecord {
+    service: String,
+    instance_id: String,
+    url: String,
+    owner_pid: u32,
+    executable_path: Option<String>,
+    schema_version: u32,
+    app_version: String,
+    started_at: String,
+    heartbeat_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,6 +68,16 @@ struct ToolBridgeRequest {
     authorization: Option<AuthorizationContext>,
     #[serde(default)]
     payload: Value,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    bridge_instance_id: Option<String>,
+    #[serde(default)]
+    sent_at: Option<String>,
 }
 
 fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
@@ -89,6 +133,244 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "update_worker_overlay",
 ];
 
+const BRIDGE_SERVICE_NAME: &str = "orchestra-tool-bridge";
+const BRIDGE_SCHEMA_VERSION: u32 = 1;
+const BRIDGE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const BRIDGE_STALE_AFTER: Duration = Duration::from_secs(30);
+const BRIDGE_RECENT_REQUEST_LIMIT: usize = 50;
+const BRIDGE_RECENT_CLEANUP_LIMIT: usize = 50;
+
+impl ToolBridgeConfig {
+    pub fn attach_app_handle(&self, app: AppHandle) {
+        if let Ok(mut current) = self.app_handle.lock() {
+            *current = Some(app);
+        }
+    }
+
+    pub fn diagnostics(&self) -> BridgeDiagnostics {
+        let clients = self
+            .clients
+            .lock()
+            .map(|entries| {
+                let mut values = entries.values().cloned().collect::<Vec<_>>();
+                values.sort_by(|left, right| right.last_seen_at.cmp(&left.last_seen_at));
+                values
+            })
+            .unwrap_or_default();
+        let recent_requests = self
+            .recent_requests
+            .lock()
+            .map(|entries| entries.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let recent_cleanup_events = self
+            .recent_cleanup_events
+            .lock()
+            .map(|entries| entries.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        BridgeDiagnostics {
+            instance: BridgeInstanceDiagnostics {
+                instance_id: self.instance_id.clone(),
+                url: self.url.clone(),
+                owner_pid: self.owner_pid,
+                started_at: self.started_at.clone(),
+                heartbeat_at: read_bridge_instance_record(&self.metadata_path)
+                    .map(|record| record.heartbeat_at)
+                    .unwrap_or_else(|_| self.started_at.clone()),
+                metadata_path: self.metadata_path.display().to_string(),
+                active_client_count: clients.iter().filter(|client| client.active).count() as i64,
+                in_flight_request_count: clients
+                    .iter()
+                    .map(|client| client.in_flight_request_count)
+                    .sum(),
+            },
+            clients,
+            recent_requests,
+            recent_cleanup_events,
+        }
+    }
+
+    pub fn cleanup_stale_instances(&self) -> Result<Vec<BridgeCleanupEvent>, String> {
+        let events = cleanup_stale_bridge_instances(&self.instance_id, Some(&self.metadata_path))?;
+        for event in &events {
+            self.push_cleanup_event(event.clone());
+            self.log_bridge_event(
+                if event.success { "info" } else { "warn" },
+                "tool.bridge.cleanup",
+                &format!(
+                    "action={} reason={} instance={:?} pid={:?}",
+                    event.action, event.reason, event.instance_id, event.pid
+                ),
+            );
+        }
+        Ok(events)
+    }
+
+    fn log_bridge_event(&self, level: &str, target: &str, message: &str) {
+        if let Ok(app_handle) = self.app_handle.lock() {
+            if let Some(app) = app_handle.as_ref() {
+                app.state::<crate::state::AppState>()
+                    .log(level, target, message);
+            }
+        }
+    }
+
+    fn push_cleanup_event(&self, event: BridgeCleanupEvent) {
+        if let Ok(mut events) = self.recent_cleanup_events.lock() {
+            events.push_front(event);
+            while events.len() > BRIDGE_RECENT_CLEANUP_LIMIT {
+                events.pop_back();
+            }
+        }
+    }
+
+    fn record_request_start(&self, request: &ToolBridgeRequest) -> BridgeRequestDiagnostics {
+        let started_at = crate::state::now_iso();
+        let request_id = request
+            .request_id
+            .clone()
+            .unwrap_or_else(|| format!("bridge-request-{}", Uuid::new_v4().simple()));
+        if let Some(client_id) = request.client_id.as_deref() {
+            if let Ok(mut clients) = self.clients.lock() {
+                let client =
+                    clients
+                        .entry(client_id.to_string())
+                        .or_insert(BridgeClientDiagnostics {
+                            client_id: client_id.to_string(),
+                            session_id: request.session_id.clone(),
+                            actor_type: request
+                                .authorization
+                                .as_ref()
+                                .map(|entry| entry.actor_type.clone()),
+                            actor_id: request
+                                .authorization
+                                .as_ref()
+                                .map(|entry| entry.actor_id.clone()),
+                            request_count: 0,
+                            in_flight_request_count: 0,
+                            last_seen_at: started_at.clone(),
+                            last_command: None,
+                            last_error: None,
+                            active: true,
+                            bridge_instance_id: request.bridge_instance_id.clone(),
+                        });
+                client.session_id = request
+                    .session_id
+                    .clone()
+                    .or_else(|| client.session_id.clone());
+                client.actor_type = request
+                    .authorization
+                    .as_ref()
+                    .map(|entry| entry.actor_type.clone())
+                    .or_else(|| client.actor_type.clone());
+                client.actor_id = request
+                    .authorization
+                    .as_ref()
+                    .map(|entry| entry.actor_id.clone())
+                    .or_else(|| client.actor_id.clone());
+                client.request_count += 1;
+                client.in_flight_request_count += 1;
+                client.last_seen_at = started_at.clone();
+                client.last_command = Some(request.command.clone());
+                client.active = true;
+                client.bridge_instance_id = request
+                    .bridge_instance_id
+                    .clone()
+                    .or_else(|| client.bridge_instance_id.clone());
+            }
+        }
+
+        let diagnostic = BridgeRequestDiagnostics {
+            request_id,
+            client_id: request.client_id.clone(),
+            session_id: request.session_id.clone(),
+            command: request.command.clone(),
+            started_at,
+            finished_at: None,
+            duration_ms: None,
+            success: false,
+            error: None,
+        };
+        self.log_bridge_event(
+            "info",
+            "tool.bridge.request.start",
+            &format!(
+                "command={} client={:?} session={:?}",
+                diagnostic.command, diagnostic.client_id, diagnostic.session_id
+            ),
+        );
+        diagnostic
+    }
+
+    fn record_request_finish(&self, diagnostic: &BridgeRequestDiagnostics) {
+        if let Some(client_id) = diagnostic.client_id.as_deref() {
+            if let Ok(mut clients) = self.clients.lock() {
+                if let Some(client) = clients.get_mut(client_id) {
+                    client.in_flight_request_count = (client.in_flight_request_count - 1).max(0);
+                    client.last_seen_at = diagnostic
+                        .finished_at
+                        .clone()
+                        .unwrap_or_else(crate::state::now_iso);
+                    client.last_error = diagnostic.error.clone();
+                    client.active = client.in_flight_request_count > 0 || diagnostic.success;
+                }
+            }
+        }
+        if let Ok(mut requests) = self.recent_requests.lock() {
+            requests.push_front(diagnostic.clone());
+            while requests.len() > BRIDGE_RECENT_REQUEST_LIMIT {
+                requests.pop_back();
+            }
+        }
+        self.log_bridge_event(
+            if diagnostic.success { "info" } else { "error" },
+            "tool.bridge.request.finish",
+            &format!(
+                "command={} client={:?} session={:?} success={} durationMs={:?} error={:?}",
+                diagnostic.command,
+                diagnostic.client_id,
+                diagnostic.session_id,
+                diagnostic.success,
+                diagnostic.duration_ms,
+                diagnostic.error
+            ),
+        );
+    }
+
+    fn start_assignment_async(
+        &self,
+        session_dir: PathBuf,
+        assignment: &TaskLaneAssignment,
+    ) -> Result<(), String> {
+        let app = self
+            .app_handle
+            .lock()
+            .map_err(|_| "Unable to access bridge app handle".to_string())?
+            .clone()
+            .ok_or_else(|| "Bridge app handle is not attached".to_string())?;
+        let assignment = assignment.clone();
+        thread::spawn(move || {
+            let state = app.state::<crate::state::AppState>();
+            if let Err(error) = crate::services::task_runtime::start_assignment_run(
+                app.clone(),
+                &state,
+                session_dir,
+                &assignment,
+            ) {
+                state.log(
+                    "error",
+                    "tool.bridge.assignment_start",
+                    &format!(
+                        "Unable to start assignment {} for task {}: {error}",
+                        assignment.id, assignment.task_id
+                    ),
+                );
+            }
+        });
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ToolBridgeResponse {
@@ -97,9 +379,20 @@ struct ToolBridgeResponse {
     data: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip)]
+    request: Option<tiny_http::Request>,
 }
 
 pub fn start_tool_bridge() -> Result<Arc<ToolBridgeConfig>, String> {
+    let instance_id = format!("bridge-instance-{}", Uuid::new_v4().simple());
+    let bridge_dir = bridge_runtime_dir()?;
+    fs::create_dir_all(&bridge_dir).map_err(|error| {
+        format!(
+            "Unable to create Orchestra bridge runtime dir {}: {error}",
+            bridge_dir.display()
+        )
+    })?;
+
     let server = Server::http("127.0.0.1:0")
         .map_err(|error| format!("Unable to start Orchestra tool bridge server: {error}"))?;
     let address = server
@@ -108,44 +401,129 @@ pub fn start_tool_bridge() -> Result<Arc<ToolBridgeConfig>, String> {
         .ok_or_else(|| "Unable to resolve Orchestra tool bridge address".to_string())?;
     let url = format!("http://{}", address);
     let token = format!("bridge-{}", Uuid::new_v4().simple());
-    let config = Arc::new(ToolBridgeConfig { url, token });
-    let thread_config = Arc::clone(&config);
+    let started_at = crate::state::now_iso();
+    let metadata_path = bridge_dir.join(format!("{}.json", instance_id));
+    let config = Arc::new(ToolBridgeConfig {
+        url,
+        token,
+        instance_id: instance_id.clone(),
+        started_at: started_at.clone(),
+        metadata_path: metadata_path.clone(),
+        owner_pid: std::process::id(),
+        app_handle: Mutex::new(None),
+        clients: Mutex::new(HashMap::new()),
+        recent_requests: Mutex::new(VecDeque::new()),
+        recent_cleanup_events: Mutex::new(VecDeque::new()),
+    });
 
+    for event in cleanup_stale_bridge_instances(&instance_id, Some(&metadata_path))? {
+        config.push_cleanup_event(event);
+    }
+
+    write_bridge_instance_record(
+        &metadata_path,
+        &BridgeInstanceRecord {
+            service: BRIDGE_SERVICE_NAME.into(),
+            instance_id: instance_id.clone(),
+            url: config.url.clone(),
+            owner_pid: config.owner_pid,
+            executable_path: std::env::current_exe()
+                .ok()
+                .map(|path| path.display().to_string()),
+            schema_version: BRIDGE_SCHEMA_VERSION,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            started_at: started_at.clone(),
+            heartbeat_at: started_at,
+        },
+    )?;
+
+    let heartbeat_config = Arc::clone(&config);
+    thread::spawn(move || loop {
+        thread::sleep(BRIDGE_HEARTBEAT_INTERVAL);
+        let existing = read_bridge_instance_record(&heartbeat_config.metadata_path).unwrap_or(
+            BridgeInstanceRecord {
+                service: BRIDGE_SERVICE_NAME.into(),
+                instance_id: heartbeat_config.instance_id.clone(),
+                url: heartbeat_config.url.clone(),
+                owner_pid: heartbeat_config.owner_pid,
+                executable_path: std::env::current_exe()
+                    .ok()
+                    .map(|path| path.display().to_string()),
+                schema_version: BRIDGE_SCHEMA_VERSION,
+                app_version: env!("CARGO_PKG_VERSION").into(),
+                started_at: heartbeat_config.started_at.clone(),
+                heartbeat_at: heartbeat_config.started_at.clone(),
+            },
+        );
+        let mut updated = existing;
+        updated.heartbeat_at = crate::state::now_iso();
+        let _ = write_bridge_instance_record(&heartbeat_config.metadata_path, &updated);
+    });
+
+    let thread_config = Arc::clone(&config);
     thread::spawn(move || {
-        for mut request in server.incoming_requests() {
-            let response = handle_request(&thread_config, &mut request).unwrap_or_else(|error| {
-                ToolBridgeResponse {
-                    success: false,
-                    data: None,
-                    error: Some(error),
-                }
-            });
-            let status = if response.success {
-                StatusCode(200)
-            } else {
-                StatusCode(400)
-            };
-            let _ = request.respond(
-                Response::from_string(serde_json::to_string(&response).unwrap_or_else(|_| {
+        for request in server.incoming_requests() {
+            let request_config = Arc::clone(&thread_config);
+            thread::spawn(move || {
+                let response = handle_request(&request_config, request).unwrap_or_else(|error| {
+                    ToolBridgeResponse {
+                        success: false,
+                        data: None,
+                        error: Some(error),
+                        request: None,
+                    }
+                });
+                let status = if response.success {
+                    StatusCode(200)
+                } else {
+                    StatusCode(400)
+                };
+                let body = serde_json::to_string(&response).unwrap_or_else(|_| {
                     "{\"success\":false,\"error\":\"serialization failed\"}".into()
-                }))
-                .with_status_code(status),
-            );
+                });
+                let _ = response_request(response, status, body);
+            });
         }
     });
 
     Ok(config)
 }
 
+fn response_request(
+    mut response: ToolBridgeResponse,
+    status: StatusCode,
+    body: String,
+) -> Result<(), String> {
+    let request = response
+        .request
+        .take()
+        .ok_or_else(|| "Missing bridge request responder".to_string())?;
+    request
+        .respond(Response::from_string(body).with_status_code(status))
+        .map_err(|error| format!("Unable to respond to bridge request: {error}"))
+}
+
 fn handle_request(
     config: &ToolBridgeConfig,
-    request: &mut tiny_http::Request,
+    mut request: tiny_http::Request,
 ) -> Result<ToolBridgeResponse, String> {
+    if request.method() == &Method::Get && request.url() == "/status" {
+        let data = serde_json::to_value(config.diagnostics())
+            .map_err(|error| format!("Unable to serialize bridge diagnostics: {error}"))?;
+        return Ok(ToolBridgeResponse {
+            success: true,
+            data: Some(data),
+            error: None,
+            request: Some(request),
+        });
+    }
+
     if request.method() != &Method::Post || request.url() != "/invoke" {
         return Ok(ToolBridgeResponse {
             success: false,
             data: None,
             error: Some("Unsupported route".into()),
+            request: Some(request),
         });
     }
 
@@ -154,48 +532,302 @@ fn handle_request(
         .as_reader()
         .read_to_string(&mut body)
         .map_err(|error| format!("Unable to read tool bridge request: {error}"))?;
-    let request = serde_json::from_str::<ToolBridgeRequest>(&body)
+    let request_body = serde_json::from_str::<ToolBridgeRequest>(&body)
         .map_err(|error| format!("Unable to parse tool bridge request: {error}"))?;
 
-    if request.token != config.token {
+    if request_body.token != config.token {
         return Ok(ToolBridgeResponse {
             success: false,
             data: None,
             error: Some("Invalid Orchestra bridge token".into()),
+            request: Some(request),
         });
     }
 
-    let connection = database::open_connection()?;
-    let data = invoke_bridge_command(
-        &connection,
-        &request.command,
-        request.authorization.as_ref(),
-        request.payload,
-    )?;
+    if request_body
+        .bridge_instance_id
+        .as_deref()
+        .is_some_and(|value| value != config.instance_id)
+    {
+        config.log_bridge_event(
+            "warn",
+            "tool.bridge.instance_mismatch",
+            &format!(
+                "Client {:?} reported bridge instance {:?} but current instance is {}",
+                request_body.client_id, request_body.bridge_instance_id, config.instance_id,
+            ),
+        );
+    }
 
-    Ok(ToolBridgeResponse {
-        success: true,
-        data: Some(data),
-        error: None,
+    let mut diagnostic = config.record_request_start(&request_body);
+    let connection = database::open_connection()?;
+    let result = invoke_bridge_command(
+        config,
+        &connection,
+        &request_body.command,
+        request_body.authorization.as_ref(),
+        request_body.payload,
+    );
+    let finished_at = crate::state::now_iso();
+    diagnostic.finished_at = Some(finished_at.clone());
+    diagnostic.duration_ms = Some(duration_ms(&diagnostic.started_at, &finished_at));
+    match result {
+        Ok(data) => {
+            diagnostic.success = true;
+            config.record_request_finish(&diagnostic);
+            Ok(ToolBridgeResponse {
+                success: true,
+                data: Some(data),
+                error: None,
+                request: Some(request),
+            })
+        }
+        Err(error) => {
+            diagnostic.success = false;
+            diagnostic.error = Some(error.clone());
+            config.record_request_finish(&diagnostic);
+            Ok(ToolBridgeResponse {
+                success: false,
+                data: None,
+                error: Some(error),
+                request: Some(request),
+            })
+        }
+    }
+}
+
+fn duration_ms(started_at: &str, finished_at: &str) -> i64 {
+    let started = chrono::DateTime::parse_from_rfc3339(started_at)
+        .map(|value| value.timestamp_millis())
+        .unwrap_or_default();
+    let finished = chrono::DateTime::parse_from_rfc3339(finished_at)
+        .map(|value| value.timestamp_millis())
+        .unwrap_or(started);
+    finished.saturating_sub(started)
+}
+
+fn bridge_runtime_dir() -> Result<PathBuf, String> {
+    Ok(crate::services::orchestra_paths::default_orchestra_root()?.join("bridge"))
+}
+
+fn write_bridge_instance_record(path: &Path, record: &BridgeInstanceRecord) -> Result<(), String> {
+    let content = serde_json::to_string_pretty(record)
+        .map_err(|error| format!("Unable to serialize bridge instance record: {error}"))?;
+    fs::write(path, content).map_err(|error| {
+        format!(
+            "Unable to write bridge instance record {}: {error}",
+            path.display()
+        )
     })
+}
+
+fn read_bridge_instance_record(path: &Path) -> Result<BridgeInstanceRecord, String> {
+    let content = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "Unable to read bridge instance record {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::from_str(&content).map_err(|error| {
+        format!(
+            "Unable to parse bridge instance record {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn cleanup_stale_bridge_instances(
+    current_instance_id: &str,
+    current_metadata_path: Option<&Path>,
+) -> Result<Vec<BridgeCleanupEvent>, String> {
+    let bridge_dir = bridge_runtime_dir()?;
+    if !bridge_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let current_exe = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string());
+    let now = crate::state::now_iso();
+    let mut events = Vec::new();
+
+    for entry in fs::read_dir(&bridge_dir).map_err(|error| {
+        format!(
+            "Unable to read bridge runtime dir {}: {error}",
+            bridge_dir.display()
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("Unable to read bridge runtime entry: {error}"))?;
+        let path = entry.path();
+        if current_metadata_path.is_some_and(|current| current == path.as_path()) {
+            continue;
+        }
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+
+        let action_id = format!("bridge-cleanup-{}", Uuid::new_v4().simple());
+        match read_bridge_instance_record(&path) {
+            Ok(record) => {
+                if record.instance_id == current_instance_id {
+                    continue;
+                }
+                let pid_alive = Path::new("/proc")
+                    .join(record.owner_pid.to_string())
+                    .exists();
+                if !pid_alive {
+                    let _ = fs::remove_file(&path);
+                    events.push(BridgeCleanupEvent {
+                        id: action_id,
+                        instance_id: Some(record.instance_id),
+                        pid: Some(record.owner_pid),
+                        action: "remove_metadata".into(),
+                        reason: "owner_process_missing".into(),
+                        success: true,
+                        timestamp: now.clone(),
+                    });
+                    continue;
+                }
+
+                if bridge_instance_is_healthy(&record) {
+                    events.push(BridgeCleanupEvent {
+                        id: action_id,
+                        instance_id: Some(record.instance_id),
+                        pid: Some(record.owner_pid),
+                        action: "skip_cleanup".into(),
+                        reason: "bridge_status_healthy".into(),
+                        success: true,
+                        timestamp: now.clone(),
+                    });
+                    continue;
+                }
+
+                let heartbeat_age_ms = chrono::DateTime::parse_from_rfc3339(&record.heartbeat_at)
+                    .map(|value| {
+                        chrono::Utc::now()
+                            .timestamp_millis()
+                            .saturating_sub(value.timestamp_millis())
+                    })
+                    .unwrap_or(i64::MAX);
+                let exe_matches = current_exe
+                    .as_deref()
+                    .is_some_and(|exe| record.executable_path.as_deref() == Some(exe));
+                if heartbeat_age_ms >= BRIDGE_STALE_AFTER.as_millis() as i64 && exe_matches {
+                    let status = std::process::Command::new("kill")
+                        .arg("-TERM")
+                        .arg(record.owner_pid.to_string())
+                        .status();
+                    thread::sleep(Duration::from_millis(500));
+                    let removed = !Path::new("/proc")
+                        .join(record.owner_pid.to_string())
+                        .exists();
+                    if removed {
+                        let _ = fs::remove_file(&path);
+                    }
+                    events.push(BridgeCleanupEvent {
+                        id: action_id,
+                        instance_id: Some(record.instance_id),
+                        pid: Some(record.owner_pid),
+                        action: "terminate_owner".into(),
+                        reason: if removed {
+                            "stale_unhealthy_bridge_reaped".into()
+                        } else {
+                            format!(
+                                "kill_attempt_failed:{:?}",
+                                status.ok().map(|entry| entry.code())
+                            )
+                        },
+                        success: removed,
+                        timestamp: now.clone(),
+                    });
+                } else {
+                    events.push(BridgeCleanupEvent {
+                        id: action_id,
+                        instance_id: Some(record.instance_id),
+                        pid: Some(record.owner_pid),
+                        action: "skip_cleanup".into(),
+                        reason: "not_stale_or_not_verified".into(),
+                        success: true,
+                        timestamp: now.clone(),
+                    });
+                }
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&path);
+                events.push(BridgeCleanupEvent {
+                    id: action_id,
+                    instance_id: None,
+                    pid: None,
+                    action: "remove_metadata".into(),
+                    reason: format!("invalid_metadata:{error}"),
+                    success: true,
+                    timestamp: now.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(events)
+}
+
+fn bridge_instance_is_healthy(record: &BridgeInstanceRecord) -> bool {
+    let url = record.url.strip_prefix("http://").unwrap_or(&record.url);
+    let mut parts = url.split(':');
+    let host = parts.next().unwrap_or("127.0.0.1");
+    let port = parts
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(0);
+    if port == 0 {
+        return false;
+    }
+    let address = format!("{}:{}", host, port);
+    let mut stream = match TcpStream::connect(&address) {
+        Ok(stream) => stream,
+        Err(_) => return false,
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    if stream
+        .write_all(b"GET /status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response.contains(BRIDGE_SERVICE_NAME) && response.contains(&record.instance_id)
 }
 
 pub fn list_bridge_tools(
     connection: &Connection,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<Vec<OrchestraToolDefinition>, String> {
-    Ok(command_authorization::list_allowed_tools(connection, authorization)?
-        .into_iter()
-        .filter(|tool| BRIDGE_SUPPORTED_COMMANDS.contains(&tool.name.as_str()))
-        .collect())
+    Ok(
+        command_authorization::list_allowed_tools(connection, authorization)?
+            .into_iter()
+            .filter(|tool| BRIDGE_SUPPORTED_COMMANDS.contains(&tool.name.as_str()))
+            .collect(),
+    )
 }
 
 fn invoke_bridge_command(
+    config: &ToolBridgeConfig,
     connection: &Connection,
     command: &str,
     authorization: Option<&AuthorizationContext>,
     payload: Value,
 ) -> Result<Value, String> {
+    #[cfg(test)]
+    if command == "__test_sleep" {
+        let sleep_ms = payload.get("sleepMs").and_then(Value::as_u64).unwrap_or(0);
+        std::thread::sleep(Duration::from_millis(sleep_ms));
+        return Ok(json!({ "sleptMs": sleep_ms, "bridgeInstanceId": config.instance_id }));
+    }
+
     match command {
         "list_orchestra_tools" => {
             let tools = list_bridge_tools(connection, authorization)?;
@@ -355,8 +987,12 @@ fn invoke_bridge_command(
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string);
             let mut writable = database::open_connection()?;
-            serde_json::to_value(tasks::create_task(&mut writable, project_id.as_deref(), input)?)
-                .map_err(|error| format!("Unable to serialize task: {error}"))
+            serde_json::to_value(tasks::create_task(
+                &mut writable,
+                project_id.as_deref(),
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize task: {error}"))
         }
         "create_subtask" => {
             let parent_task_id = require_string(&payload, "parentTaskId")?;
@@ -365,8 +1001,12 @@ fn invoke_bridge_command(
                 serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
                     .map_err(|error| format!("Unable to parse task input: {error}"))?;
             let mut writable = database::open_connection()?;
-            serde_json::to_value(tasks::create_subtask(&mut writable, &parent_task_id, input)?)
-                .map_err(|error| format!("Unable to serialize task: {error}"))
+            serde_json::to_value(tasks::create_subtask(
+                &mut writable,
+                &parent_task_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize task: {error}"))
         }
         "update_task" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -391,7 +1031,11 @@ fn invoke_bridge_command(
         }
         "dispatch_task_lane" => {
             let task_id = require_string(&payload, "taskId")?;
-            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.transition",
+            )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let assignment = crate::services::task_runtime::dispatch_task_lane(
@@ -400,14 +1044,21 @@ fn invoke_bridge_command(
                 &context.session_dir,
                 &task_id,
             )?;
-            start_assignment_blocking(&context.session_dir, &assignment)?;
+            config.start_assignment_async(context.session_dir.clone(), &assignment)?;
             serde_json::to_value(assignment)
                 .map_err(|error| format!("Unable to serialize task dispatch assignment: {error}"))
         }
         "complete_lane_as_success" => {
             let task_id = require_string(&payload, "taskId")?;
-            let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
-            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.transition",
+            )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let task = crate::services::task_runtime::complete_lane_as_success(
@@ -424,15 +1075,22 @@ fn invoke_bridge_command(
                 &context.session_dir,
                 &task_id,
             )? {
-                start_assignment_blocking(&context.session_dir, &next_assignment)?;
+                config.start_assignment_async(context.session_dir.clone(), &next_assignment)?;
             }
             serde_json::to_value(task)
                 .map_err(|error| format!("Unable to serialize completed task lane: {error}"))
         }
         "complete_lane_as_failure" => {
             let task_id = require_string(&payload, "taskId")?;
-            let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
-            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.transition",
+            )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let task = crate::services::task_runtime::complete_lane_as_failure(
@@ -449,15 +1107,22 @@ fn invoke_bridge_command(
                 &context.session_dir,
                 &task_id,
             )? {
-                start_assignment_blocking(&context.session_dir, &next_assignment)?;
+                config.start_assignment_async(context.session_dir.clone(), &next_assignment)?;
             }
             serde_json::to_value(task)
                 .map_err(|error| format!("Unable to serialize failed task lane: {error}"))
         }
         "request_user_intervention" => {
             let task_id = require_string(&payload, "taskId")?;
-            let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
-            command_authorization::require_permission(connection, authorization, "tasks.transition")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.transition",
+            )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let task = crate::services::task_runtime::request_user_intervention(
@@ -468,13 +1133,18 @@ fn invoke_bridge_command(
                 notes,
                 authorization,
             )?;
-            serde_json::to_value(task)
-                .map_err(|error| format!("Unable to serialize user-intervention task lane: {error}"))
+            serde_json::to_value(task).map_err(|error| {
+                format!("Unable to serialize user-intervention task lane: {error}")
+            })
         }
         "add_task_dependency" => {
             let blocker_task_id = require_string(&payload, "blockerTaskId")?;
             let blocked_task_id = require_string(&payload, "blockedTaskId")?;
-            command_authorization::require_permission(connection, authorization, "tasks.dependencies.write")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.dependencies.write",
+            )?;
             let mut writable = database::open_connection()?;
             serde_json::to_value(tasks::add_task_dependency(
                 &mut writable,
@@ -485,27 +1155,46 @@ fn invoke_bridge_command(
         }
         "remove_task_dependency" => {
             let dependency_id = require_string(&payload, "dependencyId")?;
-            command_authorization::require_permission(connection, authorization, "tasks.dependencies.write")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.dependencies.write",
+            )?;
             let writable = database::open_connection()?;
             serde_json::to_value(tasks::remove_task_dependency(&writable, &dependency_id)?)
                 .map_err(|error| format!("Unable to serialize removed task dependency: {error}"))
         }
         "add_task_attachment" => {
             let task_id = require_string(&payload, "taskId")?;
-            command_authorization::require_permission(connection, authorization, "tasks.attachments.write")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.attachments.write",
+            )?;
             let input: TaskAttachmentInput =
                 serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
                     .map_err(|error| format!("Unable to parse task attachment input: {error}"))?;
             let mut writable = database::open_connection()?;
-            serde_json::to_value(task_attachments::add_task_attachment(&mut writable, &task_id, input)?)
-                .map_err(|error| format!("Unable to serialize task attachment: {error}"))
+            serde_json::to_value(task_attachments::add_task_attachment(
+                &mut writable,
+                &task_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize task attachment: {error}"))
         }
         "remove_task_attachment" => {
             let attachment_id = require_string(&payload, "attachmentId")?;
-            command_authorization::require_permission(connection, authorization, "tasks.attachments.write")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.attachments.write",
+            )?;
             let writable = database::open_connection()?;
-            serde_json::to_value(task_attachments::remove_task_attachment(&writable, &attachment_id)?)
-                .map_err(|error| format!("Unable to serialize removed task attachment: {error}"))
+            serde_json::to_value(task_attachments::remove_task_attachment(
+                &writable,
+                &attachment_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize removed task attachment: {error}"))
         }
         "list_workflows" => {
             let include_archived = payload
@@ -662,36 +1351,6 @@ fn invoke_bridge_command(
     }
 }
 
-fn start_assignment_blocking(
-    session_dir: &std::path::Path,
-    assignment: &TaskLaneAssignment,
-) -> Result<(), String> {
-    if assignment.status != "active" {
-        return Ok(());
-    }
-    let Some(session_id) = assignment.session_id.as_deref() else {
-        return Ok(());
-    };
-    let Some(runtime_cwd) = assignment.runtime_cwd.as_deref() else {
-        return Ok(());
-    };
-    let Some(prompt) = assignment.prompt.as_deref() else {
-        return Ok(());
-    };
-
-    let run_id = format!("bridge-run-{}", Uuid::new_v4().simple());
-    let _ = pi_sessions::stream_prompt_session(
-        std::path::Path::new(runtime_cwd),
-        session_dir,
-        session_id,
-        &run_id,
-        prompt,
-        false,
-        |_| {},
-    )?;
-    Ok(())
-}
-
 fn require_string(payload: &Value, key: &str) -> Result<String, String> {
     payload
         .get(key)
@@ -707,8 +1366,11 @@ mod tests {
     use std::{
         env,
         path::PathBuf,
+        sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn unique_temp_db(label: &str) -> PathBuf {
         let suffix = format!(
@@ -727,6 +1389,69 @@ mod tests {
         let path = unique_temp_db(label);
         initialize_database_at(&path).expect("database should initialize");
         Connection::open(path).expect("database should open")
+    }
+
+    fn dummy_bridge_config(label: &str) -> ToolBridgeConfig {
+        let metadata_path = env::temp_dir().join(format!("{}-bridge.json", label));
+        ToolBridgeConfig {
+            url: "http://127.0.0.1:0".into(),
+            token: "token".into(),
+            instance_id: format!("instance-{label}"),
+            started_at: crate::state::now_iso(),
+            metadata_path,
+            owner_pid: std::process::id(),
+            app_handle: Mutex::new(None),
+            clients: Mutex::new(HashMap::new()),
+            recent_requests: Mutex::new(VecDeque::new()),
+            recent_cleanup_events: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    fn with_temp_home<T>(label: &str, action: impl FnOnce() -> T) -> T {
+        let _guard = TEST_ENV_LOCK.lock().expect("test env lock should acquire");
+        let previous_home = env::var_os("HOME");
+        let root = env::temp_dir().join(format!("{}-{}", label, Uuid::new_v4().simple()));
+        fs::create_dir_all(&root).expect("temp home should create");
+        unsafe {
+            env::set_var("HOME", &root);
+        }
+        let result = action();
+        match previous_home {
+            Some(value) => unsafe {
+                env::set_var("HOME", value);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
+        }
+        result
+    }
+
+    fn bridge_http_request(
+        url: &str,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+    ) -> serde_json::Value {
+        let address = url
+            .strip_prefix("http://")
+            .expect("bridge url should use http");
+        let mut stream = TcpStream::connect(address).expect("bridge should accept connections");
+        let payload = body.unwrap_or_default();
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),
+            payload,
+        );
+        stream
+            .write_all(request.as_bytes())
+            .expect("bridge request should write");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("bridge response should read");
+        let body = response.split("\r\n\r\n").nth(1).unwrap_or("{}");
+        serde_json::from_str(body).expect("bridge response body should parse")
     }
 
     #[test]
@@ -756,7 +1481,10 @@ mod tests {
         )
         .expect("agent policies should sync");
 
+        let config = dummy_bridge_config("auth");
+
         let result = invoke_bridge_command(
+            &config,
             &connection,
             "list_policies",
             Some(&AuthorizationContext {
@@ -770,6 +1498,7 @@ mod tests {
         assert_eq!(array.len(), 1);
 
         let error = invoke_bridge_command(
+            &config,
             &connection,
             "list_roles",
             Some(&AuthorizationContext {
@@ -780,5 +1509,125 @@ mod tests {
         )
         .expect_err("bridge call should be denied");
         assert!(error.contains("roles.read"));
+    }
+
+    #[test]
+    fn serves_concurrent_requests_without_global_serialization() {
+        with_temp_home("bridge-concurrency", || {
+            let bridge = start_tool_bridge().expect("bridge should start");
+            let body_left = serde_json::to_string(&json!({
+                "token": bridge.token,
+                "command": "__test_sleep",
+                "payload": { "sleepMs": 350 },
+                "requestId": "left",
+                "clientId": "client-left",
+                "sessionId": "session-left",
+                "bridgeInstanceId": bridge.instance_id,
+            }))
+            .expect("left request should serialize");
+            let body_right = serde_json::to_string(&json!({
+                "token": bridge.token,
+                "command": "__test_sleep",
+                "payload": { "sleepMs": 350 },
+                "requestId": "right",
+                "clientId": "client-right",
+                "sessionId": "session-right",
+                "bridgeInstanceId": bridge.instance_id,
+            }))
+            .expect("right request should serialize");
+
+            let started = std::time::Instant::now();
+            let left_url = bridge.url.clone();
+            let right_url = bridge.url.clone();
+            let left = thread::spawn(move || {
+                bridge_http_request(&left_url, "POST", "/invoke", Some(body_left))
+            });
+            let right = thread::spawn(move || {
+                bridge_http_request(&right_url, "POST", "/invoke", Some(body_right))
+            });
+            let left_response = left.join().expect("left request should join");
+            let right_response = right.join().expect("right request should join");
+            let elapsed = started.elapsed();
+
+            assert_eq!(
+                left_response.get("success").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                right_response.get("success").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert!(
+                elapsed < Duration::from_millis(650),
+                "elapsed was {:?}",
+                elapsed
+            );
+
+            let diagnostics = bridge.diagnostics();
+            assert!(diagnostics.recent_requests.len() >= 2);
+        });
+    }
+
+    #[test]
+    fn records_request_diagnostics_per_client() {
+        let config = dummy_bridge_config("diagnostics");
+        let request = ToolBridgeRequest {
+            token: config.token.clone(),
+            command: "get_task_context".into(),
+            authorization: Some(AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: "role-1".into(),
+            }),
+            payload: json!({ "taskId": "task-1" }),
+            request_id: Some("request-1".into()),
+            client_id: Some("client-1".into()),
+            session_id: Some("session-1".into()),
+            bridge_instance_id: Some(config.instance_id.clone()),
+            sent_at: Some(crate::state::now_iso()),
+        };
+
+        let mut diagnostic = config.record_request_start(&request);
+        diagnostic.success = true;
+        diagnostic.finished_at = Some(crate::state::now_iso());
+        diagnostic.duration_ms = Some(12);
+        config.record_request_finish(&diagnostic);
+
+        let snapshot = config.diagnostics();
+        assert_eq!(snapshot.instance.active_client_count, 1);
+        assert_eq!(snapshot.clients.len(), 1);
+        assert_eq!(snapshot.clients[0].client_id, "client-1");
+        assert_eq!(snapshot.recent_requests.len(), 1);
+        assert_eq!(snapshot.recent_requests[0].request_id, "request-1");
+    }
+
+    #[test]
+    fn cleans_up_stale_dead_bridge_metadata() {
+        with_temp_home("bridge-cleanup", || {
+            let bridge_dir = bridge_runtime_dir().expect("bridge runtime dir should resolve");
+            fs::create_dir_all(&bridge_dir).expect("bridge dir should create");
+            let stale_path = bridge_dir.join("stale.json");
+            write_bridge_instance_record(
+                &stale_path,
+                &BridgeInstanceRecord {
+                    service: BRIDGE_SERVICE_NAME.into(),
+                    instance_id: "stale-instance".into(),
+                    url: "http://127.0.0.1:9".into(),
+                    owner_pid: 999_999,
+                    executable_path: None,
+                    schema_version: BRIDGE_SCHEMA_VERSION,
+                    app_version: env!("CARGO_PKG_VERSION").into(),
+                    started_at: crate::state::now_iso(),
+                    heartbeat_at: crate::state::now_iso(),
+                },
+            )
+            .expect("stale record should write");
+
+            let events = cleanup_stale_bridge_instances("current-instance", None)
+                .expect("cleanup should succeed");
+            assert!(events
+                .iter()
+                .any(|event| event.reason == "owner_process_missing"));
+            assert!(!stale_path.exists());
+        });
     }
 }

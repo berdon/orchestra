@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::{
-    models::{AppInfo, LogEntry, SessionModel, SessionStorageInfo},
+    models::{
+        AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, SessionModel, SessionStorageInfo,
+    },
     services::pi_sessions::{detect_session_context, list_available_models},
     state::AppState,
 };
@@ -29,6 +31,18 @@ pub fn get_logs(state: State<'_, AppState>) -> Vec<LogEntry> {
 #[tauri::command]
 pub fn clear_logs(state: State<'_, AppState>) {
     state.clear_logs();
+}
+
+#[tauri::command]
+pub fn get_bridge_diagnostics(state: State<'_, AppState>) -> BridgeDiagnostics {
+    state.tool_bridge.diagnostics()
+}
+
+#[tauri::command]
+pub fn cleanup_stale_bridge_instances(
+    state: State<'_, AppState>,
+) -> Result<Vec<BridgeCleanupEvent>, String> {
+    state.tool_bridge.cleanup_stale_instances()
 }
 
 #[tauri::command]

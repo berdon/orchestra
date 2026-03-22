@@ -1,5 +1,5 @@
 export type PrimaryPage = "tasks" | "agents" | "sessions" | "settings";
-export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "logs";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -19,6 +19,60 @@ export interface AppInfo {
   appName: string;
   environment: "tauri" | "browser";
   backendStatus: "connected" | "mock";
+}
+
+export interface BridgeClientDiagnostics {
+  clientId: string;
+  sessionId?: string | null;
+  actorType?: string | null;
+  actorId?: string | null;
+  requestCount: number;
+  inFlightRequestCount: number;
+  lastSeenAt: string;
+  lastCommand?: string | null;
+  lastError?: string | null;
+  active: boolean;
+  bridgeInstanceId?: string | null;
+}
+
+export interface BridgeRequestDiagnostics {
+  requestId: string;
+  clientId?: string | null;
+  sessionId?: string | null;
+  command: string;
+  startedAt: string;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+  success: boolean;
+  error?: string | null;
+}
+
+export interface BridgeCleanupEvent {
+  id: string;
+  instanceId?: string | null;
+  pid?: number | null;
+  action: string;
+  reason: string;
+  success: boolean;
+  timestamp: string;
+}
+
+export interface BridgeInstanceDiagnostics {
+  instanceId: string;
+  url: string;
+  ownerPid: number;
+  startedAt: string;
+  heartbeatAt: string;
+  metadataPath: string;
+  activeClientCount: number;
+  inFlightRequestCount: number;
+}
+
+export interface BridgeDiagnostics {
+  instance: BridgeInstanceDiagnostics;
+  clients: BridgeClientDiagnostics[];
+  recentRequests: BridgeRequestDiagnostics[];
+  recentCleanupEvents: BridgeCleanupEvent[];
 }
 
 export interface ProjectSummary {

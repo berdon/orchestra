@@ -3,6 +3,8 @@ import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import type {
   AgentSummary,
   AppInfo,
+  BridgeCleanupEvent,
+  BridgeDiagnostics,
   JsonValue,
   LogEntry,
   LogLevel,
@@ -44,6 +46,7 @@ const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
 const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
+const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const CURRENT_PROJECT_ID = "orchestra";
 
 function sessionStorageKey() {
@@ -253,6 +256,32 @@ function ensureMockSessions() {
 
   const seeded = seedMockSessions();
   setStoredValue(sessionStorageKey(), seeded);
+  return seeded;
+}
+
+function ensureMockBridgeDiagnostics(): BridgeDiagnostics {
+  const existing = getStoredValue<BridgeDiagnostics>(BRIDGE_DIAGNOSTICS_STORAGE_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const timestamp = nowIso();
+  const seeded: BridgeDiagnostics = {
+    instance: {
+      instanceId: "bridge-instance-browser",
+      url: "http://127.0.0.1:0",
+      ownerPid: 0,
+      startedAt: timestamp,
+      heartbeatAt: timestamp,
+      metadataPath: "/mock/.orchestra/bridge/bridge-instance-browser.json",
+      activeClientCount: 0,
+      inFlightRequestCount: 0,
+    },
+    clients: [],
+    recentRequests: [],
+    recentCleanupEvents: [],
+  };
+  setStoredValue(BRIDGE_DIAGNOSTICS_STORAGE_KEY, seeded);
   return seeded;
 }
 
@@ -1122,6 +1151,38 @@ export async function getLogs(): Promise<LogEntry[]> {
   return invoke<LogEntry[]>("get_logs");
 }
 
+export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
+  if (!isTauriAvailable()) {
+    return ensureMockBridgeDiagnostics();
+  }
+
+  return invoke<BridgeDiagnostics>("get_bridge_diagnostics");
+}
+
+export async function cleanupStaleBridgeInstances(): Promise<BridgeCleanupEvent[]> {
+  if (!isTauriAvailable()) {
+    const diagnostics = ensureMockBridgeDiagnostics();
+    setStoredValue(BRIDGE_DIAGNOSTICS_STORAGE_KEY, {
+      ...diagnostics,
+      recentCleanupEvents: [
+        {
+          id: `bridge-cleanup-${Date.now()}`,
+          instanceId: diagnostics.instance.instanceId,
+          pid: diagnostics.instance.ownerPid,
+          action: "cleanup_requested",
+          reason: "mock_cleanup",
+          success: true,
+          timestamp: nowIso(),
+        },
+        ...diagnostics.recentCleanupEvents,
+      ].slice(0, 20),
+    } satisfies BridgeDiagnostics);
+    return ensureMockBridgeDiagnostics().recentCleanupEvents;
+  }
+
+  return invoke<BridgeCleanupEvent[]>("cleanup_stale_bridge_instances");
+}
+
 export async function clearLogs(): Promise<void> {
   if (!isTauriAvailable()) {
     setStoredValue(LOG_STORAGE_KEY, [] satisfies LogEntry[]);
@@ -1316,6 +1377,45 @@ export async function sendSessionMessage(sessionId: string, message: string, run
       message: trimmedMessage,
       timestamp: nowIso(),
     };
+    const bridgeDiagnostics = ensureMockBridgeDiagnostics();
+    setStoredValue(BRIDGE_DIAGNOSTICS_STORAGE_KEY, {
+      ...bridgeDiagnostics,
+      instance: {
+        ...bridgeDiagnostics.instance,
+        activeClientCount: 1,
+        inFlightRequestCount: 1,
+        heartbeatAt: queued.timestamp,
+      },
+      clients: [
+        {
+          clientId: `browser-client-${sessionId}`,
+          sessionId,
+          actorType: "session",
+          actorId: sessionId,
+          requestCount: (bridgeDiagnostics.clients[0]?.requestCount ?? 0) + 1,
+          inFlightRequestCount: 1,
+          lastSeenAt: queued.timestamp,
+          lastCommand: "send_session_message",
+          lastError: null,
+          active: true,
+          bridgeInstanceId: bridgeDiagnostics.instance.instanceId,
+        },
+      ],
+      recentRequests: [
+        {
+          requestId: `browser-request-${runId}`,
+          clientId: `browser-client-${sessionId}`,
+          sessionId,
+          command: "send_session_message",
+          startedAt: queued.timestamp,
+          finishedAt: null,
+          durationMs: null,
+          success: true,
+          error: null,
+        },
+        ...bridgeDiagnostics.recentRequests,
+      ].slice(0, 20),
+    } satisfies BridgeDiagnostics);
 
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);

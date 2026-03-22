@@ -7,6 +7,9 @@ type OrchestraToolDefinition = { name: string; description: string; requiredPerm
 type BridgeConfig = {
   bridgeUrl: string;
   token: string;
+  bridgeInstanceId: string | null;
+  clientId: string | null;
+  sessionId: string | null;
   allowedCommands: OrchestraToolDefinition[];
   authorization: AuthorizationContext;
 };
@@ -14,6 +17,9 @@ type BridgeConfig = {
 export function getBridgeConfig() {
   const bridgeUrl = process.env.ORCHESTRA_BRIDGE_URL;
   const token = process.env.ORCHESTRA_BRIDGE_TOKEN;
+  const bridgeInstanceId = process.env.ORCHESTRA_BRIDGE_INSTANCE_ID ?? null;
+  const clientId = process.env.ORCHESTRA_BRIDGE_CLIENT_ID ?? null;
+  const sessionId = process.env.ORCHESTRA_BRIDGE_SESSION_ID ?? null;
   const allowedCommandsRaw = process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON;
   const authorizationRaw = process.env.ORCHESTRA_AUTH_CONTEXT_JSON;
 
@@ -23,7 +29,7 @@ export function getBridgeConfig() {
 
   const allowedCommands = JSON.parse(allowedCommandsRaw) as OrchestraToolDefinition[];
   const authorization = authorizationRaw ? (JSON.parse(authorizationRaw) as AuthorizationContext) : null;
-  return { bridgeUrl, token, allowedCommands, authorization } satisfies BridgeConfig;
+  return { bridgeUrl, token, bridgeInstanceId, clientId, sessionId, allowedCommands, authorization } satisfies BridgeConfig;
 }
 
 function isTransientBridgeFetchError(error: unknown) {
@@ -37,6 +43,10 @@ function isTransientBridgeFetchError(error: unknown) {
 
 async function delay(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createBridgeRequestId() {
+  return `bridge-request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 async function invokeBridge(command: string, payload: Record<string, unknown>) {
@@ -57,6 +67,11 @@ async function invokeBridge(command: string, payload: Record<string, unknown>) {
           command,
           authorization: config.authorization,
           payload,
+          requestId: createBridgeRequestId(),
+          clientId: config.clientId,
+          sessionId: config.sessionId,
+          bridgeInstanceId: config.bridgeInstanceId,
+          sentAt: new Date().toISOString(),
         }),
       });
 
