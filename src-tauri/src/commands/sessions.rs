@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use rusqlite::OptionalExtension;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
@@ -7,7 +9,8 @@ use crate::{
         app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{
-            create_session_file, delete_session_file, detect_session_context, get_session,
+            all_session_contexts, create_session_file, delete_session_file, detect_session_context,
+            find_session_context_for_session, get_session, get_session_header_cwd,
             list_sessions as list_real_sessions, set_session_model as apply_session_model,
         },
         task_runtime,
@@ -68,36 +71,55 @@ fn load_session_debug_info(
         }));
     }
 
-    let role_assignment = connection
+    let agent_runtime = connection
         .query_row(
             r#"
-            SELECT runtime_cwd
-            FROM role_session_assignments
+            SELECT ars.runtime_cwd, p.slug
+            FROM agent_runtime_states ars
+            LEFT JOIN projects p ON p.id = ars.project_id
+            WHERE ars.main_session_id = ?1
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load agent session debug info {session_id}: {error}"))?;
+
+    if let Some((runtime_cwd, project_slug)) = agent_runtime {
+        let project_root = project_slug.and_then(|slug| {
+            crate::services::orchestra_paths::default_orchestra_root()
+                .ok()
+                .map(|root| crate::services::orchestra_paths::project_root(&root, &slug).display().to_string())
+        });
+        return Ok(Some(SessionDebugInfo {
+            project_root,
+            managed_repository_path: None,
+            worktree_path: runtime_cwd.clone(),
+            session_cwd: runtime_cwd,
+        }));
+    }
+
+    let role_runtime = connection
+        .query_row(
+            r#"
+            SELECT worktree_path
+            FROM role_instances
             WHERE session_id = ?1
-            ORDER BY updated_at DESC, id DESC
             LIMIT 1
             "#,
             [session_id],
             |row| row.get::<_, Option<String>>(0),
         )
         .optional()
-        .or_else(|error| {
-            if error.to_string().contains("no such table") {
-                Ok(None)
-            } else {
-                Err(error)
-            }
-        })
         .map_err(|error| format!("Unable to load role session debug info {session_id}: {error}"))?;
 
-    Ok(role_assignment
-        .flatten()
-        .map(|runtime_cwd| SessionDebugInfo {
-            project_root: None,
-            managed_repository_path: None,
-            worktree_path: Some(runtime_cwd.clone()),
-            session_cwd: Some(runtime_cwd),
-        }))
+    Ok(role_runtime.flatten().map(|runtime_cwd| SessionDebugInfo {
+        project_root: None,
+        managed_repository_path: None,
+        worktree_path: Some(runtime_cwd.clone()),
+        session_cwd: Some(runtime_cwd),
+    }))
 }
 
 fn decorate_session_record_with_connection(
@@ -164,16 +186,54 @@ fn load_decorated_session_record(
     decorate_session_record(record)
 }
 
+fn resolve_session_runtime_root(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+    storage_project_root: &std::path::Path,
+    session_dir: &std::path::Path,
+) -> Result<PathBuf, String> {
+    if let Some(debug_info) = load_session_debug_info(connection, session_id)? {
+        if let Some(session_cwd) = debug_info.session_cwd {
+            return Ok(PathBuf::from(session_cwd));
+        }
+        if let Some(project_root) = debug_info.project_root {
+            return Ok(PathBuf::from(project_root));
+        }
+    }
+
+    if let Some(header_cwd) = get_session_header_cwd(session_dir, session_id)? {
+        return Ok(header_cwd);
+    }
+
+    Ok(storage_project_root.to_path_buf())
+}
+
+fn resolve_session_paths(session_id: &str) -> Result<(PathBuf, PathBuf), String> {
+    let storage_context = find_session_context_for_session(session_id)?;
+    let connection = database::open_connection()?;
+    let runtime_root = resolve_session_runtime_root(
+        &connection,
+        session_id,
+        &storage_context.project_root,
+        &storage_context.session_dir,
+    )?;
+    Ok((runtime_root, storage_context.session_dir))
+}
+
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
     spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        let sessions = list_real_sessions(&context.session_dir, &subscribed)?;
-        sessions
+        let mut sessions = all_session_contexts()?
             .into_iter()
+            .map(|context| list_real_sessions(&context.session_dir, &subscribed))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
             .map(decorate_session_record)
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()?;
+        sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        Ok::<_, String>(sessions)
     })
     .await
     .map_err(|error| format!("Unable to join list_sessions task: {error}"))?
@@ -187,7 +247,7 @@ pub async fn get_session_record(
     let subscribed = state.subscribed_session_ids()?.contains(&session_id);
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
-        let context = detect_session_context(None)?;
+        let context = find_session_context_for_session(&session_id_for_task)?;
         load_decorated_session_record(&context.session_dir, &session_id_for_task, subscribed)
     })
     .await
@@ -254,8 +314,8 @@ pub async fn delete_session(
     state.clear_session_tracking(&session_id)?;
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        delete_session_file(&context.session_dir, &session_id_for_task)
+        let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
+        delete_session_file(&session_dir, &session_id_for_task)
     })
     .await
     .map_err(|error| format!("Unable to join delete_session task: {error}"))??;
@@ -274,10 +334,8 @@ pub async fn resume_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
-    let (project_root, session_dir) = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        Ok::<_, String>((context.project_root, context.session_dir))
-    })
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
     .await
     .map_err(|error| format!("Unable to join resume_session context task: {error}"))??;
 
@@ -310,10 +368,8 @@ pub async fn subscribe_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
-    let (project_root, session_dir) = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        Ok::<_, String>((context.project_root, context.session_dir))
-    })
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
     .await
     .map_err(|error| format!("Unable to join subscribe_session context task: {error}"))??;
 
@@ -353,8 +409,8 @@ pub async fn unsubscribe_session(
 
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        load_decorated_session_record(&context.session_dir, &session_id_for_task, false)
+        let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
+        load_decorated_session_record(&session_dir, &session_id_for_task, false)
     })
     .await
     .map_err(|error| format!("Unable to join unsubscribe_session task: {error}"))??;
@@ -372,10 +428,8 @@ pub async fn get_session_model_state(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionModelState, String> {
-    let (project_root, session_dir) = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        Ok::<_, String>((context.project_root, context.session_dir))
-    })
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
     .await
     .map_err(|error| format!("Unable to join get_session_model_state context task: {error}"))??;
 
@@ -407,10 +461,8 @@ pub async fn set_session_model(
     provider: String,
     model_id: String,
 ) -> Result<SessionModelState, String> {
-    let (project_root, session_dir) = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        Ok::<_, String>((context.project_root, context.session_dir))
-    })
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
     .await
     .map_err(|error| format!("Unable to join set_session_model context task: {error}"))??;
 
@@ -483,10 +535,8 @@ pub async fn send_session_message(
         return Err("Message cannot be empty".into());
     }
 
-    let (project_root, session_dir) = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
-        Ok::<_, String>((context.project_root, context.session_dir))
-    })
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
     .await
     .map_err(|error| format!("Unable to join send_session_message context task: {error}"))??;
 

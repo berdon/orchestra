@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     models::{ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryUpsertInput},
-    services::{database, projects},
+    services::{database, pi_sessions, projects},
     state::AppState,
 };
 
@@ -39,6 +39,29 @@ pub fn update_project(
     let project = projects::update_project(&connection, &project_id, input)?;
     state.log("info", "project.updated", &format!("Updated project {}", project.id));
     Ok(project)
+}
+
+#[tauri::command]
+pub fn delete_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ProjectDetail, String> {
+    let connection = database::open_connection()?;
+    let project = projects::get_project(&connection, &project_id)?;
+    let context = pi_sessions::detect_session_context(Some(&project.slug))?;
+    let session_ids = pi_sessions::list_sessions(&context.session_dir, &std::collections::HashSet::new())?
+        .into_iter()
+        .map(|session| session.id)
+        .collect::<Vec<_>>();
+    for session_id in &session_ids {
+        if let Some(runtime) = state.remove_session_runtime(session_id)? {
+            runtime.shutdown();
+        }
+        state.clear_session_tracking(session_id)?;
+    }
+    let deleted = projects::delete_project(&connection, &project_id)?;
+    state.log("info", "project.deleted", &format!("Deleted project {}", deleted.id));
+    Ok(deleted)
 }
 
 #[tauri::command]

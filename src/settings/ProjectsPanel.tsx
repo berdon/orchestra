@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createProject,
   createRepository,
+  deleteProject,
   getProject,
   listProjects,
   setProjectDefaultRepository,
@@ -128,6 +129,33 @@ export function ProjectsPanel() {
     }
   }
 
+  async function handleDeleteProject() {
+    if (!selectedProject?.id || selectedProject.id === "orchestra") {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete project "${selectedProject.name}"? This removes its Orchestra-managed project data.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteProject(selectedProject.id);
+      setProjectDetail(null);
+      setProjectDraft(createBlankProjectDraft());
+      setRepositoryDraft(createBlankRepositoryDraft());
+      setSelectedProjectId(null);
+      setIsCreatingProject(false);
+      await loadProjects();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to delete project.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="task-shell">
       <aside className="task-nav-panel">
@@ -175,9 +203,16 @@ export function ProjectsPanel() {
               <p className="eyebrow">Project detail</p>
               <h3>{selectedProject ? selectedProject.name : "New project"}</h3>
             </div>
-            <button className="primary-button" type="button" disabled={saving} onClick={() => void handleSaveProject()}>
-              {saving ? "Saving…" : selectedProject ? "Save project" : "Create project"}
-            </button>
+            <div className="row-actions">
+              {selectedProject && selectedProject.id !== "orchestra" ? (
+                <button className="secondary-button" data-role="delete-project" type="button" disabled={saving} onClick={() => void handleDeleteProject()}>
+                  Delete project
+                </button>
+              ) : null}
+              <button className="primary-button" type="button" disabled={saving} onClick={() => void handleSaveProject()}>
+                {saving ? "Saving…" : selectedProject ? "Save project" : "Create project"}
+              </button>
+            </div>
           </div>
 
           <div className="task-editor-grid">

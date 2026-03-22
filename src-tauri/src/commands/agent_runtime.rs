@@ -38,7 +38,7 @@ pub async fn ensure_agent_session(
     agent_id: String,
 ) -> Result<SessionRecord, String> {
     let context = detect_session_context(None)?;
-    let runtime_state = agent_dispatch::ensure_main_session(&context.project_root, &context.session_dir, &agent_id)?;
+    let runtime_state = agent_dispatch::ensure_main_session(&context.project_root, &context.session_dir, "orchestra", &agent_id)?;
     let session_id = runtime_state
         .main_session_id
         .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;

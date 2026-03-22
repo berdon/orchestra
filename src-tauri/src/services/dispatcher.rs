@@ -65,10 +65,17 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
         )?;
         let activated = task_runtime::activate_queued_role_assignments(&connection)?;
         for assignment in activated {
+            let assignment_session_dir = if let Some(session_id) = assignment.session_id.as_deref() {
+                pi_sessions::find_session_context_for_session(session_id)
+                    .map(|resolved| resolved.session_dir)
+                    .unwrap_or_else(|_| context.session_dir.clone())
+            } else {
+                context.session_dir.clone()
+            };
             task_runtime::start_assignment_run(
                 app.clone(),
                 state,
-                context.session_dir.clone(),
+                assignment_session_dir,
                 &assignment,
             )?;
             if let Some(session_id) = assignment.session_id.clone() {

@@ -2,7 +2,9 @@ use std::{sync::Arc, thread};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tiny_http::{Method, Response, Server, StatusCode};
 use uuid::Uuid;
 
@@ -32,6 +34,12 @@ struct ToolBridgeRequest {
     authorization: Option<AuthorizationContext>,
     #[serde(default)]
     payload: Value,
+}
+
+fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
+    let connection = database::open_connection()?;
+    let task = tasks::get_task_context(&connection, task_id)?;
+    pi_sessions::session_context_for_project_id(&task.project_id)
 }
 
 const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
@@ -384,7 +392,7 @@ fn invoke_bridge_command(
         "dispatch_task_lane" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.transition")?;
-            let context = pi_sessions::detect_session_context(None)?;
+            let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let assignment = crate::services::task_runtime::dispatch_task_lane(
                 &mut writable,
@@ -400,7 +408,7 @@ fn invoke_bridge_command(
             let task_id = require_string(&payload, "taskId")?;
             let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
             command_authorization::require_permission(connection, authorization, "tasks.transition")?;
-            let context = pi_sessions::detect_session_context(None)?;
+            let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let task = crate::services::task_runtime::complete_lane_as_success(
                 &mut writable,
@@ -425,7 +433,7 @@ fn invoke_bridge_command(
             let task_id = require_string(&payload, "taskId")?;
             let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
             command_authorization::require_permission(connection, authorization, "tasks.transition")?;
-            let context = pi_sessions::detect_session_context(None)?;
+            let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let task = crate::services::task_runtime::complete_lane_as_failure(
                 &mut writable,
@@ -450,7 +458,7 @@ fn invoke_bridge_command(
             let task_id = require_string(&payload, "taskId")?;
             let notes = payload.get("notes").and_then(Value::as_str).map(str::to_string);
             command_authorization::require_permission(connection, authorization, "tasks.transition")?;
-            let context = pi_sessions::detect_session_context(None)?;
+            let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
             let task = crate::services::task_runtime::request_user_intervention(
                 &mut writable,

@@ -83,19 +83,16 @@ describe("desktop file workflow", () => {
       await waitForText(sessionId, 'File Workflow Project');
       await waitForSelector(sessionId, '[data-role="repository-name"]');
 
-      await setInputValue(sessionId, '[data-role="repository-name"]', 'File Workflow Repo');
-      await setInputValue(sessionId, '[data-role="repository-path"]', repoPath);
-      await setInputValue(sessionId, '[data-role="repository-default-branch"]', 'main');
+      await setFieldByLabel(sessionId, 'Repository name', 'File Workflow Repo');
+      await setFieldByLabel(sessionId, 'Repository Path', repoPath);
+      await setFieldByLabel(sessionId, 'Default branch', 'main');
       await clickSelector(sessionId, '[data-role="add-repository"]');
       await waitForText(sessionId, 'File Workflow Repo');
 
       const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
       const project = projects.find((entry) => entry.name === 'File Workflow Project');
       expect(project).toBeTruthy();
-      const projectDetail = await invokeCommand<{ repositories: Array<{ id: string; name: string }> }>(sessionId, 'get_project', { projectId: project!.id });
-      const repository = projectDetail.repositories.find((entry) => entry.name === 'File Workflow Repo');
-      expect(repository).toBeTruthy();
-      await invokeCommand(sessionId, 'set_project_default_repository', { projectId: project!.id, repositoryId: repository!.id });
+      await clickByText(sessionId, 'button', 'Make default');
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
@@ -127,14 +124,7 @@ describe("desktop file workflow", () => {
       await waitForText(sessionId, 'new task');
       await setInputValue(sessionId, '[data-role="task-title"]', 'Create /tmp/file.md');
       await setInputValue(sessionId, '[data-role="task-description"]', 'Read the referenced project file and do exactly what it says.');
-      const selectedTaskRepositories = await executeScript<string[]>(sessionId, `
-        const select = document.querySelector('[data-role="task-repositories"]');
-        if (!(select instanceof HTMLSelectElement)) {
-          return [];
-        }
-        return Array.from(select.selectedOptions).map((option) => option.textContent || '');
-      `);
-      expect(selectedTaskRepositories).toContain('File Workflow Repo');
+      await selectByLabel(sessionId, '[data-role="task-repositories"]', 'File Workflow Repo');
       await selectValue(sessionId, '[data-role="task-status"]', 'ready');
       await selectByLabel(sessionId, '[data-role="task-workflow"]', 'File Creation Flow');
       await clickSelector(sessionId, '[data-role="save-task"]');
@@ -169,6 +159,17 @@ describe("desktop file workflow", () => {
         await sleep(500);
       }
       expect(taskRepositories.some((entry) => typeof entry.taskWorktreePath === 'string' && entry.taskWorktreePath.length > 0)).toBe(true);
+
+      const dispatchedTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: savedTask!.id });
+      expect(dispatchedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+      const spawnedSession = await invokeCommand<any>(sessionId, 'get_session_record', {
+        sessionId: dispatchedTask.activeLaneAssignment.sessionId,
+      });
+      expect(spawnedSession.debugInfo?.projectRoot).toBe(join(testHome!, '.orchestra', 'projects', 'file-workflow-project'));
+      expect(spawnedSession.debugInfo?.managedRepositoryPath).toBe(join(testHome!, '.orchestra', 'projects', 'file-workflow-project', 'repositories', 'file-workflow-repo', 'repository'));
+      expect(spawnedSession.debugInfo?.worktreePath).toContain(join(testHome!, '.orchestra', 'projects', 'file-workflow-project'));
+      expect(spawnedSession.debugInfo?.sessionCwd).toContain(join(testHome!, '.orchestra', 'projects', 'file-workflow-project'));
+      expect(spawnedSession.debugInfo?.sessionCwd).not.toBe(process.env.ORCHESTRA_PROJECT_ROOT);
 
       const deadline = Date.now() + 180_000;
       while (Date.now() < deadline && !existsSync(targetFile)) {

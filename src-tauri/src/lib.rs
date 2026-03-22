@@ -20,7 +20,7 @@ use commands::{
     },
     project_settings::{get_worker_overlay, update_worker_overlay},
     projects::{
-        create_project, create_repository, get_project, list_projects, list_repositories,
+        create_project, create_repository, delete_project, get_project, list_projects, list_repositories,
         set_project_default_repository, update_project, update_repository,
     },
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
@@ -121,6 +121,7 @@ pub fn run() {
             get_project,
             create_project,
             update_project,
+            delete_project,
             list_repositories,
             create_repository,
             update_repository,

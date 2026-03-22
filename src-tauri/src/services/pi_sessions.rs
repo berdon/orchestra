@@ -14,7 +14,10 @@ use uuid::Uuid;
 
 use crate::{
     models::{SessionEvent, SessionModel, SessionModelState, SessionRecord, SessionStreamEvent},
-    services::orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
+    services::{
+        database, projects,
+        orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
+    },
 };
 
 const DEFAULT_EMPTY_SESSION_MESSAGE: &str = "Real pi session ready. Send a message to begin.";
@@ -69,6 +72,46 @@ pub fn detect_session_context(
         orchestra_root,
         session_dir,
     })
+}
+
+pub fn session_context_for_project_id(project_id: &str) -> Result<SessionContext, String> {
+    let connection = database::open_connection()?;
+    let project = projects::get_project(&connection, project_id)?;
+    detect_session_context(Some(&project.slug))
+}
+
+pub fn all_session_contexts() -> Result<Vec<SessionContext>, String> {
+    let connection = database::open_connection()?;
+    let projects = projects::list_projects(&connection)?;
+    let mut contexts = Vec::new();
+    let mut seen = HashSet::new();
+    for project in projects {
+        let context = detect_session_context(Some(&project.slug))?;
+        let key = context.session_dir.display().to_string();
+        if seen.insert(key) {
+            contexts.push(context);
+        }
+    }
+    Ok(contexts)
+}
+
+pub fn find_session_context_for_session(session_id: &str) -> Result<SessionContext, String> {
+    for context in all_session_contexts()? {
+        if get_session(&context.session_dir, session_id, false).is_ok() {
+            return Ok(context);
+        }
+    }
+    Err(format!("Session {session_id} was not found in any Orchestra project session directory"))
+}
+
+pub fn get_session_header_cwd(session_dir: &Path, session_id: &str) -> Result<Option<PathBuf>, String> {
+    let path = get_session_path(session_dir, session_id)?;
+    let lines = read_jsonl(&path)?;
+    let header = lines.first();
+    Ok(header
+        .and_then(|value| value.get("cwd"))
+        .and_then(Value::as_str)
+        .map(PathBuf::from))
 }
 
 pub fn create_session_file(
