@@ -16,7 +16,7 @@ type TaskDetailTab =
   | "runtime"
   | "hierarchy"
   | "dependencies"
-  | "files"
+  | "repo-files"
   | "attachments"
   | "comments"
   | "timeline"
@@ -82,7 +82,7 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
   { id: "runtime", label: "Runtime" },
   { id: "hierarchy", label: "Hierarchy" },
   { id: "dependencies", label: "Dependencies" },
-  { id: "files", label: "Project files" },
+  { id: "repo-files", label: "Repo files" },
   { id: "attachments", label: "Attachments" },
   { id: "comments", label: "Comments" },
   { id: "timeline", label: "Timeline" },
@@ -328,13 +328,14 @@ export function TaskDetailPage({
             </div>
           </section>
         );
-      case "files":
+      case "repo-files":
         return (
-          <section className="task-section" data-role="task-detail-tabpanel-files">
+          <section className="task-section" data-role="task-detail-tabpanel-repo-files">
             <div className="task-section__header">
               <div>
-                <p className="eyebrow">Project files</p>
-                <h4>Live repository references</h4>
+                <p className="eyebrow">Repo files</p>
+                <h4>Tracked repository file changes and references</h4>
+                <p className="muted-copy">Use this panel for important repository artifacts that should stay visible on the task, such as design docs, diagrams, plans, ADRs, and other central non-source files.</p>
               </div>
             </div>
 
@@ -394,7 +395,7 @@ export function TaskDetailPage({
                   </article>
                 ))}
               </div>
-            ) : <p className="muted-copy">No project files referenced yet. Add a repository file to give sessions direct live context.</p>}
+            ) : <p className="muted-copy">No repo files tracked yet. Add an important repository file here to keep it visible on the task for workers and reviewers.</p>}
           </section>
         );
       case "attachments":

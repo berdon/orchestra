@@ -27,7 +27,8 @@ use crate::{
     },
     services::{
         agents, authorization, command_authorization, database, pi_sessions, policies,
-        project_settings, role_runtime, roles, task_attachments, tasks, workflows,
+        project_settings, role_runtime, roles, task_attachments, task_file_references, tasks,
+        workflows,
     },
 };
 
@@ -106,6 +107,9 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "get_task",
     "get_task_context",
     "list_task_repositories",
+    "list_task_file_references",
+    "add_task_file_reference",
+    "remove_task_file_reference",
     "create_task",
     "create_subtask",
     "update_task",
@@ -976,6 +980,28 @@ fn invoke_bridge_command(
             serde_json::to_value(task.task_repositories)
                 .map_err(|error| format!("Unable to serialize task repositories: {error}"))
         }
+        "list_task_file_references" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(task_file_references::load_task_file_references(connection, &task_id)?)
+                .map_err(|error| format!("Unable to serialize task file references: {error}"))
+        }
+        "add_task_file_reference" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            let input = serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                .map_err(|error| format!("Unable to parse task file reference input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(task_file_references::add_task_file_reference(&mut writable, &task_id, input)?)
+                .map_err(|error| format!("Unable to serialize task file reference: {error}"))
+        }
+        "remove_task_file_reference" => {
+            let reference_id = require_string(&payload, "referenceId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            let writable = database::open_connection()?;
+            serde_json::to_value(task_file_references::remove_task_file_reference(&writable, &reference_id)?)
+                .map_err(|error| format!("Unable to serialize removed task file reference: {error}"))
+        }
         "create_task" => {
             command_authorization::require_permission(connection, authorization, "tasks.create")?;
             let input: TaskUpsertInput =
@@ -1362,7 +1388,10 @@ fn require_string(payload: &Value, key: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{database::initialize_database_at, policies};
+    use crate::{
+        models::TaskUpsertInput,
+        services::{database::initialize_database_at, policies, tasks},
+    };
     use std::{
         env,
         path::PathBuf,
@@ -1452,6 +1481,69 @@ mod tests {
             .expect("bridge response should read");
         let body = response.split("\r\n\r\n").nth(1).unwrap_or("{}");
         serde_json::from_str(body).expect("bridge response body should parse")
+    }
+
+    #[test]
+    fn task_file_reference_commands_round_trip_through_bridge() {
+        let mut connection = open_test_connection("tool-bridge-task-files");
+        let now = "2026-03-22T00:00:00Z";
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'repo-1', ?1, ?1)",
+                [now],
+            )
+            .expect("project should seed");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-1', 'project-1', 'repo', 'Repo', '/tmp/repo', NULL, 'main', ?1, ?1)",
+                [now],
+            )
+            .expect("repository should seed");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-1"),
+            TaskUpsertInput {
+                title: "Task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: Some("repo-1".into()),
+                repository_ids: vec!["repo-1".into()],
+                parent_task_id: None,
+                archived: None,
+            },
+        )
+        .expect("task should seed");
+        crate::services::task_file_references::add_task_file_reference(
+            &mut connection,
+            &task.id,
+            crate::models::TaskFileReferenceInput {
+                repository_id: "repo-1".into(),
+                relative_path: "docs/design.md".into(),
+            },
+        )
+        .expect("file reference should seed");
+
+        let listed = invoke_bridge_command(
+            &connection,
+            "list_task_file_references",
+            Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            }),
+            json!({ "taskId": task.id }),
+        )
+        .expect("list_task_file_references should succeed");
+        assert_eq!(listed.as_array().map(|items| items.len()), Some(1));
+        assert_eq!(
+            listed.pointer("/0/relativePath").and_then(Value::as_str),
+            Some("docs/design.md")
+        );
     }
 
     #[test]
