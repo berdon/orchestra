@@ -85,8 +85,8 @@ Suggested fields:
 - `updatedAt`
 
 Notes:
-- An idle instance can be reused for the next queue entry for the same role within the same project.
-- The instance owns the runtime session/worktree association.
+- Role instances are single-use transient workers and must not be reused for later queue entries.
+- The instance owns the runtime session/worktree association for exactly one dispatched assignment.
 - Effective permissions for the instance should be resolved from the role's attached policies plus direct permissions.
 
 ## Dispatch model
@@ -102,10 +102,10 @@ When work enters a role-owned lane:
 
 When dispatch runs for a role in a project:
 1. count non-terminal instances for the role in that project
-2. if active instance count is below `role.capacity`, create or reuse an available instance
+2. if active instance count is below `role.capacity`, create a fresh instance for the queued entry
 3. assign the oldest queued entry (FIFO)
-4. provision a disposable worktree if needed
-5. create or resume a session for the instance
+4. provision a disposable worktree/runtime directory for that instance
+5. create a fresh session for the instance
 6. mark queue entry `assigned`
 7. mark instance `running`
 8. log `role.instance.assigned`
@@ -114,9 +114,10 @@ When dispatch runs for a role in a project:
 
 When work finishes or is manually released:
 1. mark queue entry terminal (`completed`/`canceled`)
-2. update instance to `idle` or terminal state
-3. keep the session/worktree attached to the instance for reuse until the operator disposes it
-4. run dispatch again for the next queued entry
+2. update instance to a terminal state
+3. do not return the instance to `idle` for reuse
+4. keep the session/worktree inspectable until disposed according to current cleanup policy
+5. run dispatch again for the next queued entry using a fresh instance
 
 ## Session policy
 
