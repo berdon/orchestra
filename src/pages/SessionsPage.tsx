@@ -201,6 +201,23 @@ export function SessionsPage({
                 </div>
               </div>
 
+              {selectedSession.debugInfo ? (
+                <section className="task-section" data-role="session-debug-paths">
+                  <div className="task-section__header">
+                    <div>
+                      <p className="eyebrow">Debug paths</p>
+                      <h4>Resolved runtime paths</h4>
+                    </div>
+                  </div>
+                  <div className="workforce-meta-grid muted-copy">
+                    <span>Project: {selectedSession.debugInfo.projectRoot ?? "—"}</span>
+                    <span>Managed repository: {selectedSession.debugInfo.managedRepositoryPath ?? "—"}</span>
+                    <span>Worktree: {selectedSession.debugInfo.worktreePath ?? "—"}</span>
+                    <span>Session cwd: {selectedSession.debugInfo.sessionCwd ?? "—"}</span>
+                  </div>
+                </section>
+              ) : null}
+
               <div className="session-transcript-wrap">
                 <div
                   className="session-transcript"

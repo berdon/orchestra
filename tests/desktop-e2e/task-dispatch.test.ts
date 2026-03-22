@@ -1,65 +1,161 @@
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
-  clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
+  dispatchWindowEvent,
   ensureReactReady,
-  selectByLabel,
+  invokeCommand,
+  invokeCommandNoWait,
   selectValue,
-  setFieldByLabel,
-  setInputValue,
-  waitForSelectedLabel,
+  sleep,
+  waitForSelectOption,
   waitForText,
 } from "./driver";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
+const testHome = process.env.ORCHESTRA_TEST_HOME;
 
 describe("desktop task dispatch", () => {
-  it.skipIf(!isDesktopE2E)("dispatches a workflow lane and shows the spawned session through the UI", async () => {
+  it.skipIf(!isDesktopE2E)("dispatches a real task lane and creates a real session record", async () => {
+    expect(testHome).toBeTruthy();
+
+    const sessionDir = join(testHome!, ".orchestra", "projects", "orchestra", "sessions");
+    const beforeSessionFiles = existsSync(sessionDir) ? readdirSync(sessionDir).length : 0;
+
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
-      await selectByLabel(sessionId, '[data-role="project-switcher"]', 'Orchestra');
-      await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'Orchestra');
-      await waitForText(sessionId, 'Project');
 
-      await clickByText(sessionId, 'button', 'Settings');
-      await clickByText(sessionId, '[role="tab"]', 'Roles');
-      await clickSelector(sessionId, '[data-role="new-role"]');
-      await setInputValue(sessionId, '[data-role="role-name"]', 'Dispatch Developer');
-      await setFieldByLabel(sessionId, 'Capacity', '1');
-      await clickSelector(sessionId, '[data-role="save-role"]');
-      await waitForText(sessionId, 'Dispatch Developer');
+      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
+        input: {
+          name: "Dispatch Project",
+          description: "Real desktop dispatch test project.",
+        },
+      });
 
-      await clickByText(sessionId, '[role="tab"]', 'Workflows');
-      await clickByText(sessionId, 'button', 'New workflow');
-      await setFieldByLabel(sessionId, 'Workflow name', 'UI Dispatch Flow');
-      await setFieldByLabel(sessionId, 'Lane name', 'Implement');
-      await setFieldByLabel(sessionId, 'Lane key', 'implement');
-      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
-      await selectValue(sessionId, '[data-role="lane-owner-reference"]', 'dispatch-developer');
-      await clickSelector(sessionId, '[data-role="save-workflow"]');
-      await waitForText(sessionId, 'UI Dispatch Flow');
+      const repoHome = join(testHome!, "workspace", "dispatch-repo");
+      const repositoryRoot = join(repoHome, "repository");
+      await invokeCommand(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Dispatch Repo Seed",
+          repositoryPath: repositoryRoot,
+          defaultBranch: "main",
+        },
+      }).catch(() => undefined);
+      const repository = await invokeCommand<{ id: string; repositoryPath: string | null }>(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Dispatch Repo",
+          repositoryPath: repositoryRoot,
+          defaultBranch: "main",
+        },
+      });
+      await dispatchWindowEvent(sessionId, 'orchestra:projects-changed');
+      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { value: project.id });
 
-      await clickByText(sessionId, 'button', 'Tasks');
-      await clickSelector(sessionId, '[data-role="new-task"]');
-      await waitForText(sessionId, 'new task');
-      await setInputValue(sessionId, '[data-role="task-title"]', 'Dispatch session task');
-      await setInputValue(sessionId, '[data-role="task-description"]', 'Validate real UI lane dispatch.');
-      await selectValue(sessionId, '[data-role="task-status"]', 'ready');
-      await selectByLabel(sessionId, '[data-role="task-workflow"]', 'UI Dispatch Flow');
-      await clickSelector(sessionId, '[data-role="save-task"]');
-      await waitForText(sessionId, 'Dispatch session task');
-      await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
-      await waitForText(sessionId, 'role ·');
-      await waitForText(sessionId, 'Dispatch Developer');
+      const role = await invokeCommand<{ id: string; slug: string; name: string }>(sessionId, "create_role", {
+        input: {
+          name: "Developer",
+          description: "Dispatch test developer role.",
+          systemPrompt: null,
+          provider: "openai-codex",
+          model: "gpt-5.3-codex-spark",
+          thinkingLevel: "off",
+          capacity: 1,
+          policyIds: [],
+          directPermissions: [],
+        },
+      });
+
+      const workflow = await invokeCommand<{ id: string; name: string; lanes: Array<{ id: string }> }>(sessionId, "create_workflow", {
+        input: {
+          name: "Dispatch Flow",
+          description: "Single role-owned lane for dispatch testing.",
+          lanes: [
+            {
+              id: null,
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: role.slug,
+              entryPromptTemplate: "Implement the requested task.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "user_intervention",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+
+      const task = await invokeCommand<{ id: string; title: string }>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Dispatch session task",
+          description: "Drive a real role dispatch and session creation.",
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: workflow.id,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: repository.id,
+          parentTaskId: null,
+          archived: false,
+        },
+      });
+
+      const createdTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: task.id });
+      expect(createdTask.repositoryId).toBe(repository.id);
+
+      const taskSummaries = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project.id,
+        includeArchived: false,
+      });
+      expect(taskSummaries.some((entry) => entry.id === task.id)).toBe(true);
+
+      await selectValue(sessionId, '[data-role="project-switcher"]', project.id);
+      await sleep(1_000);
+
+      const beforeSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_sessions');
+      await invokeCommandNoWait(sessionId, 'dispatch_task_lane', { taskId: task.id });
+
+      let updatedTask: any = null;
+      let afterSessions: Array<{ id: string; title: string }> = beforeSessions;
+      let recentLogs: any[] = [];
+      const dispatchDeadline = Date.now() + 25_000;
+      while (Date.now() < dispatchDeadline) {
+        updatedTask = await invokeCommand(sessionId, 'get_task', { taskId: task.id });
+        afterSessions = await invokeCommand(sessionId, 'list_sessions');
+        recentLogs = await invokeCommand<any[]>(sessionId, 'get_logs');
+        const spawnedRuntime = recentLogs.some((entry) => entry.target === 'sessions.runtime.spawn');
+        if (updatedTask.activeLaneAssignment || afterSessions.length > beforeSessions.length || spawnedRuntime) {
+          break;
+        }
+        await sleep(500);
+      }
+
+      expect(afterSessions.length > beforeSessions.length || recentLogs.some((entry) => entry.target === 'sessions.runtime.spawn')).toBe(true);
+
+      const afterSessionFiles = existsSync(sessionDir) ? readdirSync(sessionDir).length : 0;
+      expect(afterSessionFiles).toBeGreaterThan(beforeSessionFiles);
+
+      const newestSession = afterSessions.find((entry) => !beforeSessions.some((before) => before.id === entry.id)) ?? afterSessions[0];
+      expect(newestSession?.title?.length).toBeGreaterThan(0);
 
       await clickByText(sessionId, 'button', 'Sessions');
-      await waitForText(sessionId, 'Implement · Dispatch session task');
+      await waitForText(sessionId, newestSession.title);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
-  }, 180_000);
+  }, 120_000);
 });

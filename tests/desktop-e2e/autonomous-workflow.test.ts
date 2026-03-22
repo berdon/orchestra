@@ -58,8 +58,7 @@ describe("desktop autonomous workflow", () => {
         projectId: project.id,
         input: {
           name: "Autonomous Workflow Repo",
-          localPath: join(testHome!, "workspace", "autonomous-workflow-repo"),
-          remoteUrl: null,
+          repositoryPath: join(testHome!, "workspace", "autonomous-workflow-repo"),
           defaultBranch: "main",
         },
       });

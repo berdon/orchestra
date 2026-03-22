@@ -36,8 +36,9 @@ export interface RepositoryRecord {
   projectId: string;
   slug: string;
   name: string;
-  localPath?: string | null;
-  remoteUrl?: string | null;
+  repositoryPath?: string | null;
+  sourcePath?: string | null;
+  sourceKind?: "local" | "remote" | null;
   defaultBranch?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -54,8 +55,7 @@ export interface ProjectUpsertInput {
 
 export interface RepositoryUpsertInput {
   name: string;
-  localPath?: string | null;
-  remoteUrl?: string | null;
+  repositoryPath?: string | null;
   defaultBranch?: string | null;
 }
 
@@ -86,6 +86,13 @@ export interface SessionEvent {
 
 export type SessionActivityState = "idle" | "thinking" | "streaming" | "tool_running" | "error";
 
+export interface SessionDebugInfo {
+  projectRoot?: string | null;
+  managedRepositoryPath?: string | null;
+  worktreePath?: string | null;
+  sessionCwd?: string | null;
+}
+
 export interface SessionRecord {
   id: string;
   title: string;
@@ -97,6 +104,7 @@ export interface SessionRecord {
   activityState?: SessionActivityState;
   activeToolName?: string | null;
   lastActivityAt?: string | null;
+  debugInfo?: SessionDebugInfo | null;
 }
 
 export interface SessionScrollState {

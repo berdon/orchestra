@@ -28,8 +28,9 @@ pub struct RepositoryRecord {
     pub project_id: String,
     pub slug: String,
     pub name: String,
-    pub local_path: Option<String>,
-    pub remote_url: Option<String>,
+    pub repository_path: Option<String>,
+    pub source_path: Option<String>,
+    pub source_kind: Option<String>,
     pub default_branch: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -59,8 +60,7 @@ pub struct ProjectUpsertInput {
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryUpsertInput {
     pub name: String,
-    pub local_path: Option<String>,
-    pub remote_url: Option<String>,
+    pub repository_path: Option<String>,
     pub default_branch: Option<String>,
 }
 
@@ -147,6 +147,15 @@ pub struct SessionEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionDebugInfo {
+    pub project_root: Option<String>,
+    pub managed_repository_path: Option<String>,
+    pub worktree_path: Option<String>,
+    pub session_cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
     pub id: String,
     pub title: String,
@@ -155,6 +164,8 @@ pub struct SessionRecord {
     pub updated_at: String,
     pub subscribed: bool,
     pub events: Vec<SessionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_info: Option<SessionDebugInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]

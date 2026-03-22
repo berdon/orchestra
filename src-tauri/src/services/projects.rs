@@ -164,17 +164,21 @@ pub fn create_repository(
     if normalized.name.is_empty() {
         return Err("Repository name is required.".into());
     }
-    if normalized.local_path.is_none() {
-        return Err("Repository local path is required.".into());
+    if normalized.repository_path.is_none() {
+        return Err("Repository path is required.".into());
     }
 
     let project = get_project(connection, project_id)?;
     let repository_id = format!("repo-{}", Uuid::new_v4().simple());
     let slug = unique_repository_slug(connection, project_id, &normalized.name, None)?;
+    let source_path = normalized
+        .repository_path
+        .as_deref()
+        .expect("validated repository path");
     let managed_checkout_dir = ensure_managed_repository_checkout(
         &project,
         &slug,
-        normalized.local_path.as_deref().expect("validated local path"),
+        source_path,
         normalized.default_branch.as_deref().unwrap_or("main"),
     )?;
     let now = now_iso();
@@ -184,7 +188,7 @@ pub fn create_repository(
             INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
             "#,
-            params![repository_id, project_id, slug, normalized.name, managed_checkout_dir.display().to_string(), normalized.remote_url, normalized.default_branch, now],
+            params![repository_id, project_id, slug, normalized.name, managed_checkout_dir.display().to_string(), Some(source_path.to_string()), normalized.default_branch, now],
         )
         .map_err(|error| format!("Unable to create repository: {error}"))?;
 
@@ -204,16 +208,20 @@ pub fn update_repository(
     } else {
         unique_repository_slug(connection, &existing.project_id, &normalized.name, Some(repository_id))?
     };
+    let source_path = normalized
+        .repository_path
+        .as_deref()
+        .expect("validated repository path");
     let managed_checkout_dir = ensure_managed_repository_checkout(
         &project,
         &slug,
-        normalized.local_path.as_deref().expect("validated local path"),
+        source_path,
         normalized.default_branch.as_deref().unwrap_or("main"),
     )?;
     connection
         .execute(
             "UPDATE repositories SET slug = ?2, name = ?3, local_path = ?4, remote_url = ?5, default_branch = ?6, updated_at = ?7 WHERE id = ?1",
-            params![repository_id, slug, normalized.name, managed_checkout_dir.display().to_string(), normalized.remote_url, normalized.default_branch, now_iso()],
+            params![repository_id, slug, normalized.name, managed_checkout_dir.display().to_string(), Some(source_path.to_string()), normalized.default_branch, now_iso()],
         )
         .map_err(|error| format!("Unable to update repository {repository_id}: {error}"))?;
     get_repository(connection, repository_id)
@@ -293,17 +301,15 @@ fn normalize_project_input(mut input: ProjectUpsertInput) -> ProjectUpsertInput 
 
 fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUpsertInput {
     input.name = input.name.trim().to_string();
-    input.local_path = input.local_path.and_then(|value| {
+    input.repository_path = input.repository_path.and_then(|value| {
         let trimmed = value.trim();
         if trimmed.is_empty() {
             None
+        } else if is_remote_repository_path(trimmed) {
+            Some(trimmed.to_string())
         } else {
             Some(normalize_repository_local_path(trimmed).display().to_string())
         }
-    });
-    input.remote_url = input.remote_url.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
     });
     input.default_branch = input.default_branch.and_then(|value| {
         let trimmed = value.trim();
@@ -314,6 +320,14 @@ fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUps
 
 fn normalize_repository_local_path(path: &str) -> PathBuf {
     PathBuf::from(path)
+}
+
+fn is_remote_repository_path(path: &str) -> bool {
+    path.starts_with("http://")
+        || path.starts_with("https://")
+        || path.starts_with("ssh://")
+        || path.starts_with("git://")
+        || (path.contains('@') && path.contains(':') && !path.starts_with('/'))
 }
 
 fn ensure_managed_repository_checkout(
@@ -334,6 +348,22 @@ fn ensure_managed_repository_checkout(
     }
 
     if managed_checkout_dir.join(".git").exists() {
+        return Ok(managed_checkout_dir);
+    }
+
+    if is_remote_repository_path(source_path) {
+        let status = std::process::Command::new("git")
+            .arg("clone")
+            .arg(source_path)
+            .arg(&managed_checkout_dir)
+            .status()
+            .map_err(|error| format!("Unable to clone repository from {source_path}: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "Unable to clone repository from {source_path} into {}",
+                managed_checkout_dir.display()
+            ));
+        }
         return Ok(managed_checkout_dir);
     }
 
@@ -445,13 +475,21 @@ fn repository_slug_exists(connection: &Connection, project_id: &str, slug: &str,
 }
 
 fn read_repository(row: &rusqlite::Row<'_>) -> rusqlite::Result<RepositoryRecord> {
+    let repository_path = row.get::<_, Option<String>>(4)?;
+    let source_path = row.get::<_, Option<String>>(5)?;
+    let source_kind = source_path
+        .as_deref()
+        .map(|value| if is_remote_repository_path(value) { "remote" } else { "local" })
+        .map(str::to_string);
+
     Ok(RepositoryRecord {
         id: row.get(0)?,
         project_id: row.get(1)?,
         slug: row.get(2)?,
         name: row.get(3)?,
-        local_path: row.get(4)?,
-        remote_url: row.get(5)?,
+        repository_path,
+        source_path,
+        source_kind,
         default_branch: row.get(6)?,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
