@@ -1,4 +1,4 @@
-use std::{io::Read, sync::Arc, thread};
+use std::{sync::Arc, thread};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,7 @@ use crate::{
     },
     services::{
         agents, authorization, command_authorization, database, pi_sessions, policies,
-        project_settings, role_dispatch, role_runtime, roles, task_attachments, task_file_references, tasks,
-        workflows,
+        project_settings, role_runtime, roles, task_attachments, tasks, workflows,
     },
 };
 
@@ -54,6 +53,7 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_tasks",
     "get_task",
     "get_task_context",
+    "list_task_repositories",
     "create_task",
     "create_subtask",
     "update_task",
@@ -328,6 +328,13 @@ fn invoke_bridge_command(
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             serde_json::to_value(tasks::get_task_context(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task context: {error}"))
+        }
+        "list_task_repositories" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let task = tasks::get_task_context(connection, &task_id)?;
+            serde_json::to_value(task.task_repositories)
+                .map_err(|error| format!("Unable to serialize task repositories: {error}"))
         }
         "create_task" => {
             command_authorization::require_permission(connection, authorization, "tasks.create")?;

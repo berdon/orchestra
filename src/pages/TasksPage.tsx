@@ -59,6 +59,7 @@ function createBlankTaskDraft(): TaskUpsertInput {
     assigneeType: "unassigned",
     assigneeId: null,
     repositoryId: null,
+    repositoryIds: [],
     parentTaskId: null,
     archived: false,
   };
@@ -91,6 +92,7 @@ function taskToDraft(task: TaskDetail): TaskUpsertInput {
     assigneeType: task.assigneeType,
     assigneeId: task.assigneeId ?? null,
     repositoryId: task.repositoryId ?? null,
+    repositoryIds: task.repositoryIds ?? [],
     parentTaskId: task.parentTaskId ?? null,
     archived: task.archived,
   };
@@ -160,6 +162,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [repositories, setRepositories] = useState<RepositoryRecord[]>([]);
+  const [defaultRepositoryId, setDefaultRepositoryId] = useState<string | null>(null);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
   const [taskDraft, setTaskDraft] = useState<TaskUpsertInput>(createBlankTaskDraft);
   const [commentDraft, setCommentDraft] = useState<TaskCommentInput>(createBlankCommentDraft);
@@ -286,6 +289,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       setAgents((current) => (sameData(current, nextAgents) ? current : nextAgents));
       setRoles((current) => (sameData(current, nextRoles) ? current : nextRoles));
       setRepositories((current) => (sameData(current, nextProject?.repositories ?? []) ? current : nextProject?.repositories ?? []));
+      setDefaultRepositoryId(nextProject?.defaultRepositoryId ?? null);
 
       const workflowIds: string[] = Array.from(
         new Set(
@@ -317,7 +321,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       if (!options?.silent) {
         setCommentDraft(createBlankCommentDraft());
         setFileReferenceDraft({
-          repositoryId: task.repositoryId ?? repositories[0]?.id ?? "",
+          repositoryId: task.repositoryId ?? task.repositoryIds?.[0] ?? repositories[0]?.id ?? "",
           relativePath: "",
         });
       }
@@ -444,6 +448,8 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
       ...createBlankTaskDraft(),
       parentTaskId: parentTaskId ?? null,
       workflowId: workflowId ?? null,
+      repositoryIds: defaultRepositoryId ? [defaultRepositoryId] : [],
+      repositoryId: defaultRepositoryId,
     });
     setCommentDraft(createBlankCommentDraft());
     setFileReferenceDraft({ repositoryId: repositories[0]?.id ?? "", relativePath: "" });
@@ -674,6 +680,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
             setTaskDraftDirty(true);
           }}
           onSave={() => void handleSaveCreateTask()}
+          repositories={repositories}
           roles={roles}
           saving={savingTask}
           workflows={workflowSummaries}

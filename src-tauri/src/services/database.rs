@@ -338,6 +338,23 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_attachments_task_id
                 ON task_attachments(task_id, created_at ASC);
 
+            CREATE TABLE IF NOT EXISTS task_repositories (
+                task_id TEXT NOT NULL,
+                repository_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, repository_id),
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY(repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+            );
+
+            INSERT OR IGNORE INTO task_repositories (task_id, repository_id, created_at)
+            SELECT id, repository_id, updated_at
+            FROM tasks
+            WHERE repository_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_task_repositories_task_id
+                ON task_repositories(task_id, created_at ASC);
+
             CREATE TABLE IF NOT EXISTS task_file_references (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

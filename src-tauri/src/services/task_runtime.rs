@@ -7,11 +7,11 @@ use uuid::Uuid;
 use crate::{
     models::{
         AgentDefinition, AuthorizationContext, RepositoryRecord, RoleDefinition, TaskComment,
-        TaskDetail, TaskLaneAssignment, WorkflowDefinition, WorkflowLane,
+        TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
         agent_runtime, agents, live_sessions, pi_sessions, projects, role_dispatch, role_runtime,
-        tasks, workflows,
+        task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -220,7 +220,6 @@ pub fn dispatch_task_lane(
     }
 
     let assignment_id = format!("task-assignment-{}", Uuid::new_v4().simple());
-    let prompt = build_lane_prompt(&task, &workflow, &lane);
     let now = now_iso();
 
     let assignment = match lane.assigned_entity_type.as_str() {
@@ -232,7 +231,6 @@ pub fn dispatch_task_lane(
             &workflow,
             &lane,
             &assignment_id,
-            &prompt,
             &now,
         )?,
         "agent" => dispatch_agent_lane(
@@ -243,7 +241,6 @@ pub fn dispatch_task_lane(
             &workflow,
             &lane,
             &assignment_id,
-            &prompt,
             &now,
         )?,
         other => {
@@ -305,6 +302,81 @@ fn resolve_task_runtime_project_root(
 
 fn repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
     repository.repository_path.as_ref().map(PathBuf::from)
+}
+
+fn ensure_task_repository_workspaces(task: &TaskDetail, base_cwd: &str) -> Result<(), String> {
+    if task.task_repositories.is_empty() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(task_repositories::task_repositories_root(base_cwd, &task.id))
+        .map_err(|error| {
+            format!(
+                "Unable to create task repository workspace root for task {}: {error}",
+                task.id
+            )
+        })?;
+
+    for repository in &task.task_repositories {
+        ensure_task_repository_worktree(task, base_cwd, repository)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_task_repository_worktree(
+    task: &TaskDetail,
+    base_cwd: &str,
+    repository: &TaskRepository,
+) -> Result<(), String> {
+    let Some(managed_repository_path) = repository.managed_repository_path.as_deref() else {
+        return Ok(());
+    };
+
+    let destination = task_repositories::task_repository_worktree_path(
+        base_cwd,
+        &task.id,
+        &repository.repository_slug,
+    );
+    let destination_path = PathBuf::from(&destination);
+    if destination_path.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = destination_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Unable to create task repository worktree parent {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(managed_repository_path)
+        .arg("worktree")
+        .arg("add")
+        .arg("--detach")
+        .arg(&destination_path)
+        .arg("HEAD")
+        .status()
+        .map_err(|error| {
+            format!(
+                "Unable to create task worktree for repository {}: {error}",
+                repository.repository_slug
+            )
+        })?;
+
+    if !status.success() {
+        return Err(format!(
+            "Unable to create task worktree for repository {} at {}",
+            repository.repository_slug,
+            destination_path.display()
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn start_assignment_run(
@@ -508,7 +580,6 @@ fn dispatch_role_lane(
     workflow: &WorkflowDefinition,
     lane: &WorkflowLane,
     assignment_id: &str,
-    prompt: &str,
     now: &str,
 ) -> Result<TaskLaneAssignment, String> {
     let role_slug = lane
@@ -516,6 +587,7 @@ fn dispatch_role_lane(
         .as_deref()
         .ok_or_else(|| format!("Lane {} is missing a role reference", lane.name))?;
     let role = get_role_by_slug(connection, role_slug)?;
+    let prompt = build_lane_prompt(task, workflow, lane, Some(project_root.display().to_string().as_str()));
 
     let queue_entry = role_runtime::enqueue_role_work(
         connection,
@@ -536,6 +608,9 @@ fn dispatch_role_lane(
 
     let (status, session_id, runtime_cwd, role_instance_id) = if let Some(instance_id) = queue_entry.assigned_instance_id.as_deref() {
         let instance = role_runtime::get_role_instance(connection, instance_id)?;
+        if let Some(base_cwd) = instance.worktree_path.as_deref() {
+            ensure_task_repository_workspaces(task, base_cwd)?;
+        }
         (
             ASSIGNMENT_STATUS_ACTIVE.to_string(),
             instance.session_id.clone(),
@@ -550,6 +625,8 @@ fn dispatch_role_lane(
             None,
         )
     };
+
+    let prompt = build_lane_prompt(task, workflow, lane, runtime_cwd.as_deref());
 
     let assignment = TaskLaneAssignment {
         id: assignment_id.to_string(),
@@ -585,7 +662,6 @@ fn dispatch_agent_lane(
     workflow: &WorkflowDefinition,
     lane: &WorkflowLane,
     assignment_id: &str,
-    prompt: &str,
     now: &str,
 ) -> Result<TaskLaneAssignment, String> {
     let agent_slug = lane
@@ -599,6 +675,7 @@ fn dispatch_agent_lane(
         .runtime_cwd
         .clone()
         .unwrap_or_else(|| project_root.display().to_string());
+    ensure_task_repository_workspaces(task, &runtime_cwd)?;
     let session_id = if let Some(existing_session_id) = runtime_state.main_session_id.clone() {
         if pi_sessions::get_session(session_dir, &existing_session_id, false).is_ok() {
             existing_session_id
@@ -613,13 +690,15 @@ fn dispatch_agent_lane(
         }
     } else {
         let created = pi_sessions::create_session_file(
-            project_root,
+            Path::new(&runtime_cwd),
             session_dir,
             Some(&format!("{} main session", agent.name)),
             false,
         )?;
         created.record.id
     };
+
+    let prompt = build_lane_prompt(task, workflow, lane, Some(&runtime_cwd));
 
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state(
@@ -1169,7 +1248,12 @@ fn apply_agent_session_defaults(
     Ok(())
 }
 
-fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &WorkflowLane) -> String {
+fn build_lane_prompt(
+    task: &TaskDetail,
+    workflow: &WorkflowDefinition,
+    lane: &WorkflowLane,
+    runtime_cwd: Option<&str>,
+) -> String {
     let mut sections = vec![
         format!("You are an agent working inside Orchestra on task {} — {}.", task.number, task.title),
         format!("Canonical task ID: {}", task.id),
@@ -1201,6 +1285,36 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
             .collect::<Vec<_>>()
             .join("\n");
         sections.push(format!("Blocking tasks:\n{}", blocked_lines));
+    }
+
+    if !task.task_repositories.is_empty() {
+        let repository_lines = task
+            .task_repositories
+            .iter()
+            .map(|repository| {
+                let workspace_path = runtime_cwd.map(|cwd| {
+                    task_repositories::task_repository_worktree_path(
+                        cwd,
+                        &task.id,
+                        &repository.repository_slug,
+                    )
+                });
+                match workspace_path.as_deref() {
+                    Some(path) => format!(
+                        "- {} ({}) available in this session at {}",
+                        repository.repository_name, repository.repository_slug, path
+                    ),
+                    None => format!(
+                        "- {} ({}) managed source at {}",
+                        repository.repository_name,
+                        repository.repository_slug,
+                        repository.managed_repository_path.as_deref().unwrap_or("—")
+                    ),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!("Task repositories associated to this task:\n{}", repository_lines));
     }
 
     if !task.file_references.is_empty() {
@@ -1268,6 +1382,7 @@ fn build_lane_prompt(task: &TaskDetail, workflow: &WorkflowDefinition, lane: &Wo
             "Available Orchestra task tools and exactly how to use them:",
             "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
             "- get_task_context(task_id): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
+            "- get_task_repositories(task_id): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
             "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}. Write comments for findings, progress updates, large actions taken, reviewer notes, handoff details, blockers, transition decisions, or decisions another worker must see later.",
             "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
             "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
@@ -1533,6 +1648,7 @@ mod tests {
                 assignee_type: "unassigned".into(),
                 assignee_id: None,
                 repository_id: Some("repo-prompt".into()),
+                repository_ids: vec!["repo-prompt".into()],
                 parent_task_id: None,
                 archived: None,
             },
@@ -1556,18 +1672,21 @@ mod tests {
             .cloned()
             .expect("implement lane should exist");
 
-        let prompt = build_lane_prompt(&task, &workflow, &lane);
+        let prompt = build_lane_prompt(&task, &workflow, &lane, Some(repo_root.to_string_lossy().as_ref()));
         assert!(prompt.contains("You are an agent working inside Orchestra"));
         assert!(prompt.contains("Canonical task ID:"));
         assert!(prompt.contains("- Workflow: the overall process definition attached to a task."));
         assert!(prompt.contains("- Lane: the current step of the workflow."));
         assert!(prompt.contains("How to work effectively in this session:"));
         assert!(prompt.contains("2. Immediately call get_task_context using the canonical task ID shown above"));
+        assert!(prompt.contains("Task repositories associated to this task:"));
+        assert!(prompt.contains("Orchestra repository"));
         assert!(prompt.contains("Referenced project files (live repository files, not imported snapshots):"));
         assert!(prompt.contains("docs/design.md"));
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
         assert!(prompt.contains("These names are real Orchestra tools/functions exposed in this session."));
         assert!(prompt.contains("- get_task_context(task_id): Call this tool"));
+        assert!(prompt.contains("- get_task_repositories(task_id): Call this tool"));
         assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}."));
         assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
         assert!(prompt.contains("Before you transition the task or request help, add a comment explaining exactly what happened"));
@@ -1613,6 +1732,20 @@ mod tests {
         )
         .expect("agent should create");
         let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let project_root = init_test_repo("task-runtime-role");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-role', 'orchestra', 'runtime-role', 'Runtime Role Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![project_root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
         let task = tasks::create_task(
             &mut connection,
             Some("orchestra"),
@@ -1626,20 +1759,26 @@ mod tests {
                 current_lane_id: Some("lane-implement".into()),
                 assignee_type: "unassigned".into(),
                 assignee_id: None,
-                repository_id: None,
+                repository_id: Some("repo-role".into()),
+                repository_ids: vec!["repo-role".into()],
                 parent_task_id: None,
                 archived: None,
             },
         )
         .expect("task should create");
 
-        let project_root = init_test_repo("task-runtime-role");
         let session_dir = project_root.parent().unwrap().join("sessions");
         let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
             .expect("role lane should dispatch");
         assert_eq!(assignment.worker_type, "role");
         assert!(assignment.session_id.is_some());
         assert!(assignment.role_instance_id.is_some());
+        let role_repo_workspace = assignment
+            .runtime_cwd
+            .as_deref()
+            .map(|cwd| task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-role"))
+            .expect("role runtime cwd should exist");
+        assert!(Path::new(&role_repo_workspace).exists());
 
         let updated = complete_lane_as_success(
             &mut connection,
@@ -1750,6 +1889,20 @@ mod tests {
             },
         )
         .expect("workflow should create");
+        let root = init_test_repo("task-runtime-agent");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-agent', 'orchestra', 'runtime-agent', 'Runtime Agent Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
         let task = tasks::create_task(
             &mut connection,
             Some("orchestra"),
@@ -1763,15 +1916,13 @@ mod tests {
                 current_lane_id: Some("lane-agent".into()),
                 assignee_type: "unassigned".into(),
                 assignee_id: None,
-                repository_id: None,
+                repository_id: Some("repo-agent".into()),
+                repository_ids: vec!["repo-agent".into()],
                 parent_task_id: None,
                 archived: None,
             },
         )
         .expect("task should create");
-
-        let root = unique_temp_dir("task-runtime-agent");
-        fs::create_dir_all(&root).expect("project root should create");
         let session_dir = root.join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
@@ -1780,6 +1931,12 @@ mod tests {
         assert_eq!(assignment.worker_type, "agent");
         assert_eq!(assignment.worker_id.as_deref(), Some(agent.id.as_str()));
         assert!(assignment.session_id.is_some());
+        let agent_repo_workspace = assignment
+            .runtime_cwd
+            .as_deref()
+            .map(|cwd| task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-agent"))
+            .expect("agent runtime cwd should exist");
+        assert!(Path::new(&agent_repo_workspace).exists());
 
         let updated = complete_lane_as_success(
             &mut connection,
@@ -1811,6 +1968,7 @@ mod tests {
                 assignee_type: "unassigned".into(),
                 assignee_id: None,
                 repository_id: None,
+                repository_ids: Vec::new(),
                 parent_task_id: None,
                 archived: None,
             },

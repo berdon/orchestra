@@ -3,9 +3,10 @@ use tauri::{AppHandle, State};
 use crate::{
     models::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskDependency,
-        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskUpsertInput,
+        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
+        TaskUpsertInput,
     },
-    services::{app_events, database, pi_sessions, task_attachments, task_file_references, task_runtime, tasks},
+    services::{app_events, database, pi_sessions, task_attachments, task_file_references, task_repositories, task_runtime, tasks},
     state::AppState,
 };
 
@@ -44,6 +45,19 @@ pub fn get_task(task_id: String) -> Result<TaskDetail, String> {
 pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
     let connection = database::open_connection()?;
     tasks::get_task_context(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn list_task_repositories(task_id: String) -> Result<Vec<TaskRepository>, String> {
+    let connection = database::open_connection()?;
+    let task = tasks::get_task(&connection, &task_id)?;
+    task_repositories::load_task_repositories(
+        &connection,
+        &task_id,
+        task.active_lane_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.runtime_cwd.as_deref()),
+    )
 }
 
 #[tauri::command]

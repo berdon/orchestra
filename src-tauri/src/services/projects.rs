@@ -322,7 +322,7 @@ fn normalize_repository_local_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn is_remote_repository_path(path: &str) -> bool {
+pub fn is_remote_repository_path(path: &str) -> bool {
     path.starts_with("http://")
         || path.starts_with("https://")
         || path.starts_with("ssh://")

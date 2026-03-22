@@ -142,7 +142,7 @@ export function TaskDetailPage({
         </div>
       </div>
 
-      <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} roles={roles} workflows={workflows} />
+      <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} repositories={repositories} roles={roles} workflows={workflows} />
 
       <div className="task-detail-sections">
         <section className="task-section">

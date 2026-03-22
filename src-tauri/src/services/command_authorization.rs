@@ -118,6 +118,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "tasks.read",
     ),
     (
+        "list_task_repositories",
+        "List task repositories and their workspace paths",
+        "tasks.read",
+    ),
+    (
         "list_task_file_references",
         "List task project file references",
         "tasks.read",
