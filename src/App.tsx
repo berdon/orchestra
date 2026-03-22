@@ -18,6 +18,7 @@ import {
   openLogsWindow,
   sendSessionMessage,
   setSessionModel,
+  stopSessionRuntime,
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
@@ -1617,6 +1618,38 @@ export function App() {
     }
   }
 
+  function handleStopSession(sessionId: string) {
+    const session = sessions.find((entry) => entry.id === sessionId);
+    if (!session) {
+      return;
+    }
+
+    const timestamp = nowIso();
+    setSessionActionError(null);
+
+    void stopSessionRuntime(sessionId)
+      .then((record: SessionRecord) => {
+        removePendingRun(sessionId);
+        mergeSessionRecord({
+          ...record,
+          status: "paused",
+          updatedAt: timestamp,
+          events: [
+            ...record.events,
+            {
+              id: `client-stop-${sessionId}-${timestamp}`,
+              kind: "system",
+              message: "Session run stopped by operator.",
+              timestamp,
+            },
+          ],
+        });
+      })
+      .catch((error: unknown) => {
+        setSessionActionError(error instanceof Error ? error.message : "Unable to stop session runtime.");
+      });
+  }
+
   function handleSendMessage(sessionId: string) {
     const session = sessions.find((entry) => entry.id === sessionId);
     if (!session) {
@@ -1904,6 +1937,11 @@ export function App() {
             onSendMessage={() => {
               if (selectedSession) {
                 handleSendMessage(selectedSession.id);
+              }
+            }}
+            onStopSession={() => {
+              if (selectedSession) {
+                handleStopSession(selectedSession.id);
               }
             }}
           />

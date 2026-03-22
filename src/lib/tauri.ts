@@ -47,6 +47,7 @@ const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
 const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
+const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
 const CURRENT_PROJECT_ID = "orchestra";
 
 function sessionStorageKey() {
@@ -360,6 +361,18 @@ function getMockSessionModels() {
 
 function setMockSessionModels(models: Record<string, SessionModel>) {
   setStoredValue(sessionModelStorageKey(), models);
+}
+
+function getMockActiveSessionRuns() {
+  return getStoredValue<Record<string, string>>(ACTIVE_RUN_STORAGE_KEY) ?? {};
+}
+
+function setMockActiveSessionRuns(runs: Record<string, string>) {
+  setStoredValue(ACTIVE_RUN_STORAGE_KEY, runs);
+}
+
+function isMockRunStillActive(sessionId: string, runId: string) {
+  return getMockActiveSessionRuns()[sessionId] === runId;
 }
 
 function ensureMockSessionModel(sessionId: string) {
@@ -1331,6 +1344,31 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
   return invoke<SessionRecord>("unsubscribe_session", { sessionId });
 }
 
+export async function stopSessionRuntime(sessionId: string): Promise<SessionRecord> {
+  if (!isTauriAvailable()) {
+    const activeRuns = getMockActiveSessionRuns();
+    delete activeRuns[sessionId];
+    setMockActiveSessionRuns(activeRuns);
+
+    const session = updateMockSession(sessionId, (current) => ({
+      ...current,
+      status: "paused",
+      updatedAt: nowIso(),
+      events: [...current.events, createEvent("system", "Session run stopped by operator.")],
+    }));
+
+    if (!session) {
+      throw new Error(`Unable to find session ${sessionId}`);
+    }
+
+    appendMockLog("info", "sessions.stop", `Stopped session runtime ${sessionId}`);
+    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.stop" });
+    return session;
+  }
+
+  return invoke<SessionRecord>("stop_session_runtime", { sessionId });
+}
+
 export async function listPiModels(): Promise<SessionModel[]> {
   if (!isTauriAvailable()) {
     return MOCK_MODELS;
@@ -1463,6 +1501,9 @@ export async function sendSessionMessage(sessionId: string, message: string, run
       });
 
       window.setTimeout(() => {
+        if (!isMockRunStillActive(sessionId, runId)) {
+          return;
+        }
         const assistantMessage = {
           ...assistantMessageBase,
           content: [{ type: "text", text: assistantReply }],

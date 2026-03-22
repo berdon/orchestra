@@ -509,6 +509,41 @@ pub async fn set_session_model(
 }
 
 #[tauri::command]
+pub async fn stop_session_runtime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRecord, String> {
+    let had_runtime = if let Some(runtime) = state.remove_session_runtime(&session_id)? {
+        runtime.abort_active_run();
+        true
+    } else {
+        false
+    };
+    state.clear_active_session_run(&session_id)?;
+
+    let session_id_for_task = session_id.clone();
+    let mut record = spawn_blocking(move || {
+        let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
+        load_decorated_session_record(&session_dir, &session_id_for_task, true)
+    })
+    .await
+    .map_err(|error| format!("Unable to join stop_session_runtime task: {error}"))??;
+
+    if had_runtime {
+        record.status = "paused".into();
+    }
+
+    state.log(
+        "info",
+        "sessions.stop",
+        &format!("Stopped session runtime {}", session_id),
+    );
+    let _ = app_events::emit_session_change(&app, "sessions.stop", [session_id.clone()]);
+    Ok(record)
+}
+
+#[tauri::command]
 pub async fn send_session_message(
     app: AppHandle,
     state: State<'_, AppState>,
