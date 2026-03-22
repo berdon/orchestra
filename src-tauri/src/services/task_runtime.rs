@@ -10,8 +10,8 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_runtime, agents, live_sessions, pi_sessions, projects, role_dispatch, role_runtime,
-        task_repositories, tasks, workflows,
+        agent_runtime, agents, live_sessions, pi_sessions, project_settings, projects,
+        role_dispatch, role_runtime, task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -129,7 +129,9 @@ pub fn activate_queued_role_assignments(
               AND rqe.assigned_instance_id IS NOT NULL
             "#,
         )
-        .map_err(|error| format!("Unable to prepare queued role assignment activation query: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to prepare queued role assignment activation query: {error}")
+        })?;
 
     let candidates = statement
         .query_map([], |row| {
@@ -140,9 +142,13 @@ pub fn activate_queued_role_assignments(
                 row.get::<_, String>(16)?,
             ))
         })
-        .map_err(|error| format!("Unable to query queued role assignment activation candidates: {error}"))?
+        .map_err(|error| {
+            format!("Unable to query queued role assignment activation candidates: {error}")
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to collect role assignment activation candidates: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to collect role assignment activation candidates: {error}")
+        })?;
 
     let mut activated = Vec::new();
     for (assignment_id, session_id, runtime_cwd, instance_id) in candidates {
@@ -180,7 +186,12 @@ pub fn activate_queued_role_assignments(
                 read_assignment,
             )
             .optional()
-            .map_err(|error| format!("Unable to reload activated role assignment {}: {error}", assignment_id))?
+            .map_err(|error| {
+                format!(
+                    "Unable to reload activated role assignment {}: {error}",
+                    assignment_id
+                )
+            })?
         {
             activated.push(assignment);
         }
@@ -205,11 +216,15 @@ pub fn dispatch_task_lane(
     let runtime_project_root = resolve_task_runtime_project_root(connection, project_root, &task)?;
 
     if task.archived {
-        return Err(format!("Task {task_id} is archived and cannot be dispatched"));
+        return Err(format!(
+            "Task {task_id} is archived and cannot be dispatched"
+        ));
     }
 
     if task.dependency_blocked {
-        return Err(format!("Task {task_id} is blocked by unresolved dependencies"));
+        return Err(format!(
+            "Task {task_id} is blocked by unresolved dependencies"
+        ));
     }
 
     if lane.assigned_entity_type == "user" {
@@ -259,7 +274,10 @@ pub fn maybe_auto_dispatch_task(
     task_id: &str,
 ) -> Result<Option<TaskLaneAssignment>, String> {
     let task = tasks::get_task_context(connection, task_id)?;
-    if task.archived || task.dependency_blocked || !matches!(task.status.as_str(), "ready" | "in_progress") {
+    if task.archived
+        || task.dependency_blocked
+        || !matches!(task.status.as_str(), "ready" | "in_progress")
+    {
         return Ok(None);
     }
 
@@ -304,18 +322,38 @@ fn repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
     repository.repository_path.as_ref().map(PathBuf::from)
 }
 
+struct WorkerPromptContext {
+    worker_type_label: &'static str,
+    worker_name: String,
+    worker_slug: String,
+    system_prompt: Option<String>,
+    project_overlay_prompt: Option<String>,
+}
+
+fn load_worker_overlay_prompt(
+    connection: &Connection,
+    task: &TaskDetail,
+    worker_type: &str,
+    worker_slug: &str,
+) -> Result<Option<String>, String> {
+    let project = projects::get_project(connection, &task.project_id)?;
+    Ok(project_settings::get_worker_overlay(&project.slug, worker_type, worker_slug)?.prompt)
+}
+
 fn ensure_task_repository_workspaces(task: &TaskDetail, base_cwd: &str) -> Result<(), String> {
     if task.task_repositories.is_empty() {
         return Ok(());
     }
 
-    std::fs::create_dir_all(task_repositories::task_repositories_root(base_cwd, &task.id))
-        .map_err(|error| {
-            format!(
-                "Unable to create task repository workspace root for task {}: {error}",
-                task.id
-            )
-        })?;
+    std::fs::create_dir_all(task_repositories::task_repositories_root(
+        base_cwd, &task.id,
+    ))
+    .map_err(|error| {
+        format!(
+            "Unable to create task repository workspace root for task {}: {error}",
+            task.id
+        )
+    })?;
 
     for repository in &task.task_repositories {
         ensure_task_repository_worktree(task, base_cwd, repository)?;
@@ -424,7 +462,10 @@ pub fn queue_comment_delivery(
     assignment: &TaskLaneAssignment,
     comment: &TaskComment,
 ) -> Result<(), String> {
-    let message = format!("Task comment from {}:\n\n{}", comment.author, comment.message);
+    let message = format!(
+        "Task comment from {}:\n\n{}",
+        comment.author, comment.message
+    );
 
     match assignment.worker_type.as_str() {
         "agent" => {
@@ -439,7 +480,11 @@ pub fn queue_comment_delivery(
                     source_task_id: Some(assignment.task_id.clone()),
                     source_workflow_id: Some(assignment.workflow_id.clone()),
                     source_lane_id: Some(assignment.lane_id.clone()),
-                    delivery_mode: if comment.interrupt_agent { "steer".into() } else { "follow_up".into() },
+                    delivery_mode: if comment.interrupt_agent {
+                        "steer".into()
+                    } else {
+                        "follow_up".into()
+                    },
                     title: format!("Comment for task {}", assignment.task_id),
                     message,
                 },
@@ -587,7 +632,20 @@ fn dispatch_role_lane(
         .as_deref()
         .ok_or_else(|| format!("Lane {} is missing a role reference", lane.name))?;
     let role = get_role_by_slug(connection, role_slug)?;
-    let prompt = build_lane_prompt(task, workflow, lane, Some(project_root.display().to_string().as_str()));
+    let worker_prompt = WorkerPromptContext {
+        worker_type_label: "role",
+        worker_name: role.name.clone(),
+        worker_slug: role.slug.clone(),
+        system_prompt: normalize_optional(role.system_prompt.clone()),
+        project_overlay_prompt: load_worker_overlay_prompt(connection, task, "role", &role.slug)?,
+    };
+    let prompt = build_lane_prompt(
+        task,
+        workflow,
+        lane,
+        Some(project_root.display().to_string().as_str()),
+        Some(&worker_prompt),
+    );
 
     let queue_entry = role_runtime::enqueue_role_work(
         connection,
@@ -606,27 +664,29 @@ fn dispatch_role_lane(
     let _ = role_dispatch::dispatch_role_queue(connection, project_root, session_dir, &role.id)?;
     let queue_entry = role_runtime::get_role_queue_entry(connection, &queue_entry.id)?;
 
-    let (status, session_id, runtime_cwd, role_instance_id) = if let Some(instance_id) = queue_entry.assigned_instance_id.as_deref() {
-        let instance = role_runtime::get_role_instance(connection, instance_id)?;
-        if let Some(base_cwd) = instance.worktree_path.as_deref() {
-            ensure_task_repository_workspaces(task, base_cwd)?;
-        }
-        (
-            ASSIGNMENT_STATUS_ACTIVE.to_string(),
-            instance.session_id.clone(),
-            instance.worktree_path.clone(),
-            Some(instance.id),
-        )
-    } else {
-        (
-            ASSIGNMENT_STATUS_QUEUED.to_string(),
-            None,
-            None,
-            None,
-        )
-    };
+    let (status, session_id, runtime_cwd, role_instance_id) =
+        if let Some(instance_id) = queue_entry.assigned_instance_id.as_deref() {
+            let instance = role_runtime::get_role_instance(connection, instance_id)?;
+            if let Some(base_cwd) = instance.worktree_path.as_deref() {
+                ensure_task_repository_workspaces(task, base_cwd)?;
+            }
+            (
+                ASSIGNMENT_STATUS_ACTIVE.to_string(),
+                instance.session_id.clone(),
+                instance.worktree_path.clone(),
+                Some(instance.id),
+            )
+        } else {
+            (ASSIGNMENT_STATUS_QUEUED.to_string(), None, None, None)
+        };
 
-    let prompt = build_lane_prompt(task, workflow, lane, runtime_cwd.as_deref());
+    let prompt = build_lane_prompt(
+        task,
+        workflow,
+        lane,
+        runtime_cwd.as_deref(),
+        Some(&worker_prompt),
+    );
 
     let assignment = TaskLaneAssignment {
         id: assignment_id.to_string(),
@@ -649,7 +709,13 @@ fn dispatch_role_lane(
 
     insert_assignment(connection, &assignment)?;
     if let Some(session_id) = session_id.as_deref() {
-        ensure_lane_run(connection, task.id.as_str(), lane.id.as_str(), session_id, now)?;
+        ensure_lane_run(
+            connection,
+            task.id.as_str(),
+            lane.id.as_str(),
+            session_id,
+            now,
+        )?;
     }
     Ok(assignment)
 }
@@ -669,6 +735,13 @@ fn dispatch_agent_lane(
         .as_deref()
         .ok_or_else(|| format!("Lane {} is missing an agent reference", lane.name))?;
     let agent = get_agent_by_slug(connection, agent_slug)?;
+    let worker_prompt = WorkerPromptContext {
+        worker_type_label: "agent",
+        worker_name: agent.name.clone(),
+        worker_slug: agent.slug.clone(),
+        system_prompt: normalize_optional(agent.system_prompt.clone()),
+        project_overlay_prompt: load_worker_overlay_prompt(connection, task, "agent", &agent.slug)?,
+    };
 
     let runtime_state = agent_runtime::ensure_agent_runtime_state(connection, &agent.id)?;
     let runtime_cwd = runtime_state
@@ -698,7 +771,13 @@ fn dispatch_agent_lane(
         created.record.id
     };
 
-    let prompt = build_lane_prompt(task, workflow, lane, Some(&runtime_cwd));
+    let prompt = build_lane_prompt(
+        task,
+        workflow,
+        lane,
+        Some(&runtime_cwd),
+        Some(&worker_prompt),
+    );
 
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state(
@@ -710,7 +789,13 @@ fn dispatch_agent_lane(
         &runtime_state.status,
         runtime_state.last_error.as_deref(),
     )?;
-    ensure_lane_run(connection, task.id.as_str(), lane.id.as_str(), &session_id, now)?;
+    ensure_lane_run(
+        connection,
+        task.id.as_str(),
+        lane.id.as_str(),
+        &session_id,
+        now,
+    )?;
     let queue_entry = agent_runtime::enqueue_agent_work(
         connection,
         crate::models::AgentQueueEntryInput {
@@ -731,7 +816,12 @@ fn dispatch_agent_lane(
         &session_id,
         &run_id,
     )?
-    .ok_or_else(|| format!("Unable to mark agent queue entry {} dispatched", queue_entry.id))?;
+    .ok_or_else(|| {
+        format!(
+            "Unable to mark agent queue entry {} dispatched",
+            queue_entry.id
+        )
+    })?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state(
         connection,
         &agent.id,
@@ -815,25 +905,41 @@ fn complete_lane(
         )?;
 
         if let Some(instance_id) = assignment.role_instance_id.as_deref() {
-            let release_outcome = if outcome == "failure" { "failure" } else { "success" };
+            let release_outcome = if outcome == "failure" {
+                "failure"
+            } else {
+                "success"
+            };
             let _ = role_dispatch::release_role_instance(
                 connection,
                 project_root,
                 session_dir,
                 instance_id,
                 release_outcome,
-                if outcome == "failure" { normalized_notes.clone() } else { None },
+                if outcome == "failure" {
+                    normalized_notes.clone()
+                } else {
+                    None
+                },
             )?;
         }
 
         if assignment.worker_type == "agent" {
             if let Some(agent_id) = assignment.worker_id.as_deref() {
-                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state(connection, agent_id)? {
+                if let Some(runtime_state) =
+                    agent_runtime::get_agent_runtime_state(connection, agent_id)?
+                {
                     if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
                         if outcome == "failure" {
-                            agent_runtime::mark_agent_queue_entry_failed(connection, queue_entry_id)?;
+                            agent_runtime::mark_agent_queue_entry_failed(
+                                connection,
+                                queue_entry_id,
+                            )?;
                         } else {
-                            agent_runtime::mark_agent_queue_entry_completed(connection, queue_entry_id)?;
+                            agent_runtime::mark_agent_queue_entry_completed(
+                                connection,
+                                queue_entry_id,
+                            )?;
                         }
                     }
                     let _ = agent_runtime::update_agent_runtime_dispatch_state(
@@ -842,8 +948,16 @@ fn complete_lane(
                         assignment.session_id.as_deref(),
                         assignment.runtime_cwd.as_deref(),
                         None,
-                        if outcome == "failure" { "needs_attention" } else { "idle" },
-                        if outcome == "failure" { normalized_notes.as_deref() } else { None },
+                        if outcome == "failure" {
+                            "needs_attention"
+                        } else {
+                            "idle"
+                        },
+                        if outcome == "failure" {
+                            normalized_notes.as_deref()
+                        } else {
+                            None
+                        },
                     )?;
                 }
             }
@@ -877,8 +991,18 @@ fn transition_task_after_completion(
                 None,
                 None,
             ),
-            "end" => (None, "completed".to_string(), Some("unassigned".to_string()), None),
-            _ => (None, "in_review".to_string(), Some("user".to_string()), None),
+            "end" => (
+                None,
+                "completed".to_string(),
+                Some("unassigned".to_string()),
+                None,
+            ),
+            _ => (
+                None,
+                "in_review".to_string(),
+                Some("user".to_string()),
+                None,
+            ),
         },
         "failure" => match lane.failure_transition_type.as_str() {
             "lane" => (
@@ -889,40 +1013,60 @@ fn transition_task_after_completion(
             ),
             _ => (None, "blocked".to_string(), Some("user".to_string()), None),
         },
-        "needs_user" => (Some(lane.id.clone()), "in_review".to_string(), Some("user".to_string()), None),
-        _ => (Some(lane.id.clone()), task.status.clone(), Some(task.assignee_type.clone()), task.assignee_id.clone()),
+        "needs_user" => (
+            Some(lane.id.clone()),
+            "in_review".to_string(),
+            Some("user".to_string()),
+            None,
+        ),
+        _ => (
+            Some(lane.id.clone()),
+            task.status.clone(),
+            Some(task.assignee_type.clone()),
+            task.assignee_id.clone(),
+        ),
     };
 
-    let (resolved_assignee_type, resolved_assignee_id, resolved_lane_id, resolved_status) = if let Some(next_lane_id) = next_lane_id {
-        let workflow = workflows::get_workflow(connection, task.workflow_id.as_deref().ok_or_else(|| format!("Task {} has no workflow", task.id))?)?;
-        if let Some(next_lane) = workflow.lanes.iter().find(|entry| entry.id == next_lane_id) {
-            let status = if next_lane.assigned_entity_type == "user" {
-                if outcome == "needs_user" { "in_review" } else { "in_review" }
+    let (resolved_assignee_type, resolved_assignee_id, resolved_lane_id, resolved_status) =
+        if let Some(next_lane_id) = next_lane_id {
+            let workflow = workflows::get_workflow(
+                connection,
+                task.workflow_id
+                    .as_deref()
+                    .ok_or_else(|| format!("Task {} has no workflow", task.id))?,
+            )?;
+            if let Some(next_lane) = workflow.lanes.iter().find(|entry| entry.id == next_lane_id) {
+                let status = if next_lane.assigned_entity_type == "user" {
+                    if outcome == "needs_user" {
+                        "in_review"
+                    } else {
+                        "in_review"
+                    }
+                } else {
+                    &resolved_status_candidate(&next_status)
+                };
+                (
+                    next_lane.assigned_entity_type.clone(),
+                    next_lane.assigned_entity_id.clone(),
+                    Some(next_lane.id.clone()),
+                    status.to_string(),
+                )
             } else {
-                &resolved_status_candidate(&next_status)
-            };
-            (
-                next_lane.assigned_entity_type.clone(),
-                next_lane.assigned_entity_id.clone(),
-                Some(next_lane.id.clone()),
-                status.to_string(),
-            )
+                (
+                    next_assignee_type.unwrap_or_else(|| task.assignee_type.clone()),
+                    next_assignee_id.or_else(|| task.assignee_id.clone()),
+                    Some(next_lane_id),
+                    next_status,
+                )
+            }
         } else {
             (
                 next_assignee_type.unwrap_or_else(|| task.assignee_type.clone()),
                 next_assignee_id.or_else(|| task.assignee_id.clone()),
-                Some(next_lane_id),
+                None,
                 next_status,
             )
-        }
-    } else {
-        (
-            next_assignee_type.unwrap_or_else(|| task.assignee_type.clone()),
-            next_assignee_id.or_else(|| task.assignee_id.clone()),
-            None,
-            next_status,
-        )
-    };
+        };
 
     connection
         .execute(
@@ -944,7 +1088,12 @@ fn transition_task_after_completion(
                 now,
             ],
         )
-        .map_err(|error| format!("Unable to update task {} after lane completion: {error}", task.id))?;
+        .map_err(|error| {
+            format!(
+                "Unable to update task {} after lane completion: {error}",
+                task.id
+            )
+        })?;
     Ok(())
 }
 
@@ -973,14 +1122,18 @@ fn validate_assignment_authorization(
             }
         }
         "agent" => {
-            if assignment.worker_type == "agent" && assignment.worker_id.as_deref() == Some(authorization.actor_id.as_str()) {
+            if assignment.worker_type == "agent"
+                && assignment.worker_id.as_deref() == Some(authorization.actor_id.as_str())
+            {
                 Ok(())
             } else {
                 Err("This agent does not own the active task lane assignment".into())
             }
         }
         "user" => Ok(()),
-        other => Err(format!("Unsupported actor type for task lane completion: {other}")),
+        other => Err(format!(
+            "Unsupported actor type for task lane completion: {other}"
+        )),
     }
 }
 
@@ -1016,7 +1169,10 @@ fn sync_task_lane_owner(
     Ok(())
 }
 
-fn insert_assignment(connection: &Connection, assignment: &TaskLaneAssignment) -> Result<(), String> {
+fn insert_assignment(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<(), String> {
     connection
         .execute(
             r#"
@@ -1059,7 +1215,12 @@ fn insert_assignment(connection: &Connection, assignment: &TaskLaneAssignment) -
                 assignment.updated_at,
             ],
         )
-        .map_err(|error| format!("Unable to insert task lane assignment {}: {error}", assignment.id))?;
+        .map_err(|error| {
+            format!(
+                "Unable to insert task lane assignment {}: {error}",
+                assignment.id
+            )
+        })?;
     Ok(())
 }
 
@@ -1174,7 +1335,12 @@ fn resolve_task_lane(
             .iter()
             .find(|lane| lane.id == current_lane_id)
             .cloned()
-            .ok_or_else(|| format!("Current lane {} was not found in workflow {}", current_lane_id, workflow.id))
+            .ok_or_else(|| {
+                format!(
+                    "Current lane {} was not found in workflow {}",
+                    current_lane_id, workflow.id
+                )
+            })
     } else {
         workflow
             .lanes
@@ -1187,7 +1353,11 @@ fn resolve_task_lane(
 
 fn get_role_by_slug(connection: &Connection, role_slug: &str) -> Result<RoleDefinition, String> {
     let role_id = connection
-        .query_row("SELECT id FROM roles WHERE slug = ?1 LIMIT 1", [role_slug], |row| row.get::<_, String>(0))
+        .query_row(
+            "SELECT id FROM roles WHERE slug = ?1 LIMIT 1",
+            [role_slug],
+            |row| row.get::<_, String>(0),
+        )
         .optional()
         .map_err(|error| format!("Unable to query role slug {role_slug}: {error}"))?
         .ok_or_else(|| format!("Role {role_slug} was not found"))?;
@@ -1196,7 +1366,11 @@ fn get_role_by_slug(connection: &Connection, role_slug: &str) -> Result<RoleDefi
 
 fn get_agent_by_slug(connection: &Connection, agent_slug: &str) -> Result<AgentDefinition, String> {
     let agent_id = connection
-        .query_row("SELECT id FROM agents WHERE slug = ?1 LIMIT 1", [agent_slug], |row| row.get::<_, String>(0))
+        .query_row(
+            "SELECT id FROM agents WHERE slug = ?1 LIMIT 1",
+            [agent_slug],
+            |row| row.get::<_, String>(0),
+        )
         .optional()
         .map_err(|error| format!("Unable to query agent slug {agent_slug}: {error}"))?
         .ok_or_else(|| format!("Agent {agent_slug} was not found"))?;
@@ -1237,7 +1411,8 @@ fn apply_agent_session_defaults(
     agent: &AgentDefinition,
 ) -> Result<(), String> {
     if let (Some(provider), Some(model)) = (agent.provider.as_deref(), agent.model.as_deref()) {
-        let _ = pi_sessions::set_session_model(project_root, session_dir, session_id, provider, model)?;
+        let _ =
+            pi_sessions::set_session_model(project_root, session_dir, session_id, provider, model)?;
     }
     let _ = pi_sessions::set_session_thinking_level(
         project_root,
@@ -1253,6 +1428,7 @@ fn build_lane_prompt(
     workflow: &WorkflowDefinition,
     lane: &WorkflowLane,
     runtime_cwd: Option<&str>,
+    worker_prompt: Option<&WorkerPromptContext>,
 ) -> String {
     let mut sections = vec![
         format!("You are an agent working inside Orchestra on task {} — {}.", task.number, task.title),
@@ -1273,7 +1449,48 @@ fn build_lane_prompt(
         format!("Task status: {}", task.status),
     ];
 
-    if let Some(description) = task.description.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(worker_prompt) = worker_prompt {
+        sections.push(format!(
+            "Assigned worker: {} {} ({})",
+            worker_prompt.worker_type_label, worker_prompt.worker_name, worker_prompt.worker_slug,
+        ));
+
+        let mut worker_sections = Vec::new();
+        if let Some(system_prompt) = worker_prompt
+            .system_prompt
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            worker_sections.push(format!(
+                "Base {} prompt:\n{}",
+                worker_prompt.worker_type_label,
+                system_prompt.trim()
+            ));
+        }
+        if let Some(overlay_prompt) = worker_prompt
+            .project_overlay_prompt
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            worker_sections.push(format!(
+                "Project-specific {} overlay prompt:\n{}",
+                worker_prompt.worker_type_label,
+                overlay_prompt.trim()
+            ));
+        }
+        if !worker_sections.is_empty() {
+            sections.push(format!(
+                "Worker-specific prompt context — follow this together with the lane instructions below:\n{}",
+                worker_sections.join("\n\n")
+            ));
+        }
+    }
+
+    if let Some(description) = task
+        .description
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         sections.push(format!("Task description:\n{}", description.trim()));
     }
 
@@ -1281,7 +1498,12 @@ fn build_lane_prompt(
         let blocked_lines = task
             .blocked_by
             .iter()
-            .map(|dependency| format!("- {} — {}", dependency.blocker.number, dependency.blocker.title))
+            .map(|dependency| {
+                format!(
+                    "- {} — {}",
+                    dependency.blocker.number, dependency.blocker.title
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         sections.push(format!("Blocking tasks:\n{}", blocked_lines));
@@ -1314,7 +1536,10 @@ fn build_lane_prompt(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        sections.push(format!("Task repositories associated to this task:\n{}", repository_lines));
+        sections.push(format!(
+            "Task repositories associated to this task:\n{}",
+            repository_lines
+        ));
     }
 
     if !task.file_references.is_empty() {
@@ -1322,22 +1547,40 @@ fn build_lane_prompt(
             .file_references
             .iter()
             .map(|reference| {
-                let status = if reference.exists { "available" } else { "missing" };
+                let status = if reference.exists {
+                    "available"
+                } else {
+                    "missing"
+                };
                 match reference.absolute_path.as_deref() {
-                    Some(path) => format!("- {}/{} ({}) at {}", reference.repository_slug, reference.relative_path, status, path),
-                    None => format!("- {}/{} ({})", reference.repository_slug, reference.relative_path, status),
+                    Some(path) => format!(
+                        "- {}/{} ({}) at {}",
+                        reference.repository_slug, reference.relative_path, status, path
+                    ),
+                    None => format!(
+                        "- {}/{} ({})",
+                        reference.repository_slug, reference.relative_path, status
+                    ),
                 }
             })
             .collect::<Vec<_>>()
             .join("\n");
-        sections.push(format!("Referenced project files (live repository files, not imported snapshots):\n{}", reference_lines));
+        sections.push(format!(
+            "Referenced project files (live repository files, not imported snapshots):\n{}",
+            reference_lines
+        ));
     }
 
     if !task.attachments.is_empty() {
         let attachment_lines = task
             .attachments
             .iter()
-            .map(|attachment| format!("- {} ({}) at {}", attachment.file_name, attachment.media_type, attachment.stored_path))
+            .map(|attachment| {
+                format!(
+                    "- {} ({}) at {}",
+                    attachment.file_name, attachment.media_type, attachment.stored_path
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         sections.push(format!("Task attachments:\n{}", attachment_lines));
@@ -1356,8 +1599,15 @@ fn build_lane_prompt(
         sections.push(format!("Recent task comments:\n{}", comment_lines));
     }
 
-    if let Some(entry_prompt) = lane.entry_prompt_template.as_deref().filter(|value| !value.trim().is_empty()) {
-        sections.push(format!("Lane-specific instruction:\n{}", entry_prompt.trim()));
+    if let Some(entry_prompt) = lane
+        .entry_prompt_template
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        sections.push(format!(
+            "Lane-specific instruction:\n{}",
+            entry_prompt.trim()
+        ));
     }
 
     sections.push(
@@ -1454,7 +1704,10 @@ mod tests {
     };
 
     use crate::{
-        models::{AgentUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput},
+        models::{
+            AgentUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput,
+            WorkflowUpsertInput,
+        },
         services::{agents, database, roles, tasks, workflows},
     };
 
@@ -1572,7 +1825,9 @@ mod tests {
                         order: Some(2),
                         assigned_entity_type: "agent".into(),
                         assigned_entity_id: Some(agent_slug.into()),
-                        entry_prompt_template: Some("Review the work and summarize findings.".into()),
+                        entry_prompt_template: Some(
+                            "Review the work and summarize findings.".into(),
+                        ),
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "lane".into(),
@@ -1621,7 +1876,8 @@ mod tests {
         let now = now_iso();
         let repo_root = unique_temp_dir("task-runtime-file-reference");
         std::fs::create_dir_all(repo_root.join("docs")).expect("docs dir should create");
-        std::fs::write(repo_root.join("docs/design.md"), "# Design\n").expect("design file should write");
+        std::fs::write(repo_root.join("docs/design.md"), "# Design\n")
+            .expect("design file should write");
         connection
             .execute(
                 "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'repo-prompt', ?1, ?1)",
@@ -1664,7 +1920,8 @@ mod tests {
         )
         .expect("file reference should add");
 
-        let task = tasks::get_task_context(&connection, &task.id).expect("task context should load");
+        let task =
+            tasks::get_task_context(&connection, &task.id).expect("task context should load");
         let lane = workflow
             .lanes
             .iter()
@@ -1672,19 +1929,29 @@ mod tests {
             .cloned()
             .expect("implement lane should exist");
 
-        let prompt = build_lane_prompt(&task, &workflow, &lane, Some(repo_root.to_string_lossy().as_ref()));
+        let prompt = build_lane_prompt(
+            &task,
+            &workflow,
+            &lane,
+            Some(repo_root.to_string_lossy().as_ref()),
+            None,
+        );
         assert!(prompt.contains("You are an agent working inside Orchestra"));
         assert!(prompt.contains("Canonical task ID:"));
         assert!(prompt.contains("- Workflow: the overall process definition attached to a task."));
         assert!(prompt.contains("- Lane: the current step of the workflow."));
         assert!(prompt.contains("How to work effectively in this session:"));
-        assert!(prompt.contains("2. Immediately call get_task_context using the canonical task ID shown above"));
+        assert!(prompt.contains(
+            "2. Immediately call get_task_context using the canonical task ID shown above"
+        ));
         assert!(prompt.contains("Task repositories associated to this task:"));
         assert!(prompt.contains("Orchestra repository"));
-        assert!(prompt.contains("Referenced project files (live repository files, not imported snapshots):"));
+        assert!(prompt
+            .contains("Referenced project files (live repository files, not imported snapshots):"));
         assert!(prompt.contains("docs/design.md"));
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
-        assert!(prompt.contains("These names are real Orchestra tools/functions exposed in this session."));
+        assert!(prompt
+            .contains("These names are real Orchestra tools/functions exposed in this session."));
         assert!(prompt.contains("- get_task_context(task_id): Call this tool"));
         assert!(prompt.contains("- get_task_repositories(task_id): Call this tool"));
         assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}."));
@@ -1693,9 +1960,107 @@ mod tests {
         assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
-        assert!(prompt.contains("You must end this lane by invoking exactly one Orchestra completion tool"));
-        assert!(prompt.contains("If any completion or transition step fails, add a task comment describing the failure"));
+        assert!(prompt
+            .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
+        assert!(prompt.contains(
+            "If any completion or transition step fails, add a task comment describing the failure"
+        ));
         assert!(prompt.contains("Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why."));
+    }
+
+    #[test]
+    fn lane_prompt_includes_worker_specific_prompt_context() {
+        let task = TaskDetail {
+            id: "task-123".into(),
+            project_id: "project-1".into(),
+            number: "ORC-123".into(),
+            title: "Investigate runtime prompt".into(),
+            description: Some("Confirm prompt assembly includes worker instructions.".into()),
+            task_type: "task".into(),
+            status: "ready".into(),
+            priority: "P1".into(),
+            workflow_id: Some("workflow-1".into()),
+            current_lane_id: Some("lane-1".into()),
+            assignee_type: "role".into(),
+            assignee_id: Some("role-1".into()),
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            archived: false,
+            comment_count: 0,
+            lane_run_count: 0,
+            child_count: 0,
+            completed_child_count: 0,
+            in_progress_child_count: 0,
+            blocked_child_count: 0,
+            blocked_by_count: 0,
+            blocking_count: 0,
+            attachment_count: 0,
+            dependency_blocked: false,
+            ready_for_dispatch: true,
+            parent: None,
+            lineage: Vec::new(),
+            children: Vec::new(),
+            blocked_by: Vec::new(),
+            blocking: Vec::new(),
+            attachments: Vec::new(),
+            task_repositories: Vec::new(),
+            file_references: Vec::new(),
+            active_lane_assignment: None,
+            created_at: "2026-03-22T00:00:00Z".into(),
+            updated_at: "2026-03-22T00:00:00Z".into(),
+            comments: Vec::new(),
+            lane_runs: Vec::new(),
+        };
+        let workflow = WorkflowDefinition {
+            id: "workflow-1".into(),
+            slug: "runtime-flow".into(),
+            name: "Runtime Flow".into(),
+            description: None,
+            archived: false,
+            lanes: Vec::new(),
+            created_at: "2026-03-22T00:00:00Z".into(),
+            updated_at: "2026-03-22T00:00:00Z".into(),
+        };
+        let lane = WorkflowLane {
+            id: "lane-1".into(),
+            key: "implement".into(),
+            name: "Implement".into(),
+            description: None,
+            order: 0,
+            assigned_entity_type: "role".into(),
+            assigned_entity_id: Some("developer".into()),
+            entry_prompt_template: Some("Ship the fix.".into()),
+            success_transition_type: "end".into(),
+            success_target_lane_id: None,
+            failure_transition_type: "user_intervention".into(),
+            failure_target_lane_id: None,
+        };
+        let worker_prompt = WorkerPromptContext {
+            worker_type_label: "role",
+            worker_name: "Developer".into(),
+            worker_slug: "developer".into(),
+            system_prompt: Some("You implement production-ready changes carefully.".into()),
+            project_overlay_prompt: Some(
+                "In Orchestra, prefer task-aware comments before transitions.".into(),
+            ),
+        };
+
+        let prompt = build_lane_prompt(
+            &task,
+            &workflow,
+            &lane,
+            Some("/tmp/runtime"),
+            Some(&worker_prompt),
+        );
+
+        assert!(prompt.contains("Assigned worker: role Developer (developer)"));
+        assert!(prompt.contains("Worker-specific prompt context — follow this together with the lane instructions below:"));
+        assert!(
+            prompt.contains("Base role prompt:\nYou implement production-ready changes carefully.")
+        );
+        assert!(prompt.contains("Project-specific role overlay prompt:\nIn Orchestra, prefer task-aware comments before transitions."));
+        assert!(prompt.contains("Lane-specific instruction:\nShip the fix."));
     }
 
     #[test]
@@ -1776,7 +2141,9 @@ mod tests {
         let role_repo_workspace = assignment
             .runtime_cwd
             .as_deref()
-            .map(|cwd| task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-role"))
+            .map(|cwd| {
+                task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-role")
+            })
             .expect("role runtime cwd should exist");
         assert!(Path::new(&role_repo_workspace).exists());
 
@@ -1842,8 +2209,12 @@ mod tests {
         };
 
         queue_comment_delivery(&connection, &assignment, &comment).expect("queue comment delivery");
-        let queue_entries = crate::services::agent_runtime::list_agent_queue_entries(&connection, Some(&agent.id), true)
-            .expect("agent queue entries");
+        let queue_entries = crate::services::agent_runtime::list_agent_queue_entries(
+            &connection,
+            Some(&agent.id),
+            true,
+        )
+        .expect("agent queue entries");
         assert_eq!(queue_entries.len(), 1);
         assert_eq!(queue_entries[0].delivery_mode, "follow_up");
         assert_eq!(queue_entries[0].source_type, "task_comment");
@@ -1934,19 +2305,15 @@ mod tests {
         let agent_repo_workspace = assignment
             .runtime_cwd
             .as_deref()
-            .map(|cwd| task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-agent"))
+            .map(|cwd| {
+                task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-agent")
+            })
             .expect("agent runtime cwd should exist");
         assert!(Path::new(&agent_repo_workspace).exists());
 
-        let updated = complete_lane_as_success(
-            &mut connection,
-            &root,
-            &session_dir,
-            &task.id,
-            None,
-            None,
-        )
-        .expect("agent lane should complete");
+        let updated =
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+                .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
     }
@@ -1993,16 +2360,34 @@ mod tests {
             )
             .expect("role assignment should insert");
 
-        let role_session = preferred_lane_session_id(&connection, task.id.as_str(), "lane-1", "role", Some("role-1"))
-            .expect("role preferred session should resolve");
+        let role_session = preferred_lane_session_id(
+            &connection,
+            task.id.as_str(),
+            "lane-1",
+            "role",
+            Some("role-1"),
+        )
+        .expect("role preferred session should resolve");
         assert_eq!(role_session.as_deref(), Some("session-role"));
 
-        let changed_role_session = preferred_lane_session_id(&connection, task.id.as_str(), "lane-1", "role", Some("role-2"))
-            .expect("different role should not reuse old session");
+        let changed_role_session = preferred_lane_session_id(
+            &connection,
+            task.id.as_str(),
+            "lane-1",
+            "role",
+            Some("role-2"),
+        )
+        .expect("different role should not reuse old session");
         assert!(changed_role_session.is_none());
 
-        let agent_session = preferred_lane_session_id(&connection, task.id.as_str(), "lane-1", "agent", Some("agent-1"))
-            .expect("agent lookup should not reuse role session");
+        let agent_session = preferred_lane_session_id(
+            &connection,
+            task.id.as_str(),
+            "lane-1",
+            "agent",
+            Some("agent-1"),
+        )
+        .expect("agent lookup should not reuse role session");
         assert!(agent_session.is_none());
     }
 }
