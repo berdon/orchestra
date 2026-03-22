@@ -382,6 +382,64 @@ test("sessions page renders debug paths below a vertically resizable chat panel"
   expect(Number.parseFloat(transcriptWrapMinHeight)).toBeGreaterThanOrEqual(240);
 });
 
+test("sessions transcript wraps long lines by default and can toggle to no-wrap", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const longLine = `LONG-${"x".repeat(600)}`;
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-wrap-toggle",
+          title: "Wrap toggle",
+          status: "idle",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "assistant-1",
+              kind: "assistant",
+              message: longLine,
+              timestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Wrap toggle" }).click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const toggle = page.locator('[data-role="session-wrap-toggle"]');
+  const firstMessage = transcript.locator(".transcript-event p").first();
+
+  await expect(toggle).toHaveAttribute("data-wrap-mode", "wrap");
+  await expect(transcript).toHaveAttribute("data-wrap-mode", "wrap");
+  await expect(firstMessage).toHaveCSS("white-space", "pre-wrap");
+
+  const wrappedMetrics = await transcript.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(wrappedMetrics.scrollWidth).toBeLessThanOrEqual(wrappedMetrics.clientWidth + 4);
+
+  await toggle.click();
+
+  await expect(toggle).toHaveAttribute("data-wrap-mode", "nowrap");
+  await expect(transcript).toHaveAttribute("data-wrap-mode", "nowrap");
+  await expect(firstMessage).toHaveCSS("white-space", "pre");
+
+  const nowrapMetrics = await transcript.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(nowrapMetrics.scrollWidth).toBeGreaterThan(nowrapMetrics.clientWidth + 20);
+});
+
 test("sessions transcript unlocks on manual scroll and relocks at bottom", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

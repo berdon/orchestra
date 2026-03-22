@@ -1,4 +1,4 @@
-import type { ChangeEvent, FormEvent, KeyboardEvent, RefObject, UIEvent } from "react";
+import { useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
@@ -71,6 +71,8 @@ export function SessionsPage({
   onDraftChange,
   onSendMessage,
 }: SessionsPageProps) {
+  const [wrapTranscript, setWrapTranscript] = useState(true);
+
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onSendMessage();
@@ -203,10 +205,26 @@ export function SessionsPage({
                 </div>
 
                 <div className="session-transcript-wrap">
+                  <div className="session-transcript-toolbar">
+                    <button
+                      type="button"
+                      className="transcript-wrap-toggle"
+                      data-role="session-wrap-toggle"
+                      data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
+                      aria-pressed={wrapTranscript}
+                      aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+                      title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+                      onClick={() => setWrapTranscript((current) => !current)}
+                    >
+                      <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
+                      <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
+                    </button>
+                  </div>
                   <div
-                    className="session-transcript"
+                    className={wrapTranscript ? "session-transcript session-transcript--wrapped" : "session-transcript session-transcript--nowrap"}
                     data-role="session-transcript"
                     data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
+                    data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
                     ref={transcriptRef}
                     role="log"
                     aria-live="polite"
