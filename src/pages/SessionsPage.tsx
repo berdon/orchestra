@@ -166,138 +166,152 @@ export function SessionsPage({
           </nav>
         </aside>
 
-        <section className="panel session-detail-panel">
-          {selectedSession ? (
-            <>
-              <div className="panel__header panel__header--session-detail">
-                <h3 data-role="selected-session-title">{selectedSession.title}</h3>
+        <div className="session-detail-column">
+          <section className="panel session-detail-panel session-chat-panel" data-role="session-chat-panel">
+            {selectedSession ? (
+              <>
+                <div className="panel__header panel__header--session-detail">
+                  <h3 data-role="selected-session-title">{selectedSession.title}</h3>
 
-                <div className="action-cluster action-cluster--session-tools">
-                  <label className="field-group field-group--compact session-model-field">
-                    <span className="field-group__label">Model</span>
-                    <select
-                      className="select-input"
-                      value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
-                      disabled={
-                        loadingModelSessionId === selectedSession.id ||
-                        changingModelSessionId === selectedSession.id ||
-                        selectedSessionPending
-                      }
-                      onChange={(event) => onModelChange(event.target.value)}
-                    >
-                      {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
-                        <option value="">{formatModelOptionLabel(selectedModelState)}</option>
-                      ) : null}
-                      {selectedModelState?.availableModels.map((model) => (
-                        <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-                          {model.name} · {model.provider}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <div className="action-cluster action-cluster--session-tools">
+                    <label className="field-group field-group--compact session-model-field">
+                      <span className="field-group__label">Model</span>
+                      <select
+                        className="select-input"
+                        value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
+                        disabled={
+                          loadingModelSessionId === selectedSession.id ||
+                          changingModelSessionId === selectedSession.id ||
+                          selectedSessionPending
+                        }
+                        onChange={(event) => onModelChange(event.target.value)}
+                      >
+                        {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
+                          <option value="">{formatModelOptionLabel(selectedModelState)}</option>
+                        ) : null}
+                        {selectedModelState?.availableModels.map((model) => (
+                          <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                            {model.name} · {model.provider}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-                  <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
-                  <span className="status-badge">{formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}</span>
-                </div>
-              </div>
-
-              <div className="session-transcript-wrap">
-                <div
-                  className="session-transcript"
-                  data-role="session-transcript"
-                  data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
-                  ref={transcriptRef}
-                  role="log"
-                  aria-live="polite"
-                  onScroll={handleTranscriptScroll}
-                >
-                  {displayedEvents.map((event) => (
-                    <article
-                      className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
-                      key={event.id}
-                    >
-                      <div className="transcript-event__meta">
-                        <span>{event.kind}</span>
-                        <div className="transcript-event__meta-group">
-                          {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
-                          {event.pending ? <span className="pending-badge">Pending</span> : null}
-                          <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
-                        </div>
-                      </div>
-                      <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
-                    </article>
-                  ))}
-                </div>
-                <div
-                  className={scrollState.lockedToBottom ? "session-scroll-indicator session-scroll-indicator--locked" : "session-scroll-indicator"}
-                  data-role="session-scroll-indicator"
-                  data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
-                  role="status"
-                  aria-live="polite"
-                >
-                  {scrollState.lockedToBottom ? "Auto-scroll on" : "Viewing older messages"}
-                </div>
-              </div>
-
-              <form className="composer" onSubmit={handleComposerSubmit}>
-                <label className="field-group field-group--composer">
-                  <span className="field-group__label">Send message</span>
-                  <textarea
-                    className="text-area"
-                    data-role="composer-input"
-                    rows={4}
-                    placeholder="Tell the session what to do next…"
-                    value={draftMessage}
-                    onChange={handleDraftChange}
-                    onKeyDown={handleComposerKeyDown}
-                  />
-                </label>
-                <div className="composer__footer">
-                  <div className="composer__meta">
-                    <p className="muted-copy">
-                      {selectedSessionPending ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
-                    </p>
-                    <div className="session-detail__meta session-detail__meta--footer">
-                      <span>Created {formatDateTime(selectedSession.createdAt)}</span>
-                      <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
-                    </div>
+                    <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
+                    <span className="status-badge">{formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}</span>
                   </div>
-                  <button
-                    className="primary-button"
-                    data-role="send-message"
-                    type="submit"
-                    disabled={draftMessage.trim().length === 0}
+                </div>
+
+                <div className="session-transcript-wrap">
+                  <div
+                    className="session-transcript"
+                    data-role="session-transcript"
+                    data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
+                    ref={transcriptRef}
+                    role="log"
+                    aria-live="polite"
+                    onScroll={handleTranscriptScroll}
                   >
-                    Send message
-                  </button>
+                    {displayedEvents.map((event) => (
+                      <article
+                        className={`transcript-event transcript-event--${getEventTone(event.kind)}${event.pending ? " transcript-event--pending" : ""}`}
+                        key={event.id}
+                      >
+                        <div className="transcript-event__meta">
+                          <span>{event.kind}</span>
+                          <div className="transcript-event__meta-group">
+                            {event.thinking ? <span className="thinking-indicator">Thinking</span> : null}
+                            {event.pending ? <span className="pending-badge">Pending</span> : null}
+                            <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+                          </div>
+                        </div>
+                        <p>{event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…")}</p>
+                      </article>
+                    ))}
+                  </div>
+                  <div
+                    className={scrollState.lockedToBottom ? "session-scroll-indicator session-scroll-indicator--locked" : "session-scroll-indicator"}
+                    data-role="session-scroll-indicator"
+                    data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {scrollState.lockedToBottom ? "Auto-scroll on" : "Viewing older messages"}
+                  </div>
                 </div>
-              </form>
 
-              {selectedSession.debugInfo ? (
-                <section className="task-section" data-role="session-debug-paths">
-                  <div className="task-section__header">
-                    <div>
-                      <p className="eyebrow">Debug paths</p>
-                      <h4>Resolved runtime paths</h4>
+                <form className="composer" onSubmit={handleComposerSubmit}>
+                  <label className="field-group field-group--composer">
+                    <span className="field-group__label">Send message</span>
+                    <textarea
+                      className="text-area"
+                      data-role="composer-input"
+                      rows={4}
+                      placeholder="Tell the session what to do next…"
+                      value={draftMessage}
+                      onChange={handleDraftChange}
+                      onKeyDown={handleComposerKeyDown}
+                    />
+                  </label>
+                  <div className="composer__footer">
+                    <div className="composer__meta">
+                      <p className="muted-copy">
+                        {selectedSessionPending ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
+                      </p>
+                      <div className="session-detail__meta session-detail__meta--footer">
+                        <span>Created {formatDateTime(selectedSession.createdAt)}</span>
+                        <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
+                      </div>
                     </div>
+                    <button
+                      className="primary-button"
+                      data-role="send-message"
+                      type="submit"
+                      disabled={draftMessage.trim().length === 0}
+                    >
+                      Send message
+                    </button>
                   </div>
-                  <div className="workforce-meta-grid muted-copy">
-                    <span>Project: {selectedSession.debugInfo.projectRoot ?? "—"}</span>
-                    <span>Managed repository: {selectedSession.debugInfo.managedRepositoryPath ?? "—"}</span>
-                    <span>Worktree: {selectedSession.debugInfo.worktreePath ?? "—"}</span>
-                    <span>Session cwd: {selectedSession.debugInfo.sessionCwd ?? "—"}</span>
-                  </div>
+                </form>
+              </>
+            ) : (
+              <div className="empty-state">
+                <p className="eyebrow">No session selected</p>
+                <h3>Create or select a session</h3>
+                <p>Use the session list to select an existing session or create a new one to begin the interaction flow.</p>
+              </div>
+            )}
+          </section>
+
+          {selectedSession?.debugInfo ? (
+            <section className="panel session-debug-panel" data-role="session-debug-paths">
+              <div className="panel__header panel__header--stacked">
+                <div>
+                  <p className="eyebrow">Debug paths</p>
+                  <h4>Resolved runtime paths</h4>
+                </div>
+              </div>
+              <div className="session-debug-grid">
+                <section className="session-debug-item">
+                  <p className="eyebrow">Project</p>
+                  <p className="session-debug-value">{selectedSession.debugInfo.projectRoot ?? "—"}</p>
                 </section>
-              ) : null}
-            </>
-          ) : (
-            <div className="empty-state">
-              <p className="eyebrow">No session selected</p>
-              <h3>Create or select a session</h3>
-              <p>Use the session list to select an existing session or create a new one to begin the interaction flow.</p>
-            </div>
-          )}
-        </section>
+                <section className="session-debug-item">
+                  <p className="eyebrow">Managed repository</p>
+                  <p className="session-debug-value">{selectedSession.debugInfo.managedRepositoryPath ?? "—"}</p>
+                </section>
+                <section className="session-debug-item">
+                  <p className="eyebrow">Worktree</p>
+                  <p className="session-debug-value">{selectedSession.debugInfo.worktreePath ?? "—"}</p>
+                </section>
+                <section className="session-debug-item">
+                  <p className="eyebrow">Session cwd</p>
+                  <p className="session-debug-value">{selectedSession.debugInfo.sessionCwd ?? "—"}</p>
+                </section>
+              </div>
+            </section>
+          ) : null}
+        </div>
       </section>
     </section>
   );
