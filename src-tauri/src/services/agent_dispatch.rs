@@ -180,7 +180,6 @@ fn deliver_prompt_entry(
         session_dir.to_path_buf(),
         session_id,
     )?;
-    runtime.set_subscribed(true);
     state.begin_session_run(session_id, &run_id)?;
     match runtime.start_delivery(&run_id, "prompt", &entry.message) {
         Ok(()) => Ok(()),

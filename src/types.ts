@@ -301,6 +301,19 @@ export interface ProjectWorkerOverlay {
   updatedAt?: string | null;
 }
 
+export interface SessionPromptToken {
+  token: string;
+  description: string;
+}
+
+export interface ProjectSessionPromptSettings {
+  projectSlug: string;
+  template: string;
+  defaultTemplate: string;
+  availableTokens: SessionPromptToken[];
+  updatedAt?: string | null;
+}
+
 export interface PolicyDefinition {
   id: string;
   slug: string;

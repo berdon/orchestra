@@ -1,8 +1,11 @@
+import { useEffect, useState } from "react";
+
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
-import type { BridgeDiagnostics, LogEntry } from "../types";
+import type { BridgeDiagnostics, LogEntry, ProjectSessionPromptSettings } from "../types";
 
 interface GeneralPanelProps {
   bridgeDiagnostics: BridgeDiagnostics | null;
+  sessionPromptSettings: ProjectSessionPromptSettings | null;
   loadingBridgeDiagnostics: boolean;
   refreshingBridgeDiagnostics: boolean;
   logs: LogEntry[];
@@ -11,6 +14,7 @@ interface GeneralPanelProps {
   onRefreshBridgeDiagnostics: () => void;
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
+  onSaveSessionPromptTemplate: (template: string | null) => void;
   onRefreshLogs: () => void;
   onClearLogs: () => void;
 }
@@ -24,6 +28,7 @@ function formatDateTime(value?: string | null) {
 
 export function GeneralPanel({
   bridgeDiagnostics,
+  sessionPromptSettings,
   loadingBridgeDiagnostics,
   refreshingBridgeDiagnostics,
   logs,
@@ -32,12 +37,74 @@ export function GeneralPanel({
   onRefreshBridgeDiagnostics,
   onCleanupStaleBridges,
   onOpenLogsWindow,
+  onSaveSessionPromptTemplate,
   onRefreshLogs,
   onClearLogs,
 }: GeneralPanelProps) {
+  const [templateDraft, setTemplateDraft] = useState("");
+
+  useEffect(() => {
+    setTemplateDraft(sessionPromptSettings?.template ?? "");
+  }, [sessionPromptSettings?.template]);
   return (
     <section className="panel-stack">
       <section className="panel general-panel">
+        <div className="panel__header panel__header--stacked">
+          <div>
+            <p className="eyebrow">General</p>
+            <h3>Session prompt</h3>
+            <p className="muted-copy">Configure the task dynamic-session context prompt template with token replacement so you can iterate on worker instructions without code changes.</p>
+          </div>
+        </div>
+
+        {sessionPromptSettings ? (
+          <section className="task-section task-section--compact">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Template</p>
+                <h4>Task session context prompt</h4>
+              </div>
+              <div className="action-cluster action-cluster--wrap">
+                <button className="secondary-button" data-role="reset-session-prompt-template" type="button" onClick={() => setTemplateDraft(sessionPromptSettings.defaultTemplate)}>
+                  Reset draft to default
+                </button>
+                <button className="secondary-button" data-role="save-session-prompt-template" type="button" onClick={() => onSaveSessionPromptTemplate(templateDraft)}>
+                  Save template
+                </button>
+              </div>
+            </div>
+            <label className="field-group">
+              <span className="field-group__label">Prompt template</span>
+              <textarea
+                className="text-area general-panel__prompt-template"
+                data-role="session-prompt-template"
+                rows={14}
+                value={templateDraft}
+                onChange={(event) => setTemplateDraft(event.target.value)}
+              />
+            </label>
+            <p className="muted-copy">Last updated: {formatDateTime(sessionPromptSettings.updatedAt)}</p>
+            <div className="bridge-diagnostics-table-wrap">
+              <table className="task-table" data-role="session-prompt-token-table">
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessionPromptSettings.availableTokens.map((token) => (
+                    <tr key={token.token} data-role="session-prompt-token-row">
+                      <td><code>{token.token}</code></td>
+                      <td>{token.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">General</p>

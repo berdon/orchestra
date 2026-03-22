@@ -1529,7 +1529,9 @@ mod tests {
         )
         .expect("file reference should seed");
 
+        let config = dummy_bridge_config("file-references");
         let listed = invoke_bridge_command(
+            &config,
             &connection,
             "list_task_file_references",
             Some(&AuthorizationContext {

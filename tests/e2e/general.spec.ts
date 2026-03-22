@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("settings general renders bridge diagnostics and cleanup controls", async ({ page }) => {
+test("settings general renders bridge diagnostics and session prompt controls", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -48,11 +48,27 @@ test("settings general renders bridge diagnostics and cleanup controls", async (
         recentCleanupEvents: [],
       }),
     );
+    window.localStorage.setItem(
+      "orchestra.mock.project-settings",
+      JSON.stringify({
+        general: {
+          taskSessionContextTemplate: "Task {TASK.ID} {TASK.NAME}",
+          updatedAt: timestamp,
+        },
+      }),
+    );
   });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "General" }).click();
+
+  await expect(page.getByRole("heading", { name: "Session prompt" })).toBeVisible();
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
+  await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{TASK.ID}");
+  await page.locator('[data-role="session-prompt-template"]').fill("Task {TASK.ID} {TASK.STATUS}");
+  await page.locator('[data-role="save-session-prompt-template"]').click();
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
 
   await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toBeVisible();
   await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");

@@ -1,4 +1,19 @@
-use crate::{models::ProjectWorkerOverlay, services::project_settings};
+use crate::{models::{ProjectSessionPromptSettings, ProjectWorkerOverlay}, services::project_settings};
+
+#[tauri::command]
+pub fn get_session_prompt_settings(
+    project_slug: Option<String>,
+) -> Result<ProjectSessionPromptSettings, String> {
+    project_settings::get_session_prompt_settings(project_slug.as_deref().unwrap_or("orchestra"))
+}
+
+#[tauri::command]
+pub fn update_session_prompt_settings(
+    project_slug: Option<String>,
+    template: Option<String>,
+) -> Result<ProjectSessionPromptSettings, String> {
+    project_settings::update_session_prompt_settings(project_slug.as_deref().unwrap_or("orchestra"), template)
+}
 
 #[tauri::command]
 pub fn get_worker_overlay(

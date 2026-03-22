@@ -25,6 +25,7 @@ import { ensureAgentSession, listAgentOperations } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
+import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
@@ -41,6 +42,7 @@ import type {
   BridgeDiagnostics,
   JsonValue,
   LogEntry,
+  ProjectSessionPromptSettings,
   PrimaryPage,
   ProjectSummary,
   SessionActivityState,
@@ -454,6 +456,7 @@ export function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
+  const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
   const [loadingBridgeDiagnostics, setLoadingBridgeDiagnostics] = useState(false);
@@ -711,6 +714,21 @@ export function App() {
     } finally {
       setRefreshingBridgeDiagnostics(false);
     }
+  }
+
+  async function loadSessionPromptSettings() {
+    if (!activeProject) {
+      setSessionPromptSettings(null);
+      return;
+    }
+    setSessionPromptSettings(await getSessionPromptSettings(activeProject.slug));
+  }
+
+  async function handleSaveSessionPromptTemplate(template: string | null) {
+    if (!activeProject) {
+      return;
+    }
+    setSessionPromptSettings(await updateSessionPromptSettings(template, activeProject.slug));
   }
 
   async function loadSessions(options?: { background?: boolean }) {
@@ -1099,7 +1117,7 @@ export function App() {
       }
 
       if (eventType === "agent_end") {
-        void subscribeSession(payload.sessionId)
+        void getSessionRecord(payload.sessionId)
           .then((record) => {
             applySessionUpdate(record);
             removePendingRun(payload.sessionId, runId);
@@ -1281,6 +1299,7 @@ export function App() {
 
     void loadLogs();
     void loadBridgeDiagnostics();
+    void loadSessionPromptSettings();
 
     const intervalId = window.setInterval(() => {
       void loadLogs();
@@ -1288,7 +1307,7 @@ export function App() {
     }, 5000);
 
     return () => window.clearInterval(intervalId);
-  }, [activePage, settingsTab, isLogsWindow]);
+  }, [activePage, settingsTab, isLogsWindow, activeProject?.slug]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -1832,6 +1851,7 @@ export function App() {
           ) : (
             <GeneralPanel
               bridgeDiagnostics={bridgeDiagnostics}
+              sessionPromptSettings={sessionPromptSettings}
               loadingBridgeDiagnostics={loadingBridgeDiagnostics}
               refreshingBridgeDiagnostics={refreshingBridgeDiagnostics}
               logs={logs}
@@ -1840,6 +1860,7 @@ export function App() {
               onRefreshBridgeDiagnostics={() => void loadBridgeDiagnostics({ background: true })}
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
+              onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
               onRefreshLogs={() => void loadLogs()}
               onClearLogs={() => void handleClearLogs()}
             />

@@ -444,7 +444,6 @@ pub fn start_assignment_run(
         session_dir,
         session_id,
     )?;
-    runtime.set_subscribed(true);
 
     let run_id = generate_id("task-run");
     state.begin_session_run(session_id, &run_id)?;
@@ -557,7 +556,6 @@ pub fn maybe_interrupt_with_comment(
         session_dir,
         session_id,
     )?;
-    runtime.set_subscribed(true);
 
     let run_id = generate_id("task-comment");
     state.begin_session_run(session_id, &run_id)?;
@@ -650,6 +648,7 @@ fn dispatch_role_lane(
         project_overlay_prompt: load_worker_overlay_prompt(connection, task, "role", &role.slug)?,
     };
     let prompt = build_lane_prompt(
+        connection,
         task,
         workflow,
         lane,
@@ -691,6 +690,7 @@ fn dispatch_role_lane(
         };
 
     let prompt = build_lane_prompt(
+        connection,
         task,
         workflow,
         lane,
@@ -782,6 +782,7 @@ fn dispatch_agent_lane(
     };
 
     let prompt = build_lane_prompt(
+        connection,
         task,
         workflow,
         lane,
@@ -1424,247 +1425,227 @@ fn apply_agent_session_defaults(
     Ok(())
 }
 
+fn orchestra_working_rules_block() -> String {
+    [
+        "How to work effectively in this session:",
+        "1. Start by understanding the task in Orchestra terms, not just the latest message.",
+        "2. Immediately call get_task_context using the canonical task ID shown above so you are working from fresh live state before making decisions.",
+        "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
+        "4. Do the reasoning/work needed for the lane.",
+        "5. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. Large actions include meaningful implementation work, file creation or edits, running important commands/tests, creating dependencies/subtasks, attaching artifacts, or any action another worker or human would need to understand later.",
+        "6. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
+        "7. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
+        "8. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
+        "9. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
+        "10. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
+        "11. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+        "12. When the lane is finished, explicitly transition it with the correct completion tool.",
+    ]
+    .join("\n")
+}
+
+fn orchestra_tool_help_block() -> String {
+    [
+        "Available Orchestra task tools and exactly how to use them:",
+        "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
+        "- get_task_context(task_id): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
+        "- get_task_repositories(task_id): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
+        "- list_task_file_references(task_id): Call this tool to inspect which repository files are already tracked on the task before adding more.",
+        "- add_task_file_reference(task_id, input): Call this tool when you create or materially change a large or central repository file that should stay visible on the task. Use input shaped like {repositoryId, relativePath}. Good candidates are design docs, diagrams, plans, ADRs, runbooks, and similar non-source artifacts. Do not use this for ordinary source code changes unless explicitly asked.",
+        "- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake.",
+        "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}. Write comments for findings, progress updates, large actions taken, reviewer notes, handoff details, blockers, transition decisions, or decisions another worker must see later.",
+        "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
+        "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
+        "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
+        "- add_task_attachment(task_id, input): Call this tool for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs.",
+        "- remove_task_attachment(attachment_id): Call this tool only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
+        "- complete_lane_as_success(task_id, notes?): Call this tool when you finished the lane's goal and the task should follow the workflow's success transition.",
+        "- complete_lane_as_failure(task_id, notes?): Call this tool when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition.",
+        "- request_user_intervention(task_id, notes?): Call this tool when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding.",
+    ]
+    .join("\n")
+}
+
+fn orchestra_completion_rules_block() -> String {
+    [
+        "Critical completion rules:",
+        "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
+        "- You are not done and cannot stop until you have actually called one of those tools.",
+        "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
+        "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
+        "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
+    ]
+    .join("\n")
+}
+
+fn slugify_task_title(value: &str) -> String {
+    let normalized = value
+        .trim()
+        .to_lowercase()
+        .replace(|ch: char| !ch.is_ascii_alphanumeric(), "-");
+    let collapsed = normalized
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if collapsed.is_empty() { "task".into() } else { collapsed }
+}
+
+fn optional_section(title: &str, body: Option<String>) -> String {
+    body.filter(|value| !value.trim().is_empty())
+        .map(|value| format!("{}:\n{}", title, value.trim()))
+        .unwrap_or_default()
+}
+
+fn build_worker_context_block(worker_prompt: Option<&WorkerPromptContext>) -> String {
+    let Some(worker_prompt) = worker_prompt else {
+        return String::new();
+    };
+
+    let mut sections = vec![format!(
+        "Assigned worker: {} {} ({})",
+        worker_prompt.worker_type_label, worker_prompt.worker_name, worker_prompt.worker_slug,
+    )];
+
+    let mut worker_sections = Vec::new();
+    if let Some(system_prompt) = worker_prompt.system_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+        worker_sections.push(format!("Base {} prompt:\n{}", worker_prompt.worker_type_label, system_prompt.trim()));
+    }
+    if let Some(overlay_prompt) = worker_prompt.project_overlay_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+        worker_sections.push(format!("Project-specific {} overlay prompt:\n{}", worker_prompt.worker_type_label, overlay_prompt.trim()));
+    }
+    if !worker_sections.is_empty() {
+        sections.push(format!(
+            "Worker-specific prompt context — follow this together with the lane instructions below:\n{}",
+            worker_sections.join("\n\n")
+        ));
+    }
+
+    sections.join("\n\n")
+}
+
 fn build_lane_prompt(
+    connection: &Connection,
     task: &TaskDetail,
     workflow: &WorkflowDefinition,
     lane: &WorkflowLane,
     runtime_cwd: Option<&str>,
     worker_prompt: Option<&WorkerPromptContext>,
 ) -> String {
-    let mut sections = vec![
-        format!("You are an agent working inside Orchestra on task {} — {}.", task.number, task.title),
-        format!("Canonical task ID: {}", task.id),
-        "Orchestra is the project orchestration system. It tracks tasks, workflows, worker ownership, runtime sessions, comments, attachments, and transitions between steps of work. You are operating as a worker inside that system, so your job is not just to do good work — it is to keep Orchestra's state accurate as you work.".into(),
-        [
-            "Orchestra concepts you need to understand:",
-            "- Task: the tracked unit of work you are responsible for right now. Tasks can have descriptions, comments, attachments, subtasks, dependencies, and workflow history.",
-            "- Workflow: the overall process definition attached to a task. A workflow contains ordered lanes and transition rules.",
-            "- Lane: the current step of the workflow. Each lane has an owner type (user, role, or agent) and defines what should happen on success or failure.",
-            "- Session: the running conversation/runtime for a worker. This session is the place where you reason, inspect task context, and decide how to move the task forward.",
-            "- Transition: the explicit tool call that moves the task out of the current lane. You must always end your work by choosing the correct transition tool.",
-        ]
-        .join("\n"),
-        format!("Workflow: {}", workflow.name),
-        format!("Current lane: {}", lane.name),
-        format!("Lane owner type: {}", lane.assigned_entity_type),
-        format!("Task status: {}", task.status),
-    ];
+    let project_slug = projects::get_project(connection, &task.project_id)
+        .map(|project| project.slug)
+        .unwrap_or_else(|_| "orchestra".into());
+    let prompt_settings = project_settings::get_session_prompt_settings(&project_slug)
+        .unwrap_or_else(|_| crate::models::ProjectSessionPromptSettings {
+            project_slug: project_slug.clone(),
+            template: project_settings::default_task_session_context_template(),
+            default_template: project_settings::default_task_session_context_template(),
+            available_tokens: project_settings::available_session_prompt_tokens(),
+            updated_at: None,
+        });
 
-    if let Some(worker_prompt) = worker_prompt {
-        sections.push(format!(
-            "Assigned worker: {} {} ({})",
-            worker_prompt.worker_type_label, worker_prompt.worker_name, worker_prompt.worker_slug,
-        ));
-
-        let mut worker_sections = Vec::new();
-        if let Some(system_prompt) = worker_prompt
-            .system_prompt
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            worker_sections.push(format!(
-                "Base {} prompt:\n{}",
-                worker_prompt.worker_type_label,
-                system_prompt.trim()
-            ));
-        }
-        if let Some(overlay_prompt) = worker_prompt
-            .project_overlay_prompt
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            worker_sections.push(format!(
-                "Project-specific {} overlay prompt:\n{}",
-                worker_prompt.worker_type_label,
-                overlay_prompt.trim()
-            ));
-        }
-        if !worker_sections.is_empty() {
-            sections.push(format!(
-                "Worker-specific prompt context — follow this together with the lane instructions below:\n{}",
-                worker_sections.join("\n\n")
-            ));
-        }
-    }
-
-    if let Some(description) = task
-        .description
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        sections.push(format!("Task description:\n{}", description.trim()));
-    }
-
-    if !task.blocked_by.is_empty() {
-        let blocked_lines = task
-            .blocked_by
+    let blocked_by_block = if task.blocked_by.is_empty() {
+        String::new()
+    } else {
+        task.blocked_by
             .iter()
-            .map(|dependency| {
-                format!(
-                    "- {} — {}",
-                    dependency.blocker.number, dependency.blocker.title
-                )
-            })
+            .map(|dependency| format!("- {} — {}", dependency.blocker.number, dependency.blocker.title))
             .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("Blocking tasks:\n{}", blocked_lines));
-    }
+            .join("\n")
+    };
 
-    if !task.task_repositories.is_empty() {
-        let repository_lines = task
-            .task_repositories
+    let repositories_block = if task.task_repositories.is_empty() {
+        String::new()
+    } else {
+        task.task_repositories
             .iter()
             .map(|repository| {
                 let workspace_path = runtime_cwd.map(|cwd| {
-                    task_repositories::task_repository_worktree_path(
-                        cwd,
-                        &task.id,
-                        &repository.repository_slug,
-                    )
+                    task_repositories::task_repository_worktree_path(cwd, &task.id, &repository.repository_slug)
                 });
                 match workspace_path.as_deref() {
-                    Some(path) => format!(
-                        "- {} ({}) available in this session at {}",
-                        repository.repository_name, repository.repository_slug, path
-                    ),
-                    None => format!(
-                        "- {} ({}) managed source at {}",
-                        repository.repository_name,
-                        repository.repository_slug,
-                        repository.managed_repository_path.as_deref().unwrap_or("—")
-                    ),
+                    Some(path) => format!("- {} ({}) available in this session at {}", repository.repository_name, repository.repository_slug, path),
+                    None => format!("- {} ({}) managed source at {}", repository.repository_name, repository.repository_slug, repository.managed_repository_path.as_deref().unwrap_or("—")),
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!(
-            "Task repositories associated to this task:\n{}",
-            repository_lines
-        ));
-    }
+            .join("\n")
+    };
 
-    if !task.file_references.is_empty() {
-        let reference_lines = task
-            .file_references
+    let file_references_block = if task.file_references.is_empty() {
+        String::new()
+    } else {
+        task.file_references
             .iter()
             .map(|reference| {
-                let status = if reference.exists {
-                    "available"
-                } else {
-                    "missing"
-                };
+                let status = if reference.exists { "available" } else { "missing" };
                 match reference.absolute_path.as_deref() {
-                    Some(path) => format!(
-                        "- {}/{} ({}) at {}",
-                        reference.repository_slug, reference.relative_path, status, path
-                    ),
-                    None => format!(
-                        "- {}/{} ({})",
-                        reference.repository_slug, reference.relative_path, status
-                    ),
+                    Some(path) => format!("- {}/{} ({}) at {}", reference.repository_slug, reference.relative_path, status, path),
+                    None => format!("- {}/{} ({})", reference.repository_slug, reference.relative_path, status),
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!(
-            "Referenced project files (live repository files, not imported snapshots):\n{}",
-            reference_lines
-        ));
-    }
+            .join("\n")
+    };
 
-    if !task.attachments.is_empty() {
-        let attachment_lines = task
-            .attachments
+    let attachments_block = if task.attachments.is_empty() {
+        String::new()
+    } else {
+        task.attachments
             .iter()
-            .map(|attachment| {
-                format!(
-                    "- {} ({}) at {}",
-                    attachment.file_name, attachment.media_type, attachment.stored_path
-                )
-            })
+            .map(|attachment| format!("- {} ({}) at {}", attachment.file_name, attachment.media_type, attachment.stored_path))
             .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("Task attachments:\n{}", attachment_lines));
-    }
+            .join("\n")
+    };
 
-    if !task.comments.is_empty() {
-        let comment_lines = task
-            .comments
+    let comments_block = if task.comments.is_empty() {
+        String::new()
+    } else {
+        task.comments
             .iter()
             .rev()
             .take(5)
             .rev()
             .map(|comment| format!("- {}: {}", comment.author, comment.message))
             .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("Recent task comments:\n{}", comment_lines));
+            .join("\n")
+    };
+
+    let mut rendered = prompt_settings.template;
+    let replacements = vec![
+        ("{TASK.ID}", task.id.clone()),
+        ("{TASK.NUMBER}", task.number.clone()),
+        ("{TASK.SLUG}", slugify_task_title(&task.title)),
+        ("{TASK.NAME}", task.title.clone()),
+        ("{TASK.STATUS}", task.status.clone()),
+        ("{TASK.ASSIGNEE}", task.assignee_id.clone().unwrap_or_else(|| task.assignee_type.clone())),
+        ("{TASK.DESCRIPTION}", optional_section("Task description", task.description.clone())),
+        ("{TASK.COMMENTS}", optional_section("Recent task comments", Some(comments_block))),
+        ("{TASK.BLOCKED_BY}", optional_section("Blocking tasks", Some(blocked_by_block))),
+        ("{TASK.REPOSITORIES}", optional_section("Task repositories associated to this task", Some(repositories_block))),
+        ("{TASK.FILE_REFERENCES}", optional_section("Referenced project files (live repository files, not imported snapshots)", Some(file_references_block))),
+        ("{TASK.ATTACHMENTS}", optional_section("Task attachments", Some(attachments_block))),
+        ("{WORKFLOW.NAME}", workflow.name.clone()),
+        ("{LANE.NAME}", lane.name.clone()),
+        ("{LANE.OWNER}", lane.assigned_entity_type.clone()),
+        ("{LANE.INSTRUCTION}", optional_section("Lane-specific instruction", lane.entry_prompt_template.clone())),
+        ("{WORKER.CONTEXT}", build_worker_context_block(worker_prompt)),
+        ("{RUNTIME.CWD}", runtime_cwd.unwrap_or("").to_string()),
+        ("{ORCHESTRA.WORKING_RULES}", orchestra_working_rules_block()),
+        ("{ORCHESTRA.TOOL_HELP}", orchestra_tool_help_block()),
+        ("{ORCHESTRA.COMPLETION_RULES}", orchestra_completion_rules_block()),
+    ];
+
+    for (token, value) in replacements {
+        rendered = rendered.replace(token, &value);
     }
 
-    if let Some(entry_prompt) = lane
-        .entry_prompt_template
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        sections.push(format!(
-            "Lane-specific instruction:\n{}",
-            entry_prompt.trim()
-        ));
-    }
-
-    sections.push(
-        [
-            "How to work effectively in this session:",
-            "1. Start by understanding the task in Orchestra terms, not just the latest message.",
-            "2. Immediately call get_task_context using the canonical task ID shown above so you are working from fresh live state before making decisions.",
-            "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
-            "4. Do the reasoning/work needed for the lane.",
-            "5. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. Large actions include meaningful implementation work, file creation or edits, running important commands/tests, creating dependencies/subtasks, attaching artifacts, or any action another worker or human would need to understand later.",
-            "6. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
-            "7. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
-            "8. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
-            "9. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
-            "10. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
-            "11. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-            "12. When the lane is finished, explicitly transition it with the correct completion tool.",
-        ]
-        .join("\n"),
-    );
-
-    sections.push(
-        [
-            "Available Orchestra task tools and exactly how to use them:",
-            "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
-            "- get_task_context(task_id): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
-            "- get_task_repositories(task_id): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
-            "- list_task_file_references(task_id): Call this tool to inspect which repository files are already tracked on the task before adding more.",
-            "- add_task_file_reference(task_id, input): Call this tool when you create or materially change a large or central repository file that should stay visible on the task. Use input shaped like {repositoryId, relativePath}. Good candidates are design docs, diagrams, plans, ADRs, runbooks, and similar non-source artifacts. Do not use this for ordinary source code changes unless explicitly asked.",
-            "- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake.",
-            "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}. Write comments for findings, progress updates, large actions taken, reviewer notes, handoff details, blockers, transition decisions, or decisions another worker must see later.",
-            "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
-            "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
-            "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
-            "- add_task_attachment(task_id, input): Call this tool for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs.",
-            "- remove_task_attachment(attachment_id): Call this tool only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
-            "- complete_lane_as_success(task_id, notes?): Call this tool when you finished the lane's goal and the task should follow the workflow's success transition.",
-            "- complete_lane_as_failure(task_id, notes?): Call this tool when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition.",
-            "- request_user_intervention(task_id, notes?): Call this tool when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding.",
-        ]
-        .join("\n"),
-    );
-
-    sections.push(
-        [
-            "Critical completion rules:",
-            "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
-            "- You are not done and cannot stop until you have actually called one of those tools.",
-            "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
-            "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
-            "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
-        ]
-        .join("\n"),
-    );
-
-    sections.join("\n\n")
+    rendered
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("\n\n\n", "\n\n")
 }
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -1936,6 +1917,7 @@ mod tests {
             .expect("implement lane should exist");
 
         let prompt = build_lane_prompt(
+            &connection,
             &task,
             &workflow,
             &lane,
@@ -2057,7 +2039,10 @@ mod tests {
             ),
         };
 
+        let connection = in_memory_connection();
+
         let prompt = build_lane_prompt(
+            &connection,
             &task,
             &workflow,
             &lane,
@@ -2072,6 +2057,114 @@ mod tests {
         );
         assert!(prompt.contains("Project-specific role overlay prompt:\nIn Orchestra, prefer task-aware comments before transitions."));
         assert!(prompt.contains("Lane-specific instruction:\nShip the fix."));
+    }
+
+    #[test]
+    fn lane_prompt_uses_project_session_prompt_template_tokens() {
+        let mut connection = in_memory_connection();
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-1', 'prompt-project', 'Prompt Project', NULL, NULL, ?1, ?1)",
+                params![now],
+            )
+            .expect("project should insert");
+
+        let previous_home = std::env::var_os("HOME");
+        let temp_home = unique_temp_dir("session-prompt-template-home");
+        std::fs::create_dir_all(&temp_home).expect("temp home should create");
+        unsafe { std::env::set_var("HOME", &temp_home); }
+        let orchestra_root = crate::services::orchestra_paths::default_orchestra_root().expect("orchestra root should resolve");
+        project_settings::update_session_prompt_settings_in(
+            &orchestra_root,
+            "prompt-project",
+            Some("Task {TASK.ID} {TASK.SLUG} {TASK.NAME} {WORKFLOW.NAME} {LANE.NAME} {LANE.OWNER} {TASK.STATUS} {TASK.ASSIGNEE}\n{TASK.DESCRIPTION}\n{TASK.COMMENTS}".into()),
+        ).expect("session prompt template should save");
+
+        let task = TaskDetail {
+            id: "task-123".into(),
+            project_id: "project-1".into(),
+            number: "ORC-123".into(),
+            title: "Investigate runtime prompt".into(),
+            description: Some("Describe the task.".into()),
+            task_type: "task".into(),
+            status: "in_review".into(),
+            priority: "P1".into(),
+            workflow_id: Some("workflow-1".into()),
+            current_lane_id: Some("lane-1".into()),
+            assignee_type: "user".into(),
+            assignee_id: Some("Data".into()),
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            archived: false,
+            comment_count: 1,
+            lane_run_count: 0,
+            child_count: 0,
+            completed_child_count: 0,
+            in_progress_child_count: 0,
+            blocked_child_count: 0,
+            blocked_by_count: 0,
+            blocking_count: 0,
+            attachment_count: 0,
+            dependency_blocked: false,
+            ready_for_dispatch: false,
+            parent: None,
+            lineage: Vec::new(),
+            children: Vec::new(),
+            blocked_by: Vec::new(),
+            blocking: Vec::new(),
+            attachments: Vec::new(),
+            task_repositories: Vec::new(),
+            file_references: Vec::new(),
+            active_lane_assignment: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            comments: vec![crate::models::TaskComment {
+                id: "comment-1".into(),
+                task_id: "task-123".into(),
+                author: "Reviewer".into(),
+                message: "Check the prompt template output.".into(),
+                interrupt_agent: false,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            }],
+            lane_runs: Vec::new(),
+        };
+        let workflow = WorkflowDefinition {
+            id: "workflow-1".into(),
+            slug: "runtime-flow".into(),
+            name: "Runtime Flow".into(),
+            description: None,
+            archived: false,
+            lanes: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let lane = WorkflowLane {
+            id: "lane-1".into(),
+            key: "review".into(),
+            name: "Review".into(),
+            description: None,
+            order: 0,
+            assigned_entity_type: "user".into(),
+            assigned_entity_id: None,
+            entry_prompt_template: None,
+            success_transition_type: "end".into(),
+            success_target_lane_id: None,
+            failure_transition_type: "end".into(),
+            failure_target_lane_id: None,
+        };
+
+        let prompt = build_lane_prompt(&connection, &task, &workflow, &lane, Some("/tmp/runtime"), None);
+        assert!(prompt.contains("Task task-123 investigate-runtime-prompt Investigate runtime prompt Runtime Flow Review user in_review Data"));
+        assert!(prompt.contains("Task description:\nDescribe the task."));
+        assert!(prompt.contains("Recent task comments:\n- Reviewer: Check the prompt template output."));
+
+        match previous_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value); },
+            None => unsafe { std::env::remove_var("HOME"); },
+        }
     }
 
     #[test]

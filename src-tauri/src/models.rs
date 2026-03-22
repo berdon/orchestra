@@ -394,6 +394,23 @@ pub struct ProjectWorkerOverlay {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionPromptToken {
+    pub token: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSessionPromptSettings {
+    pub project_slug: String,
+    pub template: String,
+    pub default_template: String,
+    pub available_tokens: Vec<SessionPromptToken>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleDefinition {
     pub id: String,
     pub slug: String,
