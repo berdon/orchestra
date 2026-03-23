@@ -298,6 +298,80 @@ test("task detail shows completion controls when user involvement is pending", a
   await expect(page.locator('[data-role="complete-task-failure"]')).toBeVisible();
 });
 
+test("approval-gated lanes pause for review, resume the same session for rework, and only finish after approval", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-approval",
+          slug: "approval-flow",
+          name: "Approval Flow",
+          description: "Single agent-owned lane requiring user approval.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent-approval",
+              key: "agent-approval",
+              name: "Agent approval",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              requireUserApprovalOnSuccess: true,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Approval gated task");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-approval");
+  await page.locator('[data-role="publish-task"]').click();
+
+  const initialSessionId = await page.locator('[data-role="task-runtime-assignment"]').textContent();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("agent");
+
+  await page.locator('[data-role="complete-task-success"]').click();
+  await expect(page.locator('[data-role="approve-task-lane"]')).toBeVisible();
+  await expect(page.locator('[data-role="send-task-back-for-work"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-awaiting-approval-note"]')).toContainText("paused for user approval");
+
+  await page.locator('[data-role="send-task-back-for-work"]').click();
+
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("active");
+  await expect(page.locator('[data-role="approve-task-lane"]')).toHaveCount(0);
+
+  const reworkPromptSeen = await page.evaluate(() => {
+    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
+    return sessions.some((session: { events?: Array<{ message?: string }> }) =>
+      (session.events ?? []).some((event) => event.message?.includes("Reload the latest task context and comments")),
+    );
+  });
+  expect(reworkPromptSeen).toBe(true);
+
+  await page.locator('[data-role="complete-task-success"]').click();
+  await expect(page.locator('[data-role="approve-task-lane"]')).toBeVisible();
+  await page.locator('[data-role="approve-task-lane"]').click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-status"]')).toHaveValue("completed");
+  await page.locator('[data-role="task-detail-tab-timeline"]').click();
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Lane lane-agent-approval completed");
+  expect(initialSessionId).toContain("Session:");
+});
+
 test("task detail dispatches an agent-owned task via publish, retries the active session, and completes the workflow", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

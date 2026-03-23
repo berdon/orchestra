@@ -220,6 +220,7 @@ pub fn duplicate_workflow(
                 assigned_entity_type: lane.assigned_entity_type,
                 assigned_entity_id: lane.assigned_entity_id,
                 entry_prompt_template: lane.entry_prompt_template,
+                require_user_approval_on_success: lane.require_user_approval_on_success,
                 success_transition_type: lane.success_transition_type,
                 success_target_lane_id: remap_lane_target(
                     &lane_id_map,
@@ -348,6 +349,13 @@ pub fn validate_workflow(
                         "invalid",
                         &format!("{path_prefix}.assignedEntityId"),
                         "User-owned lanes must not specify an assigned entity id.",
+                    ));
+                }
+                if lane.require_user_approval_on_success {
+                    errors.push(validation_error(
+                        "invalid",
+                        &format!("{path_prefix}.requireUserApprovalOnSuccess"),
+                        "User-owned lanes cannot require user approval on success.",
                     ));
                 }
             }
@@ -561,6 +569,7 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 assigned_entity_type,
                 assigned_entity_id,
                 entry_prompt_template,
+                require_user_approval_on_success,
                 success_transition_type,
                 success_target_lane_id,
                 failure_transition_type,
@@ -585,10 +594,11 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 assigned_entity_type: row.get(5)?,
                 assigned_entity_id: row.get(6)?,
                 entry_prompt_template: row.get(7)?,
-                success_transition_type: row.get(8)?,
-                success_target_lane_id: row.get(9)?,
-                failure_transition_type: row.get(10)?,
-                failure_target_lane_id: row.get(11)?,
+                require_user_approval_on_success: row.get::<_, i64>(8)? != 0,
+                success_transition_type: row.get(9)?,
+                success_target_lane_id: row.get(10)?,
+                failure_transition_type: row.get(11)?,
+                failure_target_lane_id: row.get(12)?,
             })
         })
         .map_err(|error| format!("Unable to query workflow lanes for {workflow_id}: {error}"))?;
@@ -617,6 +627,7 @@ fn write_lanes(
                     assigned_entity_type,
                     assigned_entity_id,
                     entry_prompt_template,
+                    require_user_approval_on_success,
                     success_transition_type,
                     success_target_lane_id,
                     failure_transition_type,
@@ -624,7 +635,7 @@ fn write_lanes(
                     user_intervention_target_lane_id,
                     created_at,
                     updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?14)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL, ?15, ?15)
                 "#,
                 params![
                     lane.id,
@@ -636,6 +647,7 @@ fn write_lanes(
                     lane.assigned_entity_type,
                     lane.assigned_entity_id,
                     lane.entry_prompt_template,
+                    if lane.require_user_approval_on_success { 1 } else { 0 },
                     lane.success_transition_type,
                     lane.success_target_lane_id,
                     lane.failure_transition_type,
@@ -666,6 +678,7 @@ struct NormalizedLaneInput {
     assigned_entity_type: String,
     assigned_entity_id: Option<String>,
     entry_prompt_template: Option<String>,
+    require_user_approval_on_success: bool,
     success_transition_type: String,
     success_target_lane_id: Option<String>,
     failure_transition_type: String,
@@ -705,6 +718,7 @@ fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLane
         assigned_entity_type: lane.assigned_entity_type.trim().to_lowercase(),
         assigned_entity_id: normalized_optional_string(lane.assigned_entity_id),
         entry_prompt_template: normalized_optional_string(lane.entry_prompt_template),
+        require_user_approval_on_success: lane.require_user_approval_on_success,
         success_transition_type: normalize_transition_type(&lane.success_transition_type),
         success_target_lane_id: normalize_transition_target(
             &lane.success_transition_type,
@@ -881,6 +895,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: Some("Draft a plan".into()),
+                    require_user_approval_on_success: false,
                     success_transition_type: "lane".into(),
                     success_target_lane_id: Some("lane-build".into()),
                     failure_transition_type: "user_intervention".into(),
@@ -895,6 +910,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "lane".into(),
@@ -945,6 +961,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -991,6 +1008,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    require_user_approval_on_success: false,
                     success_transition_type: "lane".into(),
                     success_target_lane_id: Some("missing-lane".into()),
                     failure_transition_type: "end".into(),
@@ -1024,6 +1042,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some("agent-missing".into()),
                     entry_prompt_template: None,
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1059,6 +1078,7 @@ mod tests {
                     assigned_entity_type: "role".into(),
                     assigned_entity_id: Some("reviewer".into()),
                     entry_prompt_template: None,
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1090,6 +1110,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some("data".into()),
                     entry_prompt_template: None,
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1100,6 +1121,40 @@ mod tests {
         .expect("validation should run");
 
         assert!(validation.valid);
+    }
+
+    #[test]
+    fn rejects_success_approval_for_user_owned_lanes() {
+        let connection = open_test_connection("workflow-validation-user-approval");
+        let validation = validate_workflow(
+            &connection,
+            &WorkflowUpsertInput {
+                name: "User review loop".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-user".into()),
+                    key: "user".into(),
+                    name: "User".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "user".into(),
+                    assigned_entity_id: None,
+                    entry_prompt_template: None,
+                    require_user_approval_on_success: true,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("validation should run");
+
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "lanes[0].requireUserApprovalOnSuccess"));
     }
 
     #[test]
@@ -1120,6 +1175,7 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: None,
+                        require_user_approval_on_success: false,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "end".into(),
@@ -1134,6 +1190,7 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: None,
+                        require_user_approval_on_success: false,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "end".into(),

@@ -7,6 +7,7 @@ import {
   addTaskAttachment,
   addTaskDependency,
   addTaskFileReference,
+  approveLaneCompletion,
   commentOnTask,
   completeLaneAsFailure,
   completeLaneAsSuccess,
@@ -23,6 +24,7 @@ import {
   removeTaskDependency,
   removeTaskFileReference,
   requestUserIntervention,
+  sendLaneBackForWork,
   sendSessionMessage,
   updateTask,
 } from "../lib/tauri";
@@ -740,6 +742,34 @@ export function TasksPage({
     }
   }
 
+  async function handleApproveLaneCompletion() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await approveLaneCompletion(route.taskId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to approve task lane.");
+    }
+  }
+
+  async function handleSendLaneBackForWork() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await sendLaneBackForWork(route.taskId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to send task lane back for work.");
+    }
+  }
+
   async function handleRetryTaskLane() {
     if (route.kind !== "detail" || !taskDetail || !taskDetail.workflowId || !taskDetail.currentLaneId) {
       return;
@@ -817,6 +847,7 @@ export function TasksPage({
           onAddComment={(draft) => handleAddComment(draft)}
           onAddDependency={() => void handleAddDependency()}
           onAddFileReference={() => void handleAddFileReference()}
+          onApproveCompletion={() => void handleApproveLaneCompletion()}
           onBack={() => setRoute({ kind: "overview" })}
           onCommentDraftChange={setCommentDraft}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
@@ -831,6 +862,7 @@ export function TasksPage({
           onPublish={() => void handlePublishDetailTask()}
           onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
           onRetry={() => void handleRetryTaskLane()}
+          onSendBackForWork={() => void handleSendLaneBackForWork()}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
           onSave={() => void handleSaveDetailTask()}

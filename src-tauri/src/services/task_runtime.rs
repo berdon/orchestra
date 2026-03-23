@@ -18,6 +18,7 @@ use crate::{
 
 const ASSIGNMENT_STATUS_QUEUED: &str = "queued";
 const ASSIGNMENT_STATUS_ACTIVE: &str = "active";
+const ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL: &str = "awaiting_user_approval";
 const ASSIGNMENT_STATUS_COMPLETED: &str = "completed";
 const ASSIGNMENT_STATUS_FAILED: &str = "failed";
 const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
@@ -44,6 +45,8 @@ pub fn get_active_lane_assignment(
                 role_queue_entry_id,
                 role_instance_id,
                 prompt,
+                pending_outcome,
+                completion_notes,
                 whip_count,
                 last_whip_at,
                 started_at,
@@ -60,6 +63,46 @@ pub fn get_active_lane_assignment(
         )
         .optional()
         .map_err(|error| format!("Unable to query active assignment for task {task_id}: {error}"))
+}
+
+pub fn get_current_lane_assignment(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<TaskLaneAssignment>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                task_id,
+                workflow_id,
+                lane_id,
+                worker_type,
+                worker_id,
+                status,
+                session_id,
+                runtime_cwd,
+                role_queue_entry_id,
+                role_instance_id,
+                prompt,
+                pending_outcome,
+                completion_notes,
+                whip_count,
+                last_whip_at,
+                started_at,
+                completed_at,
+                created_at,
+                updated_at
+            FROM task_lane_assignments
+            WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            "#,
+            [task_id],
+            read_assignment,
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query current assignment for task {task_id}: {error}"))
 }
 
 pub fn get_active_assignment_for_session(
@@ -82,6 +125,8 @@ pub fn get_active_assignment_for_session(
                 role_queue_entry_id,
                 role_instance_id,
                 prompt,
+                pending_outcome,
+                completion_notes,
                 whip_count,
                 last_whip_at,
                 started_at,
@@ -119,6 +164,8 @@ pub fn activate_queued_role_assignments(
                 tla.role_queue_entry_id,
                 tla.role_instance_id,
                 tla.prompt,
+                tla.pending_outcome,
+                tla.completion_notes,
                 tla.whip_count,
                 tla.last_whip_at,
                 tla.started_at,
@@ -145,9 +192,9 @@ pub fn activate_queued_role_assignments(
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, String>(19)?,
+                row.get::<_, String>(21)?,
+                row.get::<_, String>(22)?,
                 row.get::<_, String>(20)?,
-                row.get::<_, String>(18)?,
             ))
         })
         .map_err(|error| {
@@ -183,6 +230,8 @@ pub fn activate_queued_role_assignments(
                     role_queue_entry_id,
                     role_instance_id,
                     prompt,
+                    pending_outcome,
+                    completion_notes,
                     whip_count,
                     last_whip_at,
                     started_at,
@@ -657,13 +706,41 @@ pub fn start_assignment_run(
         return Ok(());
     }
 
+    let Some(prompt) = assignment.prompt.as_deref() else {
+        return Ok(());
+    };
+
+    start_assignment_prompt(app, state, session_dir, assignment, prompt)
+}
+
+pub fn start_assignment_follow_up(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    prompt: &str,
+) -> Result<(), String> {
+    if assignment.status != ASSIGNMENT_STATUS_ACTIVE {
+        return Err(format!(
+            "Task lane assignment {} is not active and cannot accept follow-up work",
+            assignment.id
+        ));
+    }
+
+    start_assignment_prompt(app, state, session_dir, assignment, prompt)
+}
+
+fn start_assignment_prompt(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    prompt: &str,
+) -> Result<(), String> {
     let Some(session_id) = assignment.session_id.as_deref() else {
         return Ok(());
     };
     let Some(runtime_cwd) = assignment.runtime_cwd.as_deref() else {
-        return Ok(());
-    };
-    let Some(prompt) = assignment.prompt.as_deref() else {
         return Ok(());
     };
 
@@ -948,6 +1025,8 @@ fn dispatch_role_lane(
         role_queue_entry_id: Some(queue_entry.id.clone()),
         role_instance_id,
         prompt: Some(prompt.to_string()),
+        pending_outcome: None,
+        completion_notes: None,
         whip_count: 0,
         last_whip_at: None,
         started_at: now.to_string(),
@@ -1102,6 +1181,8 @@ fn dispatch_agent_lane(
         role_queue_entry_id: None,
         role_instance_id: None,
         prompt: Some(prompt.to_string()),
+        pending_outcome: None,
+        completion_notes: None,
         whip_count: 0,
         last_whip_at: None,
         started_at: now.to_string(),
@@ -1160,6 +1241,20 @@ fn complete_lane(
     let normalized_notes = normalize_optional(notes);
 
     if let Some(assignment) = active_assignment.as_ref() {
+        if outcome == "success"
+            && lane.require_user_approval_on_success
+            && matches!(assignment.worker_type.as_str(), "agent" | "role")
+        {
+            mark_assignment_awaiting_user_approval(
+                connection,
+                &assignment.id,
+                normalized_notes.clone(),
+                &now,
+            )?;
+            move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
+            return tasks::get_task_context(connection, task_id);
+        }
+
         update_open_lane_run(
             connection,
             task_id,
@@ -1170,79 +1265,224 @@ fn complete_lane(
             &now,
         )?;
 
-        if let Some(instance_id) = assignment.role_instance_id.as_deref() {
-            let release_outcome = if outcome == "failure" {
-                "failure"
-            } else {
-                "success"
-            };
-            let _ = role_dispatch::release_role_instance(
-                connection,
-                project_root,
-                session_dir,
-                instance_id,
-                release_outcome,
-                if outcome == "failure" {
-                    normalized_notes.clone()
-                } else {
-                    None
-                },
-            )?;
-        }
-
-        if assignment.worker_type == "agent" {
-            if let Some(agent_id) = assignment.worker_id.as_deref() {
-                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(
-                    connection,
-                    &task.project_id,
-                    agent_id,
-                )? {
-                    if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
-                        if outcome == "failure" {
-                            agent_runtime::mark_agent_queue_entry_failed(
-                                connection,
-                                queue_entry_id,
-                            )?;
-                        } else {
-                            agent_runtime::mark_agent_queue_entry_completed(
-                                connection,
-                                queue_entry_id,
-                            )?;
-                        }
-                    }
-                    let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
-                        connection,
-                        &task.project_id,
-                        agent_id,
-                        assignment.session_id.as_deref(),
-                        assignment.runtime_cwd.as_deref(),
-                        None,
-                        if outcome == "failure" {
-                            "needs_attention"
-                        } else {
-                            "idle"
-                        },
-                        if outcome == "failure" {
-                            normalized_notes.as_deref()
-                        } else {
-                            None
-                        },
-                    )?;
-                }
-            }
-        }
-
-        let assignment_status = match outcome {
-            "success" | "needs_user" => ASSIGNMENT_STATUS_COMPLETED,
-            "failure" => ASSIGNMENT_STATUS_FAILED,
-            _ => ASSIGNMENT_STATUS_CANCELED,
-        };
-        complete_assignment(connection, &assignment.id, assignment_status, &now)?;
+        finalize_worker_assignment(
+            connection,
+            project_root,
+            session_dir,
+            &task,
+            assignment,
+            outcome,
+            normalized_notes.clone(),
+            &now,
+        )?;
     }
 
     transition_task_after_completion(connection, &task, &lane, outcome, &now)?;
     let updated = tasks::get_task_context(connection, task_id)?;
     Ok(updated)
+}
+
+pub fn approve_pending_lane_completion(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+) -> Result<TaskDetail, String> {
+    let assignment = get_current_lane_assignment(connection, task_id)?
+        .ok_or_else(|| format!("Task {task_id} has no lane assignment awaiting approval"))?;
+    if assignment.status != ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL {
+        return Err(format!("Task {task_id} is not awaiting user approval"));
+    }
+
+    let task = tasks::get_task_context(connection, task_id)?;
+    let workflow = load_task_workflow(connection, &task)?;
+    let lane = workflow
+        .lanes
+        .iter()
+        .find(|lane| lane.id == assignment.lane_id)
+        .cloned()
+        .ok_or_else(|| format!("Unable to resolve current lane for task {}", task.id))?;
+    let now = now_iso();
+
+    update_open_lane_run(
+        connection,
+        task_id,
+        &assignment.lane_id,
+        assignment.session_id.as_deref(),
+        "success",
+        assignment.completion_notes.clone(),
+        &now,
+    )?;
+    finalize_worker_assignment(
+        connection,
+        project_root,
+        session_dir,
+        &task,
+        &assignment,
+        "success",
+        assignment.completion_notes.clone(),
+        &now,
+    )?;
+    transition_task_after_completion(connection, &task, &lane, "success", &now)?;
+    tasks::get_task_context(connection, task_id)
+}
+
+pub fn send_lane_back_for_work(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<TaskLaneAssignment, String> {
+    let assignment = get_current_lane_assignment(connection, task_id)?
+        .ok_or_else(|| format!("Task {task_id} has no lane assignment awaiting approval"))?;
+    if assignment.status != ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL {
+        return Err(format!("Task {task_id} is not awaiting user approval"));
+    }
+
+    let now = now_iso();
+    connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = ?2,
+                pending_outcome = NULL,
+                completion_notes = NULL,
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+            params![assignment.id, ASSIGNMENT_STATUS_ACTIVE, now],
+        )
+        .map_err(|error| format!("Unable to reactivate lane assignment {}: {error}", assignment.id))?;
+
+    connection
+        .execute(
+            r#"
+            UPDATE tasks
+            SET current_lane_id = ?2,
+                assignee_type = ?3,
+                assignee_id = ?4,
+                status = 'in_progress',
+                updated_at = ?5
+            WHERE id = ?1
+            "#,
+            params![
+                task_id,
+                assignment.lane_id,
+                assignment.worker_type,
+                assignment.worker_id,
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to send task {} back for work: {error}", task_id))?;
+
+    get_current_lane_assignment(connection, task_id)?
+        .ok_or_else(|| format!("Unable to reload reactivated lane assignment for task {task_id}"))
+}
+
+fn mark_assignment_awaiting_user_approval(
+    connection: &Connection,
+    assignment_id: &str,
+    notes: Option<String>,
+    now: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = ?2,
+                pending_outcome = 'success',
+                completion_notes = ?3,
+                updated_at = ?4
+            WHERE id = ?1
+            "#,
+            params![assignment_id, ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL, notes, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to mark task lane assignment {} awaiting user approval: {error}",
+                assignment_id
+            )
+        })?;
+    Ok(())
+}
+
+fn move_task_to_user_review(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            r#"
+            UPDATE tasks
+            SET current_lane_id = ?2,
+                assignee_type = 'user',
+                assignee_id = NULL,
+                status = 'in_review',
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+            params![task_id, lane_id, now],
+        )
+        .map_err(|error| format!("Unable to move task {} to user review: {error}", task_id))?;
+    Ok(())
+}
+
+fn finalize_worker_assignment(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task: &TaskDetail,
+    assignment: &TaskLaneAssignment,
+    outcome: &str,
+    notes: Option<String>,
+    now: &str,
+) -> Result<(), String> {
+    if let Some(instance_id) = assignment.role_instance_id.as_deref() {
+        let release_outcome = if outcome == "failure" {
+            "failure"
+        } else {
+            "success"
+        };
+        let _ = role_dispatch::release_role_instance(
+            connection,
+            project_root,
+            session_dir,
+            instance_id,
+            release_outcome,
+            if outcome == "failure" { notes.clone() } else { None },
+        )?;
+    }
+
+    if assignment.worker_type == "agent" {
+        if let Some(agent_id) = assignment.worker_id.as_deref() {
+            if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(connection, &task.project_id, agent_id)? {
+                if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
+                    if outcome == "failure" {
+                        agent_runtime::mark_agent_queue_entry_failed(connection, queue_entry_id)?;
+                    } else {
+                        agent_runtime::mark_agent_queue_entry_completed(connection, queue_entry_id)?;
+                    }
+                }
+                let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
+                    connection,
+                    &task.project_id,
+                    agent_id,
+                    assignment.session_id.as_deref(),
+                    assignment.runtime_cwd.as_deref(),
+                    None,
+                    if outcome == "failure" { "needs_attention" } else { "idle" },
+                    if outcome == "failure" { notes.as_deref() } else { None },
+                )?;
+            }
+        }
+    }
+
+    let assignment_status = match outcome {
+        "success" | "needs_user" => ASSIGNMENT_STATUS_COMPLETED,
+        "failure" => ASSIGNMENT_STATUS_FAILED,
+        _ => ASSIGNMENT_STATUS_CANCELED,
+    };
+    complete_assignment(connection, &assignment.id, assignment_status, now)
 }
 
 fn transition_task_after_completion(
@@ -1497,6 +1737,8 @@ fn insert_assignment(
                 role_queue_entry_id,
                 role_instance_id,
                 prompt,
+                pending_outcome,
+                completion_notes,
                 whip_count,
                 last_whip_at,
                 started_at,
@@ -1504,7 +1746,7 @@ fn insert_assignment(
                 created_at,
                 updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             "#,
             params![
                 assignment.id,
@@ -1519,6 +1761,8 @@ fn insert_assignment(
                 assignment.role_queue_entry_id,
                 assignment.role_instance_id,
                 assignment.prompt,
+                assignment.pending_outcome,
+                assignment.completion_notes,
                 assignment.whip_count,
                 assignment.last_whip_at,
                 assignment.started_at,
@@ -1544,7 +1788,7 @@ fn complete_assignment(
 ) -> Result<(), String> {
     connection
         .execute(
-            "UPDATE task_lane_assignments SET status = ?2, completed_at = ?3, updated_at = ?3 WHERE id = ?1",
+            "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completed_at = ?3, updated_at = ?3 WHERE id = ?1",
             params![assignment_id, status, now],
         )
         .map_err(|error| format!("Unable to complete lane assignment {assignment_id}: {error}"))?;
@@ -1733,6 +1977,15 @@ fn apply_agent_session_defaults(
         &agent.thinking_level,
     )?;
     Ok(())
+}
+
+pub fn lane_rework_follow_up_prompt() -> String {
+    [
+        "The user has requested more work be done on this lane.",
+        "Reload the latest task context and comments before continuing so you are working from current Orchestra state.",
+        "Continue the lane using the same session and finish by calling the appropriate Orchestra completion tool when the work is actually done.",
+    ]
+    .join("\n\n")
 }
 
 fn orchestra_working_rules_block() -> String {
@@ -2071,6 +2324,10 @@ fn build_lane_prompt(
         rendered = rendered.replace(token, &value);
     }
 
+    if lane.require_user_approval_on_success && matches!(lane.assigned_entity_type.as_str(), "agent" | "role") {
+        rendered.push_str("\n\nThis lane requires user approval after you report success. When you call complete_lane_as_success, Orchestra will pause the task for human review on this same lane until the user either approves it or sends it back for more work.");
+    }
+
     rendered
         .lines()
         .map(str::trim_end)
@@ -2104,12 +2361,14 @@ fn read_assignment(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskLaneAssignme
         role_queue_entry_id: row.get(9)?,
         role_instance_id: row.get(10)?,
         prompt: row.get(11)?,
-        whip_count: row.get(12)?,
-        last_whip_at: row.get(13)?,
-        started_at: row.get(14)?,
-        completed_at: row.get(15)?,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
+        pending_outcome: row.get(12)?,
+        completion_notes: row.get(13)?,
+        whip_count: row.get(14)?,
+        last_whip_at: row.get(15)?,
+        started_at: row.get(16)?,
+        completed_at: row.get(17)?,
+        created_at: row.get(18)?,
+        updated_at: row.get(19)?,
     })
 }
 
@@ -2218,6 +2477,7 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: Some("Draft the plan.".into()),
+                        require_user_approval_on_success: false,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-implement".into()),
                         failure_transition_type: "user_intervention".into(),
@@ -2232,6 +2492,7 @@ mod tests {
                         assigned_entity_type: "role".into(),
                         assigned_entity_id: Some(role_slug.into()),
                         entry_prompt_template: Some("Implement the task.".into()),
+                        require_user_approval_on_success: false,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-review".into()),
                         failure_transition_type: "lane".into(),
@@ -2248,6 +2509,7 @@ mod tests {
                         entry_prompt_template: Some(
                             "Review the work and summarize findings.".into(),
                         ),
+                        require_user_approval_on_success: false,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "lane".into(),
@@ -2468,6 +2730,7 @@ mod tests {
             assigned_entity_type: "role".into(),
             assigned_entity_id: Some("developer".into()),
             entry_prompt_template: Some("Ship the fix.".into()),
+            require_user_approval_on_success: false,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
             failure_transition_type: "user_intervention".into(),
@@ -2599,6 +2862,7 @@ mod tests {
             assigned_entity_type: "user".into(),
             assigned_entity_id: None,
             entry_prompt_template: None,
+            require_user_approval_on_success: false,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
             failure_transition_type: "end".into(),
@@ -2730,6 +2994,147 @@ mod tests {
     }
 
     #[test]
+    fn approval_gated_lane_pauses_for_review_and_resumes_same_session_for_rework() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Approval Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-implement".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task.".into()),
+                    require_user_approval_on_success: true,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-approval");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-approval', 'orchestra', 'runtime-approval', 'Runtime Approval Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![project_root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Approval gated task".into(),
+                description: Some("Hold for user approval after worker success.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-approval".into()),
+                repository_ids: vec!["repo-approval".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("role lane should dispatch");
+        let session_id = assignment.session_id.clone().expect("session id should exist");
+
+        let awaiting_review = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Ready for review".into()),
+            None,
+        )
+        .expect("lane should pause for approval");
+        assert_eq!(awaiting_review.status, "in_review");
+        assert_eq!(awaiting_review.assignee_type, "user");
+        assert_eq!(awaiting_review.current_lane_id.as_deref(), Some("lane-implement"));
+        assert_eq!(
+            awaiting_review.active_lane_assignment.as_ref().map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
+        );
+        assert_eq!(
+            awaiting_review.active_lane_assignment.as_ref().and_then(|entry| entry.session_id.as_deref()),
+            Some(session_id.as_str())
+        );
+        assert_eq!(awaiting_review.lane_runs.len(), 1);
+        assert!(awaiting_review.lane_runs[0].completed_at.is_none());
+
+        let reactivated_assignment = send_lane_back_for_work(&connection, &task.id)
+            .expect("lane should reactivate for rework");
+        assert_eq!(reactivated_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
+        assert_eq!(reactivated_assignment.session_id.as_deref(), Some(session_id.as_str()));
+        let reactivated_task = tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(reactivated_task.status, "in_progress");
+        assert_eq!(reactivated_task.assignee_type, "role");
+
+        let awaiting_review_again = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Ready again".into()),
+            None,
+        )
+        .expect("lane should pause for approval again");
+        assert_eq!(
+            awaiting_review_again.active_lane_assignment.as_ref().map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
+        );
+
+        let approved = approve_pending_lane_completion(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("approval should finish the lane");
+        assert_eq!(approved.status, "completed");
+        assert!(approved.active_lane_assignment.is_none());
+        assert_eq!(approved.lane_runs.len(), 1);
+        assert_eq!(approved.lane_runs[0].result, "success");
+        assert!(approved.lane_runs[0].completed_at.is_some());
+    }
+
+    #[test]
     fn queues_non_interrupting_agent_comments_in_agent_queue() {
         let mut connection = in_memory_connection();
         let agent = agents::create_agent(
@@ -2760,6 +3165,8 @@ mod tests {
             role_queue_entry_id: None,
             role_instance_id: None,
             prompt: Some("Prompt".into()),
+            pending_outcome: None,
+            completion_notes: None,
             whip_count: 0,
             last_whip_at: None,
             started_at: now_iso(),
@@ -3036,6 +3443,7 @@ mod tests {
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
                     failure_target_lane_id: None,
+                    require_user_approval_on_success: false,
                 }],
             },
         )
@@ -3215,6 +3623,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Keep going until done.".into()),
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -3314,6 +3723,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Do the work.".into()),
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -3428,6 +3838,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Handle the task.".into()),
+                    require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),

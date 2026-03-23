@@ -129,7 +129,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
     task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
-    task.active_lane_assignment = task_runtime::get_active_lane_assignment(connection, task_id)?;
+    task.active_lane_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
     task.task_repositories = task_repositories::load_task_repositories(
         connection,
         task_id,
@@ -1941,6 +1941,8 @@ mod tests {
             role_queue_entry_id: None,
             role_instance_id: None,
             prompt: Some("Prompt".into()),
+            pending_outcome: None,
+            completion_notes: None,
             whip_count: 0,
             last_whip_at: None,
             started_at: now.clone(),
