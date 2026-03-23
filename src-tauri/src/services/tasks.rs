@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::HashSet, fs};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        TaskComment, TaskCommentInput, TaskDetail, TaskDependency, TaskLaneRun, TaskSummary,
-        TaskUpsertInput,
+        TaskComment, TaskCommentInput, TaskCommentReceipt, TaskDependency, TaskDetail,
+        TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -49,7 +49,10 @@ pub fn list_tasks(
         .map_err(|error| format!("Unable to prepare task list query: {error}"))?;
 
     let rows = statement
-        .query_map(params![project_id, if include_archived { 1 } else { 0 }], map_task_summary_row)
+        .query_map(
+            params![project_id, if include_archived { 1 } else { 0 }],
+            map_task_summary_row,
+        )
         .map_err(|error| format!("Unable to query tasks for project {project_id}: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -232,7 +235,11 @@ pub fn create_subtask(
 ) -> Result<TaskDetail, String> {
     input.parent_task_id = Some(parent_task_id.to_string());
     let project_id = connection
-        .query_row("SELECT project_id FROM tasks WHERE id = ?1", [parent_task_id], |row| row.get::<_, String>(0))
+        .query_row(
+            "SELECT project_id FROM tasks WHERE id = ?1",
+            [parent_task_id],
+            |row| row.get::<_, String>(0),
+        )
         .map_err(|error| format!("Unable to resolve parent task project: {error}"))?;
     create_task(connection, Some(&project_id), input)
 }
@@ -283,14 +290,26 @@ pub fn update_task(
             normalized.assignee_id,
             normalized.repository_ids.first().cloned(),
             normalized.parent_task_id,
-            normalized.whip_max_attempts.unwrap_or(existing.whip_max_attempts),
-            if normalized.archived.unwrap_or(existing.archived) { 1 } else { 0 },
+            normalized
+                .whip_max_attempts
+                .unwrap_or(existing.whip_max_attempts),
+            if normalized.archived.unwrap_or(existing.archived) {
+                1
+            } else {
+                0
+            },
             now,
         ],
     )
     .map_err(|error| format!("Unable to update task {task_id}: {error}"))?;
 
-    sync_task_repository_links(&tx, task_id, &existing.project_id, &normalized.repository_ids, &now)?;
+    sync_task_repository_links(
+        &tx,
+        task_id,
+        &existing.project_id,
+        &normalized.repository_ids,
+        &now,
+    )?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit task update: {error}"))?;
@@ -323,7 +342,10 @@ pub fn delete_task(connection: &mut Connection, task_id: &str) -> Result<TaskDet
         let path = std::path::PathBuf::from(&attachment.stored_path);
         if path.exists() {
             fs::remove_file(&path).map_err(|error| {
-                format!("Unable to remove task attachment file {}: {error}", path.display())
+                format!(
+                    "Unable to remove task attachment file {}: {error}",
+                    path.display()
+                )
             })?;
         }
     }
@@ -359,7 +381,13 @@ pub fn add_task_dependency(
         INSERT INTO task_dependencies (id, project_id, blocker_task_id, blocked_task_id, created_at)
         VALUES (?1, ?2, ?3, ?4, ?5)
         "#,
-        params![dependency_id, project_id, blocker_task_id, blocked_task_id, now],
+        params![
+            dependency_id,
+            project_id,
+            blocker_task_id,
+            blocked_task_id,
+            now
+        ],
     )
     .map_err(|error| format!("Unable to add task dependency: {error}"))?;
 
@@ -375,7 +403,10 @@ pub fn remove_task_dependency(
 ) -> Result<TaskDependency, String> {
     let dependency = load_dependency(connection, dependency_id)?;
     let deleted = connection
-        .execute("DELETE FROM task_dependencies WHERE id = ?1", [dependency_id])
+        .execute(
+            "DELETE FROM task_dependencies WHERE id = ?1",
+            [dependency_id],
+        )
         .map_err(|error| format!("Unable to remove task dependency {dependency_id}: {error}"))?;
 
     if deleted == 0 {
@@ -435,6 +466,126 @@ pub fn add_task_comment(
     Ok(comment)
 }
 
+pub fn list_unread_task_comments(
+    connection: &Connection,
+    task_id: &str,
+    assignment: &TaskLaneAssignment,
+) -> Result<Vec<TaskComment>, String> {
+    if assignment.task_id != task_id {
+        return Err(format!(
+            "Assignment {} does not belong to task {}",
+            assignment.id, task_id
+        ));
+    }
+    let session_id = assignment
+        .session_id
+        .as_deref()
+        .ok_or_else(|| format!("Task assignment {} has no session id", assignment.id))?;
+
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT c.id, c.task_id, c.author, c.message, c.interrupt_agent, c.created_at, c.updated_at
+            FROM task_comments c
+            WHERE c.task_id = ?1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM task_comment_receipts r
+                  WHERE r.comment_id = c.id AND r.session_id = ?2
+              )
+            ORDER BY c.created_at ASC, c.id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare unread task comments query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, session_id], |row| {
+            Ok(TaskComment {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                author: row.get(2)?,
+                message: row.get(3)?,
+                interrupt_agent: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("Unable to load unread task comments for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect unread task comments for {task_id}: {error}"))
+}
+
+pub fn mark_task_comments_read(
+    connection: &Connection,
+    task_id: &str,
+    assignment: &TaskLaneAssignment,
+    comment_ids: Option<&[String]>,
+) -> Result<Vec<TaskCommentReceipt>, String> {
+    if assignment.task_id != task_id {
+        return Err(format!(
+            "Assignment {} does not belong to task {}",
+            assignment.id, task_id
+        ));
+    }
+    let session_id = assignment
+        .session_id
+        .as_deref()
+        .ok_or_else(|| format!("Task assignment {} has no session id", assignment.id))?;
+
+    let comments = load_comments_for_receipt_update(connection, task_id, comment_ids)?;
+    if comments.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let now = now_iso();
+    for comment in &comments {
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_comment_receipts (
+                    comment_id,
+                    task_id,
+                    assignment_id,
+                    worker_type,
+                    worker_id,
+                    role_instance_id,
+                    session_id,
+                    read_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
+                ON CONFLICT(comment_id, session_id) DO UPDATE SET
+                    assignment_id = excluded.assignment_id,
+                    worker_type = excluded.worker_type,
+                    worker_id = excluded.worker_id,
+                    role_instance_id = excluded.role_instance_id,
+                    read_at = excluded.read_at,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    comment.id.as_str(),
+                    task_id,
+                    assignment.id.as_str(),
+                    assignment.worker_type.as_str(),
+                    assignment.worker_id.clone(),
+                    assignment.role_instance_id.clone(),
+                    session_id,
+                    now,
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to record task comment receipt for comment {} on task {}: {error}",
+                    comment.id, task_id
+                )
+            })?;
+    }
+
+    load_task_comment_receipts(connection, task_id, session_id, Some(&comments))
+}
+
 fn validate_task_input(
     connection: &Connection,
     input: &TaskUpsertInput,
@@ -467,11 +618,16 @@ fn validate_task_input(
     }
 
     if !VALID_ASSIGNEE_TYPES.contains(&input.assignee_type.as_str()) {
-        errors.push("assigneeType: Assignee type must be one of: user, agent, role, unassigned.".to_string());
+        errors.push(
+            "assigneeType: Assignee type must be one of: user, agent, role, unassigned."
+                .to_string(),
+        );
     }
 
-    if matches!(input.assignee_type.as_str(), "user" | "unassigned") && input.assignee_id.is_some() {
-        errors.push("assigneeId: User/unassigned tasks must not specify an assignee id.".to_string());
+    if matches!(input.assignee_type.as_str(), "user" | "unassigned") && input.assignee_id.is_some()
+    {
+        errors
+            .push("assigneeId: User/unassigned tasks must not specify an assignee id.".to_string());
     }
 
     if matches!(input.assignee_type.as_str(), "agent" | "role") && input.assignee_id.is_none() {
@@ -499,7 +655,9 @@ fn validate_task_input(
             errors.push("workflowId: Workflow was not found.".to_string());
         } else if let Some(current_lane_id) = input.current_lane_id.as_deref() {
             if !lane_exists_for_workflow(connection, workflow_id, current_lane_id)? {
-                errors.push("currentLaneId: Lane does not belong to the selected workflow.".to_string());
+                errors.push(
+                    "currentLaneId: Lane does not belong to the selected workflow.".to_string(),
+                );
             }
         }
     }
@@ -543,6 +701,92 @@ fn validate_dependency_edge(
     }
 
     Ok(())
+}
+
+fn load_comments_for_receipt_update(
+    connection: &Connection,
+    task_id: &str,
+    comment_ids: Option<&[String]>,
+) -> Result<Vec<TaskComment>, String> {
+    let comments = load_task_comments(connection, task_id)?;
+    let Some(comment_ids) = comment_ids else {
+        return Ok(comments);
+    };
+
+    let selected_ids = comment_ids
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    if selected_ids.is_empty() {
+        return Ok(comments);
+    }
+
+    let filtered = comments
+        .into_iter()
+        .filter(|comment| selected_ids.contains(&comment.id))
+        .collect::<Vec<_>>();
+
+    if filtered.len() != selected_ids.len() {
+        return Err("One or more comment ids were not found on this task.".into());
+    }
+
+    Ok(filtered)
+}
+
+fn load_task_comment_receipts(
+    connection: &Connection,
+    task_id: &str,
+    session_id: &str,
+    comments: Option<&[TaskComment]>,
+) -> Result<Vec<TaskCommentReceipt>, String> {
+    let selected_ids = comments.map(|entries| {
+        entries
+            .iter()
+            .map(|comment| comment.id.as_str())
+            .collect::<HashSet<_>>()
+    });
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT comment_id, task_id, assignment_id, worker_type, worker_id, role_instance_id, session_id, read_at, created_at, updated_at
+            FROM task_comment_receipts
+            WHERE task_id = ?1 AND session_id = ?2
+            ORDER BY read_at ASC, comment_id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare task comment receipts query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, session_id], |row| {
+            Ok(TaskCommentReceipt {
+                comment_id: row.get(0)?,
+                task_id: row.get(1)?,
+                assignment_id: row.get(2)?,
+                worker_type: row.get(3)?,
+                worker_id: row.get(4)?,
+                role_instance_id: row.get(5)?,
+                session_id: row.get(6)?,
+                read_at: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        })
+        .map_err(|error| format!("Unable to read task comment receipts for {task_id}: {error}"))?;
+
+    let receipts = rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        format!("Unable to collect task comment receipts for {task_id}: {error}")
+    })?;
+
+    if let Some(selected_ids) = selected_ids {
+        Ok(receipts
+            .into_iter()
+            .filter(|receipt| selected_ids.contains(receipt.comment_id.as_str()))
+            .collect())
+    } else {
+        Ok(receipts)
+    }
 }
 
 fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<TaskComment>, String> {
@@ -616,7 +860,10 @@ fn load_parent_summary(
     }
 }
 
-fn load_lineage(connection: &Connection, mut parent_task_id: Option<String>) -> Result<Vec<TaskSummary>, String> {
+fn load_lineage(
+    connection: &Connection,
+    mut parent_task_id: Option<String>,
+) -> Result<Vec<TaskSummary>, String> {
     let mut lineage = Vec::new();
 
     while let Some(current_parent_id) = parent_task_id {
@@ -725,10 +972,14 @@ fn load_blocked_by_dependencies(
                 row.get::<_, String>(3)?,
             ))
         })
-        .map_err(|error| format!("Unable to query blocked-by dependencies for {task_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to query blocked-by dependencies for {task_id}: {error}")
+        })?;
 
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to collect blocked-by dependencies for {task_id}: {error}"))?
+        .map_err(|error| {
+            format!("Unable to collect blocked-by dependencies for {task_id}: {error}")
+        })?
         .into_iter()
         .map(|(id, blocker_task_id, blocked_task_id, created_at)| {
             Ok(TaskDependency {
@@ -845,10 +1096,7 @@ fn lane_exists_for_workflow(
     Ok(exists.is_some())
 }
 
-fn first_lane_id(
-    connection: &Connection,
-    workflow_id: &str,
-) -> Result<Option<String>, String> {
+fn first_lane_id(connection: &Connection, workflow_id: &str) -> Result<Option<String>, String> {
     connection
         .query_row(
             "SELECT id FROM workflow_lanes WHERE workflow_id = ?1 ORDER BY lane_order ASC LIMIT 1",
@@ -957,7 +1205,10 @@ fn would_create_dependency_cycle(
             .map_err(|error| format!("Unable to traverse task dependency graph: {error}"))?;
 
         for child in rows {
-            stack.push(child.map_err(|error| format!("Unable to read dependency traversal row: {error}"))?);
+            stack
+                .push(child.map_err(|error| {
+                    format!("Unable to read dependency traversal row: {error}")
+                })?);
         }
     }
 
@@ -1005,7 +1256,9 @@ fn apply_default_task_repositories(
                 |row| row.get::<_, Option<String>>(0),
             )
             .optional()
-            .map_err(|error| format!("Unable to resolve default repository for project {project_id}: {error}"))?
+            .map_err(|error| {
+                format!("Unable to resolve default repository for project {project_id}: {error}")
+            })?
             .flatten();
         if let Some(default_repository_id) = default_repository_id {
             input.repository_ids.push(default_repository_id.clone());
@@ -1030,7 +1283,9 @@ fn apply_default_lane_if_needed(
         input.workflow_id.as_deref(),
         input.current_lane_id.as_deref(),
     ) {
-        if let Some((assignee_type, assignee_id)) = lane_owner_for_workflow(connection, workflow_id, current_lane_id)? {
+        if let Some((assignee_type, assignee_id)) =
+            lane_owner_for_workflow(connection, workflow_id, current_lane_id)?
+        {
             input.assignee_type = assignee_type;
             input.assignee_id = assignee_id;
         }
@@ -1057,7 +1312,10 @@ fn sync_task_repository_links(
     created_at: &str,
 ) -> Result<(), String> {
     connection
-        .execute("DELETE FROM task_repositories WHERE task_id = ?1", [task_id])
+        .execute(
+            "DELETE FROM task_repositories WHERE task_id = ?1",
+            [task_id],
+        )
         .map_err(|error| format!("Unable to clear task repositories for {task_id}: {error}"))?;
 
     for repository_id in repository_ids {
@@ -1067,7 +1325,9 @@ fn sync_task_repository_links(
                 [repository_id],
                 |row| row.get::<_, String>(0),
             )
-            .map_err(|error| format!("Unable to validate task repository {repository_id}: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to validate task repository {repository_id}: {error}")
+            })?;
 
         if repository_project_id != project_id {
             return Err(format!(
@@ -1213,7 +1473,12 @@ mod tests {
             TaskUpsertInput {
                 title: title.into(),
                 description: None,
-                task_type: if parent_task_id.is_none() { "epic" } else { "task" }.into(),
+                task_type: if parent_task_id.is_none() {
+                    "epic"
+                } else {
+                    "task"
+                }
+                .into(),
                 status: status.into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -1415,8 +1680,12 @@ mod tests {
             },
         )
         .expect("repository should create");
-        crate::services::projects::set_project_default_repository(&connection, &project, Some(&repository.id))
-            .expect("default repository should set");
+        crate::services::projects::set_project_default_repository(
+            &connection,
+            &project,
+            Some(&repository.id),
+        )
+        .expect("default repository should set");
 
         let task = create_task(
             &mut connection,
@@ -1529,6 +1798,104 @@ mod tests {
         assert_eq!(loaded.comments.len(), 1);
         assert_eq!(loaded.comments[0].author, "Reviewer");
         assert!(loaded.comments[0].interrupt_agent);
+    }
+
+    #[test]
+    fn tracks_unread_comments_and_records_receipts_per_session() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Unread target", "in_progress", None);
+        let now = now_iso();
+        let assignment = TaskLaneAssignment {
+            id: "assignment-unread".into(),
+            task_id: task.id.clone(),
+            workflow_id: "workflow-dev".into(),
+            lane_id: "lane-plan".into(),
+            worker_type: "agent".into(),
+            worker_id: Some("agent-data".into()),
+            status: "active".into(),
+            session_id: Some("session-unread".into()),
+            runtime_cwd: Some("/tmp/unread".into()),
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: Some("Prompt".into()),
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: now.clone(),
+            completed_at: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL, ?10, 0, NULL, ?11, NULL, ?11, ?11)",
+                params![
+                    assignment.id.as_str(),
+                    assignment.task_id.as_str(),
+                    assignment.workflow_id.as_str(),
+                    assignment.lane_id.as_str(),
+                    assignment.worker_type.as_str(),
+                    assignment.worker_id.as_deref(),
+                    assignment.status.as_str(),
+                    assignment.session_id.as_deref(),
+                    assignment.runtime_cwd.as_deref(),
+                    assignment.prompt.as_deref(),
+                    now.as_str(),
+                ],
+            )
+            .expect("assignment should insert");
+
+        let first = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Reviewer".into(),
+                message: "Check the failing test before you continue.".into(),
+                interrupt_agent: false,
+            },
+        )
+        .expect("first comment should add");
+        let second = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Lead".into(),
+                message: "Also update the release notes.".into(),
+                interrupt_agent: true,
+            },
+        )
+        .expect("second comment should add");
+
+        let unread_before = list_unread_task_comments(&connection, &task.id, &assignment)
+            .expect("unread comments should load");
+        assert_eq!(unread_before.len(), 2);
+        assert_eq!(unread_before[0].id, first.id);
+        assert_eq!(unread_before[1].id, second.id);
+
+        let receipts = mark_task_comments_read(
+            &connection,
+            &task.id,
+            &assignment,
+            Some(&[first.id.clone()]),
+        )
+        .expect("comment receipt should record");
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].comment_id, first.id);
+        assert_eq!(receipts[0].assignment_id, assignment.id);
+        assert_eq!(receipts[0].session_id, "session-unread");
+
+        let unread_after_first = list_unread_task_comments(&connection, &task.id, &assignment)
+            .expect("remaining unread comments should load");
+        assert_eq!(unread_after_first.len(), 1);
+        assert_eq!(unread_after_first[0].id, second.id);
+
+        let remaining_receipts = mark_task_comments_read(&connection, &task.id, &assignment, None)
+            .expect("remaining unread comments should mark read");
+        assert_eq!(remaining_receipts.len(), 2);
+        let unread_after_all = list_unread_task_comments(&connection, &task.id, &assignment)
+            .expect("all comments should now be read");
+        assert!(unread_after_all.is_empty());
     }
 
     #[test]

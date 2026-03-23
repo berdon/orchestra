@@ -21,9 +21,9 @@ use uuid::Uuid;
 use crate::{
     models::{
         AuthorizationContext, BridgeCleanupEvent, BridgeClientDiagnostics, BridgeDiagnostics,
-        BridgeInstanceDiagnostics, BridgeRequestDiagnostics, OrchestraToolDefinition,
-        RoleQueueEntryInput, TaskAttachmentInput, TaskCommentInput, TaskLaneAssignment,
-        TaskUpsertInput,
+        BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkTaskCommentsReadInput,
+        OrchestraToolDefinition, RoleQueueEntryInput, TaskAttachmentInput, TaskCommentInput,
+        TaskLaneAssignment, TaskUpsertInput,
     },
     services::{
         agents, authorization, command_authorization, database, pi_sessions, policies,
@@ -106,6 +106,8 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_tasks",
     "get_task",
     "get_task_context",
+    "get_unread_task_comments",
+    "mark_task_comments_read",
     "list_task_repositories",
     "list_task_file_references",
     "add_task_file_reference",
@@ -339,6 +341,13 @@ impl ToolBridgeConfig {
                 diagnostic.error
             ),
         );
+    }
+
+    fn clone_app_handle(&self) -> Option<AppHandle> {
+        self.app_handle
+            .lock()
+            .ok()
+            .and_then(|current| current.clone())
     }
 
     fn start_assignment_async(
@@ -973,6 +982,48 @@ fn invoke_bridge_command(
             serde_json::to_value(tasks::get_task_context(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task context: {error}"))
         }
+        "get_unread_task_comments" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let assignment =
+                crate::services::task_runtime::get_active_lane_assignment(connection, &task_id)?
+                    .ok_or_else(|| format!("Task {} has no active lane assignment", task_id))?;
+            crate::services::task_runtime::validate_assignment_authorization(
+                &assignment,
+                authorization,
+            )?;
+            serde_json::to_value(tasks::list_unread_task_comments(
+                connection,
+                &task_id,
+                &assignment,
+            )?)
+            .map_err(|error| format!("Unable to serialize unread task comments: {error}"))
+        }
+        "mark_task_comments_read" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.comment")?;
+            let assignment =
+                crate::services::task_runtime::get_active_lane_assignment(connection, &task_id)?
+                    .ok_or_else(|| format!("Task {} has no active lane assignment", task_id))?;
+            crate::services::task_runtime::validate_assignment_authorization(
+                &assignment,
+                authorization,
+            )?;
+            let input: MarkTaskCommentsReadInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or_else(|| {
+                    serde_json::json!({
+                        "commentIds": payload.get("commentIds").cloned().unwrap_or(Value::Null)
+                    })
+                }))
+                .map_err(|error| format!("Unable to parse task comment receipt input: {error}"))?;
+            serde_json::to_value(tasks::mark_task_comments_read(
+                connection,
+                &task_id,
+                &assignment,
+                input.comment_ids.as_deref(),
+            )?)
+            .map_err(|error| format!("Unable to serialize task comment receipts: {error}"))
+        }
         "list_task_repositories" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
@@ -983,24 +1034,36 @@ fn invoke_bridge_command(
         "list_task_file_references" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            serde_json::to_value(task_file_references::load_task_file_references(connection, &task_id)?)
-                .map_err(|error| format!("Unable to serialize task file references: {error}"))
+            serde_json::to_value(task_file_references::load_task_file_references(
+                connection, &task_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize task file references: {error}"))
         }
         "add_task_file_reference" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.update")?;
-            let input = serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
-                .map_err(|error| format!("Unable to parse task file reference input: {error}"))?;
+            let input =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| {
+                        format!("Unable to parse task file reference input: {error}")
+                    })?;
             let mut writable = database::open_connection()?;
-            serde_json::to_value(task_file_references::add_task_file_reference(&mut writable, &task_id, input)?)
-                .map_err(|error| format!("Unable to serialize task file reference: {error}"))
+            serde_json::to_value(task_file_references::add_task_file_reference(
+                &mut writable,
+                &task_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize task file reference: {error}"))
         }
         "remove_task_file_reference" => {
             let reference_id = require_string(&payload, "referenceId")?;
             command_authorization::require_permission(connection, authorization, "tasks.update")?;
             let writable = database::open_connection()?;
-            serde_json::to_value(task_file_references::remove_task_file_reference(&writable, &reference_id)?)
-                .map_err(|error| format!("Unable to serialize removed task file reference: {error}"))
+            serde_json::to_value(task_file_references::remove_task_file_reference(
+                &writable,
+                &reference_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize removed task file reference: {error}"))
         }
         "create_task" => {
             command_authorization::require_permission(connection, authorization, "tasks.create")?;
@@ -1052,6 +1115,32 @@ fn invoke_bridge_command(
                     .map_err(|error| format!("Unable to parse task comment input: {error}"))?;
             let mut writable = database::open_connection()?;
             let comment = tasks::add_task_comment(&mut writable, &task_id, input)?;
+            if let Some(active_assignment) =
+                crate::services::task_runtime::get_active_lane_assignment(&writable, &task_id)?
+            {
+                if crate::services::task_runtime::assignment_owned_by_worker_authorization(
+                    &active_assignment,
+                    authorization,
+                ) {
+                    let comment_ids = vec![comment.id.clone()];
+                    let _ = tasks::mark_task_comments_read(
+                        &writable,
+                        &task_id,
+                        &active_assignment,
+                        Some(&comment_ids),
+                    )?;
+                } else if let Some(app) = config.clone_app_handle() {
+                    let context = session_context_for_task_id(&task_id)?;
+                    let state = app.state::<crate::state::AppState>();
+                    crate::services::task_runtime::notify_active_assignment_of_unread_comments(
+                        app.clone(),
+                        &state,
+                        context.session_dir,
+                        &active_assignment,
+                        &comment,
+                    )?;
+                }
+            }
             serde_json::to_value(comment)
                 .map_err(|error| format!("Unable to serialize task comment: {error}"))
         }
@@ -1389,9 +1478,10 @@ fn require_string(payload: &Value, key: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::{
-        models::TaskUpsertInput,
-        services::{database::initialize_database_at, policies, tasks},
+        models::{AgentUpsertInput, TaskUpsertInput},
+        services::{agents, database::initialize_database_at, policies, tasks},
     };
+    use rusqlite::params;
     use std::{
         env,
         path::PathBuf,
@@ -1604,6 +1694,104 @@ mod tests {
         )
         .expect_err("bridge call should be denied");
         assert!(error.contains("roles.read"));
+    }
+
+    #[test]
+    fn unread_comment_commands_round_trip_through_bridge() {
+        let mut connection = open_test_connection("bridge-unread-comments");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Bridge Reader".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.read".into(), "tasks.comment".into()],
+            },
+        )
+        .expect("agent should create");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Bridge unread comments".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-bridge', ?1, 'workflow-bridge', 'lane-bridge', 'agent', ?2, 'active', 'session-bridge', '/tmp/bridge', NULL, NULL, 'Prompt', 0, NULL, ?3, NULL, ?3, ?3)",
+                params![task.id.as_str(), agent.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+        let _comment = tasks::add_task_comment(
+            &mut connection,
+            &task.id,
+            crate::models::TaskCommentInput {
+                author: "Reviewer".into(),
+                message: "Please read this through the bridge.".into(),
+                interrupt_agent: false,
+            },
+        )
+        .expect("comment should add");
+
+        let config = dummy_bridge_config("bridge-unread-comments");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+
+        let unread = invoke_bridge_command(
+            &config,
+            &connection,
+            "get_unread_task_comments",
+            Some(&authorization),
+            json!({ "taskId": task.id }),
+        )
+        .expect("unread comments should load through bridge");
+        let unread_comments = unread
+            .as_array()
+            .expect("unread comments should be an array");
+        assert_eq!(unread_comments.len(), 1);
+
+        let receipts = invoke_bridge_command(
+            &config,
+            &connection,
+            "mark_task_comments_read",
+            Some(&authorization),
+            json!({ "taskId": task.id }),
+        )
+        .expect("comment receipts should record through bridge");
+        let receipt_entries = receipts.as_array().expect("receipts should be an array");
+        assert_eq!(receipt_entries.len(), 1);
+
+        let unread_after = invoke_bridge_command(
+            &config,
+            &connection,
+            "get_unread_task_comments",
+            Some(&authorization),
+            json!({ "taskId": task.id }),
+        )
+        .expect("unread comments should reload through bridge");
+        assert_eq!(unread_after.as_array().map(Vec::len), Some(0));
     }
 
     #[test]

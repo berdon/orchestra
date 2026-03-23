@@ -694,6 +694,27 @@ pub struct TaskCommentInput {
     pub interrupt_agent: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkTaskCommentsReadInput {
+    pub comment_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentReceipt {
+    pub comment_id: String,
+    pub task_id: String,
+    pub assignment_id: String,
+    pub worker_type: String,
+    pub worker_id: Option<String>,
+    pub role_instance_id: Option<String>,
+    pub session_id: String,
+    pub read_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskLaneRun {

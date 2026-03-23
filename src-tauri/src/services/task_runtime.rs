@@ -329,7 +329,10 @@ fn read_task_whip_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskWhi
     })
 }
 
-fn load_task_whip_candidates(connection: &Connection, assignment_id: Option<&str>) -> Result<Vec<TaskWhipCandidate>, String> {
+fn load_task_whip_candidates(
+    connection: &Connection,
+    assignment_id: Option<&str>,
+) -> Result<Vec<TaskWhipCandidate>, String> {
     let mut statement = connection
         .prepare(
             r#"
@@ -398,12 +401,19 @@ fn load_task_whip_candidates(connection: &Connection, assignment_id: Option<&str
         .map_err(|error| format!("Unable to collect task whip candidates: {error}"))
 }
 
-pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhipCandidate>, String> {
+pub fn find_task_whip_candidates(
+    connection: &Connection,
+) -> Result<Vec<TaskWhipCandidate>, String> {
     load_task_whip_candidates(connection, None)
 }
 
-pub fn refresh_task_whip_candidate(connection: &Connection, assignment_id: &str) -> Result<Option<TaskWhipCandidate>, String> {
-    Ok(load_task_whip_candidates(connection, Some(assignment_id))?.into_iter().next())
+pub fn refresh_task_whip_candidate(
+    connection: &Connection,
+    assignment_id: &str,
+) -> Result<Option<TaskWhipCandidate>, String> {
+    Ok(load_task_whip_candidates(connection, Some(assignment_id))?
+        .into_iter()
+        .next())
 }
 
 pub fn build_task_whip_message(task_id: &str) -> String {
@@ -442,7 +452,10 @@ pub fn send_task_whip(
             source_workflow_id: Some(candidate.workflow_id.clone()),
             source_lane_id: Some(candidate.lane_id.clone()),
             delivery_mode: "prompt".into(),
-            title: format!("{} · {} · keep working", candidate.task_number, candidate.task_title),
+            title: format!(
+                "{} · {} · keep working",
+                candidate.task_number, candidate.task_title
+            ),
             message,
         },
     )?;
@@ -462,7 +475,7 @@ pub fn escalate_task_whip_limit_exceeded(
         "Automatic user intervention requested after {} whip attempts without lane completion.",
         candidate.whip_count
     );
-    let _ = tasks::add_task_comment(
+    let comment = tasks::add_task_comment(
         connection,
         &candidate.task_id,
         crate::models::TaskCommentInput {
@@ -471,6 +484,15 @@ pub fn escalate_task_whip_limit_exceeded(
             interrupt_agent: false,
         },
     )?;
+    if let Some(assignment) = get_active_lane_assignment(connection, &candidate.task_id)? {
+        let comment_ids = vec![comment.id.clone()];
+        let _ = tasks::mark_task_comments_read(
+            connection,
+            &candidate.task_id,
+            &assignment,
+            Some(&comment_ids),
+        )?;
+    }
 
     request_user_intervention(
         connection,
@@ -663,15 +685,19 @@ pub fn start_assignment_run(
     }
 }
 
+fn build_unread_comment_delivery_message(task_id: &str, comment: &TaskComment) -> String {
+    format!(
+        "New task comment from {} on task {}. Call get_unread_task_comments for this task now, read and incorporate any unread comments, then call mark_task_comments_read for the same task before you continue or complete the lane.",
+        comment.author, task_id
+    )
+}
+
 pub fn queue_comment_delivery(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
     comment: &TaskComment,
 ) -> Result<(), String> {
-    let message = format!(
-        "Task comment from {}:\n\n{}",
-        comment.author, comment.message
-    );
+    let message = build_unread_comment_delivery_message(&assignment.task_id, comment);
 
     match assignment.worker_type.as_str() {
         "agent" => {
@@ -685,7 +711,12 @@ pub fn queue_comment_delivery(
                     |row| row.get::<_, String>(0),
                 )
                 .optional()
-                .map_err(|error| format!("Unable to resolve task project {}: {error}", assignment.task_id))?
+                .map_err(|error| {
+                    format!(
+                        "Unable to resolve task project {}: {error}",
+                        assignment.task_id
+                    )
+                })?
                 .unwrap_or_else(|| "orchestra".to_string());
             let _ = agent_runtime::enqueue_agent_work_for_project(
                 connection,
@@ -730,17 +761,14 @@ pub fn queue_comment_delivery(
     }
 }
 
-pub fn maybe_interrupt_with_comment(
+pub fn notify_active_assignment_of_unread_comments(
     app: AppHandle,
     state: &AppState,
     session_dir: PathBuf,
     assignment: &TaskLaneAssignment,
     comment: &TaskComment,
 ) -> Result<(), String> {
-    if assignment.worker_type == "agent" {
-        return Ok(());
-    }
-    if !comment.interrupt_agent || assignment.status != ASSIGNMENT_STATUS_ACTIVE {
+    if assignment.status != ASSIGNMENT_STATUS_ACTIVE {
         return Ok(());
     }
 
@@ -751,11 +779,12 @@ pub fn maybe_interrupt_with_comment(
         return Ok(());
     };
 
-    let prompt = format!(
-        "New task comment from {}. Interrupt current work and incorporate this guidance immediately.\n\n{}",
-        comment.author, comment.message
-    );
-
+    let message = build_unread_comment_delivery_message(&assignment.task_id, comment);
+    let delivery_mode = if comment.interrupt_agent {
+        "steer"
+    } else {
+        "follow_up"
+    };
     let runtime = live_sessions::ensure_runtime(
         &state.session_runtimes,
         app,
@@ -766,7 +795,7 @@ pub fn maybe_interrupt_with_comment(
 
     let run_id = generate_id("task-comment");
     state.begin_session_run(session_id, &run_id)?;
-    match runtime.start_run(&run_id, &prompt) {
+    match runtime.start_delivery(&run_id, delivery_mode, &message) {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = state.end_session_run(session_id, &run_id);
@@ -962,7 +991,11 @@ fn dispatch_agent_lane(
         project_overlay_prompt: load_worker_overlay_prompt(connection, task, "agent", &agent.slug)?,
     };
 
-    let runtime_state = agent_runtime::ensure_agent_runtime_state_for_project(connection, &task.project_id, &agent.id)?;
+    let runtime_state = agent_runtime::ensure_agent_runtime_state_for_project(
+        connection,
+        &task.project_id,
+        &agent.id,
+    )?;
     let runtime_cwd = runtime_state
         .runtime_cwd
         .clone()
@@ -1010,7 +1043,13 @@ fn dispatch_agent_lane(
         &runtime_state.status,
         runtime_state.last_error.as_deref(),
     )?;
-    ensure_lane_run(connection, task.id.as_str(), lane.id.as_str(), &session_id, now)?;
+    ensure_lane_run(
+        connection,
+        task.id.as_str(),
+        lane.id.as_str(),
+        &session_id,
+        now,
+    )?;
     let queue_entry = agent_runtime::enqueue_agent_work_for_project(
         connection,
         &task.project_id,
@@ -1032,7 +1071,12 @@ fn dispatch_agent_lane(
         &session_id,
         &run_id,
     )?
-    .ok_or_else(|| format!("Unable to mark agent queue entry {} dispatched", queue_entry.id))?;
+    .ok_or_else(|| {
+        format!(
+            "Unable to mark agent queue entry {} dispatched",
+            queue_entry.id
+        )
+    })?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         connection,
         &task.project_id,
@@ -1100,6 +1144,13 @@ fn complete_lane(
             return Err(format!("Task {task_id} is not currently running"));
         }
         validate_assignment_authorization(assignment, authorization)?;
+        let unread_comments = tasks::list_unread_task_comments(connection, task_id, assignment)?;
+        if !unread_comments.is_empty() {
+            return Err(format!(
+                "Task {task_id} has {} unread comment(s). Call get_unread_task_comments({task_id}), review them, then call mark_task_comments_read({task_id}) before using a completion tool.",
+                unread_comments.len()
+            ));
+        }
     } else if lane.assigned_entity_type != "user" {
         return Err(format!("Task {task_id} has no active lane assignment"));
     }
@@ -1140,7 +1191,11 @@ fn complete_lane(
 
         if assignment.worker_type == "agent" {
             if let Some(agent_id) = assignment.worker_id.as_deref() {
-                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(connection, &task.project_id, agent_id)? {
+                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(
+                    connection,
+                    &task.project_id,
+                    agent_id,
+                )? {
                     if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
                         if outcome == "failure" {
                             agent_runtime::mark_agent_queue_entry_failed(
@@ -1210,7 +1265,12 @@ fn transition_task_after_completion(
                 "#,
                 params![task.id, task.current_lane_id, now],
             )
-            .map_err(|error| format!("Unable to move task {} to user intervention: {error}", task.id))?;
+            .map_err(|error| {
+                format!(
+                    "Unable to move task {} to user intervention: {error}",
+                    task.id
+                )
+            })?;
         return Ok(());
     }
 
@@ -1336,7 +1396,7 @@ fn resolved_status_candidate(status: &str) -> String {
     }
 }
 
-fn validate_assignment_authorization(
+pub(crate) fn validate_assignment_authorization(
     assignment: &TaskLaneAssignment,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<(), String> {
@@ -1365,6 +1425,22 @@ fn validate_assignment_authorization(
         other => Err(format!(
             "Unsupported actor type for task lane completion: {other}"
         )),
+    }
+}
+
+pub(crate) fn assignment_owned_by_worker_authorization(
+    assignment: &TaskLaneAssignment,
+    authorization: Option<&AuthorizationContext>,
+) -> bool {
+    match authorization {
+        Some(authorization) if authorization.actor_type == "role_instance" => {
+            assignment.role_instance_id.as_deref() == Some(authorization.actor_id.as_str())
+        }
+        Some(authorization) if authorization.actor_type == "agent" => {
+            assignment.worker_type == "agent"
+                && assignment.worker_id.as_deref() == Some(authorization.actor_id.as_str())
+        }
+        _ => false,
     }
 }
 
@@ -1665,14 +1741,15 @@ fn orchestra_working_rules_block() -> String {
         "2. Immediately call get_task_context using the canonical task ID shown above so you are working from fresh live state before making decisions.",
         "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
         "4. Do the reasoning/work needed for the lane.",
-        "5. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. Large actions include meaningful implementation work, file creation or edits, running important commands/tests, creating dependencies/subtasks, attaching artifacts, or any action another worker or human would need to understand later.",
-        "6. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
-        "7. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
-        "8. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
-        "9. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
-        "10. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
-        "11. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-        "12. When the lane is finished, explicitly transition it with the correct completion tool.",
+        "5. Whenever you resume this lane, restart after an interruption, or suspect new feedback may have arrived, call get_unread_task_comments using the canonical task ID. After you read and incorporate those comments, call mark_task_comments_read so Orchestra knows you saw them.",
+        "6. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. Large actions include meaningful implementation work, file creation or edits, running important commands/tests, creating dependencies/subtasks, attaching artifacts, or any action another worker or human would need to understand later.",
+        "7. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
+        "8. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
+        "9. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
+        "10. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
+        "11. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
+        "12. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+        "13. When the lane is finished, explicitly transition it with the correct completion tool.",
     ]
     .join("\n")
 }
@@ -1687,6 +1764,8 @@ fn orchestra_tool_help_block() -> String {
         "- add_task_file_reference(task_id, input): Call this tool when you create or materially change a large or central repository file that should stay visible on the task. Use input shaped like {repositoryId, relativePath}. Good candidates are design docs, diagrams, plans, ADRs, runbooks, and similar non-source artifacts. Do not use this for ordinary source code changes unless explicitly asked.",
         "- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake.",
         "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}. Write comments for findings, progress updates, large actions taken, reviewer notes, handoff details, blockers, transition decisions, or decisions another worker must see later.",
+        "- get_unread_task_comments(task_id): Call this tool whenever you resume work, when Orchestra tells you to check unread mail, and again immediately before any completion tool. It returns task comments you have not yet acknowledged for the active session.",
+        "- mark_task_comments_read(task_id, commentIds?): After you read and incorporate unread task comments, call this tool to acknowledge them. If commentIds is omitted, it marks all current unread comments for the active session as read.",
         "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
         "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
         "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
@@ -1704,6 +1783,7 @@ fn orchestra_completion_rules_block() -> String {
         "Critical completion rules:",
         "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
         "- You are not done and cannot stop until you have actually called one of those tools.",
+        "- Immediately before any completion tool, call get_unread_task_comments for the canonical task ID, review any unread comments, and then call mark_task_comments_read before completing the lane.",
         "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
         "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
         "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
@@ -1721,7 +1801,11 @@ fn slugify_task_title(value: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    if collapsed.is_empty() { "task".into() } else { collapsed }
+    if collapsed.is_empty() {
+        "task".into()
+    } else {
+        collapsed
+    }
 }
 
 fn optional_section(title: &str, body: Option<String>) -> String {
@@ -1741,11 +1825,27 @@ fn build_worker_context_block(worker_prompt: Option<&WorkerPromptContext>) -> St
     )];
 
     let mut worker_sections = Vec::new();
-    if let Some(system_prompt) = worker_prompt.system_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
-        worker_sections.push(format!("Base {} prompt:\n{}", worker_prompt.worker_type_label, system_prompt.trim()));
+    if let Some(system_prompt) = worker_prompt
+        .system_prompt
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        worker_sections.push(format!(
+            "Base {} prompt:\n{}",
+            worker_prompt.worker_type_label,
+            system_prompt.trim()
+        ));
     }
-    if let Some(overlay_prompt) = worker_prompt.project_overlay_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
-        worker_sections.push(format!("Project-specific {} overlay prompt:\n{}", worker_prompt.worker_type_label, overlay_prompt.trim()));
+    if let Some(overlay_prompt) = worker_prompt
+        .project_overlay_prompt
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        worker_sections.push(format!(
+            "Project-specific {} overlay prompt:\n{}",
+            worker_prompt.worker_type_label,
+            overlay_prompt.trim()
+        ));
     }
     if !worker_sections.is_empty() {
         sections.push(format!(
@@ -1782,7 +1882,12 @@ fn build_lane_prompt(
     } else {
         task.blocked_by
             .iter()
-            .map(|dependency| format!("- {} — {}", dependency.blocker.number, dependency.blocker.title))
+            .map(|dependency| {
+                format!(
+                    "- {} — {}",
+                    dependency.blocker.number, dependency.blocker.title
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -1794,11 +1899,23 @@ fn build_lane_prompt(
             .iter()
             .map(|repository| {
                 let workspace_path = runtime_cwd.map(|cwd| {
-                    task_repositories::task_repository_worktree_path(cwd, &task.id, &repository.repository_slug)
+                    task_repositories::task_repository_worktree_path(
+                        cwd,
+                        &task.id,
+                        &repository.repository_slug,
+                    )
                 });
                 match workspace_path.as_deref() {
-                    Some(path) => format!("- {} ({}) available in this session at {}", repository.repository_name, repository.repository_slug, path),
-                    None => format!("- {} ({}) managed source at {}", repository.repository_name, repository.repository_slug, repository.managed_repository_path.as_deref().unwrap_or("—")),
+                    Some(path) => format!(
+                        "- {} ({}) available in this session at {}",
+                        repository.repository_name, repository.repository_slug, path
+                    ),
+                    None => format!(
+                        "- {} ({}) managed source at {}",
+                        repository.repository_name,
+                        repository.repository_slug,
+                        repository.managed_repository_path.as_deref().unwrap_or("—")
+                    ),
                 }
             })
             .collect::<Vec<_>>()
@@ -1811,10 +1928,20 @@ fn build_lane_prompt(
         task.file_references
             .iter()
             .map(|reference| {
-                let status = if reference.exists { "available" } else { "missing" };
+                let status = if reference.exists {
+                    "available"
+                } else {
+                    "missing"
+                };
                 match reference.absolute_path.as_deref() {
-                    Some(path) => format!("- {}/{} ({}) at {}", reference.repository_slug, reference.relative_path, status, path),
-                    None => format!("- {}/{} ({})", reference.repository_slug, reference.relative_path, status),
+                    Some(path) => format!(
+                        "- {}/{} ({}) at {}",
+                        reference.repository_slug, reference.relative_path, status, path
+                    ),
+                    None => format!(
+                        "- {}/{} ({})",
+                        reference.repository_slug, reference.relative_path, status
+                    ),
                 }
             })
             .collect::<Vec<_>>()
@@ -1826,7 +1953,12 @@ fn build_lane_prompt(
     } else {
         task.attachments
             .iter()
-            .map(|attachment| format!("- {} ({}) at {}", attachment.file_name, attachment.media_type, attachment.stored_path))
+            .map(|attachment| {
+                format!(
+                    "- {} ({}) at {}",
+                    attachment.file_name, attachment.media_type, attachment.stored_path
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -1851,22 +1983,63 @@ fn build_lane_prompt(
         ("{TASK.SLUG}", slugify_task_title(&task.title)),
         ("{TASK.NAME}", task.title.clone()),
         ("{TASK.STATUS}", task.status.clone()),
-        ("{TASK.ASSIGNEE}", task.assignee_id.clone().unwrap_or_else(|| task.assignee_type.clone())),
-        ("{TASK.DESCRIPTION}", optional_section("Task description", task.description.clone())),
-        ("{TASK.COMMENTS}", optional_section("Recent task comments", Some(comments_block))),
-        ("{TASK.BLOCKED_BY}", optional_section("Blocking tasks", Some(blocked_by_block))),
-        ("{TASK.REPOSITORIES}", optional_section("Task repositories associated to this task", Some(repositories_block))),
-        ("{TASK.FILE_REFERENCES}", optional_section("Referenced project files (live repository files, not imported snapshots)", Some(file_references_block))),
-        ("{TASK.ATTACHMENTS}", optional_section("Task attachments", Some(attachments_block))),
+        (
+            "{TASK.ASSIGNEE}",
+            task.assignee_id
+                .clone()
+                .unwrap_or_else(|| task.assignee_type.clone()),
+        ),
+        (
+            "{TASK.DESCRIPTION}",
+            optional_section("Task description", task.description.clone()),
+        ),
+        (
+            "{TASK.COMMENTS}",
+            optional_section("Recent task comments", Some(comments_block)),
+        ),
+        (
+            "{TASK.BLOCKED_BY}",
+            optional_section("Blocking tasks", Some(blocked_by_block)),
+        ),
+        (
+            "{TASK.REPOSITORIES}",
+            optional_section(
+                "Task repositories associated to this task",
+                Some(repositories_block),
+            ),
+        ),
+        (
+            "{TASK.FILE_REFERENCES}",
+            optional_section(
+                "Referenced project files (live repository files, not imported snapshots)",
+                Some(file_references_block),
+            ),
+        ),
+        (
+            "{TASK.ATTACHMENTS}",
+            optional_section("Task attachments", Some(attachments_block)),
+        ),
         ("{WORKFLOW.NAME}", workflow.name.clone()),
         ("{LANE.NAME}", lane.name.clone()),
         ("{LANE.OWNER}", lane.assigned_entity_type.clone()),
-        ("{LANE.INSTRUCTION}", optional_section("Lane-specific instruction", lane.entry_prompt_template.clone())),
-        ("{WORKER.CONTEXT}", build_worker_context_block(worker_prompt)),
+        (
+            "{LANE.INSTRUCTION}",
+            optional_section(
+                "Lane-specific instruction",
+                lane.entry_prompt_template.clone(),
+            ),
+        ),
+        (
+            "{WORKER.CONTEXT}",
+            build_worker_context_block(worker_prompt),
+        ),
         ("{RUNTIME.CWD}", runtime_cwd.unwrap_or("").to_string()),
         ("{ORCHESTRA.WORKING_RULES}", orchestra_working_rules_block()),
         ("{ORCHESTRA.TOOL_HELP}", orchestra_tool_help_block()),
-        ("{ORCHESTRA.COMPLETION_RULES}", orchestra_completion_rules_block()),
+        (
+            "{ORCHESTRA.COMPLETION_RULES}",
+            orchestra_completion_rules_block(),
+        ),
     ];
 
     for (token, value) in replacements {
@@ -2182,15 +2355,23 @@ mod tests {
         assert!(prompt.contains("- add_task_file_reference(task_id, input): Call this tool when you create or materially change a large or central repository file that should stay visible on the task."));
         assert!(prompt.contains("- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake."));
         assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}."));
+        assert!(prompt.contains("call get_unread_task_comments using the canonical task ID"));
+        assert!(prompt.contains("call mark_task_comments_read so Orchestra knows you saw them"));
         assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
         assert!(prompt.contains("If you create or materially change a large or central repository file that should stay visible on the task"));
         assert!(prompt.contains("Do not add normal source code or test file edits as task file references unless the human explicitly asked"));
         assert!(prompt.contains("Before you transition the task or request help, add a comment explaining exactly what happened"));
+        assert!(prompt.contains(
+            "- get_unread_task_comments(task_id): Call this tool whenever you resume work"
+        ));
+        assert!(prompt.contains("- mark_task_comments_read(task_id, commentIds?): After you read and incorporate unread task comments"));
         assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
         assert!(prompt
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
+        assert!(prompt
+            .contains("Immediately before any completion tool, call get_unread_task_comments"));
         assert!(prompt.contains(
             "If any completion or transition step fails, add a task comment describing the failure"
         ));
@@ -2310,8 +2491,11 @@ mod tests {
         let previous_home = std::env::var_os("HOME");
         let temp_home = unique_temp_dir("session-prompt-template-home");
         std::fs::create_dir_all(&temp_home).expect("temp home should create");
-        unsafe { std::env::set_var("HOME", &temp_home); }
-        let orchestra_root = crate::services::orchestra_paths::default_orchestra_root().expect("orchestra root should resolve");
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+        let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()
+            .expect("orchestra root should resolve");
         project_settings::update_session_prompt_settings_in(
             &orchestra_root,
             "prompt-project",
@@ -2394,14 +2578,27 @@ mod tests {
             failure_target_lane_id: None,
         };
 
-        let prompt = build_lane_prompt(&connection, &task, &workflow, &lane, Some("/tmp/runtime"), None);
+        let prompt = build_lane_prompt(
+            &connection,
+            &task,
+            &workflow,
+            &lane,
+            Some("/tmp/runtime"),
+            None,
+        );
         assert!(prompt.contains("Task task-123 investigate-runtime-prompt Investigate runtime prompt Runtime Flow Review user in_review Data"));
         assert!(prompt.contains("Task description:\nDescribe the task."));
-        assert!(prompt.contains("Recent task comments:\n- Reviewer: Check the prompt template output."));
+        assert!(
+            prompt.contains("Recent task comments:\n- Reviewer: Check the prompt template output.")
+        );
 
         match previous_home {
-            Some(value) => unsafe { std::env::set_var("HOME", value); },
-            None => unsafe { std::env::remove_var("HOME"); },
+            Some(value) => unsafe {
+                std::env::set_var("HOME", value);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
         }
     }
 
@@ -2563,6 +2760,124 @@ mod tests {
         assert_eq!(queue_entries.len(), 1);
         assert_eq!(queue_entries[0].delivery_mode, "follow_up");
         assert_eq!(queue_entries[0].source_type, "task_comment");
+        assert!(queue_entries[0]
+            .message
+            .contains("get_unread_task_comments"));
+        assert!(queue_entries[0].message.contains("mark_task_comments_read"));
+    }
+
+    #[test]
+    fn completion_requires_unread_comments_to_be_acknowledged() {
+        let mut connection = in_memory_connection();
+        let _role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Completer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, "developer", &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-unread-comments");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Unread completion guard".into(),
+                description: Some("Do not finish before reading comments.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent lane should dispatch");
+        let _comment = tasks::add_task_comment(
+            &mut connection,
+            &task.id,
+            crate::models::TaskCommentInput {
+                author: "Reviewer".into(),
+                message: "Please address the latest notes before finishing.".into(),
+                interrupt_agent: false,
+            },
+        )
+        .expect("task comment should add");
+
+        let error = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            None,
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+        )
+        .expect_err("completion should fail while unread comments remain");
+        assert!(error.contains("unread comment"));
+        assert!(error.contains("get_unread_task_comments"));
+
+        let unread = tasks::list_unread_task_comments(&connection, &task.id, &assignment)
+            .expect("unread comments should load");
+        assert_eq!(unread.len(), 1);
+        tasks::mark_task_comments_read(&connection, &task.id, &assignment, None)
+            .expect("unread comments should mark read");
+
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Handled the unread feedback".into()),
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+        )
+        .expect("completion should succeed after acknowledging comments");
+        assert_eq!(updated.status, "completed");
     }
 
     #[test]
@@ -2630,7 +2945,8 @@ mod tests {
             )
             .expect("agent runtime state should insert");
 
-        let candidates = find_task_whip_candidates(&connection).expect("whip candidates should resolve");
+        let candidates =
+            find_task_whip_candidates(&connection).expect("whip candidates should resolve");
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].task_id, task.id);
         assert_eq!(candidates[0].worker_type, "agent");
@@ -2640,7 +2956,9 @@ mod tests {
         assert_eq!(queued.source_type, "task_whip");
         assert_eq!(queued.source_task_id.as_deref(), Some(task.id.as_str()));
         assert!(queued.message.contains(TASK_WHIP_PROMPT));
-        assert!(queued.message.contains(&format!("Canonical task ID: {}", task.id)));
+        assert!(queued
+            .message
+            .contains(&format!("Canonical task ID: {}", task.id)));
 
         let assignment = get_active_lane_assignment(&connection, &task.id)
             .expect("assignment should reload")
@@ -2648,7 +2966,8 @@ mod tests {
         assert_eq!(assignment.whip_count, 1);
         assert!(assignment.last_whip_at.is_some());
 
-        let candidates_after_queue = find_task_whip_candidates(&connection).expect("whip candidates should resolve after queueing");
+        let candidates_after_queue = find_task_whip_candidates(&connection)
+            .expect("whip candidates should resolve after queueing");
         assert!(candidates_after_queue.is_empty());
     }
 
@@ -2743,8 +3062,9 @@ mod tests {
             .next()
             .expect("candidate should exist");
 
-        let updated = complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
-            .expect("lane should complete");
+        let updated =
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+                .expect("lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
 
@@ -2818,12 +3138,19 @@ mod tests {
             )
             .expect("assignment should insert");
 
-        let candidates = find_task_whip_candidates(&connection).expect("role whip candidates should resolve");
+        let candidates =
+            find_task_whip_candidates(&connection).expect("role whip candidates should resolve");
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].worker_type, "role");
         assert_eq!(candidates[0].worker_id, role.id);
-        assert_eq!(candidates[0].role_instance_id.as_deref(), Some("instance-whip"));
-        assert_eq!(candidates[0].runtime_cwd.as_deref(), Some("/tmp/runtime-role-whip"));
+        assert_eq!(
+            candidates[0].role_instance_id.as_deref(),
+            Some("instance-whip")
+        );
+        assert_eq!(
+            candidates[0].runtime_cwd.as_deref(),
+            Some("/tmp/runtime-role-whip")
+        );
         assert_eq!(candidates[0].whip_max_attempts, 4);
     }
 
@@ -2912,14 +3239,18 @@ mod tests {
             )
             .expect("agent runtime state should insert");
 
-        let candidates = find_task_whip_candidates(&connection).expect("whip candidates should resolve");
+        let candidates =
+            find_task_whip_candidates(&connection).expect("whip candidates should resolve");
         assert_eq!(candidates.len(), 1);
-        let updated = escalate_task_whip_limit_exceeded(&mut connection, &root, &session_dir, &candidates[0])
-            .expect("task should escalate to user intervention");
+        let updated =
+            escalate_task_whip_limit_exceeded(&mut connection, &root, &session_dir, &candidates[0])
+                .expect("task should escalate to user intervention");
         assert_eq!(updated.status, "in_review");
         assert_eq!(updated.assignee_type, "user");
         assert!(updated.active_lane_assignment.is_none());
-        assert!(updated.comments.iter().any(|comment| comment.message.contains("Automatic user intervention requested after 1 whip attempts")));
+        assert!(updated.comments.iter().any(|comment| comment
+            .message
+            .contains("Automatic user intervention requested after 1 whip attempts")));
     }
 
     #[test]
@@ -3120,13 +3451,22 @@ mod tests {
             },
         )
         .expect("task should create");
-        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
         let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
             .expect("agent lane should dispatch with project-scoped runtime");
-        assert_eq!(assignment.runtime_cwd.as_deref(), Some(project_root.to_string_lossy().as_ref()));
-        assert_ne!(assignment.runtime_cwd.as_deref(), Some(wrong_runtime.to_string_lossy().as_ref()));
+        assert_eq!(
+            assignment.runtime_cwd.as_deref(),
+            Some(project_root.to_string_lossy().as_ref())
+        );
+        assert_ne!(
+            assignment.runtime_cwd.as_deref(),
+            Some(wrong_runtime.to_string_lossy().as_ref())
+        );
     }
 
     #[test]
