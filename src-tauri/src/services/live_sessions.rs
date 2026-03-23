@@ -10,7 +10,7 @@ use std::{
 
 use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{path::BaseDirectory, AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
@@ -19,6 +19,22 @@ use crate::{
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = app
+        .path()
+        .resolve("extensions/orchestra-tools.ts", BaseDirectory::Resource)
+        .map_err(|error| format!("Unable to resolve packaged Orchestra extension path: {error}"))?;
+
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "Packaged Orchestra extension path does not exist: {}",
+            path.display()
+        ))
+    }
+}
 
 pub struct SessionRuntime {
     session_id: String,
@@ -53,7 +69,7 @@ impl SessionRuntime {
         } else {
             None
         };
-        let extension_path = project_root.join("extensions").join("orchestra-tools.ts");
+        let extension_path = resolve_orchestra_extension_path(&app)?;
 
         let pi_executable =
             std::env::var("ORCHESTRA_PI_EXECUTABLE").unwrap_or_else(|_| "pi".to_string());
@@ -114,7 +130,11 @@ impl SessionRuntime {
         app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.spawn",
-            &format!("Spawning live pi RPC runtime for session {}", session_id),
+            &format!(
+                "Spawning live pi RPC runtime for session {} with extension {}",
+                session_id,
+                extension_path.display()
+            ),
         );
         if let Some(path) = extension_debug_log_file.as_ref() {
             app.state::<crate::state::AppState>().log(

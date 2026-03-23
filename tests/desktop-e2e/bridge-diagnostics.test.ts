@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -32,6 +35,30 @@ describe("desktop bridge diagnostics", () => {
       expect(diagnostics?.instance?.instanceId).toBeTruthy();
       expect(String(diagnostics?.instance?.url ?? "")).toContain("127.0.0.1");
 
+      await clickByText(sessionId, "button", "Sessions");
+      const beforeSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
+      await clickByText(sessionId, "button", "Create session");
+      let sessions = beforeSessions;
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        sessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
+        if (sessions.length > beforeSessions.length) {
+          break;
+        }
+      }
+      const createdSession = sessions.find((entry) => !beforeSessions.some((before) => before.id === entry.id)) ?? sessions[0];
+      expect(createdSession?.id).toBeTruthy();
+      const extensionLogPath = join("/tmp", `orchestra-extension-tools-${createdSession.id}.log`);
+      const logDeadline = Date.now() + 10_000;
+      while (Date.now() < logDeadline && !existsSync(extensionLogPath)) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      expect(existsSync(extensionLogPath)).toBe(true);
+      const extensionLog = readFileSync(extensionLogPath, "utf8");
+      expect(extensionLog).toContain("registerTool name=orchestra_help");
+
+      await clickByText(sessionId, "button", "Settings");
+      await clickByText(sessionId, "button", "General");
       await invokeCommand(sessionId, "cleanup_stale_bridge_instances");
       await waitForText(sessionId, "Recent stale-bridge cleanup events");
     } finally {
