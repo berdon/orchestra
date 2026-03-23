@@ -92,7 +92,6 @@ strong {
 .project-switcher__label,
 .eyebrow,
 .status-pill__label,
-.log-entry__meta,
 .transcript-event__meta,
 .muted-copy,
 .field-group__label,
@@ -250,7 +249,6 @@ strong {
 
 .panel__header,
 .status-cluster,
-.log-entry__meta,
 .transcript-event__meta,
 .composer__footer,
 .composer__meta {
@@ -312,8 +310,10 @@ strong {
 
 .log-list {
   display: grid;
-  gap: 12px;
+  gap: 6px;
   margin-top: 18px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .log-panel {
@@ -344,7 +344,6 @@ strong {
   line-height: 1.45;
 }
 
-.log-entry,
 .transcript-event {
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -365,40 +364,49 @@ strong {
   min-width: 0;
 }
 
-.log-entry p,
 .transcript-event p {
   margin: 0;
   white-space: pre-wrap;
 }
 
-.log-level,
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 52px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.log-line {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 
-.log-level--debug,
-.log-level--info,
+.log-line__level {
+  font-weight: 700;
+}
+
+.log-line--debug .log-line__level {
+  color: var(--accent);
+}
+
 .status-badge--accent {
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.log-level--warn,
+.log-line--info .log-line__level {
+  color: var(--text);
+}
+
+.log-line--warn .log-line__level {
+  color: var(--warning);
+}
+
 .status-badge--warning {
   background: var(--warning-soft);
   color: var(--warning);
 }
 
-.log-level--error,
+.log-line--error .log-line__level {
+  color: var(--danger);
+}
+
 .status-badge--error {
   background: var(--danger-soft);
   color: var(--danger);
