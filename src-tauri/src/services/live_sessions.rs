@@ -255,6 +255,7 @@ impl SessionRuntime {
                     &self.session_id,
                     Some(&run_id),
                 );
+                let _ = crate::services::role_dispatch::complete_role_run(&self.session_id);
             }
             self.close_if_idle();
         }
@@ -278,6 +279,7 @@ impl SessionRuntime {
                 Some(&run_id),
                 &error_message,
             );
+            let _ = crate::services::role_dispatch::fail_role_run(&self.session_id, &error_message);
             self.emit_stream_event(json!({
                 "type": "error",
                 "message": error_message,

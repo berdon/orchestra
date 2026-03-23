@@ -313,33 +313,50 @@ pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhip
                 t.project_id,
                 tla.workflow_id,
                 tla.lane_id,
+                tla.worker_type,
                 tla.worker_id,
+                tla.role_instance_id,
                 tla.session_id,
+                tla.runtime_cwd,
                 t.number,
                 t.title,
                 tla.whip_count,
                 t.whip_max_attempts
             FROM task_lane_assignments tla
             JOIN tasks t ON t.id = tla.task_id
-            JOIN agent_runtime_states ars ON ars.project_id = t.project_id AND ars.agent_id = tla.worker_id
+            LEFT JOIN agent_runtime_states ars ON ars.project_id = t.project_id AND ars.agent_id = tla.worker_id
+            LEFT JOIN role_instances ri ON ri.id = tla.role_instance_id
             WHERE tla.status = 'active'
-              AND tla.worker_type = 'agent'
+              AND tla.worker_type IN ('agent', 'role')
               AND tla.worker_id IS NOT NULL
               AND tla.session_id IS NOT NULL
               AND t.archived = 0
               AND t.status IN ('ready', 'in_progress')
-              AND ars.status = 'idle'
-              AND ars.current_queue_entry_id IS NULL
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM agent_queue_entries aqe
-                  WHERE aqe.project_id = t.project_id
-                    AND aqe.agent_id = tla.worker_id
-                    AND aqe.status IN ('queued', 'dispatched')
-                    AND aqe.source_type = 'task_whip'
-                    AND aqe.source_task_id = tla.task_id
-                    AND aqe.source_workflow_id = tla.workflow_id
-                    AND aqe.source_lane_id = tla.lane_id
+              AND (
+                (
+                  tla.worker_type = 'agent'
+                  AND ars.status = 'idle'
+                  AND ars.current_queue_entry_id IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM agent_queue_entries aqe
+                      WHERE aqe.project_id = t.project_id
+                        AND aqe.agent_id = tla.worker_id
+                        AND aqe.status IN ('queued', 'dispatched')
+                        AND aqe.source_type = 'task_whip'
+                        AND aqe.source_task_id = tla.task_id
+                        AND aqe.source_workflow_id = tla.workflow_id
+                        AND aqe.source_lane_id = tla.lane_id
+                  )
+                )
+                OR
+                (
+                  tla.worker_type = 'role'
+                  AND tla.role_instance_id IS NOT NULL
+                  AND tla.runtime_cwd IS NOT NULL
+                  AND ri.status = 'idle'
+                  AND ri.current_queue_entry_id IS NULL
+                )
               )
             ORDER BY tla.updated_at ASC, tla.created_at ASC, tla.id ASC
             "#,
@@ -354,13 +371,16 @@ pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhip
                 project_id: row.get(2)?,
                 workflow_id: row.get(3)?,
                 lane_id: row.get(4)?,
-                agent_id: row.get(5)?,
-                session_id: row.get(6)?,
-                task_number: row.get(7)?,
-                task_title: row.get(8)?,
-                whip_count: row.get(9)?,
+                worker_type: row.get(5)?,
+                worker_id: row.get(6)?,
+                role_instance_id: row.get(7)?,
+                session_id: row.get(8)?,
+                runtime_cwd: row.get(9)?,
+                task_number: row.get(10)?,
+                task_title: row.get(11)?,
+                whip_count: row.get(12)?,
                 whip_max_attempts: {
-                    let configured = row.get::<_, i64>(10)?;
+                    let configured = row.get::<_, i64>(13)?;
                     if configured < 1 {
                         DEFAULT_TASK_WHIP_MAX_ATTEMPTS
                     } else {
@@ -375,22 +395,37 @@ pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhip
         .map_err(|error| format!("Unable to collect task whip candidates: {error}"))
 }
 
+pub fn build_task_whip_message(task_id: &str) -> String {
+    format!("{}\n\nCanonical task ID: {}", TASK_WHIP_PROMPT, task_id)
+}
+
+pub fn record_task_whip_sent(
+    connection: &Connection,
+    assignment_id: &str,
+    current_whip_count: i64,
+) -> Result<(), String> {
+    let next_whip_count = current_whip_count + 1;
+    let now = now_iso();
+    connection
+        .execute(
+            "UPDATE task_lane_assignments SET whip_count = ?2, last_whip_at = ?3, updated_at = ?3 WHERE id = ?1",
+            params![assignment_id, next_whip_count, now],
+        )
+        .map_err(|error| format!("Unable to update whip state for assignment {}: {error}", assignment_id))?;
+    Ok(())
+}
+
 pub fn send_task_whip(
     connection: &Connection,
     candidate: &TaskWhipCandidate,
 ) -> Result<crate::models::AgentQueueEntry, String> {
-    let next_whip_count = candidate.whip_count + 1;
-    let now = now_iso();
-    let message = format!(
-        "{}\n\nCanonical task ID: {}",
-        TASK_WHIP_PROMPT, candidate.task_id
-    );
+    let message = build_task_whip_message(&candidate.task_id);
 
     let queue_entry = agent_runtime::enqueue_agent_work_for_project(
         connection,
         &candidate.project_id,
         crate::models::AgentQueueEntryInput {
-            agent_id: candidate.agent_id.clone(),
+            agent_id: candidate.worker_id.clone(),
             source_type: "task_whip".into(),
             source_task_id: Some(candidate.task_id.clone()),
             source_workflow_id: Some(candidate.workflow_id.clone()),
@@ -401,12 +436,7 @@ pub fn send_task_whip(
         },
     )?;
 
-    connection
-        .execute(
-            "UPDATE task_lane_assignments SET whip_count = ?2, last_whip_at = ?3, updated_at = ?3 WHERE id = ?1",
-            params![candidate.assignment_id, next_whip_count, now],
-        )
-        .map_err(|error| format!("Unable to update whip state for assignment {}: {error}", candidate.assignment_id))?;
+    record_task_whip_sent(connection, &candidate.assignment_id, candidate.whip_count)?;
 
     Ok(queue_entry)
 }
@@ -485,8 +515,11 @@ pub struct TaskWhipCandidate {
     pub project_id: String,
     pub workflow_id: String,
     pub lane_id: String,
-    pub agent_id: String,
+    pub worker_type: String,
+    pub worker_id: String,
+    pub role_instance_id: Option<String>,
     pub session_id: String,
+    pub runtime_cwd: Option<String>,
     pub task_number: String,
     pub task_title: String,
     pub whip_count: i64,
@@ -2589,6 +2622,7 @@ mod tests {
         let candidates = find_task_whip_candidates(&connection).expect("whip candidates should resolve");
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].task_id, task.id);
+        assert_eq!(candidates[0].worker_type, "agent");
         assert_eq!(candidates[0].whip_max_attempts, 2);
 
         let queued = send_task_whip(&connection, &candidates[0]).expect("whip should enqueue");
@@ -2605,6 +2639,80 @@ mod tests {
 
         let candidates_after_queue = find_task_whip_candidates(&connection).expect("whip candidates should resolve after queueing");
         assert!(candidates_after_queue.is_empty());
+    }
+
+    #[test]
+    fn finds_idle_role_whip_candidates() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Whip Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Role needs a whip".into(),
+                description: Some("Role should keep working.".into()),
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "role".into(),
+                assignee_id: Some(role.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: Some(4),
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "UPDATE tasks SET whip_max_attempts = 4 WHERE id = ?1",
+                params![task.id.as_str()],
+            )
+            .expect("task whip max attempts should update");
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-whip', ?1, 'Whip Role 1', 'idle', NULL, 'session-role-whip', '/tmp/runtime-role-whip', NULL, NULL, ?2, ?2)",
+                params![role.id.as_str(), now.as_str()],
+            )
+            .expect("role instance should insert");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-role-whip', ?1, 'workflow-whip', 'lane-role', 'role', ?2, 'active', 'session-role-whip', '/tmp/runtime-role-whip', NULL, 'instance-whip', 'Prompt', 0, NULL, ?3, NULL, ?3, ?3)",
+                params![task.id.as_str(), role.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        let candidates = find_task_whip_candidates(&connection).expect("role whip candidates should resolve");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].worker_type, "role");
+        assert_eq!(candidates[0].worker_id, role.id);
+        assert_eq!(candidates[0].role_instance_id.as_deref(), Some("instance-whip"));
+        assert_eq!(candidates[0].runtime_cwd.as_deref(), Some("/tmp/runtime-role-whip"));
+        assert_eq!(candidates[0].whip_max_attempts, 4);
     }
 
     #[test]
