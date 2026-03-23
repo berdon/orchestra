@@ -251,27 +251,6 @@ export function SessionsPage({
                       />
                     ))}
                   </div>
-                  {transcriptScrollIndicator.visible ? (
-                    <div className="session-transcript-scrollbar" aria-hidden="true">
-                      <div
-                        className="session-transcript-scrollbar__thumb"
-                        data-role="session-transcript-scroll-thumb"
-                        style={{
-                          height: `${transcriptScrollIndicator.heightPercent}%`,
-                          transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                  <div
-                    className={scrollState.lockedToBottom ? "session-scroll-indicator session-scroll-indicator--locked" : "session-scroll-indicator"}
-                    data-role="session-scroll-indicator"
-                    data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
-                    role="status"
-                    aria-live="polite"
-                  >
-                    {scrollState.lockedToBottom ? "Auto-scroll on" : "Viewing older messages"}
-                  </div>
                 </div>
 
                 <form className="composer" onSubmit={handleComposerSubmit}>
