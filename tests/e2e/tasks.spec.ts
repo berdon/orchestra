@@ -165,6 +165,18 @@ test("tasks overview hides empty inbox, hides done lanes, and supports done filt
   await expect(page.locator('[data-role="task-table"]')).toContainText("Completed task");
   await expect(page.locator('[data-role="task-table-row"]')).toContainText("Simple Flow");
   await expect(page.locator('[data-role="task-table-row"]')).toContainText("0");
+  await expect(page.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(async () =>
+    page.evaluate(() => window.localStorage.getItem("orchestra.preferences.task-board-view-mode"))
+  ).toBe("table");
+
+  const secondPage = await page.context().newPage();
+  await secondPage.goto("/");
+  await secondPage.getByRole("button", { name: "Tasks" }).click();
+  await secondPage.locator('[data-role="task-filter-done"]').click();
+  await expect(secondPage.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(secondPage.locator('[data-role="task-table"]')).toContainText("Completed task");
+  await secondPage.close();
 });
 
 test("task detail manages dependencies and blocked state", async ({ page }) => {

@@ -75,7 +75,9 @@ export function SessionsPage({
   onStopSession,
 }: SessionsPageProps) {
   const [wrapTranscript, setWrapTranscript] = useState(true);
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [transcriptScrollMetrics, setTranscriptScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
+  const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
 
   const transcriptScrollIndicator = useMemo(() => {
     const { scrollTop, scrollHeight, clientHeight } = transcriptScrollMetrics;
@@ -103,6 +105,10 @@ export function SessionsPage({
       clientHeight: node.clientHeight,
     });
   }, [displayedEvents, selectedSession?.id, transcriptRef, wrapTranscript]);
+
+  useEffect(() => {
+    setShowDebugInfo(false);
+  }, [selectedSession?.id]);
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -277,10 +283,10 @@ export function SessionsPage({
                       </div>
                     </div>
                     <div className="composer__actions">
-                      <label className="field-group field-group--compact session-model-field session-model-field--composer">
-                        <span className="field-group__label">Model</span>
+                      <div className="session-model-field session-model-field--composer">
                         <select
                           className="select-input"
+                          aria-label="Session model"
                           value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
                           disabled={
                             loadingModelSessionId === selectedSession.id ||
@@ -298,7 +304,7 @@ export function SessionsPage({
                             </option>
                           ))}
                         </select>
-                      </label>
+                      </div>
                       <button
                         className="secondary-button"
                         data-role="stop-session-runtime"
@@ -329,7 +335,18 @@ export function SessionsPage({
             )}
           </section>
 
-          {selectedSession?.debugInfo ? (
+          {canShowDebugInfo && !showDebugInfo ? (
+            <button
+              type="button"
+              className="session-debug-toggle"
+              data-role="show-session-debug"
+              onClick={() => setShowDebugInfo(true)}
+            >
+              Show debug information
+            </button>
+          ) : null}
+
+          {canShowDebugInfo && showDebugInfo && selectedSession?.debugInfo ? (
             <section className="panel session-debug-panel" data-role="session-debug-paths">
               <div className="panel__header panel__header--stacked">
                 <div>

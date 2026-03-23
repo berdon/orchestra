@@ -461,6 +461,22 @@ strong {
   overflow: hidden;
 }
 
+.session-debug-toggle {
+  justify-self: start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.session-debug-toggle:hover,
+.session-debug-toggle:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .session-debug-panel {
   display: grid;
   gap: 14px;
@@ -1017,11 +1033,17 @@ strong {
 }
 
 .session-model-field {
-  min-width: min(220px, 100%);
+  width: min(100%, 168px);
+  flex: 0 0 min(100%, 168px);
+}
+
+.session-model-field .select-input {
+  width: 100%;
 }
 
 .session-model-field--composer {
-  min-width: min(180px, 100%);
+  width: min(100%, 168px);
+  flex-basis: min(100%, 168px);
 }
 
 .workflow-stack {
