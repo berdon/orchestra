@@ -116,6 +116,8 @@ interface TasksPageProps {
   createTaskToken?: number;
   createTaskProjectId?: string | null;
   openTaskRequest?: { taskId: string; token: number; projectId: string | null } | null;
+  taskBoardViewMode?: TaskBoardViewMode;
+  onTaskBoardViewModeChange?: (viewMode: TaskBoardViewMode) => void;
 }
 
 function sameData<T>(current: T, next: T) {
@@ -158,7 +160,14 @@ function shouldRefreshTasksFromSessionEvent(payload: SessionStreamEnvelope) {
   return false;
 }
 
-export function TasksPage({ projectId = null, createTaskToken = 0, createTaskProjectId = null, openTaskRequest = null }: TasksPageProps) {
+export function TasksPage({
+  projectId = null,
+  createTaskToken = 0,
+  createTaskProjectId = null,
+  openTaskRequest = null,
+  taskBoardViewMode = "cards",
+  onTaskBoardViewModeChange,
+}: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [workflowSummaries, setWorkflowSummaries] = useState<WorkflowSummary[]>([]);
@@ -179,7 +188,6 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
   const [publishingTask, setPublishingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
-  const [taskBoardViewMode, setTaskBoardViewMode] = useState<TaskBoardViewMode>("cards");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
@@ -465,6 +473,10 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
     setFileReferenceDraft({ repositoryId: repositories[0]?.id ?? "", relativePath: "" });
     setTaskDraftDirty(false);
     setRoute({ kind: "create", parentTaskId: parentTaskId ?? null, workflowId: workflowId ?? null });
+  }
+
+  function handleTaskBoardViewModeChange(viewMode: TaskBoardViewMode) {
+    onTaskBoardViewModeChange?.(viewMode);
   }
 
   function openTaskDetail(taskId: string) {
@@ -770,7 +782,7 @@ export function TasksPage({ projectId = null, createTaskToken = 0, createTaskPro
           filter={taskFilter}
           onFilterChange={setTaskFilter}
           onOpenTask={openTaskDetail}
-          onViewModeChange={setTaskBoardViewMode}
+          onViewModeChange={handleTaskBoardViewModeChange}
           roles={roles}
           viewMode={taskBoardViewMode}
         />

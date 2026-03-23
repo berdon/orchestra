@@ -26,6 +26,23 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
 });
 
+test("sessions composer model selector is compact, fixed-width, and unlabeled", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  const modelSelect = page.locator('select[aria-label="Session model"]');
+  await expect(modelSelect).toBeVisible();
+  await expect(page.locator('.session-model-field .field-group__label')).toHaveCount(0);
+
+  const modelWidth = await modelSelect.evaluate((node) => node.getBoundingClientRect().width);
+  expect(modelWidth).toBeGreaterThanOrEqual(140);
+  expect(modelWidth).toBeLessThanOrEqual(190);
+});
+
 test("sessions composer stays enabled while earlier messages are still pending", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -39,7 +56,7 @@ test("sessions composer stays enabled while earlier messages are still pending",
 
   await page.locator('[data-role="composer-input"]').fill("Second queued message");
   await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
-  await expect(page.locator('[data-role="send-message"]')).toContainText("Send message");
+  await expect(page.locator('[data-role="send-message"]')).toContainText("Send");
   await page.locator('[data-role="composer-input"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("First queued message", { timeout: 10_000 });
@@ -335,7 +352,7 @@ test("sessions page filters active and closed task sessions", async ({ page }) =
   await expect(closedSessionLinks).toContainText("Implementation · Closable session task");
 });
 
-test("sessions page renders debug paths below a vertically resizable chat panel", async ({ page }) => {
+test("sessions page hides debug paths behind a dev-only toggle below the chat panel", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -372,10 +389,14 @@ test("sessions page renders debug paths below a vertically resizable chat panel"
   await page.getByRole("link", { name: "Debug path layout" }).click();
 
   const transcript = page.locator('[data-role="session-transcript"]');
+  const debugToggle = page.locator('[data-role="show-session-debug"]');
+  const debugPanel = page.locator('[data-role="session-debug-paths"]');
   const debugHeading = page.getByRole("heading", { name: "Resolved runtime paths" });
 
   await expect(transcript).toBeVisible();
-  await expect(debugHeading).toBeVisible();
+  await expect(debugToggle).toBeVisible();
+  await expect(debugToggle).toContainText("Show debug information");
+  await expect(debugPanel).toHaveCount(0);
 
   const chatPanelMetrics = await transcript.evaluate((node) => {
     const panel = node.closest(".panel") as HTMLElement | null;
@@ -388,31 +409,27 @@ test("sessions page renders debug paths below a vertically resizable chat panel"
     return {
       y: rect.y,
       height: rect.height,
+      bottom: rect.bottom,
       resize: style.resize,
       minHeight: style.minHeight,
     };
   });
-  const debugPanelMetrics = await debugHeading.evaluate((node) => {
-    const panel = node.closest(".panel, .task-section") as HTMLElement | null;
-    if (!panel) {
-      return null;
-    }
-
-    const rect = panel.getBoundingClientRect();
-    return {
-      y: rect.y,
-      height: rect.height,
-    };
+  const debugToggleMetrics = await debugToggle.evaluate((node) => {
+    const rect = (node as HTMLElement).getBoundingClientRect();
+    return { y: rect.y };
   });
 
   expect(chatPanelMetrics).not.toBeNull();
-  expect(debugPanelMetrics).not.toBeNull();
-  expect(debugPanelMetrics!.y).toBeGreaterThanOrEqual(chatPanelMetrics!.y + chatPanelMetrics!.height - 1);
+  expect(debugToggleMetrics.y).toBeGreaterThanOrEqual(chatPanelMetrics!.bottom - 1);
   expect(chatPanelMetrics!.resize).toBe("vertical");
   expect(Number.parseFloat(chatPanelMetrics!.minHeight)).toBeGreaterThanOrEqual(560);
 
   const transcriptWrapMinHeight = await transcript.evaluate((node) => window.getComputedStyle(node.parentElement as HTMLElement).minHeight);
   expect(Number.parseFloat(transcriptWrapMinHeight)).toBeGreaterThanOrEqual(240);
+
+  await debugToggle.click();
+  await expect(debugToggle).toHaveCount(0);
+  await expect(debugHeading).toBeVisible();
 });
 
 test("sessions transcript wraps long lines by default and can toggle to no-wrap", async ({ page }) => {

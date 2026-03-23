@@ -33,6 +33,7 @@ import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
+import type { TaskBoardViewMode } from "./pages/tasks/TasksOverviewPage";
 import { AgentsPanel } from "./settings/AgentsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
@@ -72,6 +73,12 @@ const SETTINGS_TABS = [
 ] as const;
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
+const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
+
+function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
+  const stored = window.localStorage.getItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY);
+  return stored === "table" || stored === "cards" ? stored : "cards";
+}
 
 function supervisorQuickChatStorageKey(projectId: string | null) {
   return `orchestra.quick-chat.supervisor.${projectId ?? "default"}`;
@@ -476,6 +483,7 @@ export function App() {
   const [sessionScrollState, setSessionScrollState] = useState<SessionScrollState>({ lockedToBottom: true });
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
   const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
+  const [taskBoardViewMode, setTaskBoardViewMode] = useState<TaskBoardViewMode>(() => loadStoredTaskBoardViewMode());
   const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(null);
   const [agentsSelectionRequest, setAgentsSelectionRequest] = useState<{ type: "role" | "agent"; id: string; token: number } | null>(null);
   const [rolesSelectionRequest, setRolesSelectionRequest] = useState<{ roleId: string; token: number } | null>(null);
@@ -514,6 +522,21 @@ export function App() {
   );
   const supervisorSessionDraftMessage = supervisorSession ? draftMessages[supervisorSession.id] ?? "" : "";
   const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
+
+  useEffect(() => {
+    window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, taskBoardViewMode);
+  }, [taskBoardViewMode]);
+
+  useEffect(() => {
+    if (activePage === "tasks") {
+      setTaskBoardViewMode(loadStoredTaskBoardViewMode());
+    }
+  }, [activePage]);
+
+  function handleTaskBoardViewModeChange(viewMode: TaskBoardViewMode) {
+    window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, viewMode);
+    setTaskBoardViewMode(viewMode);
+  }
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
     const normalizedSession = normalizeSessionRecord(updatedSession);
@@ -1952,6 +1975,8 @@ export function App() {
             key={activeProject?.id ?? "default"}
             openTaskRequest={tasksOpenRequest}
             projectId={activeProject?.id ?? null}
+            taskBoardViewMode={taskBoardViewMode}
+            onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
           />
         )}
       </main>
