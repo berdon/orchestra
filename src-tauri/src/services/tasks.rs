@@ -85,19 +85,20 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     assignee_type: row.get(10)?,
                     assignee_id: row.get(11)?,
                     parent_task_id: row.get(12)?,
-                    archived: row.get::<_, i64>(13)? != 0,
-                    comment_count: row.get(14)?,
-                    lane_run_count: row.get(15)?,
-                    child_count: row.get(16)?,
-                    completed_child_count: row.get(17)?,
-                    in_progress_child_count: row.get(18)?,
-                    blocked_child_count: row.get(19)?,
-                    blocked_by_count: row.get(20)?,
-                    blocking_count: row.get(21)?,
-                    attachment_count: row.get(22)?,
-                    dependency_blocked: row.get::<_, i64>(23)? != 0,
-                    ready_for_dispatch: row.get::<_, i64>(24)? != 0,
-                    repository_id: row.get(27)?,
+                    whip_max_attempts: row.get(13)?,
+                    archived: row.get::<_, i64>(14)? != 0,
+                    comment_count: row.get(15)?,
+                    lane_run_count: row.get(16)?,
+                    child_count: row.get(17)?,
+                    completed_child_count: row.get(18)?,
+                    in_progress_child_count: row.get(19)?,
+                    blocked_child_count: row.get(20)?,
+                    blocked_by_count: row.get(21)?,
+                    blocking_count: row.get(22)?,
+                    attachment_count: row.get(23)?,
+                    dependency_blocked: row.get::<_, i64>(24)? != 0,
+                    ready_for_dispatch: row.get::<_, i64>(25)? != 0,
+                    repository_id: row.get(28)?,
                     repository_ids: Vec::new(),
                     parent: None,
                     lineage: Vec::new(),
@@ -110,8 +111,8 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     comments: Vec::new(),
                     lane_runs: Vec::new(),
                     active_lane_assignment: None,
-                    created_at: row.get(25)?,
-                    updated_at: row.get(26)?,
+                    created_at: row.get(26)?,
+                    updated_at: row.get(27)?,
                 })
             },
         )
@@ -186,11 +187,12 @@ pub fn create_task(
             assignee_id,
             repository_id,
             parent_task_id,
+            whip_max_attempts,
             archived,
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)
         "#,
         params![
             task_id,
@@ -208,6 +210,7 @@ pub fn create_task(
             normalized.assignee_id,
             normalized.repository_ids.first().cloned(),
             normalized.parent_task_id,
+            normalized.whip_max_attempts.unwrap_or(10),
             if normalized.archived.unwrap_or(false) { 1 } else { 0 },
             now,
         ],
@@ -262,8 +265,9 @@ pub fn update_task(
             assignee_id = ?10,
             repository_id = ?11,
             parent_task_id = ?12,
-            archived = ?13,
-            updated_at = ?14
+            whip_max_attempts = ?13,
+            archived = ?14,
+            updated_at = ?15
         WHERE id = ?1
         "#,
         params![
@@ -279,6 +283,7 @@ pub fn update_task(
             normalized.assignee_id,
             normalized.repository_ids.first().cloned(),
             normalized.parent_task_id,
+            normalized.whip_max_attempts.unwrap_or(existing.whip_max_attempts),
             if normalized.archived.unwrap_or(existing.archived) { 1 } else { 0 },
             now,
         ],
@@ -453,6 +458,12 @@ fn validate_task_input(
 
     if !VALID_TASK_PRIORITIES.contains(&input.priority.as_str()) {
         errors.push("priority: Task priority must be one of: P0, P1, P2, P3, P4.".to_string());
+    }
+
+    if let Some(whip_max_attempts) = input.whip_max_attempts {
+        if whip_max_attempts < 1 {
+            errors.push("whipMaxAttempts: Task whip max attempts must be at least 1.".to_string());
+        }
     }
 
     if !VALID_ASSIGNEE_TYPES.contains(&input.assignee_type.as_str()) {
@@ -1092,6 +1103,7 @@ fn task_summary_columns(alias: &str) -> String {
         {alias}.assignee_type,
         {alias}.assignee_id,
         {alias}.parent_task_id,
+        {alias}.whip_max_attempts,
         {alias}.archived,
         COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = {alias}.id), 0) AS comment_count,
         COALESCE((SELECT COUNT(*) FROM task_lane_runs lr WHERE lr.task_id = {alias}.id), 0) AS lane_run_count,
@@ -1132,20 +1144,21 @@ fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
         assignee_type: row.get(10)?,
         assignee_id: row.get(11)?,
         parent_task_id: row.get(12)?,
-        archived: row.get::<_, i64>(13)? != 0,
-        comment_count: row.get(14)?,
-        lane_run_count: row.get(15)?,
-        child_count: row.get(16)?,
-        completed_child_count: row.get(17)?,
-        in_progress_child_count: row.get(18)?,
-        blocked_child_count: row.get(19)?,
-        blocked_by_count: row.get(20)?,
-        blocking_count: row.get(21)?,
-        attachment_count: row.get(22)?,
-        dependency_blocked: row.get::<_, i64>(23)? != 0,
-        ready_for_dispatch: row.get::<_, i64>(24)? != 0,
-        created_at: row.get(25)?,
-        updated_at: row.get(26)?,
+        whip_max_attempts: row.get(13)?,
+        archived: row.get::<_, i64>(14)? != 0,
+        comment_count: row.get(15)?,
+        lane_run_count: row.get(16)?,
+        child_count: row.get(17)?,
+        completed_child_count: row.get(18)?,
+        in_progress_child_count: row.get(19)?,
+        blocked_child_count: row.get(20)?,
+        blocked_by_count: row.get(21)?,
+        blocking_count: row.get(22)?,
+        attachment_count: row.get(23)?,
+        dependency_blocked: row.get::<_, i64>(24)? != 0,
+        ready_for_dispatch: row.get::<_, i64>(25)? != 0,
+        created_at: row.get(26)?,
+        updated_at: row.get(27)?,
     })
 }
 
@@ -1210,6 +1223,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id,
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -1238,6 +1252,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: Some(epic.id.clone()),
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -1245,6 +1260,7 @@ mod tests {
 
         assert_eq!(created.number, "ORC-2");
         assert_eq!(created.parent_task_id.as_deref(), Some(epic.id.as_str()));
+        assert_eq!(created.whip_max_attempts, 10);
 
         let loaded_epic = get_task(&connection, &epic.id).expect("load epic");
         assert_eq!(loaded_epic.child_count, 1);
@@ -1259,6 +1275,58 @@ mod tests {
             loaded_child.parent.as_ref().map(|task| task.id.as_str()),
             Some(epic.id.as_str())
         );
+    }
+
+    #[test]
+    fn updates_task_whip_max_attempts() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let created = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Whip settings task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "draft".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: Some(3),
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        assert_eq!(created.whip_max_attempts, 3);
+
+        let updated = update_task(
+            &mut connection,
+            &created.id,
+            TaskUpsertInput {
+                title: created.title.clone(),
+                description: created.description.clone(),
+                task_type: created.task_type.clone(),
+                status: created.status.clone(),
+                priority: created.priority.clone(),
+                workflow_id: created.workflow_id.clone(),
+                current_lane_id: created.current_lane_id.clone(),
+                assignee_type: created.assignee_type.clone(),
+                assignee_id: created.assignee_id.clone(),
+                repository_id: created.repository_id.clone(),
+                repository_ids: created.repository_ids.clone(),
+                parent_task_id: created.parent_task_id.clone(),
+                whip_max_attempts: Some(5),
+                archived: Some(created.archived),
+            },
+        )
+        .expect("task should update");
+        assert_eq!(updated.whip_max_attempts, 5);
     }
 
     #[test]
@@ -1282,6 +1350,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -1302,6 +1371,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -1364,6 +1434,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -1393,6 +1464,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -1425,6 +1497,7 @@ mod tests {
                 repository_id: parent.repository_id.clone(),
                 repository_ids: parent.repository_ids.clone(),
                 parent_task_id: Some(child.id.clone()),
+                whip_max_attempts: None,
                 archived: Some(false),
             },
         )
@@ -1490,6 +1563,7 @@ mod tests {
                 repository_id: blocker.repository_id.clone(),
                 repository_ids: blocker.repository_ids.clone(),
                 parent_task_id: blocker.parent_task_id.clone(),
+                whip_max_attempts: None,
                 archived: Some(false),
             },
         )

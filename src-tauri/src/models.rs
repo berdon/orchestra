@@ -722,6 +722,8 @@ pub struct TaskLaneAssignment {
     pub role_queue_entry_id: Option<String>,
     pub role_instance_id: Option<String>,
     pub prompt: Option<String>,
+    pub whip_count: i64,
+    pub last_whip_at: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub created_at: String,
@@ -745,6 +747,7 @@ pub struct TaskSummary {
     pub assignee_type: String,
     pub assignee_id: Option<String>,
     pub parent_task_id: Option<String>,
+    pub whip_max_attempts: i64,
     pub archived: bool,
     pub comment_count: i64,
     pub lane_run_count: i64,
@@ -792,6 +795,7 @@ pub struct TaskDetail {
     #[serde(default)]
     pub repository_ids: Vec<String>,
     pub parent_task_id: Option<String>,
+    pub whip_max_attempts: i64,
     pub archived: bool,
     pub comment_count: i64,
     pub lane_run_count: i64,
@@ -836,6 +840,7 @@ pub struct TaskUpsertInput {
     #[serde(default)]
     pub repository_ids: Vec<String>,
     pub parent_task_id: Option<String>,
+    pub whip_max_attempts: Option<i64>,
     pub archived: Option<bool>,
 }
 

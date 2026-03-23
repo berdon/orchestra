@@ -836,6 +836,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     repositoryId: (input.repositoryIds?.[0]?.trim() || input.repositoryId?.trim() || null),
     repositoryIds: (input.repositoryIds ?? []).map((value) => value.trim()).filter(Boolean),
     parentTaskId: input.parentTaskId?.trim() || null,
+    whipMaxAttempts: Math.max(1, input.whipMaxAttempts ?? existingTask?.whipMaxAttempts ?? 10),
     archived: input.archived ?? existingTask?.archived ?? false,
     commentCount: existingTask?.comments.length ?? 0,
     laneRunCount: existingTask?.laneRuns.length ?? 0,
@@ -888,6 +889,10 @@ function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
 
   if (!["user", "agent", "role", "unassigned"].includes(input.assigneeType)) {
     errors.push({ path: "assigneeType", message: "Assignee type must be one of: user, agent, role, unassigned." });
+  }
+
+  if ((input.whipMaxAttempts ?? 10) < 1) {
+    errors.push({ path: "whipMaxAttempts", message: "Task whip max attempts must be at least 1." });
   }
 
   if (["user", "unassigned"].includes(input.assigneeType) && input.assigneeId?.trim()) {

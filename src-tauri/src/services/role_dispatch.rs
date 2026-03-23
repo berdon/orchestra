@@ -675,6 +675,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )
@@ -750,6 +751,7 @@ mod tests {
                 repository_id: None,
                 repository_ids: Vec::new(),
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )

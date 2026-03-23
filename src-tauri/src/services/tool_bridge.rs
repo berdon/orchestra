@@ -1515,6 +1515,7 @@ mod tests {
                 repository_id: Some("repo-1".into()),
                 repository_ids: vec!["repo-1".into()],
                 parent_task_id: None,
+                whip_max_attempts: None,
                 archived: None,
             },
         )

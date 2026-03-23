@@ -121,6 +121,22 @@ export function TaskEditorForm({ draft, workflows, agents, roles, repositories, 
         </select>
       </label>
 
+      <label className="field-group">
+        <span className="field-group__label">Whip max attempts</span>
+        <input
+          className="text-input"
+          data-role="task-whip-max-attempts"
+          type="number"
+          min={1}
+          value={draft.whipMaxAttempts ?? 10}
+          onChange={(event) => onChange({ ...draft, whipMaxAttempts: Math.max(1, Number(event.target.value || 10)) })}
+        />
+      </label>
+
+      <div className="task-editor-grid__full muted-copy">
+        Orchestra re-prompts idle agent-owned task lanes to keep working. If the lane still is not completed after this many whip attempts, Orchestra automatically escalates the task to user intervention.
+      </div>
+
       <label className="field-group task-editor-grid__full">
         <span className="field-group__label">Description</span>
         <textarea className="text-area" data-role="task-description" rows={6} value={draft.description ?? ""} onChange={(event) => onChange({ ...draft, description: event.target.value })} />

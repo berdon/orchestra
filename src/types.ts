@@ -631,6 +631,8 @@ export interface TaskLaneAssignment {
   roleQueueEntryId?: string | null;
   roleInstanceId?: string | null;
   prompt?: string | null;
+  whipCount?: number;
+  lastWhipAt?: string | null;
   startedAt: string;
   completedAt?: string | null;
   createdAt: string;
@@ -651,6 +653,7 @@ export interface TaskSummary {
   assigneeType: TaskAssigneeType | string;
   assigneeId?: string | null;
   parentTaskId?: string | null;
+  whipMaxAttempts?: number;
   archived: boolean;
   commentCount: number;
   laneRunCount: number;
@@ -670,6 +673,7 @@ export interface TaskSummary {
 export interface TaskDetail extends TaskSummary {
   repositoryId?: string | null;
   repositoryIds: string[];
+  whipMaxAttempts?: number;
   parent?: TaskSummary | null;
   lineage: TaskSummary[];
   children: TaskSummary[];
@@ -696,6 +700,7 @@ export interface TaskUpsertInput {
   repositoryId?: string | null;
   repositoryIds?: string[];
   parentTaskId?: string | null;
+  whipMaxAttempts?: number | null;
   archived?: boolean;
 }
 
