@@ -41,6 +41,7 @@ describe("orchestra tools extension tool registration", () => {
   test("registers one tool per allowed Orchestra command and routes execution to the matching bridge command", async () => {
     const registeredTools: Array<any> = [];
     const registeredCommands: string[] = [];
+    const consoleInfoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
       async json() {
         return {
@@ -69,6 +70,9 @@ describe("orchestra tools extension tool registration", () => {
       expect.arrayContaining(["orchestra_help", "complete_lane_as_success", "get_task_context", "add_task_file_reference", "comment_on_task"]),
     );
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
+    expect(consoleInfoSpy).toHaveBeenCalledWith(expect.stringContaining("registerTool name=orchestra_help"));
+    expect(consoleInfoSpy).toHaveBeenCalledWith(expect.stringContaining("registerTool name=complete_lane_as_success"));
+    expect(consoleInfoSpy).toHaveBeenCalledWith(expect.stringContaining("registerTool name=get_task_context"));
 
     const completionTool = registeredTools.find((tool) => tool.name === "complete_lane_as_success");
     const result = await completionTool.execute("tool-call-1", {

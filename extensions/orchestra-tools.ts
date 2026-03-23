@@ -166,6 +166,12 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
   };
 }
 
+function logRegisteredTool(toolName: string, config: BridgeConfig) {
+  console.info(
+    `[orchestra-tools] registerTool name=${toolName} session=${config.sessionId ?? "unknown"} client=${config.clientId ?? "unknown"} bridge=${config.bridgeInstanceId ?? "unknown"}`,
+  );
+}
+
 export default function orchestraToolsExtension(pi: ExtensionAPI) {
   const config = getBridgeConfig();
   if (!config) {
@@ -204,7 +210,7 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
+  const helpTool = {
     name: "orchestra_help",
     label: "Orchestra Help",
     description: "List Orchestra backend commands available to this session.",
@@ -216,9 +222,13 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
         details: { command: "help", result },
       };
     },
-  });
+  };
+  logRegisteredTool(helpTool.name, config);
+  pi.registerTool(helpTool);
 
   for (const tool of config.allowedCommands) {
-    pi.registerTool(createBridgeTool(tool));
+    const bridgeTool = createBridgeTool(tool);
+    logRegisteredTool(bridgeTool.name, config);
+    pi.registerTool(bridgeTool);
   }
 }
