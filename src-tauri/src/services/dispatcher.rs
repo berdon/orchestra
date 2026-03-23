@@ -116,6 +116,17 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
     for candidate in candidates {
         let context = pi_sessions::session_context_for_project_id(&candidate.project_id)?;
         let mut connection = database::open_connection()?;
+        let Some(candidate) = task_runtime::refresh_task_whip_candidate(&connection, &candidate.assignment_id)? else {
+            state.log(
+                "info",
+                "task.whip.skipped",
+                &format!(
+                    "Skipped whip for task {} because assignment {} is no longer eligible",
+                    candidate.task_id, candidate.assignment_id
+                ),
+            );
+            continue;
+        };
 
         if candidate.whip_count >= candidate.whip_max_attempts {
             let task = task_runtime::escalate_task_whip_limit_exceeded(
