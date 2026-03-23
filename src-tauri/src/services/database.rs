@@ -414,6 +414,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 role_queue_entry_id TEXT,
                 role_instance_id TEXT,
                 prompt TEXT,
+                pending_outcome TEXT,
+                completion_notes TEXT,
                 whip_count INTEGER NOT NULL DEFAULT 0,
                 last_whip_at TEXT,
                 started_at TEXT NOT NULL,
@@ -449,6 +451,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 assigned_entity_type TEXT NOT NULL,
                 assigned_entity_id TEXT,
                 entry_prompt_template TEXT,
+                require_user_approval_on_success INTEGER NOT NULL DEFAULT 0,
                 success_transition_type TEXT NOT NULL DEFAULT 'end',
                 success_target_lane_id TEXT,
                 failure_transition_type TEXT NOT NULL DEFAULT 'end',
@@ -778,6 +781,28 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result<(), String> {
     let columns = table_columns(connection, "task_lane_assignments")?;
 
+    if !columns.contains("pending_outcome") {
+        connection
+            .execute(
+                "ALTER TABLE task_lane_assignments ADD COLUMN pending_outcome TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add pending_outcome column to task_lane_assignments: {error}")
+            })?;
+    }
+
+    if !columns.contains("completion_notes") {
+        connection
+            .execute(
+                "ALTER TABLE task_lane_assignments ADD COLUMN completion_notes TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add completion_notes column to task_lane_assignments: {error}")
+            })?;
+    }
+
     if !columns.contains("whip_count") {
         connection
             .execute(
@@ -844,6 +869,15 @@ fn migrate_workflow_worker_references_to_slugs(connection: &Connection) -> Resul
 
 fn ensure_workflow_transition_columns(connection: &Connection) -> Result<(), String> {
     let columns = table_columns(connection, "workflow_lanes")?;
+
+    if !columns.contains("require_user_approval_on_success") {
+        connection
+            .execute(
+                "ALTER TABLE workflow_lanes ADD COLUMN require_user_approval_on_success INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("Unable to add require_user_approval_on_success column: {error}"))?;
+    }
 
     if !columns.contains("success_transition_type") {
         connection

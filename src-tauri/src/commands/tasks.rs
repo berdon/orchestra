@@ -450,6 +450,84 @@ pub async fn request_user_intervention(
     complete_lane_command(app, state, task_id, notes, "needs_user").await
 }
 
+#[tauri::command]
+pub async fn approve_lane_completion(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let task_id_for_context = task_id.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
+        .await
+        .map_err(|error| format!("Unable to join lane approval context task: {error}"))??;
+    let mut connection = database::open_connection()?;
+    let mut task = task_runtime::approve_pending_lane_completion(
+        &mut connection,
+        &context.project_root,
+        &context.session_dir,
+        &task_id,
+    )?;
+
+    if let Some(next_assignment) = task_runtime::maybe_auto_dispatch_task(
+        &mut connection,
+        &context.project_root,
+        &context.session_dir,
+        &task_id,
+    )? {
+        task_runtime::start_assignment_run(
+            app.clone(),
+            &state,
+            context.session_dir.clone(),
+            &next_assignment,
+        )?;
+        if let Some(session_id) = next_assignment.session_id.clone() {
+            emit_session_change(&app, "task.transition.next_assignment", [session_id]);
+        }
+        task = tasks::get_task_context(&connection, &task_id)?;
+    }
+
+    state.log(
+        "info",
+        "task.transition",
+        &format!("Approved pending lane completion for task {}", task_id),
+    );
+    emit_task_change(&app, "task.transition.approved_success", [task.id.clone()]);
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn send_lane_back_for_work(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let task_id_for_context = task_id.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
+        .await
+        .map_err(|error| format!("Unable to join lane rework context task: {error}"))??;
+    let connection = database::open_connection()?;
+    let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
+    let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+    task_runtime::start_assignment_follow_up(
+        app.clone(),
+        &state,
+        context.session_dir.clone(),
+        &assignment,
+        &follow_up_prompt,
+    )?;
+    if let Some(session_id) = assignment.session_id.clone() {
+        emit_session_change(&app, "task.transition.rework", [session_id]);
+    }
+    let task = tasks::get_task_context(&connection, &task_id)?;
+    state.log(
+        "info",
+        "task.transition",
+        &format!("Sent task {} back to the current lane session for more work", task_id),
+    );
+    emit_task_change(&app, "task.transition.needs_work", [task.id.clone()]);
+    Ok(task)
+}
+
 async fn complete_lane_command(
     app: AppHandle,
     state: State<'_, AppState>,

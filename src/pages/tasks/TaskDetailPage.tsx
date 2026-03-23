@@ -48,6 +48,8 @@ interface TaskDetailPageProps {
   onDispatch: () => void;
   onRetry: () => void;
   onComplete: (outcome: "success" | "failure" | "needs_user") => void;
+  onApproveCompletion: () => void;
+  onSendBackForWork: () => void;
   onAddDependency: () => void;
   onRemoveDependency: (dependencyId: string) => void;
   onSelectBlocker: (taskId: string) => void;
@@ -147,6 +149,8 @@ export function TaskDetailPage({
   onDispatch,
   onRetry,
   onComplete,
+  onApproveCompletion,
+  onSendBackForWork,
   onAddDependency,
   onRemoveDependency,
   onSelectBlocker,
@@ -245,24 +249,37 @@ export function TaskDetailPage({
                     Dispatch lane
                   </button>
                 ) : null}
-                {task.workflowId && task.currentLaneId && ["agent", "role"].includes(task.assigneeType) ? (
-                  <button className="secondary-button" data-role="retry-task-lane" type="button" onClick={onRetry}>
-                    Retry
-                  </button>
-                ) : null}
-                {task.activeLaneAssignment || (task.workflowId && task.currentLaneId && task.assigneeType === "user") ? (
+                {task.activeLaneAssignment?.status === "awaiting_user_approval" ? (
                   <>
-                    <button className="secondary-button" data-role="complete-task-success" type="button" onClick={() => onComplete("success")}>
-                      Mark success
+                    <button className="primary-button" data-role="approve-task-lane" type="button" onClick={onApproveCompletion}>
+                      Approve
                     </button>
-                    <button className="secondary-button secondary-button--danger" data-role="complete-task-failure" type="button" onClick={() => onComplete("failure")}>
-                      Mark failure
-                    </button>
-                    <button className="secondary-button" data-role="complete-task-needs-user" type="button" onClick={() => onComplete("needs_user")}>
-                      Needs user
+                    <button className="secondary-button" data-role="send-task-back-for-work" type="button" onClick={onSendBackForWork}>
+                      Needs work
                     </button>
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    {task.workflowId && task.currentLaneId && ["agent", "role"].includes(task.assigneeType) ? (
+                      <button className="secondary-button" data-role="retry-task-lane" type="button" onClick={onRetry}>
+                        Retry
+                      </button>
+                    ) : null}
+                    {task.activeLaneAssignment || (task.workflowId && task.currentLaneId && task.assigneeType === "user") ? (
+                      <>
+                        <button className="secondary-button" data-role="complete-task-success" type="button" onClick={() => onComplete("success")}>
+                          Mark success
+                        </button>
+                        <button className="secondary-button secondary-button--danger" data-role="complete-task-failure" type="button" onClick={() => onComplete("failure")}>
+                          Mark failure
+                        </button>
+                        <button className="secondary-button" data-role="complete-task-needs-user" type="button" onClick={() => onComplete("needs_user")}>
+                          Needs user
+                        </button>
+                      </>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
             {task.activeLaneAssignment ? (
@@ -280,6 +297,12 @@ export function TaskDetailPage({
                   <span>Whips: {task.activeLaneAssignment.whipCount ?? 0} / {task.whipMaxAttempts ?? 10}</span>
                   <span>Last whip: {task.activeLaneAssignment.lastWhipAt ?? "—"}</span>
                 </div>
+                {task.activeLaneAssignment.status === "awaiting_user_approval" ? (
+                  <p className="muted-copy" data-role="task-awaiting-approval-note">
+                    This lane reported success and is paused for user approval before the workflow continues.
+                    {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <p className="muted-copy">No active runtime assignment for this task.</p>

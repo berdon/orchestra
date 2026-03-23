@@ -31,6 +31,7 @@ function createEmptyLane(order: number): WorkflowLaneInput {
     assignedEntityType: "user",
     assignedEntityId: null,
     entryPromptTemplate: null,
+    requireUserApprovalOnSuccess: false,
     successTransitionType: "end",
     successTargetLaneId: null,
     failureTransitionType: "end",
@@ -79,6 +80,7 @@ function workflowToDraft(workflow: WorkflowDefinition): WorkflowUpsertInput {
         assignedEntityType: lane.assignedEntityType,
         assignedEntityId: lane.assignedEntityId ?? "",
         entryPromptTemplate: lane.entryPromptTemplate ?? "",
+        requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
         successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId ?? "",
         failureTransitionType: lane.failureTransitionType,
@@ -420,6 +422,7 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
                 <div className="workflow-board-lane__flow">
                   <span>Success → {nextLane ? formatLaneLabel(nextLane, index + 1) : "End"}</span>
                   <span>Failure → {describeFailure(lane, laneIdOptions)}</span>
+                  {lane.requireUserApprovalOnSuccess ? <span>Success requires user approval</span> : null}
                 </div>
               </button>
             );
@@ -663,6 +666,7 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
                                 ...entry,
                                 assignedEntityType: "user",
                                 assignedEntityId: "",
+                                requireUserApprovalOnSuccess: false,
                               };
                             }
 
@@ -772,6 +776,35 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
                       }
                     />
                   </label>
+
+                  <div className="field-group workflow-form-grid__full">
+                    <span className="field-group__label">Success review</span>
+                    <label className="checkbox-row">
+                      <input
+                        data-role="lane-success-review-required"
+                        type="checkbox"
+                        checked={selectedLane.requireUserApprovalOnSuccess ?? false}
+                        disabled={selectedLane.assignedEntityType === "user"}
+                        onChange={(event) =>
+                          updateWorkflowDraft((draft) => ({
+                            ...draft,
+                            lanes: draft.lanes.map((entry) =>
+                              entry.id === selectedLane.id
+                                ? { ...entry, requireUserApprovalOnSuccess: event.target.checked }
+                                : entry,
+                            ),
+                          }))
+                        }
+                      />
+                      <span>Require user approval after success before the workflow continues.</span>
+                    </label>
+                    {selectedLane.assignedEntityType === "user" ? (
+                      <span className="muted-copy">User-owned lanes do not support an extra approval gate.</span>
+                    ) : null}
+                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].requireUserApprovalOnSuccess`).map((error) => (
+                      <span className="field-error" key={error.message}>{error.message}</span>
+                    ))}
+                  </div>
 
                   <div className="workflow-flow-note workflow-form-grid__full">
                     <p className="eyebrow">On success</p>

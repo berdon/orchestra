@@ -202,6 +202,7 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           assignedEntityType: "user",
           assignedEntityId: null,
           entryPromptTemplate: "Define the approach before implementation begins.",
+          requireUserApprovalOnSuccess: false,
           successTransitionType: "lane",
           successTargetLaneId: buildId,
           failureTransitionType: "user_intervention",
@@ -215,6 +216,7 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           assignedEntityType: "role",
           assignedEntityId: "developer",
           entryPromptTemplate: "Carry out the approved implementation plan.",
+          requireUserApprovalOnSuccess: false,
           successTransitionType: "lane",
           successTargetLaneId: reviewId,
           failureTransitionType: "lane",
@@ -228,6 +230,7 @@ function seedMockWorkflows(): WorkflowDefinition[] {
           assignedEntityType: "user",
           assignedEntityId: null,
           entryPromptTemplate: "Check the completed work and decide what happens next.",
+          requireUserApprovalOnSuccess: false,
           successTransitionType: "end",
           successTargetLaneId: null,
           failureTransitionType: "lane",
@@ -990,6 +993,14 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
       });
     }
 
+    if (lane.assignedEntityType === "user" && lane.requireUserApprovalOnSuccess) {
+      errors.push({
+        code: "invalid",
+        path: `${path}.requireUserApprovalOnSuccess`,
+        message: "User-owned lanes cannot require user approval on success.",
+      });
+    }
+
     if (lane.assignedEntityType === "agent") {
       const agentRef = lane.assignedEntityId?.trim();
       const agents = getStoredMockAgents();
@@ -1086,6 +1097,7 @@ function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow
     assignedEntityType: lane.assignedEntityType,
     assignedEntityId: lane.assignedEntityId?.trim() || null,
     entryPromptTemplate: lane.entryPromptTemplate?.trim() || null,
+    requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
     successTransitionType: lane.successTransitionType,
     successTargetLaneId: lane.successTransitionType === "lane" ? lane.successTargetLaneId?.trim() || null : null,
     failureTransitionType: lane.failureTransitionType,
@@ -1460,6 +1472,10 @@ export async function sendSessionMessage(sessionId: string, message: string, run
       ].slice(0, 20),
     } satisfies BridgeDiagnostics);
 
+    const activeRuns = getMockActiveSessionRuns();
+    activeRuns[sessionId] = runId;
+    setMockActiveSessionRuns(activeRuns);
+
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);
     const userMessage = {
@@ -1552,6 +1568,10 @@ export async function sendSessionMessage(sessionId: string, message: string, run
           }));
           return;
         }
+
+        const nextRuns = getMockActiveSessionRuns();
+        delete nextRuns[sessionId];
+        setMockActiveSessionRuns(nextRuns);
 
         appendMockLog("info", "sessions.message", `Sent message to session ${session.id}`);
         emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "agent_end" }));
@@ -1812,6 +1832,119 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("dispatch_task_lane", { taskId });
 }
 
+function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition, lane: WorkflowLane, updatedAt: string) {
+  if (lane.assignedEntityType === "user") {
+    return null;
+  }
+
+  return {
+    id: createId("task-assignment"),
+    taskId: task.id,
+    workflowId: workflow.id,
+    laneId: lane.id,
+    workerType: lane.assignedEntityType,
+    workerId: lane.assignedEntityId ?? null,
+    status: "active",
+    sessionId: createId("session"),
+    runtimeCwd: lane.assignedEntityType === "agent"
+      ? getProjectRuntimeCwd(CURRENT_PROJECT_ID)
+      : `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
+    roleQueueEntryId: lane.assignedEntityType === "role" ? createId("queue") : null,
+    roleInstanceId: lane.assignedEntityType === "role" ? createId("instance") : null,
+    prompt: `Work task ${task.number}: ${task.title}`,
+    pendingOutcome: null,
+    completionNotes: null,
+    startedAt: updatedAt,
+    completedAt: null,
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}
+
+function closeMockTaskSessionIfNeeded(task: TaskDetail, nextStatus: string, updatedAt: string) {
+  if (!["completed", "canceled"].includes(nextStatus) || !task.activeLaneAssignment?.sessionId) {
+    return;
+  }
+
+  const activeSessionId = task.activeLaneAssignment.sessionId;
+  const isPersistentAgentMainSession =
+    task.activeLaneAssignment.workerType === "agent" &&
+    getStoredMockAgentRuntimes().some((runtime) => runtime.mainSessionId === activeSessionId);
+
+  if (!isPersistentAgentMainSession) {
+    updateMockSession(activeSessionId, (current) => ({
+      ...current,
+      status: "closed",
+      updatedAt,
+    }));
+    emitMockSessionChange({ sessionIds: [activeSessionId], reason: "task.session.closed" });
+  }
+}
+
+function finalizeMockAgentState(task: TaskDetail, outcome: "success" | "failure" | "needs_user", updatedAt: string, autoAssignment: TaskDetail["activeLaneAssignment"] | null) {
+  if (task.activeLaneAssignment?.workerType !== "agent" || !task.activeLaneAssignment.workerId) {
+    return;
+  }
+
+  saveStoredMockAgentQueue(
+    getStoredMockAgentQueue().map((entry) =>
+      entry.id === task.activeLaneAssignment?.id || entry.sessionId === task.activeLaneAssignment?.sessionId
+        ? {
+            ...entry,
+            status: outcome === "failure" ? "failed" : "completed",
+            completedAt: updatedAt,
+            updatedAt,
+          }
+        : entry,
+    ),
+  );
+  saveStoredMockAgentRuntimes(
+    getStoredMockAgentRuntimes().map((runtime) =>
+      runtime.agentId === task.activeLaneAssignment?.workerId
+        ? {
+            ...runtime,
+            status: outcome === "failure" ? "needs_attention" : autoAssignment ? "running" : "idle",
+            mainSessionId: autoAssignment?.sessionId ?? task.activeLaneAssignment?.sessionId,
+            runtimeCwd: autoAssignment?.runtimeCwd ?? task.activeLaneAssignment?.runtimeCwd,
+            currentQueueEntryId: autoAssignment?.id ?? null,
+            lastDispatchAt: updatedAt,
+            lastError: outcome === "failure" ? task.activeLaneAssignment?.completionNotes ?? "Marked failed" : null,
+            updatedAt,
+          }
+        : runtime,
+    ),
+  );
+}
+
+function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition, autoAssignment: TaskDetail["activeLaneAssignment"] | null) {
+  if (autoAssignment?.workerType !== "agent" || !autoAssignment.workerId) {
+    return;
+  }
+
+  saveStoredMockAgentQueue([
+    ...getStoredMockAgentQueue(),
+    {
+      id: autoAssignment.id,
+      projectId: CURRENT_PROJECT_ID,
+      agentId: autoAssignment.workerId,
+      status: "dispatched",
+      sourceType: "workflow_lane",
+      sourceTaskId: task.id,
+      sourceWorkflowId: workflow.id,
+      sourceLaneId: autoAssignment.laneId,
+      deliveryMode: "prompt",
+      title: `${task.number} · ${task.title}`,
+      message: autoAssignment.prompt,
+      sessionId: autoAssignment.sessionId,
+      runId: createId("run"),
+      dispatchedAt: autoAssignment.startedAt,
+      completedAt: null,
+      createdAt: autoAssignment.createdAt,
+      updatedAt: autoAssignment.updatedAt,
+    },
+  ]);
+}
+
 async function completeMockTaskLane(taskId: string, outcome: "success" | "failure" | "needs_user", notes?: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
@@ -1825,13 +1958,39 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   }
 
   const updatedAt = nowIso();
-  const laneRuns = task.activeLaneAssignment
-    ? task.laneRuns.map((run, index, allRuns) =>
-        index === allRuns.length - 1 && run.completedAt == null
-          ? { ...run, result: outcome, notes: notes ?? run.notes ?? null, completedAt: updatedAt }
-          : run,
-      )
-    : task.laneRuns;
+  const normalizedNotes = notes?.trim() || null;
+
+  if (
+    outcome === "success"
+    && task.activeLaneAssignment
+    && ["agent", "role"].includes(task.activeLaneAssignment.workerType)
+    && (lane.requireUserApprovalOnSuccess ?? false)
+  ) {
+    saveMockTasks(tasks.map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            status: "in_review",
+            assigneeType: "user",
+            assigneeId: null,
+            activeLaneAssignment: entry.activeLaneAssignment
+              ? {
+                  ...entry.activeLaneAssignment,
+                  status: "awaiting_user_approval",
+                  pendingOutcome: "success",
+                  completionNotes: normalizedNotes,
+                  updatedAt,
+                }
+              : null,
+            updatedAt,
+          }
+        : entry,
+    ));
+
+    appendMockLog("info", "task.transition", `Task ${taskId} is awaiting user approval on ${lane.name}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.awaiting_user_approval" });
+    return getTask(taskId);
+  }
 
   let nextLaneId: string | null = task.currentLaneId;
   let nextStatus: string = task.status;
@@ -1872,29 +2031,18 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   const nextLane = nextLaneId ? workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null : null;
   const autoAssignment =
     nextLane && nextLane.assignedEntityType !== "user" && ["ready", "in_progress"].includes(nextStatus)
-      ? {
-          id: createId("task-assignment"),
-          taskId,
-          workflowId: workflow.id,
-          laneId: nextLane.id,
-          workerType: nextLane.assignedEntityType,
-          workerId: nextLane.assignedEntityId ?? null,
-          status: "active",
-          sessionId: createId("session"),
-          runtimeCwd: nextLane.assignedEntityType === "agent"
-            ? getProjectRuntimeCwd(CURRENT_PROJECT_ID)
-            : `/mock/runtime/${nextLane.assignedEntityType}/${nextLane.assignedEntityId ?? "user"}`,
-          roleQueueEntryId: nextLane.assignedEntityType === "role" ? createId("queue") : null,
-          roleInstanceId: nextLane.assignedEntityType === "role" ? createId("instance") : null,
-          prompt: `Work task ${task.number}: ${task.title}`,
-          startedAt: updatedAt,
-          completedAt: null,
-          createdAt: updatedAt,
-          updatedAt,
-        }
+      ? buildMockAutoAssignment(task, workflow, nextLane, updatedAt)
       : null;
 
-  const nextTasks = tasks.map((entry) =>
+  const laneRuns = task.activeLaneAssignment
+    ? task.laneRuns.map((run, index, allRuns) =>
+        index === allRuns.length - 1 && run.completedAt == null
+          ? { ...run, result: outcome, notes: normalizedNotes ?? run.notes ?? null, completedAt: updatedAt }
+          : run,
+      )
+    : task.laneRuns;
+
+  saveMockTasks(tasks.map((entry) =>
     entry.id === taskId
       ? {
           ...entry,
@@ -1922,84 +2070,156 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
           updatedAt,
         }
       : entry,
+  ));
+
+  finalizeMockAgentState(
+    {
+      ...task,
+      activeLaneAssignment: task.activeLaneAssignment
+        ? { ...task.activeLaneAssignment, completionNotes: normalizedNotes }
+        : null,
+    },
+    outcome,
+    updatedAt,
+    autoAssignment,
   );
-
-  if (task.activeLaneAssignment?.workerType === "agent" && task.activeLaneAssignment.workerId) {
-    saveStoredMockAgentQueue(
-      getStoredMockAgentQueue().map((entry) =>
-        entry.id === task.activeLaneAssignment?.id || entry.sessionId === task.activeLaneAssignment?.sessionId
-          ? {
-              ...entry,
-              status: outcome === "failure" ? "failed" : "completed",
-              completedAt: updatedAt,
-              updatedAt,
-            }
-          : entry,
-      ),
-    );
-    saveStoredMockAgentRuntimes(
-      getStoredMockAgentRuntimes().map((runtime) =>
-        runtime.agentId === task.activeLaneAssignment?.workerId
-          ? {
-              ...runtime,
-              status: outcome === "failure" ? "needs_attention" : autoAssignment ? "running" : "idle",
-              mainSessionId: autoAssignment?.sessionId ?? task.activeLaneAssignment?.sessionId,
-              runtimeCwd: autoAssignment?.runtimeCwd ?? task.activeLaneAssignment?.runtimeCwd,
-              currentQueueEntryId: autoAssignment?.id ?? null,
-              lastDispatchAt: updatedAt,
-              lastError: outcome === "failure" ? notes ?? "Marked failed" : null,
-              updatedAt,
-            }
-          : runtime,
-      ),
-    );
-  }
-
-  if (autoAssignment?.workerType === "agent" && autoAssignment.workerId) {
-    saveStoredMockAgentQueue([
-      ...getStoredMockAgentQueue(),
-      {
-        id: autoAssignment.id,
-        projectId: CURRENT_PROJECT_ID,
-        agentId: autoAssignment.workerId,
-        status: "dispatched",
-        sourceType: "workflow_lane",
-        sourceTaskId: taskId,
-        sourceWorkflowId: workflow.id,
-        sourceLaneId: autoAssignment.laneId,
-        deliveryMode: "prompt",
-        title: `${task.number} · ${task.title}`,
-        message: autoAssignment.prompt,
-        sessionId: autoAssignment.sessionId,
-        runId: createId("run"),
-        dispatchedAt: autoAssignment.startedAt,
-        completedAt: null,
-        createdAt: autoAssignment.createdAt,
-        updatedAt: autoAssignment.updatedAt,
-      },
-    ]);
-  }
-
-  saveMockTasks(nextTasks);
-
-  if (["completed", "canceled"].includes(nextStatus) && task.activeLaneAssignment?.sessionId) {
-    const activeSessionId = task.activeLaneAssignment.sessionId;
-    const isPersistentAgentMainSession =
-      task.activeLaneAssignment.workerType === "agent" &&
-      getStoredMockAgentRuntimes().some((runtime) => runtime.mainSessionId === activeSessionId);
-
-    if (!isPersistentAgentMainSession) {
-      updateMockSession(activeSessionId, (current) => ({
-        ...current,
-        status: "closed",
-        updatedAt,
-      }));
-      emitMockSessionChange({ sessionIds: [activeSessionId], reason: "task.session.closed" });
-    }
-  }
+  queueMockAutoAssignment(task, workflow, autoAssignment);
+  closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
 
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
   emitMockTaskChange({ taskIds: [taskId], reason: `task.transition.${outcome}` });
+  return getTask(taskId);
+}
+
+async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
+  const tasks = ensureMockTasks();
+  const task = tasks.find((entry) => entry.id === taskId);
+  if (!task || !task.workflowId || !task.currentLaneId || task.activeLaneAssignment?.status !== "awaiting_user_approval") {
+    throw new Error(`Task ${taskId} is not awaiting lane approval.`);
+  }
+
+  const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+  const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
+  if (!workflow || !lane) {
+    throw new Error("Current workflow lane could not be resolved.");
+  }
+
+  const updatedAt = nowIso();
+  let nextLaneId: string | null = task.currentLaneId;
+  let nextStatus: string = task.status;
+  let nextAssigneeType: string = task.assigneeType;
+  let nextAssigneeId: string | null = task.assigneeId ?? null;
+
+  if (lane.successTransitionType === "lane" && lane.successTargetLaneId) {
+    const nextLane = workflow.lanes.find((entry) => entry.id === lane.successTargetLaneId);
+    nextLaneId = nextLane?.id ?? null;
+    nextStatus = nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
+    nextAssigneeType = nextLane?.assignedEntityType ?? "unassigned";
+    nextAssigneeId = nextLane?.assignedEntityId ?? null;
+  } else {
+    nextLaneId = null;
+    nextStatus = "completed";
+    nextAssigneeType = "unassigned";
+    nextAssigneeId = null;
+  }
+
+  const nextLane = nextLaneId ? workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null : null;
+  const autoAssignment =
+    nextLane && nextLane.assignedEntityType !== "user" && ["ready", "in_progress"].includes(nextStatus)
+      ? buildMockAutoAssignment(task, workflow, nextLane, updatedAt)
+      : null;
+
+  const laneRuns = task.laneRuns.map((run, index, allRuns) =>
+    index === allRuns.length - 1 && run.completedAt == null
+      ? {
+          ...run,
+          result: "success" as const,
+          notes: task.activeLaneAssignment?.completionNotes ?? run.notes ?? null,
+          completedAt: updatedAt,
+        }
+      : run,
+  );
+
+  saveMockTasks(tasks.map((entry) =>
+    entry.id === taskId
+      ? {
+          ...entry,
+          currentLaneId: nextLaneId,
+          status: nextStatus,
+          assigneeType: nextAssigneeType,
+          assigneeId: nextAssigneeId,
+          activeLaneAssignment: autoAssignment,
+          laneRuns:
+            autoAssignment && nextLane
+              ? [
+                  ...laneRuns,
+                  {
+                    id: createId("lane-run"),
+                    taskId: entry.id,
+                    laneId: nextLane.id,
+                    sessionId: autoAssignment.sessionId!,
+                    result: "needs_user" as const,
+                    notes: null,
+                    startedAt: autoAssignment.startedAt,
+                    completedAt: null,
+                  },
+                ]
+              : laneRuns,
+          updatedAt,
+        }
+      : entry,
+  ));
+
+  finalizeMockAgentState(task, "success", updatedAt, autoAssignment);
+  queueMockAutoAssignment(task, workflow, autoAssignment);
+  closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
+
+  appendMockLog("info", "task.transition", `Approved pending lane completion for task ${taskId}`);
+  emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.approved_success" });
+  return getTask(taskId);
+}
+
+async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
+  const tasks = ensureMockTasks();
+  const task = tasks.find((entry) => entry.id === taskId);
+  if (!task || task.activeLaneAssignment?.status !== "awaiting_user_approval" || !task.activeLaneAssignment.sessionId) {
+    throw new Error(`Task ${taskId} is not awaiting lane approval.`);
+  }
+
+  const updatedAt = nowIso();
+  const followUpPrompt = "The user has requested more work be done on this lane. Reload the latest task context and comments before continuing.";
+
+  saveMockTasks(tasks.map((entry) =>
+    entry.id === taskId
+      ? {
+          ...entry,
+          status: "in_progress",
+          assigneeType: entry.activeLaneAssignment?.workerType ?? entry.assigneeType,
+          assigneeId: entry.activeLaneAssignment?.workerId ?? entry.assigneeId,
+          activeLaneAssignment: entry.activeLaneAssignment
+            ? {
+                ...entry.activeLaneAssignment,
+                status: "active",
+                pendingOutcome: null,
+                completionNotes: null,
+                updatedAt,
+              }
+            : null,
+          updatedAt,
+        }
+      : entry,
+  ));
+
+  updateMockSession(task.activeLaneAssignment.sessionId, (current) => ({
+    ...current,
+    status: "active",
+    updatedAt,
+    events: [...current.events, createEvent("system", followUpPrompt)],
+  }));
+  emitMockSessionChange({ sessionIds: [task.activeLaneAssignment.sessionId], reason: "task.transition.rework" });
+
+  appendMockLog("info", "task.transition", `Sent task ${taskId} back to the current lane session for more work`);
+  emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.needs_work" });
   return getTask(taskId);
 }
 
@@ -2025,6 +2245,22 @@ export async function requestUserIntervention(taskId: string, notes?: string): P
   }
 
   return invoke<TaskDetail>("request_user_intervention", { taskId, notes });
+}
+
+export async function approveLaneCompletion(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return approveMockLaneCompletion(taskId);
+  }
+
+  return invoke<TaskDetail>("approve_lane_completion", { taskId });
+}
+
+export async function sendLaneBackForWork(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return sendMockLaneBackForWork(taskId);
+  }
+
+  return invoke<TaskDetail>("send_lane_back_for_work", { taskId });
 }
 
 export async function addTaskDependency(blockerTaskId: string, blockedTaskId: string): Promise<TaskDependency> {
@@ -2404,6 +2640,7 @@ export async function duplicateWorkflow(workflowId: string, newName?: string): P
         assignedEntityType: lane.assignedEntityType,
         assignedEntityId: lane.assignedEntityId,
         entryPromptTemplate: lane.entryPromptTemplate,
+        requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
         successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId,
         failureTransitionType: lane.failureTransitionType,

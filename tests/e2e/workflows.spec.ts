@@ -27,15 +27,17 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   await page.getByLabel("Lane key").fill("implement");
   await page.locator('[data-role="lane-owner-type"]').selectOption("agent");
   await page.locator('[data-role="lane-owner-reference"]').selectOption("data");
+  await page.locator('[data-role="lane-success-review-required"]').check();
   await page.locator('[data-role="save-workflow"]').click();
 
   await expect(page.getByRole("heading", { name: "Agent Driven Flow" })).toBeVisible();
 
-  const savedOwnerRef = await page.evaluate(() => {
+  const savedLane = await page.evaluate(() => {
     const workflows = JSON.parse(window.localStorage.getItem("orchestra.mock.workflows") ?? "[]");
     const created = workflows.find((workflow: { name: string }) => workflow.name === "Agent Driven Flow");
-    return created?.lanes?.[0]?.assignedEntityId ?? null;
+    return created?.lanes?.[0] ?? null;
   });
 
-  expect(savedOwnerRef).toBe("data");
+  expect(savedLane?.assignedEntityId).toBe("data");
+  expect(savedLane?.requireUserApprovalOnSuccess).toBe(true);
 });

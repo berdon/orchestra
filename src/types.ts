@@ -393,6 +393,7 @@ export interface WorkflowLane {
   assignedEntityType: WorkflowOwnerType | string;
   assignedEntityId?: string | null;
   entryPromptTemplate?: string | null;
+  requireUserApprovalOnSuccess?: boolean;
   successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
   failureTransitionType: WorkflowTransitionType | string;
@@ -633,6 +634,8 @@ export interface TaskLaneAssignment {
   roleQueueEntryId?: string | null;
   roleInstanceId?: string | null;
   prompt?: string | null;
+  pendingOutcome?: string | null;
+  completionNotes?: string | null;
   whipCount?: number;
   lastWhipAt?: string | null;
   startedAt: string;
@@ -737,6 +740,7 @@ export interface WorkflowLaneInput {
   assignedEntityType: WorkflowOwnerType | string;
   assignedEntityId?: string | null;
   entryPromptTemplate?: string | null;
+  requireUserApprovalOnSuccess?: boolean;
   successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
   failureTransitionType: WorkflowTransitionType | string;

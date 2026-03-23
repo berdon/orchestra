@@ -746,6 +746,8 @@ pub struct TaskLaneAssignment {
     pub role_queue_entry_id: Option<String>,
     pub role_instance_id: Option<String>,
     pub prompt: Option<String>,
+    pub pending_outcome: Option<String>,
+    pub completion_notes: Option<String>,
     pub whip_count: i64,
     pub last_whip_at: Option<String>,
     pub started_at: String,
@@ -892,6 +894,8 @@ pub struct WorkflowLane {
     pub assigned_entity_type: String,
     pub assigned_entity_id: Option<String>,
     pub entry_prompt_template: Option<String>,
+    #[serde(default)]
+    pub require_user_approval_on_success: bool,
     pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
     pub failure_transition_type: String,
@@ -930,6 +934,8 @@ pub struct WorkflowLaneInput {
     pub assigned_entity_type: String,
     pub assigned_entity_id: Option<String>,
     pub entry_prompt_template: Option<String>,
+    #[serde(default)]
+    pub require_user_approval_on_success: bool,
     pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
     pub failure_transition_type: String,
