@@ -48,6 +48,11 @@ impl SessionRuntime {
             authorization_context.as_ref(),
         )?;
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
+        let extension_debug_log_file = if cfg!(debug_assertions) {
+            Some(std::env::temp_dir().join(format!("orchestra-extension-tools-{}.log", session_id)))
+        } else {
+            None
+        };
         let extension_path = project_root.join("extensions").join("orchestra-tools.ts");
 
         let pi_executable =
@@ -68,6 +73,13 @@ impl SessionRuntime {
             .env("ORCHESTRA_BRIDGE_INSTANCE_ID", &bridge_config.instance_id)
             .env("ORCHESTRA_BRIDGE_CLIENT_ID", &bridge_client_id)
             .env("ORCHESTRA_BRIDGE_SESSION_ID", &session_id)
+            .env(
+                "ORCHESTRA_EXTENSION_DEBUG_LOG_FILE",
+                extension_debug_log_file
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            )
             .env(
                 "ORCHESTRA_ALLOWED_COMMANDS_JSON",
                 serde_json::to_string(&allowed_tools)
@@ -104,6 +116,13 @@ impl SessionRuntime {
             "sessions.runtime.spawn",
             &format!("Spawning live pi RPC runtime for session {}", session_id),
         );
+        if let Some(path) = extension_debug_log_file.as_ref() {
+            app.state::<crate::state::AppState>().log(
+                "info",
+                "sessions.runtime.extension_debug_log",
+                &format!("Extension registerTool debug log for session {} -> {}", session_id, path.display()),
+            );
+        }
 
         let runtime = Arc::new(Self {
             session_id,
