@@ -57,6 +57,18 @@ test("settings general renders bridge diagnostics and session prompt controls", 
         },
       }),
     );
+    window.localStorage.setItem(
+      "orchestra.mock.logs",
+      JSON.stringify([
+        {
+          id: "log-1",
+          level: "warn",
+          target: "tool.bridge",
+          message: "Bridge   warning\n details",
+          timestamp,
+        },
+      ]),
+    );
   });
 
   await page.goto("/");
@@ -78,4 +90,8 @@ test("settings general renders bridge diagnostics and session prompt controls", 
 
   await page.locator('[data-role="cleanup-stale-bridges"]').click();
   await expect(page.locator('[data-role="bridge-cleanup-table"]')).toContainText("cleanup_requested");
+
+  await expect(page.locator('[data-role="runtime-log-list"]')).toBeVisible();
+  await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(tool.bridge): Bridge warning details");
+  await expect(page.locator('[data-role="runtime-log-line"]', { hasText: "(tool.bridge): Bridge warning details" })).toHaveText(/^\[W\]\s.+\s\(tool\.bridge\):\sBridge warning details$/);
 });
