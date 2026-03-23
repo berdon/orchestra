@@ -291,9 +291,6 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_comments_task_id
                 ON task_comments(task_id, created_at ASC);
 
-            CREATE INDEX IF NOT EXISTS idx_task_comments_parent_comment_id
-                ON task_comments(task_id, parent_comment_id, created_at ASC);
-
             CREATE TABLE IF NOT EXISTS task_comment_receipts (
                 comment_id TEXT NOT NULL,
                 task_id TEXT NOT NULL,
@@ -774,6 +771,17 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
                 format!("Unable to add parent_comment_id column to task_comments: {error}")
             })?;
     }
+
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_comments_parent_comment_id ON task_comments(task_id, parent_comment_id, created_at ASC)",
+            [],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to create task comment parent index after migration: {error}"
+            )
+        })?;
 
     Ok(())
 }
@@ -1318,6 +1326,82 @@ mod tests {
                 ("role".into(), Some("reviewer".into())),
             ]
         );
+    }
+
+    #[test]
+    fn migrates_legacy_task_comments_table_and_adds_reply_index() {
+        let path = unique_temp_db("task-comments-migration");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL,
+                    number TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    workflow_id TEXT,
+                    current_lane_id TEXT,
+                    assignee_type TEXT NOT NULL,
+                    assignee_id TEXT,
+                    repository_id TEXT,
+                    parent_task_id TEXT,
+                    whip_max_attempts INTEGER NOT NULL DEFAULT 10,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE task_comments (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    interrupt_agent INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
+
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status, priority,
+                    workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id,
+                    whip_max_attempts, archived, created_at, updated_at
+                ) VALUES (
+                    'task-1', 'orchestra', 1, 'ORC-1', 'Legacy task', NULL, 'task', 'ready', 'P2',
+                    NULL, NULL, 'user', NULL, NULL, NULL,
+                    10, 0, '2026-03-18T00:00:00Z', '2026-03-18T00:00:00Z'
+                );
+
+                INSERT INTO task_comments (id, task_id, author, message, interrupt_agent, created_at, updated_at)
+                VALUES ('comment-1', 'task-1', 'Reviewer', 'Legacy comment', 0, '2026-03-18T00:00:01Z', '2026-03-18T00:00:01Z');
+                "#,
+            )
+            .expect("legacy task comments table should seed");
+        drop(connection);
+
+        initialize_database_at(&path).expect("database migration should succeed");
+        let connection = Connection::open(&path).expect("migrated database should open");
+
+        let columns = table_columns(&connection, "task_comments").expect("task comments columns should load");
+        assert!(columns.contains("parent_comment_id"));
+
+        let indexes = connection
+            .prepare("PRAGMA index_list('task_comments')")
+            .expect("index query should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("index query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("indexes should collect");
+        assert!(indexes.iter().any(|name| name == "idx_task_comments_parent_comment_id"));
     }
 
     #[test]
