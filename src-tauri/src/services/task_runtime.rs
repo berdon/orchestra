@@ -303,7 +303,33 @@ pub fn maybe_auto_dispatch_task(
     dispatch_task_lane(connection, project_root, session_dir, task_id).map(Some)
 }
 
-pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhipCandidate>, String> {
+fn read_task_whip_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskWhipCandidate> {
+    Ok(TaskWhipCandidate {
+        assignment_id: row.get(0)?,
+        task_id: row.get(1)?,
+        project_id: row.get(2)?,
+        workflow_id: row.get(3)?,
+        lane_id: row.get(4)?,
+        worker_type: row.get(5)?,
+        worker_id: row.get(6)?,
+        role_instance_id: row.get(7)?,
+        session_id: row.get(8)?,
+        runtime_cwd: row.get(9)?,
+        task_number: row.get(10)?,
+        task_title: row.get(11)?,
+        whip_count: row.get(12)?,
+        whip_max_attempts: {
+            let configured = row.get::<_, i64>(13)?;
+            if configured < 1 {
+                DEFAULT_TASK_WHIP_MAX_ATTEMPTS
+            } else {
+                configured
+            }
+        },
+    })
+}
+
+fn load_task_whip_candidates(connection: &Connection, assignment_id: Option<&str>) -> Result<Vec<TaskWhipCandidate>, String> {
     let mut statement = connection
         .prepare(
             r#"
@@ -332,6 +358,7 @@ pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhip
               AND tla.session_id IS NOT NULL
               AND t.archived = 0
               AND t.status IN ('ready', 'in_progress')
+              AND (?1 IS NULL OR tla.id = ?1)
               AND (
                 (
                   tla.worker_type = 'agent'
@@ -364,35 +391,19 @@ pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhip
         .map_err(|error| format!("Unable to prepare task whip candidate query: {error}"))?;
 
     let rows = statement
-        .query_map([], |row| {
-            Ok(TaskWhipCandidate {
-                assignment_id: row.get(0)?,
-                task_id: row.get(1)?,
-                project_id: row.get(2)?,
-                workflow_id: row.get(3)?,
-                lane_id: row.get(4)?,
-                worker_type: row.get(5)?,
-                worker_id: row.get(6)?,
-                role_instance_id: row.get(7)?,
-                session_id: row.get(8)?,
-                runtime_cwd: row.get(9)?,
-                task_number: row.get(10)?,
-                task_title: row.get(11)?,
-                whip_count: row.get(12)?,
-                whip_max_attempts: {
-                    let configured = row.get::<_, i64>(13)?;
-                    if configured < 1 {
-                        DEFAULT_TASK_WHIP_MAX_ATTEMPTS
-                    } else {
-                        configured
-                    }
-                },
-            })
-        })
+        .query_map([assignment_id], read_task_whip_candidate)
         .map_err(|error| format!("Unable to query task whip candidates: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect task whip candidates: {error}"))
+}
+
+pub fn find_task_whip_candidates(connection: &Connection) -> Result<Vec<TaskWhipCandidate>, String> {
+    load_task_whip_candidates(connection, None)
+}
+
+pub fn refresh_task_whip_candidate(connection: &Connection, assignment_id: &str) -> Result<Option<TaskWhipCandidate>, String> {
+    Ok(load_task_whip_candidates(connection, Some(assignment_id))?.into_iter().next())
 }
 
 pub fn build_task_whip_message(task_id: &str) -> String {
@@ -2639,6 +2650,107 @@ mod tests {
 
         let candidates_after_queue = find_task_whip_candidates(&connection).expect("whip candidates should resolve after queueing");
         assert!(candidates_after_queue.is_empty());
+    }
+
+    #[test]
+    fn refresh_task_whip_candidate_skips_assignments_after_lane_completion() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Completed Whip Target".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Whip completion flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-agent-complete".into()),
+                    key: "agent".into(),
+                    name: "Agent".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some("Finish the task.".into()),
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = unique_temp_dir("task-whip-complete");
+        fs::create_dir_all(&root).expect("root should create");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "No whip after complete".into(),
+                description: Some("Completed work should not be whipped again.".into()),
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-agent-complete".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: Some(3),
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-complete-whip', ?1, ?2, 'lane-agent-complete', 'agent', ?3, 'active', 'session-complete-whip', '/tmp/runtime-complete-whip', NULL, NULL, 'Prompt', 0, NULL, ?4, NULL, ?4, ?4)",
+                params![task.id.as_str(), workflow.id.as_str(), agent.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', ?1, 'idle', 'session-complete-whip', '/tmp/runtime-complete-whip', NULL, NULL, NULL, ?2, ?2)",
+                params![agent.id.as_str(), now.as_str()],
+            )
+            .expect("agent runtime state should insert");
+
+        let stale_candidate = find_task_whip_candidates(&connection)
+            .expect("whip candidates should resolve")
+            .into_iter()
+            .next()
+            .expect("candidate should exist");
+
+        let updated = complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+            .expect("lane should complete");
+        assert_eq!(updated.status, "completed");
+        assert!(updated.active_lane_assignment.is_none());
+
+        let refreshed = refresh_task_whip_candidate(&connection, &stale_candidate.assignment_id)
+            .expect("candidate should revalidate");
+        assert!(refreshed.is_none());
     }
 
     #[test]
