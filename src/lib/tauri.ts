@@ -2106,16 +2106,27 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
 
     const author = input.author.trim();
     const message = input.message.trim();
+    const parentCommentId = input.parentCommentId?.trim() || null;
     if (!author) {
       throw new Error("author: Comment author is required.");
     }
     if (!message) {
       throw new Error("message: Comment message is required.");
     }
+    if (parentCommentId) {
+      const parent = task.comments.find((entry) => entry.id === parentCommentId) ?? null;
+      if (!parent) {
+        throw new Error(`parentCommentId: Comment ${parentCommentId} was not found.`);
+      }
+      if (parent.parentCommentId) {
+        throw new Error("parentCommentId: Replies can only target top-level comments.");
+      }
+    }
 
     const comment: TaskComment = {
       id: createId("task-comment"),
       taskId,
+      parentCommentId,
       author,
       message,
       interruptAgent: input.interruptAgent,
@@ -2147,6 +2158,18 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
   }
 
   return invoke<TaskComment>("comment_on_task", { taskId, input });
+}
+
+export async function listTaskComments(taskId: string): Promise<TaskComment[]> {
+  if (!isTauriAvailable()) {
+    const task = ensureMockTasks().find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+    return task.comments;
+  }
+
+  return invoke<TaskComment[]>("list_task_comments", { taskId });
 }
 
 export async function addTaskFileReference(taskId: string, input: TaskFileReferenceInput): Promise<TaskFileReference> {

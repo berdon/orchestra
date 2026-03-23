@@ -237,9 +237,18 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Reviewer");
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Interrupt requested");
 
+  await page.locator('[data-role="reply-task-comment"]').first().click();
+  await page.locator('[data-role="task-reply-author"]').fill("Worker");
+  await page.locator('[data-role="task-reply-message"]').fill("I checked the task context and updated the plan.");
+  await page.locator('[data-role="add-task-reply"]').click();
+
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Worker");
+  await expect(page.locator('[data-role="task-comment-reply"]')).toContainText("I checked the task context and updated the plan.");
+
   await page.locator('[data-role="task-detail-tab-timeline"]').click();
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Attachment added: notes.txt");
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Reviewer commented");
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Worker replied");
 
   await page.getByRole("button", { name: "Back to tasks" }).click();
   await page.getByRole("button", { name: "New task" }).click();

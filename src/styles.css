@@ -1660,6 +1660,29 @@ strong {
   padding-bottom: 10px;
 }
 
+.task-comment-thread,
+.task-comment-thread__replies,
+.task-comment-thread__actions,
+.task-comment-reply-composer {
+  display: grid;
+  gap: 12px;
+}
+
+.task-comment-thread__replies,
+.task-comment-reply-composer {
+  margin-left: 24px;
+  padding-left: 16px;
+  border-left: 2px solid rgba(143, 79, 47, 0.14);
+}
+
+.task-comment-thread__reply {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.task-comment-thread__actions {
+  justify-content: start;
+}
+
 .task-attachment-upload {
   position: relative;
   overflow: hidden;

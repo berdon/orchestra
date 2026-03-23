@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import type { AgentSummary, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -56,7 +56,7 @@ interface TaskDetailPageProps {
   onFileReferenceDraftChange: (draft: TaskFileReferenceInput) => void;
   onAddFileReference: () => void;
   onRemoveFileReference: (referenceId: string) => void;
-  onAddComment: () => void;
+  onAddComment: (draft: TaskCommentInput) => Promise<void>;
 }
 
 function formatStatusLabel(status: string) {
@@ -76,6 +76,36 @@ function getStatusTone(status: string) {
     default:
       return "neutral";
   }
+}
+
+function createReplyDraft(author = "User", parentCommentId?: string | null): TaskCommentInput {
+  return {
+    author,
+    message: "",
+    interruptAgent: false,
+    parentCommentId: parentCommentId ?? null,
+  };
+}
+
+function groupTaskComments(comments: TaskComment[]) {
+  const repliesByParent = new Map<string, TaskComment[]>();
+  const topLevelComments: TaskComment[] = [];
+
+  for (const comment of comments) {
+    if (!comment.parentCommentId) {
+      topLevelComments.push(comment);
+      continue;
+    }
+
+    const replies = repliesByParent.get(comment.parentCommentId) ?? [];
+    replies.push(comment);
+    repliesByParent.set(comment.parentCommentId, replies);
+  }
+
+  return topLevelComments.map((comment) => ({
+    comment,
+    replies: repliesByParent.get(comment.id) ?? [],
+  }));
 }
 
 const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
@@ -130,9 +160,12 @@ export function TaskDetailPage({
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("runtime");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteHolding, setDeleteHolding] = useState(false);
+  const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState<TaskCommentInput>(() => createReplyDraft(commentDraft.author));
   const deleteHoldTimerRef = useRef<number | null>(null);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
+  const commentThreads = groupTaskComments(task.comments);
 
   useEffect(() => {
     return () => {
@@ -141,6 +174,17 @@ export function TaskDetailPage({
       }
     };
   }, []);
+
+  useEffect(() => {
+    setReplyTargetCommentId(null);
+    setReplyDraft(createReplyDraft(commentDraft.author));
+  }, [task.id]);
+
+  useEffect(() => {
+    if (!replyTargetCommentId) {
+      setReplyDraft((current) => ({ ...current, author: commentDraft.author }));
+    }
+  }, [commentDraft.author, replyTargetCommentId]);
 
   function clearDeleteHold() {
     if (deleteHoldTimerRef.current !== null) {
@@ -165,6 +209,24 @@ export function TaskDetailPage({
 
   function handleDeletePointerEnd(_event?: ReactPointerEvent<HTMLButtonElement>) {
     clearDeleteHold();
+  }
+
+  function openReplyComposer(comment: TaskComment) {
+    setReplyTargetCommentId(comment.id);
+    setReplyDraft(createReplyDraft(commentDraft.author, comment.id));
+  }
+
+  async function handleAddTopLevelComment() {
+    await onAddComment({ ...commentDraft, parentCommentId: null });
+  }
+
+  async function handleAddReply() {
+    if (!replyTargetCommentId) {
+      return;
+    }
+    await onAddComment({ ...replyDraft, parentCommentId: replyTargetCommentId });
+    setReplyTargetCommentId(null);
+    setReplyDraft(createReplyDraft(commentDraft.author));
   }
 
   function renderTabPanel() {
@@ -457,22 +519,76 @@ export function TaskDetailPage({
                 <textarea className="text-area" data-role="task-comment-message" rows={4} value={commentDraft.message} onChange={(event) => onCommentDraftChange({ ...commentDraft, message: event.target.value })} />
               </label>
               <div className="task-comment-composer__actions">
-                <button className="primary-button" data-role="add-task-comment" type="button" onClick={onAddComment}>Add comment</button>
+                <button className="primary-button" data-role="add-task-comment" type="button" onClick={() => void handleAddTopLevelComment()}>Add comment</button>
               </div>
             </div>
 
-            {task.comments.length ? (
+            {commentThreads.length ? (
               <div className="task-section-list" data-role="task-comments">
-                {task.comments.map((comment) => (
-                  <article className="transcript-event transcript-event--system" key={comment.id}>
-                    <div className="transcript-event__meta">
-                      <span>{comment.author}</span>
-                      <div className="transcript-event__meta-group">
-                        {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                        <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                {commentThreads.map(({ comment, replies }) => (
+                  <article className="task-comment-thread" data-role="task-comment-thread" key={comment.id}>
+                    <article className="transcript-event transcript-event--system task-comment-thread__parent" data-role="task-comment-item">
+                      <div className="transcript-event__meta">
+                        <span>{comment.author}</span>
+                        <div className="transcript-event__meta-group">
+                          {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                          <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                        </div>
                       </div>
-                    </div>
-                    <p>{comment.message}</p>
+                      <p>{comment.message}</p>
+                      <div className="task-comment-thread__actions">
+                        <button className="secondary-button" data-role="reply-task-comment" data-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
+                          Reply
+                        </button>
+                      </div>
+                    </article>
+
+                    {replies.length ? (
+                      <div className="task-comment-thread__replies" data-role="task-comment-replies">
+                        {replies.map((reply) => (
+                          <article className="transcript-event transcript-event--system task-comment-thread__reply" data-role="task-comment-reply" key={reply.id}>
+                            <div className="transcript-event__meta">
+                              <span>{reply.author}</span>
+                              <div className="transcript-event__meta-group">
+                                {reply.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                                <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
+                              </div>
+                            </div>
+                            <p>{reply.message}</p>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {replyTargetCommentId === comment.id ? (
+                      <div className="task-comment-reply-composer" data-role="task-comment-reply-composer">
+                        <div className="task-comment-composer__grid">
+                          <label className="field-group">
+                            <span className="field-group__label">Reply author</span>
+                            <input className="text-input" data-role="task-reply-author" value={replyDraft.author} onChange={(event) => setReplyDraft({ ...replyDraft, author: event.target.value })} />
+                          </label>
+                          <label className="checkbox-row task-comment-composer__interrupt">
+                            <input data-role="task-reply-interrupt" type="checkbox" checked={replyDraft.interruptAgent} onChange={(event) => setReplyDraft({ ...replyDraft, interruptAgent: event.target.checked })} />
+                            Interrupt current worker now
+                          </label>
+                        </div>
+                        <label className="field-group">
+                          <span className="field-group__label">Reply to {comment.author}</span>
+                          <textarea className="text-area" data-role="task-reply-message" rows={3} value={replyDraft.message} onChange={(event) => setReplyDraft({ ...replyDraft, message: event.target.value })} />
+                        </label>
+                        <div className="task-comment-composer__actions">
+                          <button className="primary-button" data-role="add-task-reply" type="button" onClick={() => void handleAddReply()}>
+                            Add reply
+                          </button>
+                          <button className="secondary-button" data-role="cancel-task-reply" type="button" onClick={() => {
+                            setReplyTargetCommentId(null);
+                            setReplyDraft(createReplyDraft(commentDraft.author));
+                          }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>

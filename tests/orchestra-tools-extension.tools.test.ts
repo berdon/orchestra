@@ -109,6 +109,7 @@ describe("orchestra tools extension bridge tool setup", () => {
         author: "Worker",
         message: "Completed a large action because it was required.",
         interruptAgent: false,
+        parentCommentId: null,
       },
     });
     expect(result.details.command).toBe("complete_lane_as_success");

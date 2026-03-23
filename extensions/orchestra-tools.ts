@@ -119,20 +119,22 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, author, message, and optionally interruptAgent.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, author, message, and optionally interruptAgent and parentCommentId.`,
       parameters: Type.Object({
         taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
         author: Type.String({ description: "Comment author name to record on the task." }),
         message: Type.String({ description: "Durable task comment text describing what happened and why." }),
         interruptAgent: Type.Optional(Type.Boolean({ description: "Whether this comment should interrupt an active worker immediately." })),
+        parentCommentId: Type.Optional(Type.String({ description: "Existing top-level task comment id to reply to." })),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; author: string; message: string; interruptAgent?: boolean }) {
+      async execute(_toolCallId: string, params: { taskId: string; author: string; message: string; interruptAgent?: boolean; parentCommentId?: string }) {
         const payload = {
           taskId: params.taskId,
           input: {
             author: params.author,
             message: params.message,
             interruptAgent: params.interruptAgent ?? false,
+            parentCommentId: params.parentCommentId ?? null,
           },
         };
         const result = await invokeBridge(tool.name, payload);
@@ -144,7 +146,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (tool.name === "get_unread_task_comments") {
+  if (tool.name === "list_task_comments" || tool.name === "get_unread_task_comments") {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -187,7 +189,6 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       },
     };
   }
-
   return {
     name: tool.name,
     label: `Orchestra · ${tool.name}`,

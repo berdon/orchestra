@@ -152,6 +152,13 @@ pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDe
     get_task(connection, task_id)
 }
 
+pub fn list_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<TaskComment>, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+    load_task_comments(connection, task_id)
+}
+
 pub fn create_task(
     connection: &mut Connection,
     project_id: Option<&str>,
@@ -427,16 +434,19 @@ pub fn add_task_comment(
 
     let author = input.author.trim();
     let message = input.message.trim();
+    let parent_comment_id = normalized_optional_string(input.parent_comment_id);
     if author.is_empty() {
         return Err("author: Comment author is required.".to_string());
     }
     if message.is_empty() {
         return Err("message: Comment message is required.".to_string());
     }
+    validate_task_comment_parent(connection, task_id, parent_comment_id.as_deref())?;
 
     let comment = TaskComment {
         id: format!("task-comment-{}", Uuid::new_v4().simple()),
         task_id: task_id.to_string(),
+        parent_comment_id: parent_comment_id.clone(),
         author: author.to_string(),
         message: message.to_string(),
         interrupt_agent: input.interrupt_agent,
@@ -448,10 +458,11 @@ pub fn add_task_comment(
         .transaction()
         .map_err(|error| format!("Unable to start task comment transaction: {error}"))?;
     tx.execute(
-        "INSERT INTO task_comments (id, task_id, author, message, interrupt_agent, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO task_comments (id, task_id, parent_comment_id, author, message, interrupt_agent, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             comment.id,
             comment.task_id,
+            comment.parent_comment_id,
             comment.author,
             comment.message,
             if comment.interrupt_agent { 1 } else { 0 },
@@ -485,7 +496,7 @@ pub fn list_unread_task_comments(
     let mut statement = connection
         .prepare(
             r#"
-            SELECT c.id, c.task_id, c.author, c.message, c.interrupt_agent, c.created_at, c.updated_at
+            SELECT c.id, c.task_id, c.parent_comment_id, c.author, c.message, c.interrupt_agent, c.created_at, c.updated_at
             FROM task_comments c
             WHERE c.task_id = ?1
               AND NOT EXISTS (
@@ -503,11 +514,12 @@ pub fn list_unread_task_comments(
             Ok(TaskComment {
                 id: row.get(0)?,
                 task_id: row.get(1)?,
-                author: row.get(2)?,
-                message: row.get(3)?,
-                interrupt_agent: row.get::<_, i64>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
+                parent_comment_id: row.get(2)?,
+                author: row.get(3)?,
+                message: row.get(4)?,
+                interrupt_agent: row.get::<_, i64>(5)? != 0,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|error| format!("Unable to load unread task comments for {task_id}: {error}"))?;
@@ -584,6 +596,35 @@ pub fn mark_task_comments_read(
     }
 
     load_task_comment_receipts(connection, task_id, session_id, Some(&comments))
+}
+
+fn validate_task_comment_parent(
+    connection: &Connection,
+    task_id: &str,
+    parent_comment_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(parent_comment_id) = parent_comment_id else {
+        return Ok(());
+    };
+
+    let parent = connection
+        .query_row(
+            "SELECT task_id, parent_comment_id FROM task_comments WHERE id = ?1",
+            [parent_comment_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load parent comment {parent_comment_id}: {error}"))?
+        .ok_or_else(|| format!("parentCommentId: Comment {parent_comment_id} was not found."))?;
+
+    if parent.0 != task_id {
+        return Err("parentCommentId: Reply target must belong to the same task.".into());
+    }
+    if parent.1.is_some() {
+        return Err("parentCommentId: Replies can only target top-level comments.".into());
+    }
+
+    Ok(())
 }
 
 fn validate_task_input(
@@ -793,7 +834,7 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, task_id, author, message, interrupt_agent, created_at, updated_at
+            SELECT id, task_id, parent_comment_id, author, message, interrupt_agent, created_at, updated_at
             FROM task_comments
             WHERE task_id = ?1
             ORDER BY created_at ASC, id ASC
@@ -806,11 +847,12 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
             Ok(TaskComment {
                 id: row.get(0)?,
                 task_id: row.get(1)?,
-                author: row.get(2)?,
-                message: row.get(3)?,
-                interrupt_agent: row.get::<_, i64>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
+                parent_comment_id: row.get(2)?,
+                author: row.get(3)?,
+                message: row.get(4)?,
+                interrupt_agent: row.get::<_, i64>(5)? != 0,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|error| format!("Unable to read task comments for {task_id}: {error}"))?;
@@ -1788,6 +1830,7 @@ mod tests {
                 author: "Reviewer".into(),
                 message: "Please course-correct before continuing.".into(),
                 interrupt_agent: true,
+                parent_comment_id: None,
             },
         )
         .expect("add task comment");
@@ -1798,6 +1841,84 @@ mod tests {
         assert_eq!(loaded.comments.len(), 1);
         assert_eq!(loaded.comments[0].author, "Reviewer");
         assert!(loaded.comments[0].interrupt_agent);
+    }
+
+    #[test]
+    fn supports_comment_replies_on_top_level_comments() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Reply target", "in_progress", None);
+        let parent = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Reviewer".into(),
+                message: "Please split this into smaller steps.".into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+            },
+        )
+        .expect("parent comment should add");
+        let reply = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Worker".into(),
+                message: "Split completed and queued for follow-up review.".into(),
+                interrupt_agent: false,
+                parent_comment_id: Some(parent.id.clone()),
+            },
+        )
+        .expect("reply should add");
+
+        let comments = list_task_comments(&connection, &task.id).expect("task comments should load");
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[1].id, reply.id);
+        assert_eq!(comments[1].parent_comment_id.as_deref(), Some(parent.id.as_str()));
+    }
+
+    #[test]
+    fn rejects_replies_to_replies() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Nested reply target", "in_progress", None);
+        let parent = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Reviewer".into(),
+                message: "Parent comment".into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+            },
+        )
+        .expect("parent comment should add");
+        let reply = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Worker".into(),
+                message: "Reply comment".into(),
+                interrupt_agent: false,
+                parent_comment_id: Some(parent.id.clone()),
+            },
+        )
+        .expect("reply should add");
+
+        let error = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "User".into(),
+                message: "Nested reply".into(),
+                interrupt_agent: false,
+                parent_comment_id: Some(reply.id.clone()),
+            },
+        )
+        .expect_err("nested reply should be rejected");
+        assert!(error.contains("Replies can only target top-level comments"));
     }
 
     #[test]
@@ -1853,6 +1974,7 @@ mod tests {
                 author: "Reviewer".into(),
                 message: "Check the failing test before you continue.".into(),
                 interrupt_agent: false,
+                parent_comment_id: None,
             },
         )
         .expect("first comment should add");
@@ -1863,6 +1985,7 @@ mod tests {
                 author: "Lead".into(),
                 message: "Also update the release notes.".into(),
                 interrupt_agent: true,
+                parent_comment_id: None,
             },
         )
         .expect("second comment should add");

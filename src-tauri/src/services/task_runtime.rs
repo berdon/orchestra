@@ -482,6 +482,7 @@ pub fn escalate_task_whip_limit_exceeded(
             author: "Orchestra".into(),
             message: note.clone(),
             interrupt_agent: false,
+            parent_comment_id: None,
         },
     )?;
     if let Some(assignment) = get_active_lane_assignment(connection, &candidate.task_id)? {
@@ -1742,14 +1743,15 @@ fn orchestra_working_rules_block() -> String {
         "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
         "4. Do the reasoning/work needed for the lane.",
         "5. Whenever you resume this lane, restart after an interruption, or suspect new feedback may have arrived, call get_unread_task_comments using the canonical task ID. After you read and incorporate those comments, call mark_task_comments_read so Orchestra knows you saw them.",
-        "6. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. Large actions include meaningful implementation work, file creation or edits, running important commands/tests, creating dependencies/subtasks, attaching artifacts, or any action another worker or human would need to understand later.",
+        "6. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. If you are responding to a specific existing comment, reply in-thread by setting parentCommentId instead of starting a new top-level comment.",
         "7. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
         "8. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
         "9. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
         "10. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
         "11. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
-        "12. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-        "13. When the lane is finished, explicitly transition it with the correct completion tool.",
+        "12. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
+        "13. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+        "14. When the lane is finished, explicitly transition it with the correct completion tool.",
     ]
     .join("\n")
 }
@@ -1759,11 +1761,12 @@ fn orchestra_tool_help_block() -> String {
         "Available Orchestra task tools and exactly how to use them:",
         "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
         "- get_task_context(task_id): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
+        "- list_task_comments(task_id): Call this tool when you need the full threaded task discussion, including replies and parent-child comment relationships.",
         "- get_task_repositories(task_id): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
         "- list_task_file_references(task_id): Call this tool to inspect which repository files are already tracked on the task before adding more.",
         "- add_task_file_reference(task_id, input): Call this tool when you create or materially change a large or central repository file that should stay visible on the task. Use input shaped like {repositoryId, relativePath}. Good candidates are design docs, diagrams, plans, ADRs, runbooks, and similar non-source artifacts. Do not use this for ordinary source code changes unless explicitly asked.",
         "- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake.",
-        "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}. Write comments for findings, progress updates, large actions taken, reviewer notes, handoff details, blockers, transition decisions, or decisions another worker must see later.",
+        "- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent, parentCommentId?}. Set parentCommentId when you are replying to a specific existing comment so the discussion stays threaded.",
         "- get_unread_task_comments(task_id): Call this tool whenever you resume work, when Orchestra tells you to check unread mail, and again immediately before any completion tool. It returns task comments you have not yet acknowledged for the active session.",
         "- mark_task_comments_read(task_id, commentIds?): After you read and incorporate unread task comments, call this tool to acknowledge them. If commentIds is omitted, it marks all current unread comments for the active session as read.",
         "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
@@ -1812,6 +1815,39 @@ fn optional_section(title: &str, body: Option<String>) -> String {
     body.filter(|value| !value.trim().is_empty())
         .map(|value| format!("{}:\n{}", title, value.trim()))
         .unwrap_or_default()
+}
+
+fn render_recent_task_comments(comments: &[TaskComment], limit: usize) -> String {
+    if comments.is_empty() {
+        return String::new();
+    }
+
+    let recent_comments = comments
+        .iter()
+        .rev()
+        .take(limit)
+        .cloned()
+        .collect::<Vec<_>>();
+    let recent_ids = recent_comments
+        .iter()
+        .map(|comment| comment.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut rendered = Vec::new();
+
+    for comment in comments.iter().filter(|comment| recent_ids.contains(comment.id.as_str())) {
+        if comment.parent_comment_id.is_some() {
+            continue;
+        }
+        rendered.push(format!("- {}: {}", comment.author, comment.message));
+        for reply in comments.iter().filter(|reply| {
+            reply.parent_comment_id.as_deref() == Some(comment.id.as_str())
+                && recent_ids.contains(reply.id.as_str())
+        }) {
+            rendered.push(format!("  ↳ {}: {}", reply.author, reply.message));
+        }
+    }
+
+    rendered.join("\n")
 }
 
 fn build_worker_context_block(worker_prompt: Option<&WorkerPromptContext>) -> String {
@@ -1963,18 +1999,7 @@ fn build_lane_prompt(
             .join("\n")
     };
 
-    let comments_block = if task.comments.is_empty() {
-        String::new()
-    } else {
-        task.comments
-            .iter()
-            .rev()
-            .take(5)
-            .rev()
-            .map(|comment| format!("- {}: {}", comment.author, comment.message))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let comments_block = render_recent_task_comments(&task.comments, 5);
 
     let mut rendered = prompt_settings.template;
     let replacements = vec![
@@ -2354,7 +2379,8 @@ mod tests {
         assert!(prompt.contains("- list_task_file_references(task_id): Call this tool to inspect which repository files are already tracked on the task before adding more."));
         assert!(prompt.contains("- add_task_file_reference(task_id, input): Call this tool when you create or materially change a large or central repository file that should stay visible on the task."));
         assert!(prompt.contains("- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake."));
-        assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent}."));
+        assert!(prompt.contains("- list_task_comments(task_id): Call this tool when you need the full threaded task discussion"));
+        assert!(prompt.contains("- comment_on_task(task_id, input): Call this tool to leave a durable note in Orchestra. Use input shaped like {author, message, interruptAgent, parentCommentId?}."));
         assert!(prompt.contains("call get_unread_task_comments using the canonical task ID"));
         assert!(prompt.contains("call mark_task_comments_read so Orchestra knows you saw them"));
         assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
@@ -2545,6 +2571,7 @@ mod tests {
             comments: vec![crate::models::TaskComment {
                 id: "comment-1".into(),
                 task_id: "task-123".into(),
+                parent_comment_id: None,
                 author: "Reviewer".into(),
                 message: "Check the prompt template output.".into(),
                 interrupt_agent: false,
@@ -2743,6 +2770,7 @@ mod tests {
         let comment = crate::models::TaskComment {
             id: "comment-1".into(),
             task_id: "task-1".into(),
+            parent_comment_id: None,
             author: "User".into(),
             message: "Please follow up later.".into(),
             interrupt_agent: false,
@@ -2840,6 +2868,7 @@ mod tests {
                 author: "Reviewer".into(),
                 message: "Please address the latest notes before finishing.".into(),
                 interrupt_agent: false,
+                parent_comment_id: None,
             },
         )
         .expect("task comment should add");

@@ -106,6 +106,7 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_tasks",
     "get_task",
     "get_task_context",
+    "list_task_comments",
     "get_unread_task_comments",
     "mark_task_comments_read",
     "list_task_repositories",
@@ -982,6 +983,12 @@ fn invoke_bridge_command(
             serde_json::to_value(tasks::get_task_context(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task context: {error}"))
         }
+        "list_task_comments" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(tasks::list_task_comments(connection, &task_id)?)
+                .map_err(|error| format!("Unable to serialize task comments: {error}"))
+        }
         "get_unread_task_comments" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
@@ -1749,6 +1756,7 @@ mod tests {
                 author: "Reviewer".into(),
                 message: "Please read this through the bridge.".into(),
                 interrupt_agent: false,
+                parent_comment_id: None,
             },
         )
         .expect("comment should add");
