@@ -289,6 +289,29 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_comments_task_id
                 ON task_comments(task_id, created_at ASC);
 
+            CREATE TABLE IF NOT EXISTS task_comment_receipts (
+                comment_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                assignment_id TEXT NOT NULL,
+                worker_type TEXT NOT NULL,
+                worker_id TEXT,
+                role_instance_id TEXT,
+                session_id TEXT NOT NULL,
+                read_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (comment_id, session_id),
+                FOREIGN KEY(comment_id) REFERENCES task_comments(id) ON DELETE CASCADE,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY(assignment_id) REFERENCES task_lane_assignments(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_comment_receipts_task_id
+                ON task_comment_receipts(task_id, read_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_task_comment_receipts_assignment_id
+                ON task_comment_receipts(assignment_id, read_at ASC);
+
             CREATE TABLE IF NOT EXISTS task_lane_runs (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,

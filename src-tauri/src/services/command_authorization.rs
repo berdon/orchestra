@@ -118,6 +118,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "tasks.read",
     ),
     (
+        "get_unread_task_comments",
+        "Get unread task comments for the active lane session",
+        "tasks.read",
+    ),
+    (
+        "mark_task_comments_read",
+        "Acknowledge task comments as read for the active lane session",
+        "tasks.comment",
+    ),
+    (
         "list_task_repositories",
         "List task repositories and their workspace paths",
         "tasks.read",
@@ -142,7 +152,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("update_task", "Update a task", "tasks.update"),
     ("delete_task", "Delete a task", "tasks.delete"),
     ("comment_on_task", "Comment on a task", "tasks.comment"),
-    ("dispatch_task_lane", "Dispatch the current task lane", "tasks.transition"),
+    (
+        "dispatch_task_lane",
+        "Dispatch the current task lane",
+        "tasks.transition",
+    ),
     (
         "complete_lane_as_success",
         "Complete the active lane as success",
