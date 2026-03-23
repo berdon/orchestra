@@ -142,15 +142,47 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             continue;
         }
 
-        let _ = task_runtime::send_task_whip(&connection, &candidate)?;
-        let _ = agent_dispatch::dispatch_agent_queue(
-            app.clone(),
-            state,
-            &context.project_root,
-            &context.session_dir,
-            &candidate.project_id,
-            &candidate.agent_id,
-        )?;
+        if candidate.worker_type == "agent" {
+            let _ = task_runtime::send_task_whip(&connection, &candidate)?;
+            let _ = agent_dispatch::dispatch_agent_queue(
+                app.clone(),
+                state,
+                &context.project_root,
+                &context.session_dir,
+                &candidate.project_id,
+                &candidate.worker_id,
+            )?;
+        } else {
+            let role_instance_id = candidate
+                .role_instance_id
+                .as_deref()
+                .ok_or_else(|| format!("Role whip candidate {} is missing a role instance", candidate.assignment_id))?;
+            let runtime_cwd = candidate
+                .runtime_cwd
+                .as_deref()
+                .ok_or_else(|| format!("Role whip candidate {} is missing a runtime cwd", candidate.assignment_id))?;
+            role_dispatch::mark_role_instance_running(&connection, role_instance_id)?;
+            let runtime = crate::services::live_sessions::ensure_runtime(
+                &state.session_runtimes,
+                app.clone(),
+                std::path::PathBuf::from(runtime_cwd),
+                context.session_dir.clone(),
+                &candidate.session_id,
+            )?;
+            runtime.set_subscribed(true);
+            let run_id = crate::state::generate_id("task-whip-run");
+            state.begin_session_run(&candidate.session_id, &run_id)?;
+            match runtime.start_run(&run_id, &task_runtime::build_task_whip_message(&candidate.task_id)) {
+                Ok(()) => {
+                    task_runtime::record_task_whip_sent(&connection, &candidate.assignment_id, candidate.whip_count)?;
+                }
+                Err(error) => {
+                    let _ = state.end_session_run(&candidate.session_id, &run_id);
+                    let _ = role_dispatch::fail_role_run(&candidate.session_id, &error);
+                    return Err(error);
+                }
+            }
+        }
         state.log(
             "info",
             "task.whip.sent",

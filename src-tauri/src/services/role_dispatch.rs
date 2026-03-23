@@ -81,6 +81,87 @@ pub fn dispatch_role_queue(
     role_runtime::get_role_operations(connection, role_id)
 }
 
+pub fn complete_role_run(session_id: &str) -> Result<(), String> {
+    let connection = crate::services::database::open_connection()?;
+    let Some(instance_id) = connection
+        .query_row(
+            "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
+            [session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to resolve role instance for session {session_id}: {error}"))?
+    else {
+        return Ok(());
+    };
+
+    let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
+    let now = crate::state::now_iso();
+    if let Some(queue_entry_id) = instance.current_queue_entry_id.as_deref() {
+        connection
+            .execute(
+                "UPDATE role_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![queue_entry_id, now],
+            )
+            .map_err(|error| format!("Unable to complete role queue entry {queue_entry_id}: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, updated_at = ?2 WHERE id = ?1",
+            params![instance.id, now],
+        )
+        .map_err(|error| format!("Unable to mark role instance {} idle: {error}", instance.id))?;
+    Ok(())
+}
+
+pub fn fail_role_run(session_id: &str, error_message: &str) -> Result<(), String> {
+    let connection = crate::services::database::open_connection()?;
+    let Some(instance_id) = connection
+        .query_row(
+            "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
+            [session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to resolve role instance for session {session_id}: {error}"))?
+    else {
+        return Ok(());
+    };
+
+    let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
+    let now = crate::state::now_iso();
+    if let Some(queue_entry_id) = instance.current_queue_entry_id.as_deref() {
+        connection
+            .execute(
+                "UPDATE role_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![queue_entry_id, now],
+            )
+            .map_err(|error| format!("Unable to finish failed role queue entry {queue_entry_id}: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "UPDATE role_instances SET status = 'failed', current_queue_entry_id = NULL, last_error = ?2, updated_at = ?3 WHERE id = ?1",
+            params![instance.id, error_message, now],
+        )
+        .map_err(|error| format!("Unable to mark role instance {} failed: {error}", instance.id))?;
+    Ok(())
+}
+
+pub fn mark_role_instance_running(
+    connection: &Connection,
+    instance_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE role_instances SET status = 'running', updated_at = ?2 WHERE id = ?1",
+            params![instance_id, crate::state::now_iso()],
+        )
+        .map_err(|error| format!("Unable to mark role instance {instance_id} running: {error}"))?;
+    Ok(())
+}
+
 pub fn release_role_instance(
     connection: &mut Connection,
     project_root: &Path,
