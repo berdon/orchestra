@@ -536,6 +536,7 @@ export type TaskAssigneeType = "user" | "agent" | "role" | "unassigned";
 export interface TaskComment {
   id: string;
   taskId: string;
+  parentCommentId?: string | null;
   author: string;
   message: string;
   interruptAgent: boolean;
@@ -547,6 +548,7 @@ export interface TaskCommentInput {
   author: string;
   message: string;
   interruptAgent: boolean;
+  parentCommentId?: string | null;
 }
 
 export interface TaskDependency {

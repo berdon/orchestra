@@ -226,7 +226,7 @@ export function TasksPage({
     const comments = taskDetail.comments.map<TaskTimelineItem>((comment) => ({
       id: `comment-${comment.id}`,
       kind: "comment",
-      title: `${comment.author} commented`,
+      title: comment.parentCommentId ? `${comment.author} replied` : `${comment.author} commented`,
       description: comment.message,
       timestamp: comment.updatedAt,
       tone: comment.interruptAgent ? "warning" : "neutral",
@@ -689,14 +689,16 @@ export function TasksPage({
     }
   }
 
-  async function handleAddComment() {
+  async function handleAddComment(draft: TaskCommentInput) {
     if (route.kind !== "detail") {
       return;
     }
     setTaskActionError(null);
     try {
-      await commentOnTask(route.taskId, commentDraft);
-      setCommentDraft(createBlankCommentDraft());
+      await commentOnTask(route.taskId, draft);
+      if (!draft.parentCommentId) {
+        setCommentDraft(createBlankCommentDraft());
+      }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
@@ -812,7 +814,7 @@ export function TasksPage({
           fileReferenceDraft={fileReferenceDraft}
           loading={loadingTaskDetail}
           onAddAttachment={(files) => void handleAttachmentInputChange(files)}
-          onAddComment={() => void handleAddComment()}
+          onAddComment={(draft) => handleAddComment(draft)}
           onAddDependency={() => void handleAddDependency()}
           onAddFileReference={() => void handleAddFileReference()}
           onBack={() => setRoute({ kind: "overview" })}

@@ -57,6 +57,12 @@ pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
 }
 
 #[tauri::command]
+pub fn list_task_comments(task_id: String) -> Result<Vec<TaskComment>, String> {
+    let connection = database::open_connection()?;
+    tasks::list_task_comments(&connection, &task_id)
+}
+
+#[tauri::command]
 pub fn list_task_repositories(task_id: String) -> Result<Vec<TaskRepository>, String> {
     let connection = database::open_connection()?;
     let task = tasks::get_task(&connection, &task_id)?;

@@ -118,6 +118,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "tasks.read",
     ),
     (
+        "list_task_comments",
+        "List task comments with reply threading metadata",
+        "tasks.read",
+    ),
+    (
         "get_unread_task_comments",
         "Get unread task comments for the active lane session",
         "tasks.read",

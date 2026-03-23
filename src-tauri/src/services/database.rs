@@ -278,16 +278,21 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS task_comments (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
+                parent_comment_id TEXT,
                 author TEXT NOT NULL,
                 message TEXT NOT NULL,
                 interrupt_agent INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY(parent_comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_task_comments_task_id
                 ON task_comments(task_id, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_task_comments_parent_comment_id
+                ON task_comments(task_id, parent_comment_id, created_at ASC);
 
             CREATE TABLE IF NOT EXISTS task_comment_receipts (
                 comment_id TEXT NOT NULL,
@@ -471,6 +476,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
     ensure_tasks_table_columns(connection)?;
+    ensure_task_comments_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
@@ -751,6 +757,20 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_max_attempts for tasks: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "task_comments")?;
+
+    if !columns.contains("parent_comment_id") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN parent_comment_id TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add parent_comment_id column to task_comments: {error}")
+            })?;
+    }
 
     Ok(())
 }

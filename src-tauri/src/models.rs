@@ -620,6 +620,7 @@ pub struct RoleOperationsDetail {
 pub struct TaskComment {
     pub id: String,
     pub task_id: String,
+    pub parent_comment_id: Option<String>,
     pub author: String,
     pub message: String,
     pub interrupt_agent: bool,
@@ -692,6 +693,8 @@ pub struct TaskCommentInput {
     pub author: String,
     pub message: String,
     pub interrupt_agent: bool,
+    #[serde(default)]
+    pub parent_comment_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
