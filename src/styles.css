@@ -741,15 +741,8 @@ strong {
   min-height: 240px;
   height: 100%;
   overflow: auto;
-  padding: 52px 14px 18px 0;
+  padding: 52px 14px 18px 14px;
   align-content: start;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.session-transcript::-webkit-scrollbar {
-  width: 0;
-  height: 0;
 }
 
 .session-transcript--wrapped .transcript-event p,
