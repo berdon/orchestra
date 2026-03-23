@@ -1,5 +1,3 @@
-import { appendFileSync } from "node:fs";
-
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
@@ -12,7 +10,6 @@ type BridgeConfig = {
   bridgeInstanceId: string | null;
   clientId: string | null;
   sessionId: string | null;
-  debugLogFile: string | null;
   allowedCommands: OrchestraToolDefinition[];
   authorization: AuthorizationContext;
 };
@@ -23,7 +20,6 @@ export function getBridgeConfig() {
   const bridgeInstanceId = process.env.ORCHESTRA_BRIDGE_INSTANCE_ID ?? null;
   const clientId = process.env.ORCHESTRA_BRIDGE_CLIENT_ID ?? null;
   const sessionId = process.env.ORCHESTRA_BRIDGE_SESSION_ID ?? null;
-  const debugLogFile = process.env.ORCHESTRA_EXTENSION_DEBUG_LOG_FILE?.trim() ? process.env.ORCHESTRA_EXTENSION_DEBUG_LOG_FILE : null;
   const allowedCommandsRaw = process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON;
   const authorizationRaw = process.env.ORCHESTRA_AUTH_CONTEXT_JSON;
 
@@ -33,7 +29,7 @@ export function getBridgeConfig() {
 
   const allowedCommands = JSON.parse(allowedCommandsRaw) as OrchestraToolDefinition[];
   const authorization = authorizationRaw ? (JSON.parse(authorizationRaw) as AuthorizationContext) : null;
-  return { bridgeUrl, token, bridgeInstanceId, clientId, sessionId, debugLogFile, allowedCommands, authorization } satisfies BridgeConfig;
+  return { bridgeUrl, token, bridgeInstanceId, clientId, sessionId, allowedCommands, authorization } satisfies BridgeConfig;
 }
 
 function isTransientBridgeFetchError(error: unknown) {
@@ -170,19 +166,6 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
   };
 }
 
-function logRegisteredTool(toolName: string, config: BridgeConfig) {
-  if (!config.debugLogFile) {
-    return;
-  }
-
-  const line = `[${new Date().toISOString()}] [orchestra-tools] registerTool name=${toolName} session=${config.sessionId ?? "unknown"} client=${config.clientId ?? "unknown"} bridge=${config.bridgeInstanceId ?? "unknown"}\n`;
-  try {
-    appendFileSync(config.debugLogFile, line, "utf8");
-  } catch {
-    // Ignore debug log write failures; tool registration must still succeed.
-  }
-}
-
 export default function orchestraToolsExtension(pi: ExtensionAPI) {
   const config = getBridgeConfig();
   if (!config) {
@@ -234,12 +217,10 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
       };
     },
   };
-  logRegisteredTool(helpTool.name, config);
   pi.registerTool(helpTool);
 
   for (const tool of config.allowedCommands) {
     const bridgeTool = createBridgeTool(tool);
-    logRegisteredTool(bridgeTool.name, config);
     pi.registerTool(bridgeTool);
   }
 }

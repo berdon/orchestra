@@ -1,6 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -48,14 +45,6 @@ describe("desktop bridge diagnostics", () => {
       }
       const createdSession = sessions.find((entry) => !beforeSessions.some((before) => before.id === entry.id)) ?? sessions[0];
       expect(createdSession?.id).toBeTruthy();
-      const extensionLogPath = join("/tmp", `orchestra-extension-tools-${createdSession.id}.log`);
-      const logDeadline = Date.now() + 10_000;
-      while (Date.now() < logDeadline && !existsSync(extensionLogPath)) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      expect(existsSync(extensionLogPath)).toBe(true);
-      const extensionLog = readFileSync(extensionLogPath, "utf8");
-      expect(extensionLog).toContain("registerTool name=orchestra_help");
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
