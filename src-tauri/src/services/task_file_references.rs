@@ -49,14 +49,18 @@ pub fn add_task_file_reference(
     tx.commit()
         .map_err(|error| format!("Unable to commit task file reference: {error}"))?;
 
-    load_task_file_reference(connection, &reference_id)
+    let runtime_cwd = crate::services::task_runtime::get_active_lane_assignment(connection, task_id)?
+        .as_ref()
+        .and_then(|assignment| assignment.runtime_cwd.as_deref())
+        .map(str::to_string);
+    load_task_file_reference(connection, &reference_id, runtime_cwd.as_deref())
 }
 
 pub fn remove_task_file_reference(
     connection: &Connection,
     reference_id: &str,
 ) -> Result<TaskFileReference, String> {
-    let reference = load_task_file_reference(connection, reference_id)?;
+    let reference = load_task_file_reference(connection, reference_id, None)?;
     let deleted = connection
         .execute("DELETE FROM task_file_references WHERE id = ?1", [reference_id])
         .map_err(|error| format!("Unable to delete task file reference {reference_id}: {error}"))?;
@@ -71,6 +75,7 @@ pub fn remove_task_file_reference(
 pub fn load_task_file_references(
     connection: &Connection,
     task_id: &str,
+    runtime_cwd: Option<&str>,
 ) -> Result<Vec<TaskFileReference>, String> {
     let mut statement = connection
         .prepare(
@@ -121,6 +126,7 @@ pub fn load_task_file_references(
                     repository_name,
                     repository_slug,
                     repository_local_path,
+                    runtime_cwd,
                     relative_path,
                     is_default,
                     created_at,
@@ -160,6 +166,7 @@ pub fn set_task_file_reference_default(
 pub fn load_task_file_reference(
     connection: &Connection,
     reference_id: &str,
+    runtime_cwd: Option<&str>,
 ) -> Result<TaskFileReference, String> {
     let row = connection
         .query_row(
@@ -197,7 +204,7 @@ pub fn load_task_file_reference(
         .map_err(|error| format!("Unable to load task file reference {reference_id}: {error}"))?
         .ok_or_else(|| format!("Task file reference {reference_id} was not found"))?;
 
-    build_reference(row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8)
+    build_reference(row.0, row.1, row.2, row.3, row.4, row.5, runtime_cwd, row.6, row.7, row.8)
 }
 
 fn build_reference(
@@ -207,14 +214,29 @@ fn build_reference(
     repository_name: String,
     repository_slug: String,
     repository_local_path: Option<String>,
+    runtime_cwd: Option<&str>,
     relative_path: String,
     is_default: i64,
     created_at: String,
 ) -> Result<TaskFileReference, String> {
-    let absolute_path = repository_local_path
-        .as_deref()
-        .map(|root| Path::new(root).join(&relative_path));
-    let exists = absolute_path.as_ref().map(|path| path.exists()).unwrap_or(false);
+    let task_workspace_path = runtime_cwd
+        .map(|cwd| crate::services::task_repositories::task_repository_worktree_path(cwd, task_id.as_str(), repository_slug.as_str()))
+        .map(PathBuf::from);
+    let managed_repository_path = repository_local_path.as_deref().map(PathBuf::from);
+
+    let preferred_path = task_workspace_path
+        .as_ref()
+        .map(|root| root.join(&relative_path))
+        .filter(|path| path.exists())
+        .or_else(|| {
+            managed_repository_path
+                .as_ref()
+                .map(|root| root.join(&relative_path))
+                .filter(|path| path.exists())
+        })
+        .or_else(|| task_workspace_path.as_ref().map(|root| root.join(&relative_path)))
+        .or_else(|| managed_repository_path.as_ref().map(|root| root.join(&relative_path)));
+    let exists = preferred_path.as_ref().is_some_and(|path| path.exists());
 
     Ok(TaskFileReference {
         id,
@@ -223,7 +245,7 @@ fn build_reference(
         repository_name,
         repository_slug,
         relative_path,
-        absolute_path: absolute_path.map(|path| path.display().to_string()),
+        absolute_path: preferred_path.map(|path| path.display().to_string()),
         exists,
         is_default: is_default != 0,
         created_at,
@@ -337,9 +359,44 @@ mod tests {
         assert_eq!(reference.relative_path, "docs/design.md");
         assert!(reference.absolute_path.as_deref().unwrap_or_default().ends_with("/tmp/repo/docs/design.md"));
 
-        let loaded = load_task_file_references(&connection, &task_id).expect("load file references");
+        let loaded = load_task_file_references(&connection, &task_id, None).expect("load file references");
         assert_eq!(loaded.len(), 1);
         let removed = remove_task_file_reference(&connection, &reference.id).expect("remove file reference");
         assert_eq!(removed.id, reference.id);
+    }
+
+    #[test]
+    fn prefers_task_worktree_paths_when_the_file_exists_there() {
+        let mut connection = in_memory_connection();
+        let (_, repo_id, task_id) = seed_project_repo_task(&mut connection);
+        let root = std::env::temp_dir().join(format!("task-file-reference-worktree-{}", Uuid::new_v4().simple()));
+        let repo_root = root.join("repository");
+        let task_repo_root = root.join("runtime").join("tasks").join(&task_id).join("repos").join("repo");
+        std::fs::create_dir_all(repo_root.join("docs")).expect("managed repo docs dir should create");
+        std::fs::create_dir_all(task_repo_root.join("docs")).expect("task repo docs dir should create");
+        std::fs::write(task_repo_root.join("docs").join("design.md"), "task worktree file\n").expect("task repo file should write");
+        connection
+            .execute(
+                "UPDATE repositories SET local_path = ?2 WHERE id = ?1",
+                params![repo_id.as_str(), repo_root.display().to_string()],
+            )
+            .expect("repository local path should update");
+
+        let reference = add_task_file_reference(
+            &mut connection,
+            &task_id,
+            TaskFileReferenceInput {
+                repository_id: repo_id.clone(),
+                relative_path: "docs/design.md".into(),
+            },
+        )
+        .expect("add file reference");
+
+        let runtime_root = root.join("runtime").display().to_string();
+        let expected_path = task_repo_root.join("docs").join("design.md").display().to_string();
+        let loaded = load_task_file_reference(&connection, &reference.id, Some(&runtime_root))
+            .expect("load task file reference");
+        assert!(loaded.exists);
+        assert_eq!(loaded.absolute_path.as_deref(), Some(expected_path.as_str()));
     }
 }

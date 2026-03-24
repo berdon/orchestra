@@ -78,7 +78,14 @@ pub fn list_task_repositories(task_id: String) -> Result<Vec<TaskRepository>, St
 #[tauri::command]
 pub fn list_task_file_references(task_id: String) -> Result<Vec<TaskFileReference>, String> {
     let connection = database::open_connection()?;
-    task_file_references::load_task_file_references(&connection, &task_id)
+    let task = tasks::get_task(&connection, &task_id)?;
+    task_file_references::load_task_file_references(
+        &connection,
+        &task_id,
+        task.active_lane_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.runtime_cwd.as_deref()),
+    )
 }
 
 #[tauri::command]

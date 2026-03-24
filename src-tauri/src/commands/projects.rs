@@ -95,6 +95,17 @@ pub fn update_repository(
 }
 
 #[tauri::command]
+pub fn delete_repository(
+    state: State<'_, AppState>,
+    repository_id: String,
+) -> Result<RepositoryRecord, String> {
+    let connection = database::open_connection()?;
+    let repository = projects::delete_repository(&connection, &repository_id)?;
+    state.log("info", "repository.deleted", &format!("Deleted repository {}", repository.id));
+    Ok(repository)
+}
+
+#[tauri::command]
 pub fn set_project_default_repository(
     state: State<'_, AppState>,
     project_id: String,
