@@ -350,6 +350,28 @@ pub fn is_remote_repository_path(path: &str) -> bool {
         || path.starts_with("ssh://")
         || path.starts_with("git://")
         || (path.contains('@') && path.contains(':') && !path.starts_with('/'))
+        || is_scp_style_without_user(path)
+}
+
+fn is_scp_style_without_user(path: &str) -> bool {
+    // Match scp-style URLs like gitea:guppy/orchestra.git where there's no user@
+    // Format: host:path/to/repo.git
+    // Must contain ':' but not at position 1 (which would be a Windows drive letter)
+    // and not start with '/' (absolute path)
+    if path.starts_with('/') || path.contains('\\') {
+        return false;
+    }
+    let colon_pos = match path.find(':') {
+        Some(pos) => pos,
+        None => return false,
+    };
+    // Windows drive letter like "C:" - not a remote
+    if colon_pos == 1 && path.as_bytes().get(0).map(|&b| b.is_ascii_alphabetic()).unwrap_or(false) {
+        return false;
+    }
+    // After colon should look like a path (contains '/' or '.git' or similar)
+    let after_colon = &path[colon_pos + 1..];
+    after_colon.contains('/') || after_colon.contains('\\') || after_colon.ends_with(".git")
 }
 
 fn ensure_project_root_exists(project_slug: &str) -> Result<PathBuf, String> {
@@ -528,4 +550,76 @@ fn read_repository(row: &rusqlite::Row<'_>) -> rusqlite::Result<RepositoryRecord
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_remote_repository_path_detects_https() {
+        assert!(is_remote_repository_path("https://github.com/user/repo.git"));
+        assert!(is_remote_repository_path("https://gitlab.com/user/repo"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_detects_http() {
+        assert!(is_remote_repository_path("http://github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_detects_ssh_protocol() {
+        assert!(is_remote_repository_path("ssh://git@github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_detects_git_protocol() {
+        assert!(is_remote_repository_path("git://github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_detects_scp_style_with_user() {
+        assert!(is_remote_repository_path("git@github.com:user/repo.git"));
+        assert!(is_remote_repository_path("git@gitea:guppy/orchestra.git"));
+        assert!(is_remote_repository_path("user@host:path/to/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_detects_scp_style_without_user() {
+        assert!(is_remote_repository_path("gitea:guppy/orchestra.git"));
+        assert!(is_remote_repository_path("github.com:user/repo.git"));
+        assert!(is_remote_repository_path("host:path/to/repo"));
+        assert!(is_remote_repository_path("my-server:/path/to/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_rejects_absolute_paths() {
+        assert!(!is_remote_repository_path("/path/to/repo"));
+        assert!(!is_remote_repository_path("/home/user/repo"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_rejects_windows_drive_letters() {
+        assert!(!is_remote_repository_path("C:\\path\\to\\repo"));
+        assert!(!is_remote_repository_path("D:/path/to/repo"));
+        assert!(!is_remote_repository_path("C:path/to/repo"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_rejects_relative_paths() {
+        assert!(!is_remote_repository_path("relative/path/to/repo"));
+        assert!(!is_remote_repository_path("./repo"));
+        assert!(!is_remote_repository_path("../repo"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_rejects_backslash_paths() {
+        assert!(!is_remote_repository_path("local\\path\\to\\repo"));
+    }
+
+    #[test]
+    fn test_is_remote_repository_path_rejects_plain_strings_without_colon_or_path_separator() {
+        assert!(!is_remote_repository_path("just-a-string"));
+        assert!(!is_remote_repository_path("repo"));
+    }
 }
