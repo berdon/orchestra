@@ -1041,8 +1041,13 @@ fn invoke_bridge_command(
         "list_task_file_references" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let task = tasks::get_task_context(connection, &task_id)?;
             serde_json::to_value(task_file_references::load_task_file_references(
-                connection, &task_id,
+                connection,
+                &task_id,
+                task.active_lane_assignment
+                    .as_ref()
+                    .and_then(|assignment| assignment.runtime_cwd.as_deref()),
             )?)
             .map_err(|error| format!("Unable to serialize task file references: {error}"))
         }
