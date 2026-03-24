@@ -2071,6 +2071,114 @@ strong {
   gap: 16px;
 }
 
+.file-content-viewer {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(251, 246, 242, 0.9);
+}
+
+.file-content-viewer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.file-content-viewer__code {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(32, 35, 42, 0.05);
+  overflow: auto;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.file-content-viewer__code code {
+  font-family: inherit;
+}
+
+.file-content-viewer__code .hljs {
+  background: transparent;
+  padding: 0;
+}
+
+.file-content-viewer__code .hljs-comment,
+.file-content-viewer__code .hljs-quote {
+  color: #998;
+  font-style: italic;
+}
+
+.file-content-viewer__code .hljs-keyword,
+.file-content-viewer__code .hljs-selector-tag,
+.file-content-viewer__code .hljs-subst {
+  color: #333;
+  font-weight: bold;
+}
+
+.file-content-viewer__code .hljs-number,
+.file-content-viewer__code .hljs-literal,
+.file-content-viewer__code .hljs-variable,
+.file-content-viewer__code .hljs-template-variable,
+.file-content-viewer__code .hljs-tag .hljs-attr {
+  color: #008080;
+}
+
+.file-content-viewer__code .hljs-string,
+.file-content-viewer__code .hljs-doctag {
+  color: #d14;
+}
+
+.file-content-viewer__code .hljs-title,
+.file-content-viewer__code .hljs-section,
+.file-content-viewer__code .hljs-selector-id {
+  color: #900;
+  font-weight: bold;
+}
+
+.file-content-viewer__code .hljs-type,
+.file-content-viewer__code .hljs-class .hljs-title {
+  color: #458;
+  font-weight: bold;
+}
+
+.file-content-viewer__code .hljs-tag,
+.file-content-viewer__code .hljs-name,
+.file-content-viewer__code .hljs-attribute {
+  color: #000080;
+}
+
+.file-content-viewer__code .hljs-regexp,
+.file-content-viewer__code .hljs-link {
+  color: #009926;
+}
+
+.file-content-viewer__code .hljs-symbol,
+.file-content-viewer__code .hljs-bullet {
+  color: #990073;
+}
+
+.file-content-viewer__code .hljs-built_in,
+.file-content-viewer__code .hljs-builtin-name {
+  color: #0086b3;
+}
+
+.file-content-viewer__code .hljs-meta {
+  color: #1f7199;
+}
+
+.file-content-viewer__code .hljs-deletion {
+  background: #fdd;
+}
+
+.file-content-viewer__code .hljs-addition {
+  background: #dfd;
+}
+
 .quick-chat-transcript {
   min-height: 260px;
   max-height: min(48vh, 420px);

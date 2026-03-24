@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
+import hljs from "highlight.js";
+import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
+import { getTaskFileContent, setDefaultTaskFileReference } from "../../lib/tauri";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -58,6 +60,7 @@ interface TaskDetailPageProps {
   onFileReferenceDraftChange: (draft: TaskFileReferenceInput) => void;
   onAddFileReference: () => void;
   onRemoveFileReference: (referenceId: string) => void;
+  onSetDefaultFileReference: (referenceId: string) => void;
   onAddComment: (draft: TaskCommentInput) => Promise<void>;
 }
 
@@ -159,6 +162,7 @@ export function TaskDetailPage({
   onFileReferenceDraftChange,
   onAddFileReference,
   onRemoveFileReference,
+  onSetDefaultFileReference,
   onAddComment,
 }: TaskDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("runtime");
@@ -166,6 +170,9 @@ export function TaskDetailPage({
   const [deleteHolding, setDeleteHolding] = useState(false);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState<TaskCommentInput>(() => createReplyDraft(commentDraft.author));
+  const [selectedFileReference, setSelectedFileReference] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [loadingFileContent, setLoadingFileContent] = useState(false);
   const deleteHoldTimerRef = useRef<number | null>(null);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
@@ -189,6 +196,106 @@ export function TaskDetailPage({
       setReplyDraft((current) => ({ ...current, author: commentDraft.author }));
     }
   }, [commentDraft.author, replyTargetCommentId]);
+
+  useEffect(() => {
+    if (activeTab === "repo-files" && task.fileReferences.length > 0) {
+      const defaultFile = task.fileReferences.find((ref) => ref.isDefault);
+      const fileToSelect = defaultFile ?? task.fileReferences[0];
+      if (fileToSelect && fileToSelect.id !== selectedFileReference) {
+        setSelectedFileReference(fileToSelect.id);
+        loadFileContent(fileToSelect);
+      }
+    }
+  }, [activeTab, task.fileReferences, selectedFileReference]);
+
+  async function loadFileContent(reference: TaskFileReference) {
+    if (!reference.exists) {
+      setFileContent(null);
+      return;
+    }
+    setLoadingFileContent(true);
+    try {
+      const content = await getTaskFileContent(reference.absolutePath || "");
+      setFileContent(content);
+    } catch (error) {
+      console.error("Failed to load file content:", error);
+      setFileContent(null);
+    } finally {
+      setLoadingFileContent(false);
+    }
+  }
+
+  async function handleSetDefault(referenceId: string) {
+    try {
+      await onSetDefaultFileReference(referenceId);
+    } catch (error) {
+      console.error("Failed to set default file reference:", error);
+    }
+  }
+
+  function detectLanguage(filename: string): string {
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
+    const languageMap: Record<string, string> = {
+      js: "javascript",
+      jsx: "javascript",
+      ts: "typescript",
+      tsx: "typescript",
+      py: "python",
+      rb: "ruby",
+      go: "go",
+      rs: "rust",
+      java: "java",
+      kt: "kotlin",
+      swift: "swift",
+      c: "c",
+      cpp: "cpp",
+      h: "c",
+      hpp: "cpp",
+      cs: "csharp",
+      php: "php",
+      sh: "bash",
+      bash: "bash",
+      zsh: "bash",
+      ps1: "powershell",
+      json: "json",
+      yaml: "yaml",
+      yml: "yaml",
+      xml: "xml",
+      html: "html",
+      css: "css",
+      scss: "scss",
+      less: "less",
+      md: "markdown",
+      markdown: "markdown",
+      sql: "sql",
+      graphql: "graphql",
+      dockerfile: "dockerfile",
+      makefile: "makefile",
+      toml: "toml",
+      ini: "ini",
+      conf: "ini",
+      gitignore: "gitignore",
+      env: "bash",
+    };
+    return languageMap[ext] || "plaintext";
+  }
+
+  function highlightCode(code: string, language: string) {
+    try {
+      if (language && hljs.getLanguage(language)) {
+        return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+      }
+      const result = hljs.highlightAuto(code);
+      return result.value;
+    } catch {
+      return code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+  }
 
   function clearDeleteHold() {
     if (deleteHoldTimerRef.current !== null) {
@@ -468,19 +575,113 @@ export function TaskDetailPage({
 
             {task.fileReferences.length ? (
               <div className="task-section-list" data-role="task-file-references">
-                {task.fileReferences.map((reference) => (
-                  <article className="task-history-card task-history-card--file-reference" key={reference.id}>
-                    <div className="workflow-section__header">
-                      <strong>{reference.repositoryName} · {reference.relativePath}</strong>
-                      <div className="action-cluster">
-                        <span className={`status-badge status-badge--${reference.exists ? "success" : "warning"}`}>{reference.exists ? "Available" : "Missing"}</span>
-                        <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveFileReference(reference.id)}>Remove</button>
+                <div className="field-group">
+                  <span className="field-group__label">View file</span>
+                  <select
+                    className="select-input"
+                    value={selectedFileReference ?? ""}
+                    onChange={(event) => {
+                      const selectedId = event.target.value;
+                      setSelectedFileReference(selectedId);
+                      const reference = task.fileReferences.find((ref) => ref.id === selectedId);
+                      if (reference) {
+                        loadFileContent(reference);
+                      }
+                    }}
+                  >
+                    {task.fileReferences.map((reference) => (
+                      <option key={reference.id} value={reference.id}>
+                        {reference.repositoryName} · {reference.relativePath}
+                        {reference.isDefault ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedFileReference && task.fileReferences.find((ref) => ref.id === selectedFileReference) && (() => {
+                  const reference = task.fileReferences.find((ref) => ref.id === selectedFileReference);
+                  if (!reference) return null;
+
+                  const language = detectLanguage(reference.relativePath);
+
+                  return (
+                    <article className="task-history-card task-history-card--file-reference" key={reference.id}>
+                      <div className="workflow-section__header">
+                        <strong>
+                          {reference.repositoryName} · {reference.relativePath}
+                          {reference.isDefault ? <span className="status-badge status-badge--neutral ml-2">Default</span> : null}
+                        </strong>
+                        <div className="action-cluster">
+                          <span className={`status-badge status-badge--${reference.exists ? "success" : "warning"}`}>
+                            {reference.exists ? "Available" : "Missing"}
+                          </span>
+                          {!reference.isDefault && (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() => handleSetDefault(reference.id)}
+                            >
+                              Set as default
+                            </button>
+                          )}
+                          <button
+                            className="secondary-button secondary-button--danger"
+                            type="button"
+                            onClick={() => onRemoveFileReference(reference.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
+                      <p className="muted-copy">Repository slug: {reference.repositorySlug}</p>
+                      <p className="muted-copy">Absolute path: {reference.absolutePath ?? "Unavailable"}</p>
+                    </article>
+                  );
+                })()}
+
+                {selectedFileReference && fileContent !== null && (() => {
+                  const reference = task.fileReferences.find((ref) => ref.id === selectedFileReference);
+                  if (!reference) return null;
+
+                  const language = detectLanguage(reference.relativePath);
+
+                  return (
+                    <div className="file-content-viewer">
+                      <div className="file-content-viewer__header">
+                        <span className="field-group__label">File content</span>
+                        <span className="muted-copy">{reference.relativePath}</span>
+                      </div>
+                      {loadingFileContent ? (
+                        <p className="muted-copy">Loading file content…</p>
+                      ) : (
+                        <pre
+                          className="file-content-viewer__code"
+                          dangerouslySetInnerHTML={{
+                            __html: highlightCode(fileContent, language),
+                          }}
+                        />
+                      )}
                     </div>
-                    <p className="muted-copy">Repository slug: {reference.repositorySlug}</p>
-                    <p className="muted-copy">Absolute path: {reference.absolutePath ?? "Unavailable"}</p>
-                  </article>
-                ))}
+                  );
+                })()}
+
+                {selectedFileReference && fileContent === null && !loadingFileContent && (() => {
+                  const reference = task.fileReferences.find((ref) => ref.id === selectedFileReference);
+                  if (!reference || reference.exists) return null;
+
+                  return (
+                    <div className="file-content-viewer">
+                      <div className="file-content-viewer__header">
+                        <span className="field-group__label">File not available</span>
+                        <span className="muted-copy">{reference.relativePath}</span>
+                      </div>
+                      <p className="muted-copy">
+                        This file cannot be found at {reference.absolutePath || "the expected location"}.
+                        It may have been moved, deleted, or the task worktree has not been materialized yet.
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
             ) : <p className="muted-copy">No repo files tracked yet. Add an important repository file here to keep it visible on the task for workers and reviewers.</p>}
           </section>

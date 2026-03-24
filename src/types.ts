@@ -590,6 +590,7 @@ export interface TaskFileReference {
   relativePath: string;
   absolutePath?: string | null;
   exists: boolean;
+  isDefault: boolean;
   createdAt: string;
 }
 

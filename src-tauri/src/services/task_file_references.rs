@@ -83,11 +83,12 @@ pub fn load_task_file_references(
                 repo.slug,
                 repo.local_path,
                 r.relative_path,
+                r.is_default,
                 r.created_at
             FROM task_file_references r
             JOIN repositories repo ON repo.id = r.repository_id
             WHERE r.task_id = ?1
-            ORDER BY r.created_at ASC, r.id ASC
+            ORDER BY r.is_default DESC, r.created_at ASC, r.id ASC
             "#,
         )
         .map_err(|error| format!("Unable to prepare task file reference query: {error}"))?;
@@ -102,7 +103,8 @@ pub fn load_task_file_references(
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, String>(6)?,
-                row.get::<_, String>(7)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, String>(8)?,
             ))
         })
         .map_err(|error| format!("Unable to read task file references for {task_id}: {error}"))?;
@@ -111,7 +113,7 @@ pub fn load_task_file_references(
         .map_err(|error| format!("Unable to collect task file references for {task_id}: {error}"))?
         .into_iter()
         .map(
-            |(id, task_id, repository_id, repository_name, repository_slug, repository_local_path, relative_path, created_at)| {
+            |(id, task_id, repository_id, repository_name, repository_slug, repository_local_path, relative_path, is_default, created_at)| {
                 build_reference(
                     id,
                     task_id,
@@ -120,11 +122,39 @@ pub fn load_task_file_references(
                     repository_slug,
                     repository_local_path,
                     relative_path,
+                    is_default,
                     created_at,
                 )
             },
         )
         .collect()
+}
+
+pub fn set_task_file_reference_default(
+    connection: &mut Connection,
+    reference_id: &str,
+) -> Result<TaskFileReference, String> {
+    let reference = load_task_file_reference(connection, reference_id)?;
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start set default transaction: {error}"))?;
+
+    tx.execute(
+        "UPDATE task_file_references SET is_default = 0 WHERE task_id = ?1",
+        [&reference.task_id],
+    )
+    .map_err(|error| format!("Unable to clear default file reference: {error}"))?;
+
+    tx.execute(
+        "UPDATE task_file_references SET is_default = 1 WHERE id = ?1",
+        [reference_id],
+    )
+    .map_err(|error| format!("Unable to set default file reference: {error}"))?;
+
+    tx.commit()
+        .map_err(|error| format!("Unable to commit set default transaction: {error}"))?;
+
+    load_task_file_reference(connection, reference_id)
 }
 
 pub fn load_task_file_reference(
@@ -142,6 +172,7 @@ pub fn load_task_file_reference(
                 repo.slug,
                 repo.local_path,
                 r.relative_path,
+                r.is_default,
                 r.created_at
             FROM task_file_references r
             JOIN repositories repo ON repo.id = r.repository_id
@@ -157,7 +188,8 @@ pub fn load_task_file_reference(
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
                 ))
             },
         )
@@ -165,7 +197,7 @@ pub fn load_task_file_reference(
         .map_err(|error| format!("Unable to load task file reference {reference_id}: {error}"))?
         .ok_or_else(|| format!("Task file reference {reference_id} was not found"))?;
 
-    build_reference(row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7)
+    build_reference(row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8)
 }
 
 fn build_reference(
@@ -176,6 +208,7 @@ fn build_reference(
     repository_slug: String,
     repository_local_path: Option<String>,
     relative_path: String,
+    is_default: i64,
     created_at: String,
 ) -> Result<TaskFileReference, String> {
     let absolute_path = repository_local_path
@@ -192,6 +225,7 @@ fn build_reference(
         relative_path,
         absolute_path: absolute_path.map(|path| path.display().to_string()),
         exists,
+        is_default: is_default != 0,
         created_at,
     })
 }
