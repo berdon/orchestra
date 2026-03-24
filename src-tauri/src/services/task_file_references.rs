@@ -140,7 +140,7 @@ pub fn set_task_file_reference_default(
     connection: &mut Connection,
     reference_id: &str,
 ) -> Result<TaskFileReference, String> {
-    let reference = load_task_file_reference(connection, reference_id)?;
+    let reference = load_task_file_reference(connection, reference_id, None)?;
     let tx = connection
         .transaction()
         .map_err(|error| format!("Unable to start set default transaction: {error}"))?;
@@ -160,7 +160,7 @@ pub fn set_task_file_reference_default(
     tx.commit()
         .map_err(|error| format!("Unable to commit set default transaction: {error}"))?;
 
-    load_task_file_reference(connection, reference_id)
+    load_task_file_reference(connection, reference_id, None)
 }
 
 pub fn load_task_file_reference(
