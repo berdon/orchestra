@@ -142,7 +142,13 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
         .iter()
         .map(|repository| repository.repository_id.clone())
         .collect();
-    task.file_references = task_file_references::load_task_file_references(connection, task_id)?;
+    task.file_references = task_file_references::load_task_file_references(
+        connection,
+        task_id,
+        task.active_lane_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.runtime_cwd.as_deref()),
+    )?;
     task.comments = load_task_comments(connection, task_id)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
     Ok(task)
