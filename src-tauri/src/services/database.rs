@@ -478,6 +478,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_tasks_table_columns(connection)?;
     ensure_task_comments_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
+    ensure_task_file_references_table_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
@@ -839,6 +840,23 @@ fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_count for task_lane_assignments: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_task_file_references_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "task_file_references")?;
+
+    if !columns.contains("is_default") {
+        connection
+            .execute(
+                "ALTER TABLE task_file_references ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add is_default column to task_file_references: {error}")
+            })?;
+    }
 
     Ok(())
 }

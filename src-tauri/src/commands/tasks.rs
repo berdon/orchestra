@@ -89,6 +89,25 @@ pub fn list_task_file_references(task_id: String) -> Result<Vec<TaskFileReferenc
 }
 
 #[tauri::command]
+pub fn set_default_task_file_reference(reference_id: String) -> Result<TaskFileReference, String> {
+    let mut connection = database::open_connection()?;
+    task_file_references::set_task_file_reference_default(&mut connection, &reference_id)
+}
+
+#[tauri::command]
+pub fn get_task_file_content(path: String) -> Result<String, String> {
+    use std::fs;
+    use std::path::Path;
+
+    let file_path = Path::new(&path);
+    if !file_path.exists() {
+        return Err(format!("File does not exist: {path}"));
+    }
+
+    fs::read_to_string(&path).map_err(|error| format!("Unable to read file: {error}"))
+}
+
+#[tauri::command]
 pub fn create_task(
     app: AppHandle,
     state: State<'_, AppState>,

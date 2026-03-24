@@ -663,6 +663,7 @@ pub struct TaskFileReference {
     pub relative_path: String,
     pub absolute_path: Option<String>,
     pub exists: bool,
+    pub is_default: bool,
     pub created_at: String,
 }
 

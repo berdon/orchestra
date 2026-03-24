@@ -26,6 +26,7 @@ import {
   requestUserIntervention,
   sendLaneBackForWork,
   sendSessionMessage,
+  setDefaultTaskFileReference,
   updateTask,
 } from "../lib/tauri";
 import type {
@@ -691,6 +692,20 @@ export function TasksPage({
     }
   }
 
+  async function handleSetDefaultFileReference(referenceId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await setDefaultTaskFileReference(referenceId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to set default file reference.");
+    }
+  }
+
   async function handleAddComment(draft: TaskCommentInput) {
     if (route.kind !== "detail") {
       return;
@@ -865,6 +880,7 @@ export function TasksPage({
           onSendBackForWork={() => void handleSendLaneBackForWork()}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
+          onSetDefaultFileReference={(referenceId) => void handleSetDefaultFileReference(referenceId)}
           onSave={() => void handleSaveDetailTask()}
           onSelectBlocker={setSelectedBlockerTaskId}
           publishing={publishingTask}

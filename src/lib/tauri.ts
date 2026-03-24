@@ -2437,6 +2437,7 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
       relativePath,
       absolutePath: repository.localPath ? `${repository.localPath.replace(/\/$/, "")}/${relativePath}` : null,
       exists: false,
+      isDefault: false,
       createdAt: nowIso(),
     };
 
@@ -2465,6 +2466,42 @@ export async function listTaskFileReferences(taskId: string): Promise<TaskFileRe
   }
 
   return invoke<TaskFileReference[]>("list_task_file_references", { taskId });
+}
+
+export async function setDefaultTaskFileReference(referenceId: string): Promise<TaskFileReference> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const updated = tasks.map((task) => ({
+      ...task,
+      fileReferences: task.fileReferences.map((reference) => ({
+        ...reference,
+        isDefault: reference.id === referenceId,
+      })),
+    }));
+
+    saveMockTasks(updated);
+    const reference = updated
+      .flatMap((task) => task.fileReferences)
+      .find((reference) => reference.id === referenceId);
+
+    if (!reference) {
+      throw new Error(`Task file reference ${referenceId} was not found`);
+    }
+
+    appendMockLog("info", "task.file_reference.default_set", `Set ${referenceId} as default`);
+    emitMockTaskChange({ taskIds: [reference.taskId], reason: "task.file_reference.default_set" });
+    return reference;
+  }
+
+  return invoke<TaskFileReference>("set_default_task_file_reference", { referenceId });
+}
+
+export async function getTaskFileContent(path: string): Promise<string> {
+  if (!isTauriAvailable()) {
+    return "Mocked file content for: " + path;
+  }
+
+  return invoke<string>("get_task_file_content", { path });
 }
 
 export async function removeTaskFileReference(referenceId: string): Promise<TaskFileReference> {
