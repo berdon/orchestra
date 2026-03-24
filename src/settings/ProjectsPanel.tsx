@@ -4,6 +4,7 @@ import {
   createProject,
   createRepository,
   deleteProject,
+  deleteRepository,
   getProject,
   listProjects,
   setProjectDefaultRepository,
@@ -129,6 +130,29 @@ export function ProjectsPanel() {
     }
   }
 
+  async function handleDeleteRepository(repositoryId: string, repositoryName: string) {
+    if (!selectedProject?.id) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete repository "${repositoryName}" from project "${selectedProject.name}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteRepository(repositoryId);
+      await loadProjectDetail(selectedProject.id);
+      await loadProjects();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to delete repository.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDeleteProject() {
     if (!selectedProject?.id || selectedProject.id === "orchestra") {
       return;
@@ -248,11 +272,22 @@ export function ProjectsPanel() {
                       <span>Kind: {repository.sourceKind ?? "—"}</span>
                       <span>Default branch: {repository.defaultBranch ?? "—"}</span>
                     </div>
-                    {projectDetail.defaultRepositoryId !== repository.id ? (
-                      <button className="secondary-button" type="button" onClick={() => void handleSetDefaultRepository(repository.id)}>
-                        Make default
+                    <div className="action-cluster">
+                      {projectDetail.defaultRepositoryId !== repository.id ? (
+                        <button className="secondary-button" type="button" onClick={() => void handleSetDefaultRepository(repository.id)}>
+                          Make default
+                        </button>
+                      ) : null}
+                      <button
+                        className="secondary-button secondary-button--danger"
+                        data-role={`delete-repository-${repository.id}`}
+                        type="button"
+                        disabled={saving || (selectedProject?.id === "orchestra" && repository.id === "repo-orchestra")}
+                        onClick={() => void handleDeleteRepository(repository.id, repository.name)}
+                      >
+                        Delete repository
                       </button>
-                    ) : null}
+                    </div>
                   </article>
                 ))}
               </div>

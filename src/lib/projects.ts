@@ -278,6 +278,37 @@ export async function updateRepository(repositoryId: string, input: RepositoryUp
   return repository;
 }
 
+export async function deleteRepository(repositoryId: string): Promise<RepositoryRecord> {
+  if (!isTauriAvailable()) {
+    const projects = ensureMockProjects();
+    let deletedRepository: RepositoryRecord | null = null;
+    saveStoredProjects(
+      projects.map((project) => {
+        const repository = project.repositories.find((entry) => entry.id === repositoryId) ?? null;
+        if (!repository) {
+          return project;
+        }
+        deletedRepository = repository;
+        const nextRepositories = project.repositories.filter((entry) => entry.id !== repositoryId);
+        return {
+          ...project,
+          repositories: nextRepositories,
+          defaultRepositoryId: project.defaultRepositoryId === repositoryId ? nextRepositories[0]?.id ?? null : project.defaultRepositoryId,
+          updatedAt: nowIso(),
+        };
+      }),
+    );
+    if (!deletedRepository) {
+      throw new Error(`Repository ${repositoryId} was not found`);
+    }
+    return deletedRepository;
+  }
+
+  const repository = await invoke<RepositoryRecord>("delete_repository", { repositoryId });
+  emitProjectsChanged();
+  return repository;
+}
+
 export async function setProjectDefaultRepository(projectId: string, repositoryId: string | null): Promise<ProjectDetail> {
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();

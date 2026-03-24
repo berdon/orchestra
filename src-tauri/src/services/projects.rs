@@ -8,7 +8,8 @@ use crate::models::{
     ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryUpsertInput,
 };
 use crate::services::orchestra_paths::{
-    default_orchestra_root, managed_repository_checkout_dir, project_root, sanitize_slug,
+    default_orchestra_root, managed_repository_checkout_dir, managed_repository_root, project_root,
+    sanitize_slug,
 };
 
 pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, String> {
@@ -241,6 +242,59 @@ pub fn set_project_default_repository(
         )
         .map_err(|error| format!("Unable to update project default repository: {error}"))?;
     get_project(connection, project_id)
+}
+
+pub fn delete_repository(
+    connection: &Connection,
+    repository_id: &str,
+) -> Result<RepositoryRecord, String> {
+    let repository = get_repository(connection, repository_id)?;
+    let project = get_project(connection, &repository.project_id)?;
+
+    if project.id == DEFAULT_PROJECT_ID && repository.id == DEFAULT_REPOSITORY_ID {
+        return Err("The default Orchestra repository cannot be deleted.".into());
+    }
+
+    let fallback_default_repository_id = if project.default_repository_id.as_deref() == Some(repository_id) {
+        project
+            .repositories
+            .iter()
+            .find(|entry| entry.id != repository_id)
+            .map(|entry| entry.id.clone())
+    } else {
+        project.default_repository_id.clone()
+    };
+
+    connection
+        .execute(
+            "UPDATE tasks SET repository_id = NULL, updated_at = ?2 WHERE repository_id = ?1",
+            params![repository_id, now_iso()],
+        )
+        .map_err(|error| format!("Unable to clear task repository references for {repository_id}: {error}"))?;
+
+    connection
+        .execute(
+            "UPDATE projects SET default_repository_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![project.id, fallback_default_repository_id, now_iso()],
+        )
+        .map_err(|error| format!("Unable to update project default repository before deletion: {error}"))?;
+
+    connection
+        .execute("DELETE FROM repositories WHERE id = ?1", [repository_id])
+        .map_err(|error| format!("Unable to delete repository {repository_id}: {error}"))?;
+
+    let orchestra_root = default_orchestra_root()?;
+    let managed_root = managed_repository_root(&orchestra_root, &project.slug, &repository.slug);
+    if managed_root.exists() {
+        fs::remove_dir_all(&managed_root).map_err(|error| {
+            format!(
+                "Unable to remove managed repository directory {}: {error}",
+                managed_root.display()
+            )
+        })?;
+    }
+
+    Ok(repository)
 }
 
 pub fn delete_project(connection: &Connection, project_id: &str) -> Result<ProjectDetail, String> {
