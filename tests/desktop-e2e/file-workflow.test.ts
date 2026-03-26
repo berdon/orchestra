@@ -33,7 +33,7 @@ async function waitForDispatchButton(sessionId: string, timeoutMs = 30_000) {
 
   while (Date.now() < deadline) {
     lastState = await executeScript(sessionId, `
-      const button = document.querySelector('[data-role="dispatch-task-lane"]');
+      const button = document.querySelector('[data-role="dispatch-task-lane"], [data-role="publish-task"]');
       return {
         present: Boolean(button),
         text: document.body ? document.body.innerText : "",
@@ -125,14 +125,12 @@ describe("desktop file workflow", () => {
       await setInputValue(sessionId, '[data-role="task-title"]', 'Create /tmp/file.md');
       await setInputValue(sessionId, '[data-role="task-description"]', 'Read the referenced project file and do exactly what it says.');
       await selectByLabel(sessionId, '[data-role="task-repositories"]', 'File Workflow Repo');
-      await selectValue(sessionId, '[data-role="task-status"]', 'ready');
       await selectByLabel(sessionId, '[data-role="task-workflow"]', 'File Creation Flow');
       await clickSelector(sessionId, '[data-role="save-task"]');
       await waitForText(sessionId, 'Create /tmp/file.md');
       const savedTasks = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', { projectId: project!.id, includeArchived: false });
       const savedTask = savedTasks.find((task) => task.title === 'Create /tmp/file.md');
       expect(savedTask).toBeTruthy();
-      await clickByText(sessionId, '[data-role="task-card"]', 'Create /tmp/file.md');
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
@@ -148,7 +146,10 @@ describe("desktop file workflow", () => {
       await waitForText(sessionId, 'Absolute path:');
 
       await waitForDispatchButton(sessionId);
-      await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
+      const dispatchSelector = await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="dispatch-task-lane"]') ? '[data-role="dispatch-task-lane"]' : '[data-role="publish-task"]';
+      `);
+      await clickSelector(sessionId, dispatchSelector);
       const worktreeDeadline = Date.now() + 30_000;
       let taskRepositories: Array<{ taskWorktreePath?: string | null }> = [];
       while (Date.now() < worktreeDeadline) {

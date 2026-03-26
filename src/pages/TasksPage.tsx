@@ -27,6 +27,8 @@ import {
   sendLaneBackForWork,
   sendSessionMessage,
   setDefaultTaskFileReference,
+  stopSessionRuntime,
+  manualTaskWhip,
   updateTask,
 } from "../lib/tauri";
 import type {
@@ -785,6 +787,41 @@ export function TasksPage({
     }
   }
 
+  async function handlePauseTaskRuntime() {
+    if (route.kind !== "detail" || !taskDetail?.activeLaneAssignment?.sessionId) {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await stopSessionRuntime(taskDetail.activeLaneAssignment.sessionId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to pause task runtime.");
+    }
+  }
+
+  async function handleWhipTask() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      const activeSessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
+      if (activeSessionId) {
+        await sendSessionMessage(
+          activeSessionId,
+          `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool \`complete_lane_as_failure\` (with task ID and optional notes). If you believe you need to escalate to the user - use tool \`request_user_intervention\` (with task ID and optional notes).\n\nCanonical task ID: ${route.taskId}`,
+        );
+      }
+      await manualTaskWhip(route.taskId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to send manual task whip.");
+    }
+  }
+
   async function handleRetryTaskLane() {
     if (route.kind !== "detail" || !taskDetail || !taskDetail.workflowId || !taskDetail.currentLaneId) {
       return;
@@ -877,6 +914,8 @@ export function TasksPage({
           onPublish={() => void handlePublishDetailTask()}
           onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
           onRetry={() => void handleRetryTaskLane()}
+          onPauseRuntime={() => void handlePauseTaskRuntime()}
+          onWhipTask={() => void handleWhipTask()}
           onSendBackForWork={() => void handleSendLaneBackForWork()}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}

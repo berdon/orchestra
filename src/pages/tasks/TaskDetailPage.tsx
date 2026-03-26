@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 
 import hljs from "highlight.js";
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
-import { getTaskFileContent, setDefaultTaskFileReference } from "../../lib/tauri";
+import { getTaskFileContent } from "../../lib/tauri";
+import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -49,6 +50,8 @@ interface TaskDetailPageProps {
   onOpenTask: (taskId: string) => void;
   onDispatch: () => void;
   onRetry: () => void;
+  onPauseRuntime: () => void;
+  onWhipTask: () => void;
   onComplete: (outcome: "success" | "failure" | "needs_user") => void;
   onApproveCompletion: () => void;
   onSendBackForWork: () => void;
@@ -114,14 +117,14 @@ function groupTaskComments(comments: TaskComment[]) {
 }
 
 const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
-  { id: "runtime", label: "Runtime" },
+  { id: "repo-files", label: "Repo files" },
+  { id: "comments", label: "Comments" },
+  { id: "attachments", label: "Attachments" },
   { id: "hierarchy", label: "Hierarchy" },
   { id: "dependencies", label: "Dependencies" },
-  { id: "repo-files", label: "Repo files" },
-  { id: "attachments", label: "Attachments" },
-  { id: "comments", label: "Comments" },
   { id: "timeline", label: "Timeline" },
   { id: "history", label: "Lane history" },
+  { id: "runtime", label: "Runtime" },
 ];
 
 const DELETE_HOLD_MS = 2000;
@@ -151,6 +154,8 @@ export function TaskDetailPage({
   onOpenTask,
   onDispatch,
   onRetry,
+  onPauseRuntime,
+  onWhipTask,
   onComplete,
   onApproveCompletion,
   onSendBackForWork,
@@ -165,7 +170,7 @@ export function TaskDetailPage({
   onSetDefaultFileReference,
   onAddComment,
 }: TaskDetailPageProps) {
-  const [activeTab, setActiveTab] = useState<TaskDetailTab>("runtime");
+  const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteHolding, setDeleteHolding] = useState(false);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
@@ -173,10 +178,22 @@ export function TaskDetailPage({
   const [selectedFileReference, setSelectedFileReference] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
+  const [defaultFileContent, setDefaultFileContent] = useState<string | null>(null);
+  const [loadingDefaultFileContent, setLoadingDefaultFileContent] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState<number>(() => {
+    if (typeof window === "undefined") {
+      return 5;
+    }
+    const stored = Number(window.localStorage.getItem("orchestra.taskDetail.historyLimit") ?? "5");
+    return [5, 10, 25].includes(stored) ? stored : 5;
+  });
   const deleteHoldTimerRef = useRef<number | null>(null);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const commentThreads = groupTaskComments(task.comments);
+  const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
+  const recentHistory = timelineItems.slice(0, historyLimit);
 
   useEffect(() => {
     return () => {
@@ -199,14 +216,47 @@ export function TaskDetailPage({
 
   useEffect(() => {
     if (activeTab === "repo-files" && task.fileReferences.length > 0) {
-      const defaultFile = task.fileReferences.find((ref) => ref.isDefault);
       const fileToSelect = defaultFile ?? task.fileReferences[0];
       if (fileToSelect && fileToSelect.id !== selectedFileReference) {
         setSelectedFileReference(fileToSelect.id);
         loadFileContent(fileToSelect);
       }
     }
-  }, [activeTab, task.fileReferences, selectedFileReference]);
+  }, [activeTab, defaultFile, task.fileReferences, selectedFileReference]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("orchestra.taskDetail.historyLimit", String(historyLimit));
+    }
+  }, [historyLimit]);
+
+  useEffect(() => {
+    if (!defaultFile?.exists || !defaultFile.absolutePath) {
+      setDefaultFileContent(null);
+      return;
+    }
+    let canceled = false;
+    setLoadingDefaultFileContent(true);
+    getTaskFileContent(defaultFile.absolutePath)
+      .then((content) => {
+        if (!canceled) {
+          setDefaultFileContent(content);
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setDefaultFileContent(null);
+        }
+      })
+      .finally(() => {
+        if (!canceled) {
+          setLoadingDefaultFileContent(false);
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [defaultFile]);
 
   async function loadFileContent(reference: TaskFileReference) {
     if (!reference.exists) {
@@ -297,6 +347,83 @@ export function TaskDetailPage({
     }
   }
 
+  function buildHeaderActions(): TaskActionMenuAction[] {
+    const actions: TaskActionMenuAction[] = [];
+
+    if (task.status === "draft") {
+      actions.push({
+        id: "dispatch-draft",
+        label: "Dispatch",
+        onClick: onPublish,
+        disabled: !canPublish,
+        variant: "primary",
+        dataRole: "publish-task",
+      });
+    } else if (task.status === "ready") {
+      actions.push({
+        id: "dispatch-ready",
+        label: "Dispatch",
+        onClick: onDispatch,
+        variant: "primary",
+        dataRole: "dispatch-task-lane",
+      });
+    }
+
+    if (task.activeLaneAssignment?.status === "awaiting_user_approval") {
+      actions.push({
+        id: "approve-pending",
+        label: "Approve",
+        onClick: onApproveCompletion,
+        variant: "primary",
+        dataRole: "approve-task-lane",
+      });
+      actions.push({
+        id: "needs-work-pending",
+        label: "Needs work",
+        onClick: onSendBackForWork,
+        variant: "secondary",
+        dataRole: "send-task-back-for-work",
+      });
+    } else if (task.activeLaneAssignment || (task.assigneeType === "user" && task.currentLaneId)) {
+      actions.push({
+        id: "approve-user",
+        label: "Approve",
+        onClick: () => onComplete("success"),
+        variant: "primary",
+        dataRole: "complete-task-success",
+      });
+      actions.push({
+        id: "needs-work-user",
+        label: "Needs work",
+        onClick: () => onComplete("failure"),
+        variant: "secondary",
+        dataRole: "complete-task-failure",
+      });
+    }
+
+    if (task.activeLaneAssignment?.status === "active" && task.activeLaneAssignment.sessionId) {
+      actions.push({
+        id: "pause",
+        label: "Pause",
+        onClick: onPauseRuntime,
+        variant: "secondary",
+        dataRole: "pause-task-runtime",
+      });
+    }
+
+    if (task.status !== "draft" && task.status !== "ready" && task.activeLaneAssignment) {
+      actions.push({
+        id: "whip",
+        label: "Whip",
+        onClick: onWhipTask,
+        variant: "secondary",
+        dataRole: "whip-task-runtime",
+      });
+    }
+
+    return actions;
+  }
+
   function clearDeleteHold() {
     if (deleteHoldTimerRef.current !== null) {
       window.clearTimeout(deleteHoldTimerRef.current);
@@ -350,44 +477,7 @@ export function TaskDetailPage({
                 <p className="eyebrow">Runtime</p>
                 <h4>Lane execution</h4>
               </div>
-              <div className="action-cluster action-cluster--wrap">
-                {task.readyForDispatch ? (
-                  <button className="primary-button" data-role="dispatch-task-lane" type="button" onClick={onDispatch}>
-                    Dispatch lane
-                  </button>
-                ) : null}
-                {task.activeLaneAssignment?.status === "awaiting_user_approval" ? (
-                  <>
-                    <button className="primary-button" data-role="approve-task-lane" type="button" onClick={onApproveCompletion}>
-                      Approve
-                    </button>
-                    <button className="secondary-button" data-role="send-task-back-for-work" type="button" onClick={onSendBackForWork}>
-                      Needs work
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {task.workflowId && task.currentLaneId && ["agent", "role"].includes(task.assigneeType) ? (
-                      <button className="secondary-button" data-role="retry-task-lane" type="button" onClick={onRetry}>
-                        Retry
-                      </button>
-                    ) : null}
-                    {task.activeLaneAssignment || (task.workflowId && task.currentLaneId && task.assigneeType === "user") ? (
-                      <>
-                        <button className="secondary-button" data-role="complete-task-success" type="button" onClick={() => onComplete("success")}>
-                          Mark success
-                        </button>
-                        <button className="secondary-button secondary-button--danger" data-role="complete-task-failure" type="button" onClick={() => onComplete("failure")}>
-                          Mark failure
-                        </button>
-                        <button className="secondary-button" data-role="complete-task-needs-user" type="button" onClick={() => onComplete("needs_user")}>
-                          Needs user
-                        </button>
-                      </>
-                    ) : null}
-                  </>
-                )}
-              </div>
+              <TaskActionMenu actions={buildHeaderActions()} menuLabel="Lane actions" />
             </div>
             {task.activeLaneAssignment ? (
               <div className="task-runtime-card" data-role="task-runtime-assignment">
@@ -898,32 +988,145 @@ export function TaskDetailPage({
             <button className="secondary-button" type="button" onClick={onBack}>
               Back to tasks
             </button>
-            {task.status === "draft" ? (
-              <button className="secondary-button" data-role="publish-task" type="button" disabled={!canPublish} onClick={onPublish}>
-                {publishing ? "Publishing…" : "Publish"}
-              </button>
-            ) : null}
-            <button className="primary-button" data-role="save-task" type="button" disabled={saving || loading || !draft.title.trim()} onClick={onSave}>
-              {saving ? "Saving…" : "Save changes"}
-            </button>
-            <button
-              className={deleteHolding ? "secondary-button secondary-button--danger task-delete-button task-delete-button--holding" : "secondary-button secondary-button--danger task-delete-button"}
-              data-role="delete-task"
-              data-delete-holding={deleteHolding ? "true" : "false"}
-              type="button"
-              disabled={deleting}
-              onPointerDown={handleDeletePointerDown}
-              onPointerUp={handleDeletePointerEnd}
-              onPointerLeave={handleDeletePointerEnd}
-              onPointerCancel={handleDeletePointerEnd}
-            >
-              <span className="task-delete-button__pulse" aria-hidden="true" />
-              <span>{deleting ? "Deleting…" : "Delete"}</span>
-            </button>
+            <TaskActionMenu actions={buildHeaderActions()} />
           </div>
         </div>
 
-        <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} repositories={repositories} roles={roles} workflows={workflows} />
+        {isEditing ? (
+          <div className="task-detail-edit-shell">
+            <div className="task-detail-edit-shell__header">
+              <div>
+                <p className="eyebrow">Edit task</p>
+                <h3>Edit details</h3>
+              </div>
+              <TaskActionMenu
+                menuLabel="Edit actions"
+                actions={[
+                  {
+                    id: "done-editing",
+                    label: "Done editing",
+                    onClick: () => setIsEditing(false),
+                    variant: "secondary",
+                    dataRole: "close-edit-task",
+                  },
+                  ...(task.status === "draft"
+                    ? [{
+                        id: "publish",
+                        label: publishing ? "Dispatching…" : "Dispatch",
+                        onClick: onPublish,
+                        disabled: !canPublish,
+                        variant: "secondary" as const,
+                        dataRole: "publish-task",
+                      }]
+                    : []),
+                  {
+                    id: "save",
+                    label: saving ? "Saving…" : "Save changes",
+                    onClick: onSave,
+                    disabled: saving || loading || !draft.title.trim(),
+                    variant: "primary",
+                    dataRole: "save-task",
+                  },
+                  {
+                    id: "delete",
+                    label: deleting ? "Deleting…" : "Delete",
+                    onClick: () => setShowDeleteConfirm(true),
+                    disabled: deleting,
+                    variant: "danger",
+                    dataRole: "delete-task",
+                  },
+                ]}
+              />
+            </div>
+            <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} repositories={repositories} roles={roles} workflows={workflows} detailLayout showAssigneeFields={false} />
+          </div>
+        ) : (
+          <div className="task-detail-summary">
+            <div className="task-detail-summary__header">
+              <div>
+                <p className="eyebrow">Overview</p>
+                <h3>Current context</h3>
+              </div>
+              <TaskActionMenu
+                menuLabel="Overview actions"
+                actions={[
+                  {
+                    id: "edit",
+                    label: "Edit Task",
+                    onClick: () => setIsEditing(true),
+                    variant: "secondary",
+                    dataRole: "edit-task",
+                  },
+                  {
+                    id: "delete-summary",
+                    label: deleting ? "Deleting…" : "Delete",
+                    onClick: () => setShowDeleteConfirm(true),
+                    disabled: deleting,
+                    variant: "danger",
+                    dataRole: "delete-task",
+                  },
+                ]}
+              />
+            </div>
+
+            <div className="task-detail-summary__file task-history-card">
+              <div className="workflow-section__header">
+                <div>
+                  <p className="eyebrow">Default repo file</p>
+                  <h4>{defaultFile ? `${defaultFile.repositoryName} · ${defaultFile.relativePath}` : "No default repo file"}</h4>
+                </div>
+                {defaultFile?.isDefault ? <span className="status-badge status-badge--neutral">Default</span> : null}
+              </div>
+              {defaultFile ? (
+                <>
+                  <p className="muted-copy">{defaultFile.exists ? (defaultFile.absolutePath ?? "Available") : "File is currently missing from the resolved workspace path."}</p>
+                  {defaultFile.exists ? (
+                    loadingDefaultFileContent ? (
+                      <p className="muted-copy">Loading file preview…</p>
+                    ) : (
+                      <pre className="file-content-viewer__code" dangerouslySetInnerHTML={{ __html: highlightCode(defaultFileContent ?? "", detectLanguage(defaultFile.relativePath)) }} />
+                    )
+                  ) : null}
+                </>
+              ) : (
+                <p className="muted-copy">Set a default repo file from the Repo files tab to keep the most important file visible here.</p>
+              )}
+            </div>
+
+            <section className="task-detail-summary__history">
+              <div className="task-detail-summary__history-header">
+                <div>
+                  <p className="eyebrow">Recent history</p>
+                  <h4>Latest activity</h4>
+                </div>
+                <label className="field-group">
+                  <span className="field-group__label">Items</span>
+                  <select className="select-input" data-role="task-history-limit" value={String(historyLimit)} onChange={(event) => setHistoryLimit(Number(event.target.value))}>
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                  </select>
+                </label>
+              </div>
+              {recentHistory.length ? (
+                <div className="task-detail-summary__history-list">
+                  {recentHistory.map((item) => (
+                    <article className="task-detail-summary__history-item" key={item.id}>
+                      <div className="workflow-section__header">
+                        <strong>{item.title}</strong>
+                        <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
+                      </div>
+                      <p>{item.description}</p>
+                      <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-copy">No recent activity yet.</p>
+              )}
+            </section>
+          </div>
+        )}
       </section>
 
       <section className="panel task-detail-tabs-panel">

@@ -2263,6 +2263,30 @@ export async function sendLaneBackForWork(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("send_lane_back_for_work", { taskId });
 }
 
+export async function manualTaskWhip(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const task = await getTask(taskId);
+    if (!task.activeLaneAssignment) {
+      throw new Error(`Task ${taskId} does not have an active lane assignment to whip.`);
+    }
+    const updated: TaskDetail = {
+      ...task,
+      activeLaneAssignment: {
+        ...task.activeLaneAssignment,
+        whipCount: (task.activeLaneAssignment.whipCount ?? 0) + 1,
+        lastWhipAt: nowIso(),
+      },
+      updatedAt: nowIso(),
+    };
+    saveMockTasks(ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)));
+    appendMockLog("info", "task.whip.sent", `Sent manual whip for task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.whip.sent" });
+    return getTask(taskId);
+  }
+
+  return invoke<TaskDetail>("manual_task_whip", { taskId });
+}
+
 export async function addTaskDependency(blockerTaskId: string, blockedTaskId: string): Promise<TaskDependency> {
   if (!isTauriAvailable()) {
     if (blockerTaskId === blockedTaskId) {
