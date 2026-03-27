@@ -4,15 +4,18 @@ import {
   clickByText,
   createReadyWebdriverSession,
   deleteWebdriverSession,
-  dispatchWindowEvent,
   ensureReactReady,
   executeScript,
-  invokeCommand,
-  selectValue,
-  sleep,
-  waitForSelectOption,
   waitForText,
 } from "./driver";
+import {
+  createProjectViaSettings,
+  createRoleViaSettings,
+  dispatchRoleQueueViaUi,
+  enqueueRoleWorkViaUi,
+  openRoleOperations,
+  switchProject,
+} from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
@@ -22,68 +25,34 @@ describe("desktop workforce work filters", () => {
     try {
       await ensureReactReady(sessionId);
 
-      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Work Filter Project",
-          description: "Role work filter coverage.",
-        },
+      await createProjectViaSettings(sessionId, "Work Filter Project", "Role work filter coverage.");
+      await switchProject(sessionId, "Work Filter Project");
+      await createRoleViaSettings(sessionId, {
+        name: "Work Filter Role",
+        capacity: "1",
+        description: "Role for filter chip testing.",
       });
 
-      const role = await invokeCommand<{ id: string; name: string }>(sessionId, "create_role", {
-        input: {
-          name: "Work Filter Role",
-          description: "Role for filter chip testing.",
-          systemPrompt: null,
-          provider: "openai-codex",
-          model: "gpt-5.3-codex-spark",
-          thinkingLevel: "off",
-          capacity: 1,
-          policyIds: [],
-          directPermissions: [],
-        },
+      await openRoleOperations(sessionId, "Work Filter Role");
+      await enqueueRoleWorkViaUi(sessionId, {
+        title: "Completed work item",
+        summary: "Should appear in completed filter.",
+        entryPrompt: "completed",
+      });
+      await enqueueRoleWorkViaUi(sessionId, {
+        title: "Active work item",
+        summary: "Should appear in active filter.",
+        entryPrompt: "active",
+      });
+      await enqueueRoleWorkViaUi(sessionId, {
+        title: "Queued work item",
+        summary: "Should appear in queued filter.",
+        entryPrompt: "queued",
       });
 
-      await invokeCommand(sessionId, "enqueue_role_work", {
-        input: {
-          roleId: role.id,
-          sourceType: "manual",
-          title: "Completed work item",
-          summary: "Should appear in completed filter.",
-          entryPrompt: "completed",
-        },
-      });
-      await invokeCommand(sessionId, "enqueue_role_work", {
-        input: {
-          roleId: role.id,
-          sourceType: "manual",
-          title: "Active work item",
-          summary: "Should appear in active filter.",
-          entryPrompt: "active",
-        },
-      });
-      await invokeCommand(sessionId, "enqueue_role_work", {
-        input: {
-          roleId: role.id,
-          sourceType: "manual",
-          title: "Queued work item",
-          summary: "Should appear in queued filter.",
-          entryPrompt: "queued",
-        },
-      });
-
-      let detail = await invokeCommand<any>(sessionId, "dispatch_role_queue", { roleId: role.id });
-      expect(detail.instances).toHaveLength(1);
-      detail = await invokeCommand<any>(sessionId, "release_role_instance", { instanceId: detail.instances[0].id, outcome: "success", errorMessage: null });
-      expect(detail.instances.length).toBeGreaterThan(0);
-
-      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { value: project.id });
-      await selectValue(sessionId, '[data-role="project-switcher"]', project.id);
-      await sleep(500);
-
-      await clickByText(sessionId, "button", "Agents");
-      await waitForText(sessionId, "Roles in operation");
-      await clickByText(sessionId, "a", role.name);
+      await dispatchRoleQueueViaUi(sessionId);
+      await waitForText(sessionId, 'Mark success');
+      await clickByText(sessionId, 'button', 'Mark success');
 
       await waitForText(sessionId, "Queued");
       await waitForText(sessionId, "Active");

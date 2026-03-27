@@ -30,14 +30,14 @@ export async function addRepositoryViaSettings(
   options: { name: string; path: string; defaultBranch?: string; makeDefault?: boolean },
 ) {
   await waitForSelector(sessionId, '[data-role="repository-name"]');
-  await setFieldByLabel(sessionId, "Repository name", options.name);
-  await setFieldByLabel(sessionId, "Repository Path", options.path);
-  await setFieldByLabel(sessionId, "Default branch", options.defaultBranch ?? "main");
+  await setFieldByLabel(sessionId, 'Repository name', options.name);
+  await setFieldByLabel(sessionId, 'Repository Path', options.path);
+  await setFieldByLabel(sessionId, 'Default branch', options.defaultBranch ?? 'main');
   await clickSelector(sessionId, '[data-role="add-repository"]');
   await waitForText(sessionId, options.name);
   if (options.makeDefault) {
-    await clickByText(sessionId, "button", "Make default");
-    await waitForText(sessionId, "Default");
+    await clickByText(sessionId, 'button', 'Make default');
+    await waitForText(sessionId, 'Default');
   }
 }
 
@@ -117,11 +117,11 @@ export async function createWorkflowViaSettings(
     lanes: Array<{
       name: string;
       key: string;
-      ownerType: "user" | "agent" | "role";
+      ownerType: 'user' | 'agent' | 'role';
       ownerReference?: string;
       entryPromptTemplate?: string;
       requireUserApprovalOnSuccess?: boolean;
-      successTransitionType?: "end" | "lane" | "user_intervention";
+      successTransitionType?: 'end' | 'lane' | 'user_intervention';
       successTargetLaneName?: string;
     }>;
   },
@@ -261,4 +261,26 @@ export async function dispatchTaskViaUi(sessionId: string) {
 
 export async function completeTaskSuccessViaUi(sessionId: string) {
   await clickSelector(sessionId, '[data-role="complete-task-success"]');
+}
+
+export async function openRoleOperations(sessionId: string, roleName: string) {
+  await clickByText(sessionId, 'button', 'Agents');
+  await waitForText(sessionId, 'Roles in operation');
+  await clickByText(sessionId, 'a', roleName);
+  await waitForText(sessionId, roleName);
+}
+
+export async function enqueueRoleWorkViaUi(
+  sessionId: string,
+  options: { title: string; summary: string; entryPrompt: string },
+) {
+  await setFieldByLabel(sessionId, 'Title', options.title);
+  await setFieldByLabel(sessionId, 'Summary', options.summary);
+  await setFieldByLabel(sessionId, 'Entry prompt', options.entryPrompt);
+  await clickByText(sessionId, 'button', 'Enqueue work');
+  await waitForText(sessionId, options.title);
+}
+
+export async function dispatchRoleQueueViaUi(sessionId: string) {
+  await clickByText(sessionId, 'button', 'Dispatch queue');
 }
