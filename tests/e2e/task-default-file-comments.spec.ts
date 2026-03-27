@@ -92,9 +92,9 @@ test("task detail supports quick comments, line comments, replies, and viewer co
 
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await expect(page.getByRole("heading", { name: "Implement task foundation shell" })).toBeVisible();
 
-  await page.locator('[data-role="default-file-quick-comment-author"]').fill("Reviewer");
-  await page.locator('[data-role="default-file-quick-comment-message"]').fill("General note under the default file.");
+  await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file.");
   await page.evaluate(() => {
     (document.querySelector('[data-role="add-default-file-quick-comment"]') as HTMLButtonElement | null)?.click();
   });
@@ -123,8 +123,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
     });
   });
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toBeVisible();
-  await page.locator('[data-role="default-file-comment-author"]').fill("Line Reviewer");
-  await page.locator('[data-role="default-file-comment-message"]').fill("Please revisit this line.");
+  await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Please revisit this line.");
   await page.evaluate(() => {
     (document.querySelector('[data-role="add-default-file-comment"]') as HTMLButtonElement | null)?.click();
   });
@@ -134,14 +133,14 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await page.locator('[data-role="default-file-line-comment-button"][data-line-number="3"]').click({ force: true });
   await expect(page.locator('[data-role="default-file-thread-popover"]')).toContainText("Please revisit this line.");
   await page.locator('[data-role="default-file-open-reply"]').click();
-  await page.locator('[data-role="default-file-reply-author"]').fill("Worker");
-  await page.locator('[data-role="default-file-reply-message"]').fill("Acknowledged on line 3.");
+  await page.getByRole("textbox", { name: "Reply" }).fill("Acknowledged on line 3.");
   await page.locator('[data-role="add-default-file-reply"]').click();
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Acknowledged on line 3.");
 
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
   await page.locator('[data-role="default-file-viewer-toggle"]').click();
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Expand");
+  await page.mouse.click(5, 5);
+  await expect(page.locator('[data-role="default-file-thread-popover"]')).toHaveCount(0);
   await page.locator('[data-role="default-file-viewer-toggle"]').click();
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
 

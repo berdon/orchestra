@@ -723,6 +723,12 @@ pub struct TaskCommentInput {
     pub selected_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentUpdateInput {
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkTaskCommentsReadInput {

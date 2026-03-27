@@ -23,6 +23,7 @@ import type {
   TaskComment,
   TaskChangeEvent,
   TaskCommentInput,
+  TaskCommentUpdateInput,
   TaskDependency,
   TaskDetail,
   TaskLaneAssignment,
@@ -2456,6 +2457,54 @@ export async function listTaskComments(taskId: string): Promise<TaskComment[]> {
   }
 
   return invoke<TaskComment[]>("list_task_comments", { taskId });
+}
+
+export async function updateTaskComment(commentId: string, input: TaskCommentUpdateInput): Promise<TaskComment> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    let updated: TaskComment | null = null;
+    saveMockTasks(tasks.map((task) => ({
+      ...task,
+      comments: task.comments.map((comment) => {
+        if (comment.id !== commentId) {
+          return comment;
+        }
+        updated = { ...comment, message: input.message.trim(), updatedAt: nowIso() };
+        return updated;
+      }),
+    })));
+    if (!updated) {
+      throw new Error(`Task comment ${commentId} was not found`);
+    }
+    return updated;
+  }
+
+  return invoke<TaskComment>("update_task_comment", { commentId, input });
+}
+
+export async function deleteTaskComment(commentId: string): Promise<TaskComment> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    let removed: TaskComment | null = null;
+    saveMockTasks(tasks.map((task) => {
+      const target = task.comments.find((comment) => comment.id === commentId);
+      if (!target) {
+        return task;
+      }
+      removed = target;
+      const removedIds = new Set([commentId, ...task.comments.filter((comment) => comment.parentCommentId === commentId).map((comment) => comment.id)]);
+      return {
+        ...task,
+        comments: task.comments.filter((comment) => !removedIds.has(comment.id)),
+      };
+    }));
+    if (!removed) {
+      throw new Error(`Task comment ${commentId} was not found`);
+    }
+    return removed;
+  }
+
+  return invoke<TaskComment>("delete_task_comment", { commentId });
 }
 
 export async function addTaskFileReference(taskId: string, input: TaskFileReferenceInput): Promise<TaskFileReference> {

@@ -1879,6 +1879,10 @@ strong {
   align-items: end;
 }
 
+.task-comment-composer__grid--compact {
+  grid-template-columns: auto;
+}
+
 .task-comment-composer__interrupt {
   padding-bottom: 10px;
 }
@@ -2455,10 +2459,53 @@ strong {
   justify-content: center;
 }
 
+.file-content-viewer__line-content-wrap {
+  position: relative;
+  min-width: 0;
+}
+
 .file-content-viewer__line-content {
+  position: relative;
+  z-index: 1;
   min-width: 0;
   white-space: pre;
   user-select: text;
+}
+
+.file-content-viewer__selected-comment-anchor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.file-content-viewer__selected-comment-highlight {
+  position: absolute;
+  inset: 1px 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning-soft) 80%, white);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  opacity: 0.9;
+}
+
+.file-content-viewer__selected-comment-icon {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: white;
+  color: var(--accent);
+  font-size: 0.72rem;
+  box-shadow: var(--shadow);
 }
 
 .file-content-viewer__code code,
@@ -2518,9 +2565,16 @@ strong {
 
 .file-content-viewer__thread-list,
 .file-content-viewer__thread-replies,
-.file-content-viewer__reply-composer {
+.file-content-viewer__reply-composer,
+.file-content-viewer__thread-actions {
   display: grid;
   gap: 10px;
+}
+
+.file-content-viewer__thread-actions {
+  grid-auto-flow: column;
+  justify-content: start;
+  gap: 6px;
 }
 
 .file-content-viewer__thread-card,
@@ -2531,6 +2585,13 @@ strong {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.file-content-viewer__icon-button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 0.86rem;
 }
 
 .file-content-viewer__thread-replies {

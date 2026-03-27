@@ -569,6 +569,10 @@ export interface TaskCommentInput {
   selectedText?: string | null;
 }
 
+export interface TaskCommentUpdateInput {
+  message: string;
+}
+
 export interface TaskDependency {
   id: string;
   blockerTaskId: string;

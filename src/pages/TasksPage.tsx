@@ -9,6 +9,8 @@ import {
   addTaskFileReference,
   approveLaneCompletion,
   commentOnTask,
+  deleteTaskComment,
+  updateTaskComment,
   completeLaneAsFailure,
   completeLaneAsSuccess,
   createTask,
@@ -734,6 +736,38 @@ export function TasksPage({
     }
   }
 
+  async function handleUpdateComment(commentId: string, message: string): Promise<boolean> {
+    if (route.kind !== "detail") {
+      return false;
+    }
+    setTaskActionError(null);
+    try {
+      await updateTaskComment(commentId, { message });
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+      return true;
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to update comment.");
+      return false;
+    }
+  }
+
+  async function handleDeleteComment(commentId: string): Promise<boolean> {
+    if (route.kind !== "detail") {
+      return false;
+    }
+    setTaskActionError(null);
+    try {
+      await deleteTaskComment(commentId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+      return true;
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to delete comment.");
+      return false;
+    }
+  }
+
   async function handleDispatchTaskLane() {
     if (route.kind !== "detail") {
       return;
@@ -906,6 +940,7 @@ export function TasksPage({
           loading={loadingTaskDetail}
           onAddAttachment={(files) => void handleAttachmentInputChange(files)}
           onAddComment={(draft) => handleAddComment(draft)}
+          onDeleteComment={(commentId) => handleDeleteComment(commentId)}
           onAddDependency={() => void handleAddDependency()}
           onAddFileReference={() => void handleAddFileReference()}
           onApproveCompletion={() => void handleApproveLaneCompletion()}
@@ -921,6 +956,7 @@ export function TasksPage({
           onFileReferenceDraftChange={setFileReferenceDraft}
           onOpenTask={openTaskDetail}
           onPublish={() => void handlePublishDetailTask()}
+          onUpdateComment={(commentId, message) => handleUpdateComment(commentId, message)}
           onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
           onRetry={() => void handleRetryTaskLane()}
           onPauseRuntime={() => void handlePauseTaskRuntime()}
