@@ -85,6 +85,8 @@ export async function createAgentViaSettings(
 ) {
   await clickByText(sessionId, '[role="tab"]', 'Agents');
   await clickSelector(sessionId, '[data-role="new-agent"]');
+  await waitForText(sessionId, 'Create agent');
+  await waitForSelector(sessionId, '[data-role="agent-name"]');
   await setInputValue(sessionId, '[data-role="agent-name"]', options.name);
   if (options.provider) {
     await selectValue(sessionId, '[data-role="agent-provider"]', options.provider);
