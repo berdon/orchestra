@@ -9,17 +9,23 @@ import {
   clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
-  dispatchWindowEvent,
   ensureReactReady,
   executeScript,
   invokeCommand,
-  selectValue,
-  setInputValue,
   sleep,
-  waitForSelectOption,
   waitForSelector,
   waitForText,
 } from "./driver";
+import {
+  addRepositoryViaSettings,
+  addTaskCommentViaUi,
+  addTaskFileReferenceViaUi,
+  createProjectViaSettings,
+  createRoleViaSettings,
+  createTaskViaTasks,
+  createWorkflowViaSettings,
+  switchProject,
+} from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -56,96 +62,39 @@ describe("desktop task detail reorganization", () => {
     try {
       await ensureReactReady(sessionId);
 
-      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Task Detail Reorg Project",
-          description: "Desktop summary/edit layout test.",
-        },
+      await createProjectViaSettings(sessionId, "Task Detail Reorg Project", "Desktop summary/edit layout test.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Task Detail Repo",
+        path: repoRoot,
+        defaultBranch: "main",
+        makeDefault: true,
       });
-
-      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
-        projectId: project.id,
-        input: {
-          name: "Task Detail Repo",
-          repositoryPath: repoRoot,
-          defaultBranch: "main",
-        },
+      await switchProject(sessionId, "Task Detail Reorg Project");
+      await createWorkflowViaSettings(sessionId, {
+        name: "Detail Reorg Flow",
+        description: "Single user lane for layout testing.",
+        lanes: [
+          {
+            name: "Review",
+            key: "review",
+            ownerType: "user",
+            entryPromptTemplate: "Review the task.",
+          },
+        ],
       });
-
-      const workflow = await invokeCommand<{ id: string }>(sessionId, "create_workflow", {
-        input: {
-          name: "Detail Reorg Flow",
-          description: "Single user lane for layout testing.",
-          lanes: [
-            {
-              id: "lane-review",
-              key: "review",
-              name: "Review",
-              description: null,
-              order: 0,
-              assignedEntityType: "user",
-              assignedEntityId: null,
-              entryPromptTemplate: "Review the task.",
-              successTransitionType: "end",
-              successTargetLaneId: null,
-              failureTransitionType: "user_intervention",
-              failureTargetLaneId: null,
-            },
-          ],
-        },
+      await createTaskViaTasks(sessionId, {
+        title: "Task detail redesign",
+        description: "Move the default repo file preview and recent history above the tabs.",
+        repositoryName: "Task Detail Repo",
+        workflowName: "Detail Reorg Flow",
       });
-
-      const task = await invokeCommand<{ id: string; title: string }>(sessionId, "create_task", {
-        projectId: project.id,
-        input: {
-          title: "Task detail redesign",
-          description: "Move the default repo file preview and recent history above the tabs.",
-          type: "task",
-          status: "ready",
-          priority: "P2",
-          workflowId: workflow.id,
-          currentLaneId: null,
-          assigneeType: "unassigned",
-          assigneeId: null,
-          repositoryId: repository.id,
-          parentTaskId: null,
-          archived: false,
-        },
-      });
-
-      const fileReference = await invokeCommand<{ id: string }>(sessionId, "add_task_file_reference", {
-        taskId: task.id,
-        input: {
-          repositoryId: repository.id,
-          relativePath: "docs/design.md",
-        },
-      });
-      await invokeCommand(sessionId, "set_default_task_file_reference", { referenceId: fileReference.id });
-      await invokeCommand(sessionId, "comment_on_task", {
-        taskId: task.id,
-        input: {
-          author: "Reviewer",
-          message: "First history item",
-          interruptAgent: false,
-        },
-      });
-      await invokeCommand(sessionId, "comment_on_task", {
-        taskId: task.id,
-        input: {
-          author: "Reviewer",
-          message: "Second history item",
-          interruptAgent: false,
-        },
-      });
-
-      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { value: project.id });
-      await selectValue(sessionId, '[data-role="project-switcher"]', project.id);
-      await sleep(1_000);
+      await addTaskFileReferenceViaUi(sessionId, "Task Detail Repo", "docs/design.md", true);
+      await addTaskCommentViaUi(sessionId, "Reviewer", "First history item");
+      await addTaskCommentViaUi(sessionId, "Reviewer", "Second history item");
 
       await clickByText(sessionId, "button", "Tasks");
-      await waitForText(sessionId, task.title);
-      await clickByText(sessionId, '[data-role="task-card"]', task.title);
+      await waitForText(sessionId, "Task detail redesign");
+      await clickByText(sessionId, '[data-role="task-card"]', "Task detail redesign");
 
       await waitForText(sessionId, "Tracked repository file changes and references");
       await waitForText(sessionId, "Default repo file");
@@ -195,7 +144,7 @@ describe("desktop task detail reorganization", () => {
       `);
       await sleep(300);
       await clickByText(sessionId, "button", "Back to tasks");
-      await clickByText(sessionId, '[data-role="task-card"]', task.title);
+      await clickByText(sessionId, '[data-role="task-card"]', "Task detail redesign");
 
       const persistedHistoryLimit = await executeScript<string>(sessionId, `
         const select = document.querySelector('[data-role="task-history-limit"]');
@@ -217,85 +166,46 @@ describe("desktop task detail reorganization", () => {
     try {
       await ensureReactReady(sessionId);
 
-      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Task Detail Actions Project",
-          description: "Desktop action button test.",
-        },
+      await createProjectViaSettings(sessionId, "Task Detail Actions Project", "Desktop action button test.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Task Detail Actions Repo",
+        path: repoRoot,
+        defaultBranch: "main",
+        makeDefault: true,
       });
-
-      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
-        projectId: project.id,
-        input: {
-          name: "Task Detail Actions Repo",
-          repositoryPath: repoRoot,
-          defaultBranch: "main",
-        },
+      await switchProject(sessionId, "Task Detail Actions Project");
+      await createRoleViaSettings(sessionId, {
+        name: "Action Worker",
+        capacity: "1",
+        description: "Role for dispatch/whip tests.",
       });
-
-      const role = await invokeCommand<{ slug: string }>(sessionId, "create_role", {
-        input: {
-          name: "Action Worker",
-          description: "Role for dispatch/whip tests.",
-          systemPrompt: null,
-          provider: "openai-codex",
-          model: "gpt-5.3-codex-spark",
-          thinkingLevel: "off",
-          capacity: 1,
-          policyIds: [],
-          directPermissions: [],
-        },
+      await createWorkflowViaSettings(sessionId, {
+        name: "Task Detail Action Flow",
+        description: "Single role lane for action testing.",
+        lanes: [
+          {
+            name: "Work",
+            key: "work",
+            ownerType: "role",
+            ownerReference: "action-worker",
+            entryPromptTemplate: "Do the work.",
+          },
+        ],
       });
-
-      const workflow = await invokeCommand<{ id: string }>(sessionId, "create_workflow", {
-        input: {
-          name: "Task Detail Action Flow",
-          description: "Single role lane for action testing.",
-          lanes: [
-            {
-              id: "lane-work",
-              key: "work",
-              name: "Work",
-              description: null,
-              order: 0,
-              assignedEntityType: "role",
-              assignedEntityId: role.slug,
-              entryPromptTemplate: "Do the work.",
-              successTransitionType: "end",
-              successTargetLaneId: null,
-              failureTransitionType: "user_intervention",
-              failureTargetLaneId: null,
-            },
-          ],
-        },
+      await createTaskViaTasks(sessionId, {
+        title: "Task detail action coverage",
+        description: "Verify top-level action buttons.",
+        repositoryName: "Task Detail Actions Repo",
+        workflowName: "Task Detail Action Flow",
       });
-
-      const task = await invokeCommand<{ id: string; title: string }>(sessionId, "create_task", {
-        projectId: project.id,
-        input: {
-          title: "Task detail action coverage",
-          description: "Verify top-level action buttons.",
-          type: "task",
-          status: "ready",
-          priority: "P2",
-          workflowId: workflow.id,
-          currentLaneId: null,
-          assigneeType: "unassigned",
-          assigneeId: null,
-          repositoryId: repository.id,
-          parentTaskId: null,
-          archived: false,
-        },
-      });
-
-      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { value: project.id });
-      await selectValue(sessionId, '[data-role="project-switcher"]', project.id);
-      await sleep(1_000);
+      const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        includeArchived: false,
+      }).then((tasks) => tasks.find((entry) => entry.title === 'Task detail action coverage'));
+      expect(task).toBeTruthy();
 
       await clickByText(sessionId, "button", "Tasks");
-      await waitForText(sessionId, task.title);
-      await clickByText(sessionId, '[data-role="task-card"]', task.title);
+      await waitForText(sessionId, "Task detail action coverage");
+      await clickByText(sessionId, '[data-role="task-card"]', "Task detail action coverage");
 
       await waitForText(sessionId, "Dispatch");
       await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
@@ -322,7 +232,7 @@ describe("desktop task detail reorganization", () => {
       await waitForText(sessionId, "Task detail action coverage");
       await clickSelector(sessionId, '[data-role="reset-task-runtime"]');
       await waitForCondition(
-        () => invokeCommand<any>(sessionId, 'get_task', { taskId: task.id }),
+        () => invokeCommand<any>(sessionId, 'get_task', { taskId: task!.id }),
         (updatedTask) => updatedTask.status === 'ready' && updatedTask.activeLaneAssignment == null,
       );
       await waitForText(sessionId, 'No active runtime assignment for this task.');
