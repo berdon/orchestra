@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import hljs from "highlight.js";
-import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
@@ -36,6 +36,7 @@ interface TaskDetailPageProps {
   agents: AgentSummary[];
   roles: RoleSummary[];
   repositories: RepositoryRecord[];
+  taskMessages: MailboxMessage[];
   timelineItems: TaskTimelineItem[];
   dependencyCandidates: Array<{ id: string; number: string; title: string }>;
   selectedBlockerTaskId: string;
@@ -43,6 +44,7 @@ interface TaskDetailPageProps {
   publishing: boolean;
   deleting: boolean;
   loading: boolean;
+  sendingMail?: boolean;
   pendingActionId?: string | null;
   onDraftChange: (draft: TaskUpsertInput) => void;
   onCommentDraftChange: (draft: TaskCommentInput) => void;
@@ -71,6 +73,7 @@ interface TaskDetailPageProps {
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
   onDeleteComment: (commentId: string) => Promise<boolean>;
+  onSendMail: (body: string, interrupt: boolean) => Promise<void>;
 }
 
 function formatStatusLabel(status: string) {
@@ -163,6 +166,7 @@ export function TaskDetailPage({
   agents,
   roles,
   repositories,
+  taskMessages,
   timelineItems,
   dependencyCandidates,
   selectedBlockerTaskId,
@@ -170,6 +174,7 @@ export function TaskDetailPage({
   publishing,
   deleting,
   loading,
+  sendingMail = false,
   pendingActionId = null,
   onDraftChange,
   onCommentDraftChange,
@@ -198,12 +203,15 @@ export function TaskDetailPage({
   onAddComment,
   onUpdateComment,
   onDeleteComment,
+  onSendMail,
 }: TaskDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteHolding, setDeleteHolding] = useState(false);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState<TaskCommentInput>(() => createReplyDraft(commentDraft.author));
+  const [mailDraft, setMailDraft] = useState("");
+  const [mailInterrupt, setMailInterrupt] = useState(false);
   const [selectedFileReference, setSelectedFileReference] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
@@ -236,6 +244,8 @@ export function TaskDetailPage({
   useEffect(() => {
     setReplyTargetCommentId(null);
     setReplyDraft(createReplyDraft(commentDraft.author));
+    setMailDraft("");
+    setMailInterrupt(false);
   }, [task.id]);
 
   useEffect(() => {
@@ -500,6 +510,15 @@ export function TaskDetailPage({
     setReplyDraft(createReplyDraft(commentDraft.author));
   }
 
+  async function handleSendRuntimeMail() {
+    if (!mailDraft.trim()) {
+      return;
+    }
+    await onSendMail(mailDraft, mailInterrupt);
+    setMailDraft("");
+    setMailInterrupt(false);
+  }
+
   function renderTabPanel() {
     switch (activeTab) {
       case "runtime":
@@ -538,10 +557,46 @@ export function TaskDetailPage({
                     Reset task runtime
                   </button>
                 </div>
+
+                <div className="task-section-list">
+                  <article className="task-history-card">
+                    <div className="workflow-section__header">
+                      <strong>Send mail to active worker</strong>
+                      <span className="status-badge status-badge--neutral">Mailbox</span>
+                    </div>
+                    <p className="muted-copy">This sends a mailbox message to the currently active assignment session and shows up in the worker's unread mail checks.</p>
+                    <label className="field-group">
+                      <span className="field-group__label">Message</span>
+                      <textarea className="text-area" data-role="task-runtime-mail-body" rows={4} value={mailDraft} onChange={(event) => setMailDraft(event.target.value)} />
+                    </label>
+                    <label className="checkbox-field">
+                      <input data-role="task-runtime-mail-interrupt" type="checkbox" checked={mailInterrupt} onChange={(event) => setMailInterrupt(event.target.checked)} />
+                      <span>Interrupt worker immediately</span>
+                    </label>
+                    <div className="action-cluster">
+                      <button className="primary-button" data-role="task-runtime-send-mail" type="button" disabled={sendingMail || !mailDraft.trim()} onClick={() => void handleSendRuntimeMail()}>
+                        {sendingMail ? "Sending…" : "Send mail"}
+                      </button>
+                    </div>
+                  </article>
+                </div>
               </div>
             ) : (
               <p className="muted-copy">No active runtime assignment for this task.</p>
             )}
+
+            <div className="task-section-list" data-role="task-mail-history">
+              {taskMessages.length ? taskMessages.map((message) => (
+                <article className="task-history-card" key={message.deliveryId}>
+                  <div className="workflow-section__header">
+                    <strong>{message.senderLabel} → {message.recipientLabel}</strong>
+                    <span className={`status-badge status-badge--${message.readAt ? "neutral" : "warning"}`}>{message.readAt ? "Read" : "Unread"}</span>
+                  </div>
+                  <p className="muted-copy">{message.priority === "interrupt" ? "Interrupt priority" : "Normal priority"}</p>
+                  <p className="pre-wrap">{message.body}</p>
+                </article>
+              )) : <p className="muted-copy">No task mail yet.</p>}
+            </div>
           </section>
         );
       case "hierarchy":

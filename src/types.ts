@@ -1,4 +1,4 @@
-export type PrimaryPage = "tasks" | "agents" | "sessions" | "settings";
+export type PrimaryPage = "tasks" | "inbox" | "agents" | "sessions" | "settings";
 export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -381,6 +381,11 @@ export interface TaskChangeEvent {
   reason: string;
 }
 
+export interface InboxChangeEvent {
+  deliveryIds: string[];
+  reason: string;
+}
+
 export type WorkflowOwnerType = "user" | "agent" | "role";
 export type WorkflowTransitionType = "lane" | "user_intervention" | "end";
 
@@ -580,6 +585,46 @@ export interface TaskCommentFileMentionCandidate {
   relativePath: string;
   displayText: string;
   insertText: string;
+}
+
+export type MailboxRecipientType = "user" | "agent" | "active_assignment" | "assignment";
+export type MailboxPriority = "normal" | "interrupt";
+
+export interface SendMailboxMessageInput {
+  projectId?: string | null;
+  taskId?: string | null;
+  recipientType: MailboxRecipientType | string;
+  recipientId?: string | null;
+  senderLabel?: string | null;
+  body: string;
+  priority?: MailboxPriority | string | null;
+}
+
+export interface MarkMailboxMessagesReadInput {
+  deliveryIds?: string[] | null;
+}
+
+export interface MailboxMessage {
+  deliveryId: string;
+  messageId: string;
+  projectId: string;
+  taskId?: string | null;
+  taskNumber?: string | null;
+  taskTitle?: string | null;
+  senderType: string;
+  senderId?: string | null;
+  senderLabel: string;
+  recipientType: string;
+  recipientId?: string | null;
+  recipientLabel: string;
+  assignmentId?: string | null;
+  body: string;
+  priority: MailboxPriority | string;
+  readAt?: string | null;
+  readSessionId?: string | null;
+  lastNotifiedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TaskDependency {

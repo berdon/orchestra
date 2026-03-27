@@ -748,6 +748,54 @@ pub struct MarkTaskCommentsReadInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SendMailboxMessageInput {
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    pub recipient_type: String,
+    #[serde(default)]
+    pub recipient_id: Option<String>,
+    #[serde(default)]
+    pub sender_label: Option<String>,
+    pub body: String,
+    #[serde(default)]
+    pub priority: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkMailboxMessagesReadInput {
+    pub delivery_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailboxMessage {
+    pub delivery_id: String,
+    pub message_id: String,
+    pub project_id: String,
+    pub task_id: Option<String>,
+    pub task_number: Option<String>,
+    pub task_title: Option<String>,
+    pub sender_type: String,
+    pub sender_id: Option<String>,
+    pub sender_label: String,
+    pub recipient_type: String,
+    pub recipient_id: Option<String>,
+    pub recipient_label: String,
+    pub assignment_id: Option<String>,
+    pub body: String,
+    pub priority: String,
+    pub read_at: Option<String>,
+    pub read_session_id: Option<String>,
+    pub last_notified_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskCommentReceipt {
     pub comment_id: String,
     pub task_id: String,

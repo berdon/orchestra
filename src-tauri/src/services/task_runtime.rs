@@ -10,8 +10,8 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_runtime, agents, live_sessions, pi_sessions, project_settings, projects,
-        role_dispatch, role_runtime, task_repositories, tasks, workflows,
+        agent_runtime, agents, live_sessions, messages, pi_sessions, project_settings,
+        projects, role_dispatch, role_runtime, task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -908,12 +908,14 @@ pub fn queue_comment_delivery(
     }
 }
 
-pub fn notify_active_assignment_of_unread_comments(
+fn notify_active_assignment_delivery(
     app: AppHandle,
     state: &AppState,
     session_dir: PathBuf,
     assignment: &TaskLaneAssignment,
-    comment: &TaskComment,
+    run_prefix: &str,
+    message: &str,
+    interrupt: bool,
 ) -> Result<(), String> {
     if assignment.status != ASSIGNMENT_STATUS_ACTIVE {
         return Ok(());
@@ -926,12 +928,6 @@ pub fn notify_active_assignment_of_unread_comments(
         return Ok(());
     };
 
-    let message = build_unread_comment_delivery_message(&assignment.task_id, comment);
-    let delivery_mode = if comment.interrupt_agent {
-        "steer"
-    } else {
-        "follow_up"
-    };
     let runtime = live_sessions::ensure_runtime(
         &state.session_runtimes,
         app,
@@ -940,15 +936,57 @@ pub fn notify_active_assignment_of_unread_comments(
         session_id,
     )?;
 
-    let run_id = generate_id("task-comment");
+    let run_id = generate_id(run_prefix);
     state.begin_session_run(session_id, &run_id)?;
-    match runtime.start_delivery(&run_id, delivery_mode, &message) {
+    match runtime.start_delivery(
+        &run_id,
+        if interrupt { "steer" } else { "follow_up" },
+        message,
+    ) {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = state.end_session_run(session_id, &run_id);
             Err(error)
         }
     }
+}
+
+pub fn notify_active_assignment_of_unread_comments(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    comment: &TaskComment,
+) -> Result<(), String> {
+    let message = build_unread_comment_delivery_message(&assignment.task_id, comment);
+    notify_active_assignment_delivery(
+        app,
+        state,
+        session_dir,
+        assignment,
+        "task-comment",
+        &message,
+        comment.interrupt_agent,
+    )
+}
+
+pub fn notify_active_assignment_of_unread_mail(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    message: &str,
+    interrupt: bool,
+) -> Result<(), String> {
+    notify_active_assignment_delivery(
+        app,
+        state,
+        session_dir,
+        assignment,
+        "task-mail",
+        message,
+        interrupt,
+    )
 }
 
 pub fn complete_lane_as_success(
@@ -1300,6 +1338,18 @@ fn complete_lane(
             return Err(format!(
                 "Task {task_id} has {} unread comment(s). Call get_unread_task_comments({task_id}), review them, then call mark_task_comments_read({task_id}) before using a completion tool.",
                 unread_comments.len()
+            ));
+        }
+        let unread_mail = messages::list_unread_mail_for_authorization(
+            connection,
+            authorization,
+            assignment.session_id.as_deref(),
+            Some(task_id),
+        )?;
+        if !unread_mail.is_empty() {
+            return Err(format!(
+                "Task {task_id} has {} unread mail message(s). Call get_unread_mail({task_id}), review them, then call mark_mail_read({task_id}) before using a completion tool.",
+                unread_mail.len()
             ));
         }
     } else if lane.assigned_entity_type != "user" {
@@ -2051,7 +2101,7 @@ fn apply_agent_session_defaults(
 pub fn lane_rework_follow_up_prompt() -> String {
     [
         "The user has requested more work be done on this lane.",
-        "Reload the latest task context and comments before continuing so you are working from current Orchestra state.",
+        "Reload the latest task context, comments, and mail before continuing so you are working from current Orchestra state.",
         "Continue the lane using the same session and finish by calling the appropriate Orchestra completion tool when the work is actually done.",
     ]
     .join("\n\n")
@@ -2065,15 +2115,16 @@ fn orchestra_working_rules_block() -> String {
         "3. If anything is still unclear or may have changed again, call get_task_context again to refresh the live task state.",
         "4. Do the reasoning/work needed for the lane.",
         "5. Whenever you resume this lane, restart after an interruption, or suspect new feedback may have arrived, call get_unread_task_comments using the canonical task ID. After you read and incorporate those comments, call mark_task_comments_read so Orchestra knows you saw them.",
-        "6. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. If you are responding to a specific existing comment, reply in-thread by setting parentCommentId instead of starting a new top-level comment.",
-        "7. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
-        "8. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
-        "9. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
-        "10. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
-        "11. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
-        "12. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
-        "13. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-        "14. When the lane is finished, explicitly transition it with the correct completion tool.",
+        "6. Whenever you resume this lane, restart after an interruption, or Orchestra tells you to check mail, call get_unread_mail using the canonical task ID. After you read and incorporate unread mail, call mark_mail_read so Orchestra knows you handled it.",
+        "7. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. If you are responding to a specific existing comment, reply in-thread by setting parentCommentId instead of starting a new top-level comment.",
+        "8. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
+        "9. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
+        "10. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
+        "11. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
+        "12. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
+        "13. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
+        "14. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+        "15. When the lane is finished, explicitly transition it with the correct completion tool.",
     ]
     .join("\n")
 }
@@ -2091,6 +2142,9 @@ fn orchestra_tool_help_block() -> String {
         "- comment_on_task(taskId, author, message, interruptAgent?, parentCommentId?): Call this tool to leave a durable note in Orchestra. Set parentCommentId when you are replying to a specific existing comment so the discussion stays threaded.",
         "- get_unread_task_comments(taskId): Call this tool whenever you resume work, when Orchestra tells you to check unread mail, and again immediately before any completion tool. It returns task comments you have not yet acknowledged for the active session.",
         "- mark_task_comments_read(taskId, commentIds?): After you read and incorporate unread task comments, call this tool to acknowledge them. If commentIds is omitted, it marks all current unread comments for the active session as read.",
+        "- get_unread_mail(taskId?): Call this tool whenever you resume work, when Orchestra tells you to check mail, and again immediately before any completion tool. With a taskId it includes both the active assignment mailbox and any direct agent mail relevant to that task session; without taskId it returns direct unread mail for the current worker session.",
+        "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail, call this tool to acknowledge it. If deliveryIds is omitted, it marks all currently visible unread mail for the worker session as read.",
+        "- send_mail(projectId?, taskId?, recipientType, recipientId?, body, priority?): Call this tool to send mailbox messages to the user, another agent, or the active assignment mailbox for a task. Use recipientType user, agent, or active_assignment. Set priority to interrupt when the recipient should be steered immediately.",
         "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
         "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
         "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
@@ -2109,6 +2163,7 @@ fn orchestra_completion_rules_block() -> String {
         "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
         "- You are not done and cannot stop until you have actually called one of those tools.",
         "- Immediately before any completion tool, call get_unread_task_comments for the canonical task ID, review any unread comments, and then call mark_task_comments_read before completing the lane.",
+        "- Immediately before any completion tool, call get_unread_mail for the canonical task ID, review any unread mail, and then call mark_mail_read before completing the lane.",
         "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
         "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
         "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
@@ -2746,6 +2801,8 @@ mod tests {
         assert!(prompt.contains("- comment_on_task(taskId, author, message, interruptAgent?, parentCommentId?): Call this tool to leave a durable note in Orchestra."));
         assert!(prompt.contains("call get_unread_task_comments using the canonical task ID"));
         assert!(prompt.contains("call mark_task_comments_read so Orchestra knows you saw them"));
+        assert!(prompt.contains("call get_unread_mail using the canonical task ID"));
+        assert!(prompt.contains("call mark_mail_read so Orchestra knows you handled it"));
         assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
         assert!(prompt.contains("If you create or materially change a large or central repository file that should stay visible on the task"));
         assert!(prompt.contains("Do not add normal source code or test file edits as task file references unless the human explicitly asked"));
@@ -2754,6 +2811,8 @@ mod tests {
             "- get_unread_task_comments(taskId): Call this tool whenever you resume work"
         ));
         assert!(prompt.contains("- mark_task_comments_read(taskId, commentIds?): After you read and incorporate unread task comments"));
+        assert!(prompt.contains("- get_unread_mail(taskId?): Call this tool whenever you resume work"));
+        assert!(prompt.contains("- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail"));
         assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
@@ -2761,6 +2820,8 @@ mod tests {
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
         assert!(prompt
             .contains("Immediately before any completion tool, call get_unread_task_comments"));
+        assert!(prompt
+            .contains("Immediately before any completion tool, call get_unread_mail"));
         assert!(prompt.contains(
             "If any completion or transition step fails, add a task comment describing the failure"
         ));

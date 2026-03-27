@@ -11,6 +11,7 @@ pub mod dispatcher;
 pub mod git_worktrees;
 pub mod live_sessions;
 pub mod logging;
+pub mod messages;
 pub mod orchestra_paths;
 pub mod pi_sessions;
 pub mod policies;

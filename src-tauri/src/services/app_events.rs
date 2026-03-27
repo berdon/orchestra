@@ -15,6 +15,13 @@ pub struct SessionChangeEvent {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxChangeEvent {
+    pub delivery_ids: Vec<String>,
+    pub reason: String,
+}
+
 pub fn emit_window_event<T: Serialize>(
     app: &AppHandle,
     event_name: &str,
@@ -60,6 +67,21 @@ pub fn emit_session_change(
         "orchestra:session-change",
         &SessionChangeEvent {
             session_ids: session_ids.into_iter().collect(),
+            reason: reason.into(),
+        },
+    )
+}
+
+pub fn emit_inbox_change(
+    app: &AppHandle,
+    reason: impl Into<String>,
+    delivery_ids: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
+    emit_window_event(
+        app,
+        "orchestra:inbox-change",
+        &InboxChangeEvent {
+            delivery_ids: delivery_ids.into_iter().collect(),
             reason: reason.into(),
         },
     )
