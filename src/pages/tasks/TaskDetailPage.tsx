@@ -6,6 +6,7 @@ import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
 import { TaskCommentMentionsTextarea } from "../../components/TaskCommentMentionsTextarea";
+import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -256,11 +257,15 @@ export function TaskDetailPage({
 
   useEffect(() => {
     if (activeTab === "repo-files" && task.fileReferences.length > 0) {
-      const fileToSelect = defaultFile ?? task.fileReferences[0];
-      if (fileToSelect && fileToSelect.id !== selectedFileReference) {
-        setSelectedFileReference(fileToSelect.id);
-        loadFileContent(fileToSelect);
+      const selectedReference = task.fileReferences.find((reference) => reference.id === selectedFileReference) ?? null;
+      const fileToSelect = selectedReference ?? defaultFile ?? task.fileReferences[0];
+      if (!fileToSelect) {
+        return;
       }
+      if (fileToSelect.id !== selectedFileReference) {
+        setSelectedFileReference(fileToSelect.id);
+      }
+      loadFileContent(fileToSelect);
     }
   }, [activeTab, defaultFile, task.fileReferences, selectedFileReference]);
 
@@ -517,6 +522,12 @@ export function TaskDetailPage({
     await onSendMail(mailDraft, mailInterrupt);
     setMailDraft("");
     setMailInterrupt(false);
+  }
+
+  function handleOpenCommentFileReference(reference: TaskFileReference) {
+    setActiveTab("repo-files");
+    setSelectedFileReference(reference.id);
+    loadFileContent(reference);
   }
 
   function renderTabPanel() {
@@ -952,7 +963,12 @@ export function TaskDetailPage({
                           <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
                         </div>
                       </div>
-                      <p>{comment.message}</p>
+                      <TaskCommentMessage
+                        dataRole="task-comment-file-mention-link"
+                        fileReferences={task.fileReferences}
+                        message={comment.message}
+                        onOpenFileReference={handleOpenCommentFileReference}
+                      />
                       {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
                       <div className="task-comment-thread__actions">
                         <button className="secondary-button" data-role="reply-task-comment" data-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
@@ -974,7 +990,12 @@ export function TaskDetailPage({
                                 <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
                               </div>
                             </div>
-                            <p>{reply.message}</p>
+                            <TaskCommentMessage
+                              dataRole="task-comment-file-mention-link"
+                              fileReferences={task.fileReferences}
+                              message={reply.message}
+                              onOpenFileReference={handleOpenCommentFileReference}
+                            />
                             {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
                           </article>
                         ))}
@@ -1206,10 +1227,12 @@ export function TaskDetailPage({
                         commentDraft={commentDraft}
                         comments={task.comments}
                         content={defaultFileContent ?? ""}
+                        fileReferences={task.fileReferences}
                         language={detectLanguage(defaultFile.relativePath)}
                         onAddComment={onAddComment}
                         onCommentDraftChange={onCommentDraftChange}
                         onDeleteComment={onDeleteComment}
+                        onOpenFileReference={handleOpenCommentFileReference}
                         onUpdateComment={onUpdateComment}
                         reference={defaultFile}
                       />
@@ -1259,7 +1282,12 @@ export function TaskDetailPage({
                             <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
                           </div>
                         </div>
-                        <p>{comment.message}</p>
+                        <TaskCommentMessage
+                          dataRole="task-comment-file-mention-link"
+                          fileReferences={task.fileReferences}
+                          message={comment.message}
+                          onOpenFileReference={handleOpenCommentFileReference}
+                        />
                         {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
                       </article>
                       {replies.length ? (
@@ -1273,7 +1301,12 @@ export function TaskDetailPage({
                                   <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
                                 </div>
                               </div>
-                              <p>{reply.message}</p>
+                              <TaskCommentMessage
+                                dataRole="task-comment-file-mention-link"
+                                fileReferences={task.fileReferences}
+                                message={reply.message}
+                                onOpenFileReference={handleOpenCommentFileReference}
+                              />
                             </article>
                           ))}
                         </div>

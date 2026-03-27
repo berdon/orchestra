@@ -200,6 +200,36 @@ test("task detail manages dependencies and blocked state", async ({ page }) => {
   await expect(page.getByText("Not dispatchable", { exact: true })).toBeVisible();
 });
 
+test("task detail opens tracked repo files when clicking @file mentions in comments", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Comment mention link task");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="task-detail-tab-repo-files"]').click();
+  await page.locator('[data-role="task-file-reference-path"]').fill("docs/design.md");
+  await page.locator('[data-role="add-task-file-reference"]').click();
+  await expect(page.locator('[data-role="task-file-references"]')).toContainText("docs/design.md");
+
+  await page.locator('[data-role="task-detail-tab-comments"]').click();
+  await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
+  await page.locator('[data-role="task-comment-message"]').fill("Please review @docs/design.md before you continue.");
+  await page.locator('[data-role="add-task-comment"]').click();
+
+  await page.locator('[data-role="task-comment-file-mention-link"]').first().click();
+  await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
+  const selectedFileLabel = await page.evaluate(() => {
+    const select = document.querySelector('[data-role="task-file-references"] select');
+    return select instanceof HTMLSelectElement ? select.options[select.selectedIndex]?.textContent ?? "" : "";
+  });
+  expect(selectedFileLabel).toContain("docs/design.md");
+});
+
 test("task detail supports attachments, comments, timeline, and review inbox filtering", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
