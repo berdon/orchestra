@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -7,15 +8,22 @@ import {
   clickByText,
   createReadyWebdriverSession,
   deleteWebdriverSession,
-  dispatchWindowEvent,
   ensureReactReady,
   getDomSnapshot,
   invokeCommand,
-  selectValue,
   sleep,
-  waitForSelectOption,
   waitForText,
 } from "./driver";
+import {
+  addRepositoryViaSettings,
+  createAgentViaSettings,
+  createProjectViaSettings,
+  createTaskViaTasks,
+  createWorkflowViaSettings,
+  dispatchTaskViaUi,
+  openTaskCard,
+  switchProject,
+} from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -41,105 +49,88 @@ describe("desktop autonomous workflow", () => {
 
     const targetFile = join(testHome!, "workspace", "autonomous-workflow-output.txt");
     const expectedContents = "AUTONOMOUS_DESKTOP_E2E_OK\n";
+    const repositoryRoot = join(testHome!, "workspace", "autonomous-workflow-repo");
     rmSync(targetFile, { force: true });
+    rmSync(repositoryRoot, { recursive: true, force: true });
+    mkdirSync(repositoryRoot, { recursive: true });
+    writeFileSync(join(repositoryRoot, "README.md"), "autonomous workflow repo\n", "utf8");
+    execFileSync("git", ["init", "-b", "main"], { cwd: repositoryRoot, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "desktop-e2e@example.invalid"], { cwd: repositoryRoot, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Desktop E2E"], { cwd: repositoryRoot, stdio: "ignore" });
+    execFileSync("git", ["add", "."], { cwd: repositoryRoot, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repositoryRoot, stdio: "ignore" });
 
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 
-      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Autonomous Workflow Project",
-          description: "Deterministic autonomous desktop workflow test.",
-        },
+      await createProjectViaSettings(sessionId, "Autonomous Workflow Project", "Deterministic autonomous desktop workflow test.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Autonomous Workflow Repo",
+        path: repositoryRoot,
+        defaultBranch: "main",
+        makeDefault: true,
+      });
+      await switchProject(sessionId, "Autonomous Workflow Project");
+
+      await createAgentViaSettings(sessionId, {
+        name: "Autonomous Builder Agent",
+        description: "Deterministically creates the requested file and completes the lane.",
+        systemPrompt: [
+          "You are a deterministic Orchestra agent.",
+          "Read the canonical task ID from the prompt.",
+          `Create the exact file ${targetFile} with the exact contents ${JSON.stringify(expectedContents)}.`,
+          "Verify the file exists with the exact contents.",
+          "Do not ask questions.",
+          "Do not wait for human input.",
+          "When verification succeeds, immediately call complete_lane_as_success with notes 'autonomous desktop e2e complete'.",
+          "If anything fails, immediately call request_user_intervention.",
+        ].join(" "),
+        provider: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+        thinkingLevel: "off",
+        supervisor: true,
       });
 
-      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
-        projectId: project.id,
-        input: {
-          name: "Autonomous Workflow Repo",
-          repositoryPath: join(testHome!, "workspace", "autonomous-workflow-repo"),
-          defaultBranch: "main",
-        },
+      await createWorkflowViaSettings(sessionId, {
+        name: "Autonomous Desktop Workflow",
+        description: "Single deterministic agent lane that must complete autonomously.",
+        lanes: [
+          {
+            name: "Autonomous Build",
+            key: "autonomous-build",
+            ownerType: "agent",
+            ownerReference: "autonomous-builder-agent",
+            entryPromptTemplate: `Create ${targetFile} with exact contents ${JSON.stringify(expectedContents)} and then complete the lane using Orchestra tools.`,
+          },
+        ],
       });
 
-      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { value: project.id });
-      await selectValue(sessionId, '[data-role="project-switcher"]', project.id);
-      await sleep(1_000);
-
-      const agent = await invokeCommand<{ id: string; slug: string; name: string }>(sessionId, "create_agent", {
-        input: {
-          name: "Autonomous Builder Agent",
-          description: "Deterministically creates the requested file and completes the lane.",
-          systemPrompt: [
-            "You are a deterministic Orchestra agent.",
-            "Read the canonical task ID from the prompt.",
-            `Create the exact file ${targetFile} with the exact contents ${JSON.stringify(expectedContents)}.`,
-            "Verify the file exists with the exact contents.",
-            "Do not ask questions.",
-            "Do not wait for human input.",
-            "When verification succeeds, immediately call complete_lane_as_success with notes 'autonomous desktop e2e complete'.",
-            "If anything fails, immediately call request_user_intervention.",
-          ].join(" "),
-          provider: "openai-codex",
-          model: "gpt-5.3-codex-spark",
-          roleId: null,
-          thinkingLevel: "off",
-          policyIds: ["policy-supervisor"],
-          directPermissions: [],
-        },
+      await createTaskViaTasks(sessionId, {
+        title: "Autonomous desktop workflow task",
+        description: `Create and validate ${targetFile}.`,
+        repositoryName: "Autonomous Workflow Repo",
+        workflowName: "Autonomous Desktop Workflow",
+        publish: true,
       });
-
-      const workflow = await invokeCommand<{ id: string }>(sessionId, "create_workflow", {
-        input: {
-          name: "Autonomous Desktop Workflow",
-          description: "Single deterministic agent lane that must complete autonomously.",
-          lanes: [
-            {
-              id: "autonomous-lane",
-              key: "autonomous-build",
-              name: "Autonomous Build",
-              description: null,
-              order: 0,
-              assignedEntityType: "agent",
-              assignedEntityId: agent.slug,
-              entryPromptTemplate: `Create ${targetFile} with exact contents ${JSON.stringify(expectedContents)} and then complete the lane using Orchestra tools.`,
-              successTransitionType: "end",
-              successTargetLaneId: null,
-              failureTransitionType: "user_intervention",
-              failureTargetLaneId: null,
-            },
-          ],
-        },
-      });
-
-      const createdTask = await invokeCommand<{ id: string }>(sessionId, "create_task", {
-        projectId: project.id,
-        input: {
-          title: "Autonomous desktop workflow task",
-          description: `Create and validate ${targetFile}.`,
-          type: "task",
-          status: "ready",
-          priority: "P2",
-          workflowId: workflow.id,
-          currentLaneId: null,
-          assigneeType: "unassigned",
-          assigneeId: null,
-          repositoryId: repository.id,
-          repositoryIds: [repository.id],
-          parentTaskId: null,
-          archived: false,
-        },
-      });
+      const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        includeArchived: false,
+      }).then((tasks) => tasks.find((entry) => entry.title === 'Autonomous desktop workflow task'));
+      expect(createdTask).toBeTruthy();
 
       await clickByText(sessionId, "button", "Sessions");
       await waitForText(sessionId, "Sessions");
 
-      const dispatchedTask = await invokeCommand<any>(sessionId, "dispatch_task_lane", { taskId: createdTask.id });
+      await openTaskCard(sessionId, 'Autonomous desktop workflow task');
+      await dispatchTaskViaUi(sessionId);
+
+      const dispatchedTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
+        (task) => Boolean(task.activeLaneAssignment?.sessionId),
+      );
       expect(dispatchedTask.activeLaneAssignment?.workerType).toBe("agent");
-      const taskRepositories = await invokeCommand<Array<{ repositoryId: string; taskWorktreePath?: string | null }>>(sessionId, "list_task_repositories", { taskId: createdTask.id });
-      expect(taskRepositories.some((entry) => entry.repositoryId === repository.id && Boolean(entry.taskWorktreePath))).toBe(true);
+      const taskRepositories = await invokeCommand<Array<{ taskWorktreePath?: string | null }>>(sessionId, "list_task_repositories", { taskId: createdTask!.id });
+      expect(taskRepositories.some((entry) => Boolean(entry.taskWorktreePath))).toBe(true);
 
       await waitForCondition(
         () => invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions"),
@@ -149,7 +140,7 @@ describe("desktop autonomous workflow", () => {
       await waitForText(sessionId, "Autonomous Builder Agent main session", 30_000);
 
       const completedTask = await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask.id }),
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
         (currentTask) => currentTask.status === "completed" && currentTask.activeLaneAssignment == null,
         180_000,
       );
