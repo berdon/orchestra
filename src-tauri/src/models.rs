@@ -624,6 +624,15 @@ pub struct TaskComment {
     pub author: String,
     pub message: String,
     pub interrupt_agent: bool,
+    pub repository_id: Option<String>,
+    pub relative_path: Option<String>,
+    pub line_start: Option<i64>,
+    pub line_end: Option<i64>,
+    pub column_start: Option<i64>,
+    pub column_end: Option<i64>,
+    pub selected_text: Option<String>,
+    pub anchor_commit_hash: Option<String>,
+    pub anchor_has_uncommitted_changes: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -696,6 +705,22 @@ pub struct TaskCommentInput {
     pub interrupt_agent: bool,
     #[serde(default)]
     pub parent_comment_id: Option<String>,
+    #[serde(default)]
+    pub repository_id: Option<String>,
+    #[serde(default)]
+    pub relative_path: Option<String>,
+    #[serde(default)]
+    pub absolute_path: Option<String>,
+    #[serde(default)]
+    pub line_start: Option<i64>,
+    #[serde(default)]
+    pub line_end: Option<i64>,
+    #[serde(default)]
+    pub column_start: Option<i64>,
+    #[serde(default)]
+    pub column_end: Option<i64>,
+    #[serde(default)]
+    pub selected_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

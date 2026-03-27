@@ -4,6 +4,7 @@ import hljs from "highlight.js";
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
+import { CommentableFileViewer } from "../../components/CommentableFileViewer";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -66,7 +67,7 @@ interface TaskDetailPageProps {
   onAddFileReference: () => void;
   onRemoveFileReference: (referenceId: string) => void;
   onSetDefaultFileReference: (referenceId: string) => void;
-  onAddComment: (draft: TaskCommentInput) => Promise<void>;
+  onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
 }
 
 function formatStatusLabel(status: string) {
@@ -116,6 +117,25 @@ function groupTaskComments(comments: TaskComment[]) {
     comment,
     replies: repliesByParent.get(comment.id) ?? [],
   }));
+}
+
+function formatCommentAnchorLabel(comment: TaskComment) {
+  if (!comment.relativePath || !comment.lineStart) {
+    return null;
+  }
+
+  const lineLabel = comment.lineStart === comment.lineEnd || !comment.lineEnd
+    ? `line ${comment.lineStart}`
+    : `lines ${comment.lineStart}-${comment.lineEnd}`;
+
+  return `${comment.relativePath} · ${lineLabel}`;
+}
+
+function isAnchoredToReference(comment: TaskComment, reference: TaskFileReference | null) {
+  if (!reference) {
+    return false;
+  }
+  return comment.repositoryId === reference.repositoryId && comment.relativePath === reference.relativePath;
 }
 
 const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
@@ -198,6 +218,7 @@ export function TaskDetailPage({
   const commentThreads = groupTaskComments(task.comments);
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const recentHistory = timelineItems.slice(0, historyLimit);
+  const summaryComments = commentThreads.slice(-4).reverse();
 
   useEffect(() => {
     return () => {
@@ -466,7 +487,10 @@ export function TaskDetailPage({
     if (!replyTargetCommentId) {
       return;
     }
-    await onAddComment({ ...replyDraft, parentCommentId: replyTargetCommentId });
+    const added = await onAddComment({ ...replyDraft, parentCommentId: replyTargetCommentId });
+    if (!added) {
+      return;
+    }
     setReplyTargetCommentId(null);
     setReplyDraft(createReplyDraft(commentDraft.author));
   }
@@ -855,10 +879,13 @@ export function TaskDetailPage({
                         <span>{comment.author}</span>
                         <div className="transcript-event__meta-group">
                           {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                          {formatCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(comment)}</span> : null}
+                          {isAnchoredToReference(comment, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
                           <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
                         </div>
                       </div>
                       <p>{comment.message}</p>
+                      {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
                       <div className="task-comment-thread__actions">
                         <button className="secondary-button" data-role="reply-task-comment" data-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
                           Reply
@@ -874,10 +901,13 @@ export function TaskDetailPage({
                               <span>{reply.author}</span>
                               <div className="transcript-event__meta-group">
                                 {reply.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                                {formatCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(reply)}</span> : null}
+                                {isAnchoredToReference(reply, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
                                 <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
                               </div>
                             </div>
                             <p>{reply.message}</p>
+                            {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
                           </article>
                         ))}
                       </div>
@@ -1095,7 +1125,14 @@ export function TaskDetailPage({
                     loadingDefaultFileContent ? (
                       <p className="muted-copy">Loading file preview…</p>
                     ) : (
-                      <pre className="file-content-viewer__code" dangerouslySetInnerHTML={{ __html: highlightCode(defaultFileContent ?? "", detectLanguage(defaultFile.relativePath)) }} />
+                      <CommentableFileViewer
+                        commentDraft={commentDraft}
+                        content={defaultFileContent ?? ""}
+                        language={detectLanguage(defaultFile.relativePath)}
+                        onAddComment={onAddComment}
+                        onCommentDraftChange={onCommentDraftChange}
+                        reference={defaultFile}
+                      />
                     )
                   ) : null}
                 </>
@@ -1103,6 +1140,75 @@ export function TaskDetailPage({
                 <p className="muted-copy">Set a default repo file from the Repo files tab to keep the most important file visible here.</p>
               )}
             </div>
+
+            <section className="task-detail-summary__comments task-history-card" data-role="task-detail-summary-comments">
+              <div className="task-detail-summary__history-header">
+                <div>
+                  <p className="eyebrow">Discussion</p>
+                  <h4>Comment on this task</h4>
+                </div>
+                <span className="status-badge status-badge--neutral">{task.commentCount}</span>
+              </div>
+
+              <div className="task-comment-composer task-comment-composer--summary">
+                <div className="task-comment-composer__grid">
+                  <label className="field-group">
+                    <span className="field-group__label">Author</span>
+                    <input className="text-input" data-role="default-file-quick-comment-author" value={commentDraft.author} onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })} />
+                  </label>
+                  <label className="checkbox-row task-comment-composer__interrupt">
+                    <input data-role="default-file-quick-comment-interrupt" type="checkbox" checked={commentDraft.interruptAgent} onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })} />
+                    Interrupt current worker now
+                  </label>
+                </div>
+                <label className="field-group">
+                  <span className="field-group__label">Quick comment</span>
+                  <textarea className="text-area" data-role="default-file-quick-comment-message" rows={3} value={commentDraft.message} onChange={(event) => onCommentDraftChange({ ...commentDraft, message: event.target.value })} />
+                </label>
+                <div className="task-comment-composer__actions">
+                  <button className="primary-button" data-role="add-default-file-quick-comment" type="button" onClick={() => void handleAddTopLevelComment()}>Add comment</button>
+                </div>
+              </div>
+
+              {summaryComments.length ? (
+                <div className="task-section-list" data-role="default-file-comment-summary">
+                  {summaryComments.map(({ comment, replies }) => (
+                    <article className="task-comment-thread task-comment-thread--summary" key={comment.id}>
+                      <article className="transcript-event transcript-event--system task-comment-thread__parent" data-role="task-comment-item">
+                        <div className="transcript-event__meta">
+                          <span>{comment.author}</span>
+                          <div className="transcript-event__meta-group">
+                            {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                            {formatCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(comment)}</span> : null}
+                            <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                          </div>
+                        </div>
+                        <p>{comment.message}</p>
+                        {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
+                      </article>
+                      {replies.length ? (
+                        <div className="task-comment-thread__replies task-comment-thread__replies--summary">
+                          {replies.slice(-2).map((reply) => (
+                            <article className="transcript-event transcript-event--system task-comment-thread__reply" key={reply.id}>
+                              <div className="transcript-event__meta">
+                                <span>{reply.author}</span>
+                                <div className="transcript-event__meta-group">
+                                  {formatCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(reply)}</span> : null}
+                                  <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
+                                </div>
+                              </div>
+                              <p>{reply.message}</p>
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-copy">No comments yet. Add one here or anchor a comment directly from the file preview.</p>
+              )}
+            </section>
 
             <section className="task-detail-summary__history">
               <div className="task-detail-summary__history-header">

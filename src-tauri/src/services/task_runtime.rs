@@ -593,6 +593,14 @@ pub fn escalate_task_whip_limit_exceeded(
             message: note.clone(),
             interrupt_agent: false,
             parent_comment_id: None,
+            repository_id: None,
+            relative_path: None,
+            absolute_path: None,
+            line_start: None,
+            line_end: None,
+            column_start: None,
+            column_end: None,
+            selected_text: None,
         },
     )?;
     if let Some(assignment) = get_active_lane_assignment(connection, &candidate.task_id)? {
@@ -2152,12 +2160,44 @@ fn render_recent_task_comments(comments: &[TaskComment], limit: usize) -> String
         if comment.parent_comment_id.is_some() {
             continue;
         }
-        rendered.push(format!("- {}: {}", comment.author, comment.message));
+        let anchor_label = comment
+            .relative_path
+            .as_deref()
+            .zip(comment.line_start)
+            .map(|(path, line_start)| {
+                let line_end = comment.line_end.unwrap_or(line_start);
+                if line_start == line_end {
+                    format!(" ({path} line {line_start})")
+                } else {
+                    format!(" ({path} lines {line_start}-{line_end})")
+                }
+            })
+            .unwrap_or_default();
+        rendered.push(format!("- {}{}: {}", comment.author, anchor_label, comment.message));
+        if let Some(selected_text) = comment.selected_text.as_deref() {
+            rendered.push(format!("  ↳ selected text: {}", selected_text));
+        }
         for reply in comments.iter().filter(|reply| {
             reply.parent_comment_id.as_deref() == Some(comment.id.as_str())
                 && recent_ids.contains(reply.id.as_str())
         }) {
-            rendered.push(format!("  ↳ {}: {}", reply.author, reply.message));
+            let reply_anchor_label = reply
+                .relative_path
+                .as_deref()
+                .zip(reply.line_start)
+                .map(|(path, line_start)| {
+                    let line_end = reply.line_end.unwrap_or(line_start);
+                    if line_start == line_end {
+                        format!(" ({path} line {line_start})")
+                    } else {
+                        format!(" ({path} lines {line_start}-{line_end})")
+                    }
+                })
+                .unwrap_or_default();
+            rendered.push(format!("  ↳ {}{}: {}", reply.author, reply_anchor_label, reply.message));
+            if let Some(selected_text) = reply.selected_text.as_deref() {
+                rendered.push(format!("    ↳ selected text: {}", selected_text));
+            }
         }
     }
 
@@ -2899,6 +2939,15 @@ mod tests {
                 author: "Reviewer".into(),
                 message: "Check the prompt template output.".into(),
                 interrupt_agent: false,
+                repository_id: None,
+                relative_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
+                anchor_commit_hash: None,
+                anchor_has_uncommitted_changes: None,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             }],
@@ -3242,6 +3291,15 @@ mod tests {
             author: "User".into(),
             message: "Please follow up later.".into(),
             interrupt_agent: false,
+            repository_id: None,
+            relative_path: None,
+            line_start: None,
+            line_end: None,
+            column_start: None,
+            column_end: None,
+            selected_text: None,
+            anchor_commit_hash: None,
+            anchor_has_uncommitted_changes: None,
             created_at: now_iso(),
             updated_at: now_iso(),
         };
@@ -3337,6 +3395,14 @@ mod tests {
                 message: "Please address the latest notes before finishing.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
             },
         )
         .expect("task comment should add");

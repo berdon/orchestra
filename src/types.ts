@@ -541,6 +541,15 @@ export interface TaskComment {
   author: string;
   message: string;
   interruptAgent: boolean;
+  repositoryId?: string | null;
+  relativePath?: string | null;
+  lineStart?: number | null;
+  lineEnd?: number | null;
+  columnStart?: number | null;
+  columnEnd?: number | null;
+  selectedText?: string | null;
+  anchorCommitHash?: string | null;
+  anchorHasUncommittedChanges?: boolean | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -550,6 +559,14 @@ export interface TaskCommentInput {
   message: string;
   interruptAgent: boolean;
   parentCommentId?: string | null;
+  repositoryId?: string | null;
+  relativePath?: string | null;
+  absolutePath?: string | null;
+  lineStart?: number | null;
+  lineEnd?: number | null;
+  columnStart?: number | null;
+  columnEnd?: number | null;
+  selectedText?: string | null;
 }
 
 export interface TaskDependency {
