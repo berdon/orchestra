@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import hljs from "highlight.js";
 
 import type { TaskComment, TaskCommentInput, TaskFileReference } from "../types";
+import { TaskCommentMentionsTextarea } from "./TaskCommentMentionsTextarea";
 
 interface FileCommentAnchor {
   repositoryId: string;
@@ -46,6 +47,7 @@ interface ThreadPopoverState {
 }
 
 interface CommentableFileViewerProps {
+  taskId: string;
   reference: TaskFileReference;
   content: string;
   language: string;
@@ -252,6 +254,7 @@ function buildThreadsByLine(threads: FileCommentThread[]) {
 }
 
 export function CommentableFileViewer({
+  taskId,
   reference,
   content,
   language,
@@ -690,12 +693,14 @@ export function CommentableFileViewer({
             </label>
             <label className="field-group">
               <span className="field-group__label">Comment</span>
-              <textarea
-                className="text-area"
-                data-role="default-file-comment-message"
-                rows={3}
+              <TaskCommentMentionsTextarea
+                taskId={taskId}
                 value={floatingComment.message}
-                onChange={(event) => setFloatingComment((current) => current ? { ...current, message: event.target.value } : current)}
+                rows={3}
+                dataRole="default-file-comment-message"
+                listDataRole="default-file-comment-mention-list"
+                optionDataRole="default-file-comment-mention-option"
+                onChange={(message) => setFloatingComment((current) => current ? { ...current, message } : current)}
               />
             </label>
             <div className="task-comment-composer__actions">

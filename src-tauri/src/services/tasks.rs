@@ -549,6 +549,12 @@ pub fn add_task_comment(
     tx.commit()
         .map_err(|error| format!("Unable to commit task comment: {error}"))?;
 
+    let _ = crate::services::task_comment_file_mentions::add_file_references_for_comment_mentions(
+        connection,
+        task_id,
+        comment.message.as_str(),
+    );
+
     Ok(comment)
 }
 

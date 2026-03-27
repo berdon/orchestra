@@ -699,6 +699,17 @@ pub struct TaskRepository {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskCommentFileMentionCandidate {
+    pub repository_id: String,
+    pub repository_name: String,
+    pub repository_slug: String,
+    pub relative_path: String,
+    pub display_text: String,
+    pub insert_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskCommentInput {
     pub author: String,
     pub message: String,

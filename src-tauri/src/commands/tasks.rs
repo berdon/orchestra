@@ -2,13 +2,14 @@ use tauri::{AppHandle, State};
 
 use crate::{
     models::{
-        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskCommentUpdateInput, TaskDependency,
-        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
+        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentFileMentionCandidate,
+        TaskCommentInput, TaskCommentUpdateInput, TaskDependency, TaskDetail,
+        TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
         TaskUpsertInput,
     },
     services::{
-        app_events, database, pi_sessions, task_attachments, task_file_references,
-        task_repositories, task_runtime, tasks,
+        app_events, database, pi_sessions, task_attachments, task_comment_file_mentions,
+        task_file_references, task_repositories, task_runtime, tasks,
     },
     state::AppState,
 };
@@ -60,6 +61,16 @@ pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
 pub fn list_task_comments(task_id: String) -> Result<Vec<TaskComment>, String> {
     let connection = database::open_connection()?;
     tasks::list_task_comments(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn search_task_comment_file_mentions(
+    task_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<TaskCommentFileMentionCandidate>, String> {
+    let connection = database::open_connection()?;
+    task_comment_file_mentions::search_task_comment_file_mentions(&connection, &task_id, &query, limit)
 }
 
 #[tauri::command]
