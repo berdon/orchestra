@@ -146,7 +146,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (tool.name === "list_task_comments" || tool.name === "get_unread_task_comments") {
+  if (["get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -156,6 +156,52 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "add_task_file_reference") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, repositoryId, and relativePath.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        repositoryId: Type.String({ description: "Repository id that owns the tracked file." }),
+        relativePath: Type.String({ description: "Repository-relative file path to track, e.g. docs/design.md." }),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; repositoryId: string; relativePath: string }) {
+        const payload = {
+          taskId: params.taskId,
+          input: {
+            repositoryId: params.repositoryId,
+            relativePath: params.relativePath,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "remove_task_file_reference") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide referenceId.`,
+      parameters: Type.Object({
+        referenceId: Type.String({ description: "Task file reference id to remove." }),
+      }),
+      async execute(_toolCallId: string, params: { referenceId: string }) {
+        const payload = { referenceId: params.referenceId };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
