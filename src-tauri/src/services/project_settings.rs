@@ -81,7 +81,7 @@ pub fn available_session_prompt_tokens() -> Vec<SessionPromptToken> {
         SessionPromptToken { token: "{LANE.OWNER}".into(), description: "Current lane owner type.".into() },
         SessionPromptToken { token: "{LANE.INSTRUCTION}".into(), description: "Lane entry instruction block.".into() },
         SessionPromptToken { token: "{WORKER.CONTEXT}".into(), description: "Worker-specific prompt context block including base and overlay prompts.".into() },
-        SessionPromptToken { token: "{RUNTIME.CWD}".into(), description: "Resolved runtime cwd for the session.".into() },
+        SessionPromptToken { token: "{RUNTIME.CWD}".into(), description: "Resolved task workspace cwd for the current lane.".into() },
         SessionPromptToken { token: "{ORCHESTRA.WORKING_RULES}".into(), description: "Standard Orchestra working rules block.".into() },
         SessionPromptToken { token: "{ORCHESTRA.TOOL_HELP}".into(), description: "Standard Orchestra task tool help block.".into() },
         SessionPromptToken { token: "{ORCHESTRA.COMPLETION_RULES}".into(), description: "Standard Orchestra completion rules block.".into() },

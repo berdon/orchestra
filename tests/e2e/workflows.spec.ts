@@ -27,6 +27,7 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   await page.getByLabel("Lane key").fill("implement");
   await page.locator('[data-role="lane-owner-type"]').selectOption("agent");
   await page.locator('[data-role="lane-owner-reference"]').selectOption("data");
+  await page.locator('[data-role="lane-use-separate-worktree"]').check();
   await page.locator('[data-role="lane-success-review-required"]').check();
   await page.locator('[data-role="save-workflow"]').click();
 
@@ -39,5 +40,6 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   });
 
   expect(savedLane?.assignedEntityId).toBe("data");
+  expect(savedLane?.useSeparateWorktree).toBe(true);
   expect(savedLane?.requireUserApprovalOnSuccess).toBe(true);
 });

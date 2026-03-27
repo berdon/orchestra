@@ -25,7 +25,7 @@ fn load_session_debug_info(
     let task_assignment = connection
         .query_row(
             r#"
-            SELECT tla.runtime_cwd, r.local_path, p.slug
+            SELECT tla.id, tla.task_id, t.project_id, tla.runtime_cwd, r.local_path, p.slug
             FROM task_lane_assignments tla
             LEFT JOIN tasks t ON t.id = tla.task_id
             LEFT JOIN repositories r ON r.id = t.repository_id
@@ -37,9 +37,12 @@ fn load_session_debug_info(
             [session_id],
             |row| {
                 Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
@@ -53,7 +56,7 @@ fn load_session_debug_info(
         })
         .map_err(|error| format!("Unable to load task session debug info {session_id}: {error}"))?;
 
-    if let Some((runtime_cwd, managed_repository_path, project_slug)) = task_assignment {
+    if let Some((assignment_id, task_id, project_id, runtime_cwd, managed_repository_path, project_slug)) = task_assignment {
         let project_root = project_slug.and_then(|slug| {
             crate::services::orchestra_paths::default_orchestra_root()
                 .ok()
@@ -63,11 +66,22 @@ fn load_session_debug_info(
                         .to_string()
                 })
         });
+        let worktree_path = task_runtime::get_active_assignment_for_session(connection, session_id)?
+            .filter(|assignment| assignment.id == assignment_id)
+            .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, &assignment, &task_id, &project_id))
+            .transpose()?
+            .flatten()
+            .or(runtime_cwd.clone());
+        let session_cwd = find_session_context_for_session(session_id)
+            .ok()
+            .and_then(|context| get_session_header_cwd(&context.session_dir, session_id).ok().flatten())
+            .map(|path| path.display().to_string())
+            .or(runtime_cwd.clone());
         return Ok(Some(SessionDebugInfo {
             project_root,
             managed_repository_path: managed_repository_path.clone(),
-            worktree_path: runtime_cwd.clone(),
-            session_cwd: runtime_cwd,
+            worktree_path,
+            session_cwd,
         }));
     }
 

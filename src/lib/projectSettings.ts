@@ -86,7 +86,7 @@ const SESSION_PROMPT_TOKENS = [
   { token: "{LANE.OWNER}", description: "Current lane owner type." },
   { token: "{LANE.INSTRUCTION}", description: "Lane entry instruction block." },
   { token: "{WORKER.CONTEXT}", description: "Worker-specific prompt context block including base and overlay prompts." },
-  { token: "{RUNTIME.CWD}", description: "Resolved runtime cwd for the session." },
+  { token: "{RUNTIME.CWD}", description: "Resolved task workspace cwd for the current lane." },
   { token: "{ORCHESTRA.WORKING_RULES}", description: "Standard Orchestra working rules block." },
   { token: "{ORCHESTRA.TOOL_HELP}", description: "Standard Orchestra task tool help block." },
   { token: "{ORCHESTRA.COMPLETION_RULES}", description: "Standard Orchestra completion rules block." },

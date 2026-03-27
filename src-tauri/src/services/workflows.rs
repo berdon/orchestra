@@ -220,6 +220,7 @@ pub fn duplicate_workflow(
                 assigned_entity_type: lane.assigned_entity_type,
                 assigned_entity_id: lane.assigned_entity_id,
                 entry_prompt_template: lane.entry_prompt_template,
+                use_separate_worktree: lane.use_separate_worktree,
                 require_user_approval_on_success: lane.require_user_approval_on_success,
                 success_transition_type: lane.success_transition_type,
                 success_target_lane_id: remap_lane_target(
@@ -569,6 +570,7 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 assigned_entity_type,
                 assigned_entity_id,
                 entry_prompt_template,
+                use_separate_worktree,
                 require_user_approval_on_success,
                 success_transition_type,
                 success_target_lane_id,
@@ -594,11 +596,12 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 assigned_entity_type: row.get(5)?,
                 assigned_entity_id: row.get(6)?,
                 entry_prompt_template: row.get(7)?,
-                require_user_approval_on_success: row.get::<_, i64>(8)? != 0,
-                success_transition_type: row.get(9)?,
-                success_target_lane_id: row.get(10)?,
-                failure_transition_type: row.get(11)?,
-                failure_target_lane_id: row.get(12)?,
+                use_separate_worktree: row.get::<_, i64>(8)? != 0,
+                require_user_approval_on_success: row.get::<_, i64>(9)? != 0,
+                success_transition_type: row.get(10)?,
+                success_target_lane_id: row.get(11)?,
+                failure_transition_type: row.get(12)?,
+                failure_target_lane_id: row.get(13)?,
             })
         })
         .map_err(|error| format!("Unable to query workflow lanes for {workflow_id}: {error}"))?;
@@ -627,6 +630,7 @@ fn write_lanes(
                     assigned_entity_type,
                     assigned_entity_id,
                     entry_prompt_template,
+                    use_separate_worktree,
                     require_user_approval_on_success,
                     success_transition_type,
                     success_target_lane_id,
@@ -635,7 +639,7 @@ fn write_lanes(
                     user_intervention_target_lane_id,
                     created_at,
                     updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL, ?15, ?15)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, NULL, ?16, ?16)
                 "#,
                 params![
                     lane.id,
@@ -647,6 +651,7 @@ fn write_lanes(
                     lane.assigned_entity_type,
                     lane.assigned_entity_id,
                     lane.entry_prompt_template,
+                    if lane.use_separate_worktree { 1 } else { 0 },
                     if lane.require_user_approval_on_success { 1 } else { 0 },
                     lane.success_transition_type,
                     lane.success_target_lane_id,
@@ -678,6 +683,7 @@ struct NormalizedLaneInput {
     assigned_entity_type: String,
     assigned_entity_id: Option<String>,
     entry_prompt_template: Option<String>,
+    use_separate_worktree: bool,
     require_user_approval_on_success: bool,
     success_transition_type: String,
     success_target_lane_id: Option<String>,
@@ -706,6 +712,7 @@ fn normalize_input(input: WorkflowUpsertInput) -> NormalizedWorkflowInput {
 }
 
 fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLaneInput {
+    let assigned_entity_type = lane.assigned_entity_type.trim().to_lowercase();
     NormalizedLaneInput {
         id: lane
             .id
@@ -715,9 +722,10 @@ fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLane
         name: lane.name.trim().to_string(),
         description: normalized_optional_string(lane.description),
         order: lane.order.unwrap_or(index as i64),
-        assigned_entity_type: lane.assigned_entity_type.trim().to_lowercase(),
+        assigned_entity_type: assigned_entity_type.clone(),
         assigned_entity_id: normalized_optional_string(lane.assigned_entity_id),
         entry_prompt_template: normalized_optional_string(lane.entry_prompt_template),
+        use_separate_worktree: lane.use_separate_worktree && matches!(assigned_entity_type.as_str(), "agent" | "role"),
         require_user_approval_on_success: lane.require_user_approval_on_success,
         success_transition_type: normalize_transition_type(&lane.success_transition_type),
         success_target_lane_id: normalize_transition_target(
@@ -895,6 +903,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: Some("Draft a plan".into()),
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "lane".into(),
                     success_target_lane_id: Some("lane-build".into()),
@@ -910,6 +919,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -961,6 +971,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -1008,6 +1019,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "lane".into(),
                     success_target_lane_id: Some("missing-lane".into()),
@@ -1042,6 +1054,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some("agent-missing".into()),
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -1078,6 +1091,7 @@ mod tests {
                     assigned_entity_type: "role".into(),
                     assigned_entity_id: Some("reviewer".into()),
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -1110,6 +1124,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some("data".into()),
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -1140,6 +1155,7 @@ mod tests {
                     assigned_entity_type: "user".into(),
                     assigned_entity_id: None,
                     entry_prompt_template: None,
+                    use_separate_worktree: false,
                     require_user_approval_on_success: true,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -1175,6 +1191,7 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: None,
+                        use_separate_worktree: false,
                         require_user_approval_on_success: false,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
@@ -1190,6 +1207,7 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: None,
+                        use_separate_worktree: false,
                         require_user_approval_on_success: false,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,

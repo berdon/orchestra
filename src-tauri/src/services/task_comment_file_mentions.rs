@@ -10,7 +10,7 @@ use rusqlite::Connection;
 
 use crate::{
     models::{TaskCommentFileMentionCandidate, TaskFileReference, TaskFileReferenceInput, TaskRepository},
-    services::{task_file_references, task_repositories, task_runtime},
+    services::{task_file_references, task_repositories, task_runtime, tasks},
 };
 
 const CACHE_TTL: Duration = Duration::from_secs(10);
@@ -120,8 +120,8 @@ pub fn add_file_references_for_comment_mentions(
         return Ok(Vec::new());
     }
 
-    let runtime_cwd = current_runtime_cwd(connection, task_id)?;
-    let existing = task_file_references::load_task_file_references(connection, task_id, runtime_cwd.as_deref())?;
+    let task_workspace_cwd = current_task_workspace_cwd(connection, task_id)?;
+    let existing = task_file_references::load_task_file_references(connection, task_id, task_workspace_cwd.as_deref())?;
     let mut existing_paths = existing
         .into_iter()
         .map(|reference| (reference.repository_id, reference.relative_path))
@@ -160,18 +160,22 @@ fn mention_search_repositories(
     connection: &Connection,
     task_id: &str,
 ) -> Result<Vec<RepositorySearchRoot>, String> {
-    let runtime_cwd = current_runtime_cwd(connection, task_id)?;
-    let repositories = task_repositories::load_task_repositories(connection, task_id, runtime_cwd.as_deref())?;
+    let task_workspace_cwd = current_task_workspace_cwd(connection, task_id)?;
+    let repositories = task_repositories::load_task_repositories(connection, task_id, task_workspace_cwd.as_deref())?;
     Ok(repositories
         .into_iter()
         .filter_map(resolve_repository_search_root)
         .collect())
 }
 
-fn current_runtime_cwd(connection: &Connection, task_id: &str) -> Result<Option<String>, String> {
-    Ok(task_runtime::get_current_lane_assignment(connection, task_id)?
+fn current_task_workspace_cwd(connection: &Connection, task_id: &str) -> Result<Option<String>, String> {
+    let task = tasks::get_task(connection, task_id)?;
+    Ok(task
+        .active_lane_assignment
         .as_ref()
-        .and_then(|assignment| assignment.runtime_cwd.clone()))
+        .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, assignment, task_id, &task.project_id))
+        .transpose()?
+        .flatten())
 }
 
 fn resolve_repository_search_root(repository: TaskRepository) -> Option<RepositorySearchRoot> {

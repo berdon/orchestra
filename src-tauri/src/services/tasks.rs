@@ -659,11 +659,14 @@ fn resolve_comment_anchor(
         return Err("selectedText: Text selections require both start and end columns.".into());
     }
 
+    let task = get_task(connection, task_id)?;
     let active_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
-    let runtime_cwd = active_assignment
+    let task_workspace_cwd = active_assignment
         .as_ref()
-        .and_then(|assignment| assignment.runtime_cwd.as_deref());
-    let file_references = task_file_references::load_task_file_references(connection, task_id, runtime_cwd)?;
+        .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, assignment, task_id, &task.project_id))
+        .transpose()?
+        .flatten();
+    let file_references = task_file_references::load_task_file_references(connection, task_id, task_workspace_cwd.as_deref())?;
     let resolved_file = file_references
         .into_iter()
         .find(|reference| {

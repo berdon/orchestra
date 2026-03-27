@@ -398,6 +398,7 @@ export interface WorkflowLane {
   assignedEntityType: WorkflowOwnerType | string;
   assignedEntityId?: string | null;
   entryPromptTemplate?: string | null;
+  useSeparateWorktree?: boolean;
   requireUserApprovalOnSuccess?: boolean;
   successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
@@ -816,6 +817,7 @@ export interface WorkflowLaneInput {
   assignedEntityType: WorkflowOwnerType | string;
   assignedEntityId?: string | null;
   entryPromptTemplate?: string | null;
+  useSeparateWorktree?: boolean;
   requireUserApprovalOnSuccess?: boolean;
   successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
