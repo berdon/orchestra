@@ -246,7 +246,12 @@ export function TasksPage({
       id: `comment-${comment.id}`,
       kind: "comment",
       title: comment.parentCommentId ? `${comment.author} replied` : `${comment.author} commented`,
-      description: comment.message,
+      description: [
+        comment.relativePath && comment.lineStart
+          ? `${comment.relativePath} · ${comment.lineStart === comment.lineEnd || !comment.lineEnd ? `line ${comment.lineStart}` : `lines ${comment.lineStart}-${comment.lineEnd}`}`
+          : null,
+        comment.message,
+      ].filter(Boolean).join("\n\n"),
       timestamp: comment.updatedAt,
       tone: comment.interruptAgent ? "warning" : "neutral",
     }));
@@ -710,9 +715,9 @@ export function TasksPage({
     }
   }
 
-  async function handleAddComment(draft: TaskCommentInput) {
+  async function handleAddComment(draft: TaskCommentInput): Promise<boolean> {
     if (route.kind !== "detail") {
-      return;
+      return false;
     }
     setTaskActionError(null);
     try {
@@ -722,8 +727,10 @@ export function TasksPage({
       }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
+      return true;
     } catch (error) {
       setTaskActionError(error instanceof Error ? error.message : "Unable to add comment.");
+      return false;
     }
   }
 

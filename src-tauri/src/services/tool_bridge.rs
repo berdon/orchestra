@@ -1762,6 +1762,14 @@ mod tests {
                 message: "Please read this through the bridge.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
             },
         )
         .expect("comment should add");

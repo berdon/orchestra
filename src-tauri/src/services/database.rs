@@ -282,14 +282,27 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 author TEXT NOT NULL,
                 message TEXT NOT NULL,
                 interrupt_agent INTEGER NOT NULL DEFAULT 0,
+                repository_id TEXT,
+                relative_path TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
+                column_start INTEGER,
+                column_end INTEGER,
+                selected_text TEXT,
+                anchor_commit_hash TEXT,
+                anchor_has_uncommitted_changes INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-                FOREIGN KEY(parent_comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+                FOREIGN KEY(parent_comment_id) REFERENCES task_comments(id) ON DELETE CASCADE,
+                FOREIGN KEY(repository_id) REFERENCES repositories(id) ON DELETE SET NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_task_comments_task_id
                 ON task_comments(task_id, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_task_comments_anchor
+                ON task_comments(task_id, repository_id, relative_path, line_start, created_at ASC);
 
             CREATE TABLE IF NOT EXISTS task_comment_receipts (
                 comment_id TEXT NOT NULL,
@@ -773,6 +786,83 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
             })?;
     }
 
+    if !columns.contains("repository_id") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN repository_id TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add repository_id column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("relative_path") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN relative_path TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add relative_path column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("line_start") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN line_start INTEGER", [])
+            .map_err(|error| {
+                format!("Unable to add line_start column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("line_end") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN line_end INTEGER", [])
+            .map_err(|error| {
+                format!("Unable to add line_end column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("column_start") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN column_start INTEGER", [])
+            .map_err(|error| {
+                format!("Unable to add column_start column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("column_end") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN column_end INTEGER", [])
+            .map_err(|error| {
+                format!("Unable to add column_end column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("selected_text") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN selected_text TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add selected_text column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("anchor_commit_hash") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN anchor_commit_hash TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add anchor_commit_hash column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("anchor_has_uncommitted_changes") {
+        connection
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN anchor_has_uncommitted_changes INTEGER",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add anchor_has_uncommitted_changes column to task_comments: {error}"
+                )
+            })?;
+    }
+
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_task_comments_parent_comment_id ON task_comments(task_id, parent_comment_id, created_at ASC)",
@@ -781,6 +871,17 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
         .map_err(|error| {
             format!(
                 "Unable to create task comment parent index after migration: {error}"
+            )
+        })?;
+
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_comments_anchor ON task_comments(task_id, repository_id, relative_path, line_start, created_at ASC)",
+            [],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to create task comment anchor index after migration: {error}"
             )
         })?;
 

@@ -41,6 +41,7 @@ const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
+const TASK_FILE_CONTENT_STORAGE_KEY = "orchestra.mock.file-contents";
 const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
@@ -2406,6 +2407,15 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
       author,
       message,
       interruptAgent: input.interruptAgent,
+      repositoryId: input.repositoryId?.trim() || null,
+      relativePath: input.relativePath?.trim() || null,
+      lineStart: input.lineStart ?? null,
+      lineEnd: input.lineEnd ?? input.lineStart ?? null,
+      columnStart: input.columnStart ?? null,
+      columnEnd: input.columnEnd ?? null,
+      selectedText: input.selectedText?.trim() || null,
+      anchorCommitHash: null,
+      anchorHasUncommittedChanges: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -2538,7 +2548,12 @@ export async function setDefaultTaskFileReference(referenceId: string): Promise<
 
 export async function getTaskFileContent(path: string): Promise<string> {
   if (!isTauriAvailable()) {
-    return "Mocked file content for: " + path;
+    const storedContents = getStoredValue<Record<string, string>>(TASK_FILE_CONTENT_STORAGE_KEY) ?? {};
+    return storedContents[path] ?? [
+      `Mocked file content for: ${path}`,
+      "Second line for anchored comments.",
+      "Third line with text selection support.",
+    ].join("\n");
   }
 
   return invoke<string>("get_task_file_content", { path });
