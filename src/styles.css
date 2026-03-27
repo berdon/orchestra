@@ -385,8 +385,27 @@ strong {
   color: var(--accent);
 }
 
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 4px 10px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-badge--accent {
   background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
 
@@ -400,6 +419,7 @@ strong {
 
 .status-badge--warning {
   background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 18%, transparent);
   color: var(--warning);
 }
 
@@ -409,16 +429,19 @@ strong {
 
 .status-badge--error {
   background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 18%, transparent);
   color: var(--danger);
 }
 
 .status-badge--success {
   background: var(--success-soft);
+  border-color: color-mix(in srgb, var(--success) 18%, transparent);
   color: var(--success);
 }
 
 .status-badge--neutral {
   background: var(--bg-subtle);
+  border-color: var(--border);
   color: var(--text-muted);
 }
 
@@ -593,10 +616,22 @@ strong {
   padding: 10px 12px;
   color: var(--text-muted);
   text-decoration: none;
-  white-space: nowrap;
+  border-radius: 12px;
+}
+
+.session-list-link__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-list-link__title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-radius: 12px;
+  white-space: nowrap;
 }
 
 .session-list-link:hover {
