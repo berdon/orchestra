@@ -131,11 +131,6 @@ pub fn list_unread_mail_for_authorization(
     task_id: Option<&str>,
 ) -> Result<Vec<MailboxMessage>, String> {
     let mut deliveries = BTreeMap::new();
-    let project_id = task_id
-        .map(|task_id| resolve_project_id_for_task(connection, task_id))
-        .transpose()?
-        .flatten()
-        .or(resolve_project_id_for_session(connection, session_id)?);
 
     let assignment_scope = match authorization {
         Some(authorization) => {
@@ -155,7 +150,7 @@ pub fn list_unread_mail_for_authorization(
         });
 
     if let Some(agent_id) = agent_id.as_deref() {
-        for message in load_unread_agent_mail(connection, project_id.as_deref(), agent_id)? {
+        for message in load_unread_agent_mail(connection, agent_id)? {
             deliveries.insert(message.delivery_id.clone(), message);
         }
     }
@@ -681,25 +676,14 @@ fn resolve_project_id_for_task(
 
 fn load_unread_agent_mail(
     connection: &Connection,
-    project_id: Option<&str>,
     agent_id: &str,
 ) -> Result<Vec<MailboxMessage>, String> {
-    let sql = if project_id.is_some() {
-        format!(
-            "{} WHERE d.recipient_type = 'agent' AND d.recipient_id = ?1 AND d.read_at IS NULL AND m.project_id = ?2 ORDER BY m.created_at ASC, d.id ASC",
-            mailbox_message_select()
-        )
-    } else {
-        format!(
-            "{} WHERE d.recipient_type = 'agent' AND d.recipient_id = ?1 AND d.read_at IS NULL ORDER BY m.created_at ASC, d.id ASC",
-            mailbox_message_select()
-        )
-    };
+    let sql = format!(
+        "{} WHERE d.recipient_type = 'agent' AND d.recipient_id = ?1 AND d.read_at IS NULL ORDER BY m.created_at ASC, d.id ASC",
+        mailbox_message_select()
+    );
 
-    match project_id {
-        Some(project_id) => load_messages_with_sql(connection, &sql, vec![&agent_id, &project_id]),
-        None => load_messages_with_sql(connection, &sql, vec![&agent_id]),
-    }
+    load_messages_with_sql(connection, &sql, vec![&agent_id])
 }
 
 fn load_unread_assignment_mail(
@@ -995,6 +979,7 @@ mod tests {
         connection: &Connection,
         delivery_id: &str,
         message_id: &str,
+        project_id: &str,
         task_id: Option<&str>,
         sender_label: &str,
         recipient_type: &str,
@@ -1005,8 +990,8 @@ mod tests {
     ) {
         connection
             .execute(
-                "INSERT INTO mailbox_messages (id, project_id, task_id, sender_type, sender_id, sender_label, body, priority, created_at, updated_at) VALUES (?1, 'orchestra', ?2, 'user', 'desktop-user', ?3, 'Hello', 'normal', ?4, ?4)",
-                params![message_id, task_id, sender_label, now],
+                "INSERT INTO mailbox_messages (id, project_id, task_id, sender_type, sender_id, sender_label, body, priority, created_at, updated_at) VALUES (?1, ?2, ?3, 'user', 'desktop-user', ?4, 'Hello', 'normal', ?5, ?5)",
+                params![message_id, project_id, task_id, sender_label, now],
             )
             .expect("message should seed");
         connection
@@ -1028,6 +1013,7 @@ mod tests {
             &connection,
             "delivery-agent",
             "message-agent",
+            "orchestra",
             Some(&task_id),
             "User",
             "agent",
@@ -1040,6 +1026,7 @@ mod tests {
             &connection,
             "delivery-assignment",
             "message-assignment",
+            "orchestra",
             Some(&task_id),
             "User",
             "assignment",
@@ -1084,6 +1071,42 @@ mod tests {
     }
 
     #[test]
+    fn direct_agent_mail_is_visible_even_when_message_project_differs_from_task_project() {
+        let mut connection = open_test_connection("messages-cross-project-agent");
+        let now = crate::state::now_iso();
+        seed_agent(&connection, "agent-1", "Agent 1", &now);
+        let task_id = create_basic_task(&mut connection, "Mailbox runtime task");
+        seed_assignment(&connection, "assignment-1", &task_id, "agent-1", "session-1", &now);
+        seed_delivery(
+            &connection,
+            "delivery-agent-cross-project",
+            "message-agent-cross-project",
+            "other-project",
+            None,
+            "User",
+            "agent",
+            Some("agent-1"),
+            "Agent 1",
+            None,
+            &now,
+        );
+
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: "agent-1".into(),
+        };
+        let unread = list_unread_mail_for_authorization(
+            &connection,
+            Some(&authorization),
+            Some("session-1"),
+            Some(&task_id),
+        )
+        .expect("unread mail should load");
+        assert_eq!(unread.len(), 1);
+        assert_eq!(unread[0].delivery_id, "delivery-agent-cross-project");
+    }
+
+    #[test]
     fn user_inbox_lists_and_marks_user_messages_read() {
         let connection = open_test_connection("messages-user-inbox");
         let now = crate::state::now_iso();
@@ -1091,6 +1114,7 @@ mod tests {
             &connection,
             "delivery-user",
             "message-user",
+            "orchestra",
             None,
             "Agent 1",
             "user",
