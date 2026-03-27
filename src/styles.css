@@ -1968,6 +1968,28 @@ strong {
   white-space: pre-wrap;
 }
 
+.task-comment-message {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.task-comment-message__mention-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.task-comment-message__mention-link:hover,
+.task-comment-message__mention-link:focus-visible {
+  color: color-mix(in srgb, var(--accent) 78%, black);
+}
+
 .task-comment-composer--summary {
   padding: 14px 16px;
   border: 1px solid var(--border);

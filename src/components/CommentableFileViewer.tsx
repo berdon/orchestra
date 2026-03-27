@@ -3,6 +3,7 @@ import hljs from "highlight.js";
 
 import type { TaskComment, TaskCommentInput, TaskFileReference } from "../types";
 import { TaskCommentMentionsTextarea } from "./TaskCommentMentionsTextarea";
+import { TaskCommentMessage } from "./TaskCommentMessage";
 
 interface FileCommentAnchor {
   repositoryId: string;
@@ -49,6 +50,7 @@ interface ThreadPopoverState {
 interface CommentableFileViewerProps {
   taskId: string;
   reference: TaskFileReference;
+  fileReferences: TaskFileReference[];
   content: string;
   language: string;
   comments: TaskComment[];
@@ -57,6 +59,7 @@ interface CommentableFileViewerProps {
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
   onDeleteComment: (commentId: string) => Promise<boolean>;
+  onOpenFileReference: (reference: TaskFileReference) => void;
 }
 
 const DEFAULT_VIEWPORT_HEIGHT_PX = 720;
@@ -256,6 +259,7 @@ function buildThreadsByLine(threads: FileCommentThread[]) {
 export function CommentableFileViewer({
   taskId,
   reference,
+  fileReferences,
   content,
   language,
   comments,
@@ -264,6 +268,7 @@ export function CommentableFileViewer({
   onAddComment,
   onUpdateComment,
   onDeleteComment,
+  onOpenFileReference,
 }: CommentableFileViewerProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -746,7 +751,12 @@ export function CommentableFileViewer({
                       />
                     </label>
                   ) : (
-                    <p>{comment.message}</p>
+                    <TaskCommentMessage
+                      dataRole="task-comment-file-mention-link"
+                      fileReferences={fileReferences}
+                      message={comment.message}
+                      onOpenFileReference={onOpenFileReference}
+                    />
                   )}
                   {comment.selectedText ? <pre className="file-content-viewer__selection-preview">{comment.selectedText}</pre> : null}
                   {replies.length ? (
@@ -769,7 +779,12 @@ export function CommentableFileViewer({
                               />
                             </label>
                           ) : (
-                            <p>{reply.message}</p>
+                            <TaskCommentMessage
+                              dataRole="task-comment-file-mention-link"
+                              fileReferences={fileReferences}
+                              message={reply.message}
+                              onOpenFileReference={onOpenFileReference}
+                            />
                           )}
                           <div className="file-content-viewer__thread-actions">
                             {editingCommentId === reply.id ? (
