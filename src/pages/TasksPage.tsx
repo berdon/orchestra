@@ -24,6 +24,7 @@ import {
   removeTaskDependency,
   removeTaskFileReference,
   requestUserIntervention,
+  resetTaskRuntime,
   sendLaneBackForWork,
   sendSessionMessage,
   setDefaultTaskFileReference,
@@ -192,6 +193,7 @@ export function TasksPage({
   const [savingTask, setSavingTask] = useState(false);
   const [publishingTask, setPublishingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
+  const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
   const createTaskTokenRef = useRef(0);
@@ -222,6 +224,18 @@ export function TasksPage({
     () => tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
     [tasks],
   );
+
+  async function runDetailAction(actionId: string, operation: () => Promise<void>, fallbackMessage: string) {
+    setTaskActionError(null);
+    setDetailActionPending(actionId);
+    try {
+      await operation();
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : fallbackMessage);
+    } finally {
+      setDetailActionPending(null);
+    }
+  }
 
   const timelineItems = useMemo<TaskTimelineItem[]>(() => {
     if (!taskDetail) {
@@ -535,17 +549,13 @@ export function TasksPage({
       return;
     }
     setSavingTask(true);
-    setTaskActionError(null);
-    try {
+    await runDetailAction("save", async () => {
       const saved = await updateTask(route.taskId, taskDraft);
       await loadTasksData();
       await loadTaskDetail(saved.id);
       setTaskDraftDirty(false);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to save task.");
-    } finally {
-      setSavingTask(false);
-    }
+    }, "Unable to save task.");
+    setSavingTask(false);
   }
 
   async function handlePublishDetailTask() {
@@ -553,18 +563,14 @@ export function TasksPage({
       return;
     }
     setPublishingTask(true);
-    setTaskActionError(null);
-    try {
+    await runDetailAction("publish", async () => {
       const saved = await updateTask(route.taskId, { ...taskDraft, status: "ready" });
       await maybeDispatchPublishedTask(saved.id);
       await loadTasksData();
       await loadTaskDetail(saved.id);
       setTaskDraftDirty(false);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to publish task.");
-    } finally {
-      setPublishingTask(false);
-    }
+    }, "Unable to publish task.");
+    setPublishingTask(false);
   }
 
   async function handleDeleteDetailTask() {
@@ -572,8 +578,7 @@ export function TasksPage({
       return;
     }
     setDeletingTask(true);
-    setTaskActionError(null);
-    try {
+    await runDetailAction("delete", async () => {
       await deleteTask(route.taskId);
       await loadTasksData();
       setRoute({ kind: "overview" });
@@ -583,11 +588,8 @@ export function TasksPage({
       setFileReferenceDraft(createBlankFileReferenceDraft());
       setTaskDraftDirty(false);
       setSelectedBlockerTaskId("");
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to delete task.");
-    } finally {
-      setDeletingTask(false);
-    }
+    }, "Unable to delete task.");
+    setDeletingTask(false);
   }
 
   async function handleAddDependency() {
@@ -729,22 +731,19 @@ export function TasksPage({
     if (route.kind !== "detail") {
       return;
     }
-    setTaskActionError(null);
-    try {
+    await runDetailAction("dispatch-ready", async () => {
       await dispatchTaskLane(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to dispatch task lane.");
-    }
+    }, "Unable to dispatch task lane.");
   }
 
   async function handleCompleteLane(outcome: "success" | "failure" | "needs_user") {
     if (route.kind !== "detail") {
       return;
     }
-    setTaskActionError(null);
-    try {
+    const actionId = outcome === "success" ? "approve-user" : outcome === "failure" ? "needs-work-user" : "needs-user";
+    await runDetailAction(actionId, async () => {
       if (outcome === "success") {
         await completeLaneAsSuccess(route.taskId);
       } else if (outcome === "failure") {
@@ -754,59 +753,48 @@ export function TasksPage({
       }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to complete task lane.");
-    }
+    }, "Unable to complete task lane.");
   }
 
   async function handleApproveLaneCompletion() {
     if (route.kind !== "detail") {
       return;
     }
-    setTaskActionError(null);
-    try {
+    await runDetailAction("approve-pending", async () => {
       await approveLaneCompletion(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to approve task lane.");
-    }
+    }, "Unable to approve task lane.");
   }
 
   async function handleSendLaneBackForWork() {
     if (route.kind !== "detail") {
       return;
     }
-    setTaskActionError(null);
-    try {
+    await runDetailAction("needs-work-pending", async () => {
       await sendLaneBackForWork(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to send task lane back for work.");
-    }
+    }, "Unable to send task lane back for work.");
   }
 
   async function handlePauseTaskRuntime() {
-    if (route.kind !== "detail" || !taskDetail?.activeLaneAssignment?.sessionId) {
+    const sessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
+    if (route.kind !== "detail" || !sessionId) {
       return;
     }
-    setTaskActionError(null);
-    try {
-      await stopSessionRuntime(taskDetail.activeLaneAssignment.sessionId);
+    await runDetailAction("pause", async () => {
+      await stopSessionRuntime(sessionId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to pause task runtime.");
-    }
+    }, "Unable to pause task runtime.");
   }
 
   async function handleWhipTask() {
     if (route.kind !== "detail") {
       return;
     }
-    setTaskActionError(null);
-    try {
+    await runDetailAction("whip", async () => {
       const activeSessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
       if (activeSessionId) {
         await sendSessionMessage(
@@ -818,9 +806,22 @@ export function TasksPage({
       await manualTaskWhip(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to send manual task whip.");
+    }, "Unable to send manual task whip.");
+  }
+
+  async function handleResetTaskRuntime() {
+    if (route.kind !== "detail") {
+      return;
     }
+    await runDetailAction("reset", async () => {
+      const activeSessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
+      if (activeSessionId) {
+        await stopSessionRuntime(activeSessionId);
+      }
+      await resetTaskRuntime(route.taskId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    }, "Unable to reset task runtime.");
   }
 
   async function handleRetryTaskLane() {
@@ -917,12 +918,14 @@ export function TasksPage({
           onRetry={() => void handleRetryTaskLane()}
           onPauseRuntime={() => void handlePauseTaskRuntime()}
           onWhipTask={() => void handleWhipTask()}
+          onResetTask={() => void handleResetTaskRuntime()}
           onSendBackForWork={() => void handleSendLaneBackForWork()}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
           onSetDefaultFileReference={(referenceId) => void handleSetDefaultFileReference(referenceId)}
           onSave={() => void handleSaveDetailTask()}
           onSelectBlocker={setSelectedBlockerTaskId}
+          pendingActionId={detailActionPending}
           publishing={publishingTask}
           roles={roles}
           repositories={repositories}

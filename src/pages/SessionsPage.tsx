@@ -40,6 +40,7 @@ interface SessionsPageProps {
   getEventTone: (kind: SessionEvent["kind"]) => string;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onDeleteClosedSessions: () => void;
   onModelChange: (value: string) => void;
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
@@ -69,6 +70,7 @@ export function SessionsPage({
   getEventTone,
   onSelectSession,
   onDeleteSession,
+  onDeleteClosedSessions,
   onModelChange,
   onDraftChange,
   onSendMessage,
@@ -178,37 +180,47 @@ export function SessionsPage({
             </button>
           </div>
 
-          <nav className="session-list" aria-label="Sessions">
-            {sessions.length === 0 ? <p className="muted-copy">No {sessionFilter} sessions.</p> : null}
-            {sessions.map((session) => (
-              <div
-                key={session.id}
-                className={session.id === selectedSession?.id ? "session-list-row session-list-row--active" : "session-list-row"}
-              >
-                <a
-                  data-role="session-link"
-                  data-session-id={session.id}
-                  className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onSelectSession(session.id);
-                  }}
+          <div className="session-list-scroll">
+            <nav className="session-list" aria-label="Sessions">
+              {sessions.length === 0 ? <p className="muted-copy">No {sessionFilter} sessions.</p> : null}
+              {sessions.map((session) => (
+                <div
+                  key={session.id}
+                  className={session.id === selectedSession?.id ? "session-list-row session-list-row--active" : "session-list-row"}
                 >
-                  <span>{session.title}</span>
-                  <span className="muted-copy">{formatActivityLabel(session.activityState, session.activeToolName)}</span>
-                </a>
-                <button
-                  className="session-delete-button"
-                  type="button"
-                  aria-label={`Delete ${session.title}`}
-                  onClick={() => onDeleteSession(session.id)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </nav>
+                  <a
+                    data-role="session-link"
+                    data-session-id={session.id}
+                    className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
+                    href="#"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onSelectSession(session.id);
+                    }}
+                  >
+                    <span>{session.title}</span>
+                    <span className="muted-copy">{formatActivityLabel(session.activityState, session.activeToolName)}</span>
+                  </a>
+                  <button
+                    className="session-delete-button"
+                    type="button"
+                    aria-label={`Delete ${session.title}`}
+                    onClick={() => onDeleteSession(session.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </nav>
+          </div>
+
+          {sessionFilter === "closed" ? (
+            <div className="session-list-footer">
+              <button className="secondary-button secondary-button--danger" data-role="delete-closed-sessions" type="button" onClick={onDeleteClosedSessions}>
+                Delete closed
+              </button>
+            </div>
+          ) : null}
         </aside>
 
         <div className="session-detail-column">

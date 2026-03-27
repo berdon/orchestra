@@ -40,7 +40,7 @@ use commands::{
         complete_lane_as_success, create_subtask, create_task, delete_task,
         dispatch_task_lane, get_task, get_task_context, get_task_file_content, list_task_comments,
         list_task_file_references, list_task_repositories, list_tasks, manual_task_whip,
-        remove_task_attachment, remove_task_dependency, remove_task_file_reference,
+        reset_task_runtime, remove_task_attachment, remove_task_dependency, remove_task_file_reference,
         request_user_intervention, send_lane_back_for_work, set_default_task_file_reference, update_task,
     },
     workflows::{
@@ -190,6 +190,7 @@ pub fn run() {
             approve_lane_completion,
             send_lane_back_for_work,
             manual_task_whip,
+            reset_task_runtime,
             add_task_dependency,
             remove_task_dependency,
             add_task_file_reference,
