@@ -17,6 +17,25 @@ function formatActivityLabel(activityState?: SessionActivityState, activeToolNam
   }
 }
 
+function getActivityTone(activityState?: SessionActivityState) {
+  switch (activityState) {
+    case "streaming":
+      return "success";
+    case "tool_running":
+    case "thinking":
+      return "accent";
+    case "error":
+      return "error";
+    default:
+      return "neutral";
+  }
+}
+
+function formatSessionStatusLabel(status: SessionStatus) {
+  const label = status.replace(/_/g, " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 interface SessionsPageProps {
   sessions: SessionRecord[];
   sessionFilter: "active" | "closed";
@@ -198,8 +217,12 @@ export function SessionsPage({
                       onSelectSession(session.id);
                     }}
                   >
-                    <span>{session.title}</span>
-                    <span className="muted-copy">{formatActivityLabel(session.activityState, session.activeToolName)}</span>
+                    <div className="session-list-link__content">
+                      <span className="session-list-link__title">{session.title}</span>
+                      <span className={`status-badge status-badge--${getActivityTone(session.activityState)}`}>
+                        {formatActivityLabel(session.activityState, session.activeToolName)}
+                      </span>
+                    </div>
                   </a>
                   <button
                     className="session-delete-button"
@@ -231,8 +254,12 @@ export function SessionsPage({
                   <h3 data-role="selected-session-title">{selectedSession.title}</h3>
 
                   <div className="action-cluster action-cluster--session-tools">
-                    <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>{selectedSessionDisplayStatus}</span>
-                    <span className="status-badge">{formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}</span>
+                    <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>
+                      {formatSessionStatusLabel(selectedSessionDisplayStatus)}
+                    </span>
+                    <span className={`status-badge status-badge--${getActivityTone(selectedSession.activityState)}`}>
+                      {formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}
+                    </span>
                   </div>
                 </div>
 
