@@ -2,6 +2,7 @@ import {
   clickByText,
   clickNthSelector,
   clickSelector,
+  executeScript,
   selectByLabel,
   selectValue,
   setFieldByLabel,
@@ -70,6 +71,44 @@ export async function createRoleViaSettings(
   await waitForText(sessionId, options.name);
 }
 
+export async function createAgentViaSettings(
+  sessionId: string,
+  options: {
+    name: string;
+    description?: string;
+    systemPrompt?: string;
+    thinkingLevel?: string;
+    provider?: string;
+    model?: string;
+    supervisor?: boolean;
+  },
+) {
+  await clickByText(sessionId, '[role="tab"]', 'Agents');
+  await clickSelector(sessionId, '[data-role="new-agent"]');
+  await setInputValue(sessionId, '[data-role="agent-name"]', options.name);
+  if (options.provider) {
+    await selectValue(sessionId, '[data-role="agent-provider"]', options.provider);
+    if (options.model) {
+      await waitForSelectOption(sessionId, '[data-role="agent-model"]', { value: options.model });
+      await selectValue(sessionId, '[data-role="agent-model"]', options.model);
+    }
+  }
+  if (options.thinkingLevel) {
+    await selectValue(sessionId, '[data-role="agent-thinking"]', options.thinkingLevel);
+  }
+  if (options.description !== undefined) {
+    await setFieldByLabel(sessionId, 'Description', options.description);
+  }
+  if (options.systemPrompt !== undefined) {
+    await setFieldByLabel(sessionId, 'System prompt', options.systemPrompt);
+  }
+  if (options.supervisor) {
+    await clickSelector(sessionId, '[data-role="agent-supervisor-toggle"]');
+  }
+  await clickSelector(sessionId, '[data-role="save-agent"]');
+  await waitForText(sessionId, options.name);
+}
+
 export async function createWorkflowViaSettings(
   sessionId: string,
   options: {
@@ -81,6 +120,9 @@ export async function createWorkflowViaSettings(
       ownerType: "user" | "agent" | "role";
       ownerReference?: string;
       entryPromptTemplate?: string;
+      requireUserApprovalOnSuccess?: boolean;
+      successTransitionType?: "end" | "lane" | "user_intervention";
+      successTargetLaneName?: string;
     }>;
   },
 ) {
@@ -100,10 +142,47 @@ export async function createWorkflowViaSettings(
     await setFieldByLabel(sessionId, 'Lane key', lane.key);
     await selectValue(sessionId, '[data-role="lane-owner-type"]', lane.ownerType);
     if (lane.ownerType !== 'user' && lane.ownerReference) {
+      await waitForSelectOption(sessionId, '[data-role="lane-owner-reference"]', { value: lane.ownerReference });
       await selectValue(sessionId, '[data-role="lane-owner-reference"]', lane.ownerReference);
     }
     if (lane.entryPromptTemplate !== undefined) {
       await setFieldByLabel(sessionId, 'Entry prompt template', lane.entryPromptTemplate);
+    }
+    if (lane.requireUserApprovalOnSuccess) {
+      const toggled = await executeScript<boolean>(
+        sessionId,
+        `
+          const input = document.querySelector('[data-role="lane-success-review-required"]');
+          if (!(input instanceof HTMLInputElement)) return false;
+          if (!input.checked) input.click();
+          return true;
+        `,
+      );
+      if (!toggled) {
+        throw new Error('Unable to enable require user approval on success');
+      }
+    }
+    if (lane.successTransitionType && lane.successTransitionType !== 'end') {
+      const changed = await executeScript<boolean>(
+        sessionId,
+        `
+          const labels = Array.from(document.querySelectorAll('.field-group'));
+          const group = labels.find((entry) => entry.textContent?.toLowerCase().includes('success transition'));
+          const select = group?.querySelector('select');
+          if (!(select instanceof HTMLSelectElement)) return false;
+          select.value = arguments[0];
+          select.dispatchEvent(new Event('input', { bubbles: true }));
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        `,
+        [lane.successTransitionType],
+      );
+      if (!changed) {
+        throw new Error('Unable to update success transition type');
+      }
+      if (lane.successTransitionType === 'lane' && lane.successTargetLaneName) {
+        await waitForSelectOption(sessionId, '[data-role="lane-success-target"]', { label: lane.successTargetLaneName }).catch(() => undefined);
+      }
     }
   }
 
@@ -118,6 +197,8 @@ export async function createTaskViaTasks(
     description: string;
     repositoryName?: string;
     workflowName?: string;
+    whipMaxAttempts?: number;
+    publish?: boolean;
   },
 ) {
   await clickByText(sessionId, 'button', 'Tasks');
@@ -129,9 +210,13 @@ export async function createTaskViaTasks(
     await selectByLabel(sessionId, '[data-role="task-repositories"]', options.repositoryName);
   }
   if (options.workflowName) {
+    await waitForSelectOption(sessionId, '[data-role="task-workflow"]', { label: options.workflowName });
     await selectByLabel(sessionId, '[data-role="task-workflow"]', options.workflowName);
   }
-  await clickSelector(sessionId, '[data-role="save-task"]');
+  if (options.whipMaxAttempts !== undefined) {
+    await setInputValue(sessionId, '[data-role="task-whip-max-attempts"]', String(options.whipMaxAttempts));
+  }
+  await clickSelector(sessionId, options.publish ? '[data-role="publish-task"]' : '[data-role="save-task"]');
   await waitForText(sessionId, options.title);
 }
 
@@ -168,4 +253,12 @@ export async function addTaskFileReferenceViaUi(
     await clickByText(sessionId, 'button', 'Set as default');
     await waitForText(sessionId, 'Default');
   }
+}
+
+export async function dispatchTaskViaUi(sessionId: string) {
+  await clickSelector(sessionId, '[data-role="dispatch-task-lane"], [data-role="publish-task"]');
+}
+
+export async function completeTaskSuccessViaUi(sessionId: string) {
+  await clickSelector(sessionId, '[data-role="complete-task-success"]');
 }

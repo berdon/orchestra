@@ -9,6 +9,7 @@ import {
   executeScript,
   invokeCommand,
 } from "./driver";
+import { createAgentViaSettings, createTaskViaTasks, createWorkflowViaSettings } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
@@ -18,41 +19,24 @@ describe("desktop task whip configuration", () => {
     try {
       await ensureReactReady(sessionId);
 
-      const agent = await invokeCommand<{ id: string; slug: string }>(sessionId, "create_agent", {
-        input: {
-          name: "Whip Agent",
-          description: "Agent used to test task whip configuration.",
-          systemPrompt: "Keep working until the task is complete and use the completion tools when you are done.",
-          provider: null,
-          model: null,
-          roleId: null,
-          thinkingLevel: "medium",
-          policyIds: [],
-          directPermissions: [],
-        },
+      await clickByText(sessionId, "button", "Settings");
+      await createAgentViaSettings(sessionId, {
+        name: "Whip Agent",
+        description: "Agent used to test task whip configuration.",
+        systemPrompt: "Keep working until the task is complete and use the completion tools when you are done.",
+        thinkingLevel: "medium",
       });
-
-      const workflow = await invokeCommand<{ id: string }>(sessionId, "create_workflow", {
-        input: {
-          name: "Whip Flow",
-          description: null,
-          lanes: [
-            {
-              id: "lane-whip",
-              key: "implement",
-              name: "Implement",
-              description: null,
-              order: 0,
-              assignedEntityType: "agent",
-              assignedEntityId: agent.slug,
-              entryPromptTemplate: "Keep going until done.",
-              successTransitionType: "end",
-              successTargetLaneId: null,
-              failureTransitionType: "end",
-              failureTargetLaneId: null,
-            },
-          ],
-        },
+      await createWorkflowViaSettings(sessionId, {
+        name: "Whip Flow",
+        lanes: [
+          {
+            name: "Implement",
+            key: "implement",
+            ownerType: "agent",
+            ownerReference: "whip-agent",
+            entryPromptTemplate: "Keep going until done.",
+          },
+        ],
       });
 
       await clickByText(sessionId, "button", "Tasks");
@@ -63,27 +47,20 @@ describe("desktop task whip configuration", () => {
       `);
       expect(defaultWhipValue).toBe('10');
 
-      const createdTask = await invokeCommand<{ id: string; whipMaxAttempts?: number }>(sessionId, "create_task", {
-        projectId: "orchestra",
-        input: {
-          title: "Whip-configured task",
-          description: "Task with a custom whip threshold.",
-          type: "task",
-          status: "draft",
-          priority: "P2",
-          workflowId: workflow.id,
-          currentLaneId: "lane-whip",
-          assigneeType: "agent",
-          assigneeId: agent.slug,
-          repositoryId: null,
-          repositoryIds: [],
-          parentTaskId: null,
-          whipMaxAttempts: 3,
-          archived: false,
-        },
+      await clickByText(sessionId, "button", "Back to tasks");
+      await createTaskViaTasks(sessionId, {
+        title: "Whip-configured task",
+        description: "Task with a custom whip threshold.",
+        workflowName: "Whip Flow",
+        whipMaxAttempts: 3,
       });
 
-      expect(createdTask.whipMaxAttempts).toBe(3);
+      const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        includeArchived: false,
+      }).then((tasks) => tasks.find((entry) => entry.title === 'Whip-configured task'));
+      expect(createdTask).toBeTruthy();
+      const loadedTask = await invokeCommand<{ id: string; whipMaxAttempts?: number }>(sessionId, 'get_task', { taskId: createdTask!.id });
+      expect(loadedTask.whipMaxAttempts).toBe(3);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
