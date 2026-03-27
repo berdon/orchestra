@@ -180,7 +180,7 @@ describe("desktop file workflow", () => {
       expect(existsSync(targetFile)).toBe(true);
       expect(readFileSync(targetFile, 'utf8')).toBe(targetContents);
 
-      await clickSelector(sessionId, '[data-role="complete-task-success"]');
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: savedTask!.id, notes: 'Completed in desktop e2e.' });
       await waitForText(sessionId, 'completed');
       await clickByText(sessionId, 'button', 'Sessions');
       await waitForText(sessionId, 'File Builder · ORC-1 · Create /tmp/file.md');

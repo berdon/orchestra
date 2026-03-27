@@ -320,6 +320,13 @@ describe("desktop task detail reorganization", () => {
       await clickSelector(sessionId, '[data-role="pause-task-runtime"]');
       await sleep(1_000);
       await waitForText(sessionId, "Task detail action coverage");
+      await clickSelector(sessionId, '[data-role="reset-task-runtime"]');
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, 'get_task', { taskId: task.id }),
+        (updatedTask) => updatedTask.status === 'ready' && updatedTask.activeLaneAssignment == null,
+      );
+      await waitForText(sessionId, 'No active runtime assignment for this task.');
+      await waitForText(sessionId, 'Dispatch');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

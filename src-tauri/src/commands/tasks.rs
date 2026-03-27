@@ -555,6 +555,12 @@ pub async fn send_lane_back_for_work(
 }
 
 #[tauri::command]
+pub fn reset_task_runtime(task_id: String) -> Result<TaskDetail, String> {
+    let mut connection = database::open_connection()?;
+    task_runtime::reset_task_runtime(&mut connection, &task_id)
+}
+
+#[tauri::command]
 pub async fn manual_task_whip(
     app: AppHandle,
     state: State<'_, AppState>,

@@ -41,6 +41,7 @@ interface TaskDetailPageProps {
   publishing: boolean;
   deleting: boolean;
   loading: boolean;
+  pendingActionId?: string | null;
   onDraftChange: (draft: TaskUpsertInput) => void;
   onCommentDraftChange: (draft: TaskCommentInput) => void;
   onSave: () => void;
@@ -52,6 +53,7 @@ interface TaskDetailPageProps {
   onRetry: () => void;
   onPauseRuntime: () => void;
   onWhipTask: () => void;
+  onResetTask: () => void;
   onComplete: (outcome: "success" | "failure" | "needs_user") => void;
   onApproveCompletion: () => void;
   onSendBackForWork: () => void;
@@ -145,6 +147,7 @@ export function TaskDetailPage({
   publishing,
   deleting,
   loading,
+  pendingActionId = null,
   onDraftChange,
   onCommentDraftChange,
   onSave,
@@ -156,6 +159,7 @@ export function TaskDetailPage({
   onRetry,
   onPauseRuntime,
   onWhipTask,
+  onResetTask,
   onComplete,
   onApproveCompletion,
   onSendBackForWork,
@@ -352,7 +356,7 @@ export function TaskDetailPage({
 
     if (task.status === "draft") {
       actions.push({
-        id: "dispatch-draft",
+        id: "publish",
         label: "Dispatch",
         onClick: onPublish,
         disabled: !canPublish,
@@ -477,7 +481,7 @@ export function TaskDetailPage({
                 <p className="eyebrow">Runtime</p>
                 <h4>Lane execution</h4>
               </div>
-              <TaskActionMenu actions={buildHeaderActions()} menuLabel="Lane actions" />
+              <TaskActionMenu actions={buildHeaderActions()} menuLabel="Lane actions" pendingActionId={pendingActionId} />
             </div>
             {task.activeLaneAssignment ? (
               <div className="task-runtime-card" data-role="task-runtime-assignment">
@@ -500,6 +504,11 @@ export function TaskDetailPage({
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
+                <div className="action-cluster">
+                  <button className="secondary-button secondary-button--danger" data-role="reset-task-runtime" type="button" disabled={Boolean(pendingActionId)} onClick={onResetTask}>
+                    Reset task runtime
+                  </button>
+                </div>
               </div>
             ) : (
               <p className="muted-copy">No active runtime assignment for this task.</p>
@@ -988,7 +997,7 @@ export function TaskDetailPage({
             <button className="secondary-button" type="button" onClick={onBack}>
               Back to tasks
             </button>
-            <TaskActionMenu actions={buildHeaderActions()} />
+            <TaskActionMenu actions={buildHeaderActions()} pendingActionId={pendingActionId} />
           </div>
         </div>
 
@@ -1036,6 +1045,7 @@ export function TaskDetailPage({
                     dataRole: "delete-task",
                   },
                 ]}
+                pendingActionId={pendingActionId}
               />
             </div>
             <TaskEditorForm agents={agents} draft={draft} onChange={onDraftChange} repositories={repositories} roles={roles} workflows={workflows} detailLayout showAssigneeFields={false} />
@@ -1058,7 +1068,7 @@ export function TaskDetailPage({
                     dataRole: "edit-task",
                   },
                   {
-                    id: "delete-summary",
+                    id: "delete",
                     label: deleting ? "Deleting…" : "Delete",
                     onClick: () => setShowDeleteConfirm(true),
                     disabled: deleting,
@@ -1066,6 +1076,7 @@ export function TaskDetailPage({
                     dataRole: "delete-task",
                   },
                 ]}
+                pendingActionId={pendingActionId}
               />
             </div>
 

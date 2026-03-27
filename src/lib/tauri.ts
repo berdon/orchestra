@@ -2287,6 +2287,22 @@ export async function manualTaskWhip(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("manual_task_whip", { taskId });
 }
 
+export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const task = await getTask(taskId);
+    const updated: TaskDetail = {
+      ...task,
+      activeLaneAssignment: null,
+      updatedAt: nowIso(),
+    };
+    saveMockTasks(ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)));
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.runtime.reset" });
+    return getTask(taskId);
+  }
+
+  return invoke<TaskDetail>("reset_task_runtime", { taskId });
+}
+
 export async function addTaskDependency(blockerTaskId: string, blockedTaskId: string): Promise<TaskDependency> {
   if (!isTauriAvailable()) {
     if (blockerTaskId === blockedTaskId) {

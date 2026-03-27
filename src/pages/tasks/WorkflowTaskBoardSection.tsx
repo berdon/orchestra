@@ -36,6 +36,14 @@ function getPriorityLabel(priority: string) {
   return priority.toUpperCase();
 }
 
+function resolveLaneLabel(task: TaskSummary, section: TaskWorkflowSection) {
+  const lane = section.lanes.find((entry) => entry.laneId === task.currentLaneId);
+  if (lane) {
+    return lane.laneName;
+  }
+  return task.currentLaneId ?? "—";
+}
+
 export function WorkflowTaskBoardSection({
   section,
   agents,
@@ -76,6 +84,7 @@ export function WorkflowTaskBoardSection({
                 <th>Priority</th>
                 <th>Status</th>
                 <th>Workflow</th>
+                <th>Lane</th>
                 <th>Assignee</th>
                 <th>Comments</th>
               </tr>
@@ -88,18 +97,27 @@ export function WorkflowTaskBoardSection({
                   data-role="task-table-row"
                   data-task-id={task.id}
                   key={task.id}
+                  tabIndex={0}
+                  onClick={() => onOpenTask(task.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenTask(task.id);
+                    }
+                  }}
                 >
                   <td>
-                    <button className="task-table__open" type="button" onClick={() => onOpenTask(task.id)}>
+                    <div className="task-table__open">
                       <strong>{task.number}</strong>
                       <span>{task.title}</span>
-                    </button>
+                    </div>
                   </td>
                   <td>{getPriorityLabel(task.priority)}</td>
                   <td>
                     <span className={`status-badge status-badge--${getStatusTone(task.status)}`}>{formatStatusLabel(task.status)}</span>
                   </td>
                   <td>{section.workflowName}</td>
+                  <td>{resolveLaneLabel(task, section)}</td>
                   <td>{resolveTaskAssigneeLabel(task, agents, roles)}</td>
                   <td>{task.commentCount}</td>
                 </tr>

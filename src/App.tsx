@@ -817,6 +817,36 @@ export function App() {
     }
   }
 
+  async function handleDeleteClosedSessions() {
+    setSessionActionError(null);
+    setIsSubmitting(true);
+    try {
+      const closedSessions = sessions.filter((session) => session.status === "closed");
+      for (const session of closedSessions) {
+        await deleteSession(session.id);
+      }
+      setPendingRuns((current) => {
+        const next = { ...current };
+        for (const session of closedSessions) {
+          delete next[session.id];
+        }
+        return next;
+      });
+      setModelStates((current) => {
+        const next = { ...current };
+        for (const session of closedSessions) {
+          delete next[session.id];
+        }
+        return next;
+      });
+      await loadSessions();
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to delete closed sessions.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   const handleSessionStreamEvent = useCallback(
     (payload: SessionStreamEnvelope) => {
       const eventType = getRpcEventType(payload);
@@ -1951,6 +1981,7 @@ export function App() {
             getEventTone={getEventTone}
             onSelectSession={setSelectedSessionId}
             onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
+            onDeleteClosedSessions={() => void handleDeleteClosedSessions()}
             onModelChange={(value) => void handleModelChange(value)}
             onDraftChange={(value) => {
               if (selectedSession) {

@@ -12,9 +12,10 @@ export interface TaskActionMenuAction {
 interface TaskActionMenuProps {
   actions: TaskActionMenuAction[];
   menuLabel?: string;
+  pendingActionId?: string | null;
 }
 
-export function TaskActionMenu({ actions, menuLabel = "Actions" }: TaskActionMenuProps) {
+export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId = null }: TaskActionMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -36,14 +37,16 @@ export function TaskActionMenu({ actions, menuLabel = "Actions" }: TaskActionMen
           <button
             key={action.id}
             className={
-              action.variant === "primary"
-                ? "primary-button"
-                : action.variant === "danger"
-                  ? "secondary-button secondary-button--danger"
-                  : "secondary-button"
+              `${
+                action.variant === "primary"
+                  ? "primary-button"
+                  : action.variant === "danger"
+                    ? "secondary-button secondary-button--danger"
+                    : "secondary-button"
+              }${pendingActionId === action.id ? " task-action-button--pending" : ""}`
             }
             data-role={action.dataRole}
-            disabled={action.disabled}
+            disabled={Boolean(pendingActionId) || action.disabled}
             type="button"
             onClick={action.onClick}
           >
@@ -66,14 +69,16 @@ export function TaskActionMenu({ actions, menuLabel = "Actions" }: TaskActionMen
               <button
                 key={action.id}
                 className={
-                  action.variant === "primary"
-                    ? "primary-button task-action-menu__dropdown-button"
-                    : action.variant === "danger"
-                      ? "secondary-button secondary-button--danger task-action-menu__dropdown-button"
-                      : "secondary-button task-action-menu__dropdown-button"
+                  `${
+                    action.variant === "primary"
+                      ? "primary-button task-action-menu__dropdown-button"
+                      : action.variant === "danger"
+                        ? "secondary-button secondary-button--danger task-action-menu__dropdown-button"
+                        : "secondary-button task-action-menu__dropdown-button"
+                  }${pendingActionId === action.id ? " task-action-button--pending" : ""}`
                 }
                 data-role={action.dataRole}
-                disabled={action.disabled}
+                disabled={Boolean(pendingActionId) || action.disabled}
                 type="button"
                 onClick={() => {
                   setOpen(false);
