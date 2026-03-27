@@ -37,11 +37,11 @@ use commands::{
     tasks::{
         add_task_attachment, add_task_dependency, add_task_file_reference,
         approve_lane_completion, comment_on_task, complete_lane_as_failure,
-        complete_lane_as_success, create_subtask, create_task, delete_task,
+        complete_lane_as_success, create_subtask, create_task, delete_task, delete_task_comment,
         dispatch_task_lane, get_task, get_task_context, get_task_file_content, list_task_comments,
         list_task_file_references, list_task_repositories, list_tasks, manual_task_whip,
         reset_task_runtime, remove_task_attachment, remove_task_dependency, remove_task_file_reference,
-        request_user_intervention, send_lane_back_for_work, set_default_task_file_reference, update_task,
+        request_user_intervention, send_lane_back_for_work, set_default_task_file_reference, update_task, update_task_comment,
     },
     workflows::{
         archive_workflow, create_workflow, duplicate_workflow, get_workflow, list_workflows,
@@ -183,6 +183,8 @@ pub fn run() {
             update_task,
             delete_task,
             comment_on_task,
+            update_task_comment,
+            delete_task_comment,
             dispatch_task_lane,
             complete_lane_as_success,
             complete_lane_as_failure,

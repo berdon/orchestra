@@ -552,6 +552,42 @@ pub fn add_task_comment(
     Ok(comment)
 }
 
+pub fn update_task_comment(
+    connection: &mut Connection,
+    comment_id: &str,
+    input: crate::models::TaskCommentUpdateInput,
+) -> Result<TaskComment, String> {
+    let existing = load_task_comment(connection, comment_id)?;
+    let message = input.message.trim();
+    if message.is_empty() {
+        return Err("message: Comment message is required.".to_string());
+    }
+    let updated_at = now_iso();
+    connection
+        .execute(
+            "UPDATE task_comments SET message = ?2, updated_at = ?3 WHERE id = ?1",
+            params![comment_id, message, updated_at],
+        )
+        .map_err(|error| format!("Unable to update task comment {comment_id}: {error}"))?;
+
+    Ok(TaskComment {
+        message: message.to_string(),
+        updated_at,
+        ..existing
+    })
+}
+
+pub fn delete_task_comment(connection: &mut Connection, comment_id: &str) -> Result<TaskComment, String> {
+    let comment = load_task_comment(connection, comment_id)?;
+    let deleted = connection
+        .execute("DELETE FROM task_comments WHERE id = ?1", [comment_id])
+        .map_err(|error| format!("Unable to delete task comment {comment_id}: {error}"))?;
+    if deleted == 0 {
+        return Err(format!("Task comment {comment_id} was not found"));
+    }
+    Ok(comment)
+}
+
 fn resolve_comment_anchor(
     connection: &Connection,
     task_id: &str,
@@ -1074,6 +1110,42 @@ fn load_task_comment_receipts(
     } else {
         Ok(receipts)
     }
+}
+
+fn load_task_comment(connection: &Connection, comment_id: &str) -> Result<TaskComment, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT id, task_id, parent_comment_id, author, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at
+            FROM task_comments
+            WHERE id = ?1
+            "#,
+            [comment_id],
+            |row| {
+                Ok(TaskComment {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    parent_comment_id: row.get(2)?,
+                    author: row.get(3)?,
+                    message: row.get(4)?,
+                    interrupt_agent: row.get::<_, i64>(5)? != 0,
+                    repository_id: row.get(6)?,
+                    relative_path: row.get(7)?,
+                    line_start: row.get(8)?,
+                    line_end: row.get(9)?,
+                    column_start: row.get(10)?,
+                    column_end: row.get(11)?,
+                    selected_text: row.get(12)?,
+                    anchor_commit_hash: row.get(13)?,
+                    anchor_has_uncommitted_changes: row.get::<_, Option<i64>>(14)?.map(|value| value != 0),
+                    created_at: row.get(15)?,
+                    updated_at: row.get(16)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load task comment {comment_id}: {error}"))?
+        .ok_or_else(|| format!("Task comment {comment_id} was not found"))
 }
 
 fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<TaskComment>, String> {

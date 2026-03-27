@@ -53,6 +53,8 @@ interface CommentableFileViewerProps {
   commentDraft: TaskCommentInput;
   onCommentDraftChange: (draft: TaskCommentInput) => void;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
+  onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
+  onDeleteComment: (commentId: string) => Promise<boolean>;
 }
 
 const DEFAULT_VIEWPORT_HEIGHT_PX = 720;
@@ -235,6 +237,20 @@ function lineCommentCounts(threads: FileCommentThread[]) {
   return counts;
 }
 
+function buildThreadsByLine(threads: FileCommentThread[]) {
+  const byLine = new Map<number, FileCommentThread[]>();
+  for (const thread of threads) {
+    const start = thread.comment.lineStart ?? 0;
+    const end = thread.comment.lineEnd ?? start;
+    for (let line = start; line <= end; line += 1) {
+      const entries = byLine.get(line) ?? [];
+      entries.push(thread);
+      byLine.set(line, entries);
+    }
+  }
+  return byLine;
+}
+
 export function CommentableFileViewer({
   reference,
   content,
@@ -243,6 +259,8 @@ export function CommentableFileViewer({
   commentDraft,
   onCommentDraftChange,
   onAddComment,
+  onUpdateComment,
+  onDeleteComment,
 }: CommentableFileViewerProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -251,6 +269,8 @@ export function CommentableFileViewer({
   const [threadPopover, setThreadPopover] = useState<ThreadPopoverState | null>(null);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [replyMessage, setReplyMessage] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingMessage, setEditingMessage] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
 
   const lines = useMemo(
@@ -262,6 +282,7 @@ export function CommentableFileViewer({
   );
   const fileCommentThreads = useMemo(() => buildFileCommentThreads(comments, reference), [comments, reference]);
   const commentCountsByLine = useMemo(() => lineCommentCounts(fileCommentThreads), [fileCommentThreads]);
+  const commentThreadsByLine = useMemo(() => buildThreadsByLine(fileCommentThreads), [fileCommentThreads]);
 
   useEffect(() => {
     setSelectionAction(null);
@@ -269,6 +290,8 @@ export function CommentableFileViewer({
     setThreadPopover(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
+    setEditingCommentId(null);
+    setEditingMessage("");
   }, [content, reference.absolutePath, reference.id]);
 
   useEffect(() => {
@@ -312,12 +335,30 @@ export function CommentableFileViewer({
       openFileCommentDraft(new CustomEvent("orchestra:open-file-comment-draft", { detail }));
     };
 
+    const closeOnOutsidePointer = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const overlay = overlayRef.current;
+      if (!overlay?.contains(target)) {
+        closeOverlays();
+        return;
+      }
+      if ((target as HTMLElement).closest('.file-content-viewer__comment-popover, .file-content-viewer__thread-popover, [data-role="default-file-selection-comment-button"]')) {
+        return;
+      }
+      closeOverlays();
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => {
       document.removeEventListener("selectionchange", syncSelectionAction);
       document.removeEventListener("mouseup", deferredSync);
       document.removeEventListener("keyup", deferredSync);
       document.removeEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
       document.removeEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
       delete (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft;
     };
   }, [reference]);
@@ -328,6 +369,8 @@ export function CommentableFileViewer({
     setThreadPopover(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
+    setEditingCommentId(null);
+    setEditingMessage("");
   }
 
   function handleViewportMouseUp() {
@@ -497,6 +540,27 @@ export function CommentableFileViewer({
     }
   }
 
+  async function submitEdit(commentId: string) {
+    if (!editingMessage.trim()) {
+      return;
+    }
+    const updated = await onUpdateComment(commentId, editingMessage);
+    if (updated) {
+      setEditingCommentId(null);
+      setEditingMessage("");
+    }
+  }
+
+  async function handleDelete(commentId: string) {
+    const deleted = await onDeleteComment(commentId);
+    if (deleted) {
+      setEditingCommentId(null);
+      setEditingMessage("");
+      setReplyTargetCommentId(null);
+      setReplyMessage("");
+    }
+  }
+
   return (
     <div className="file-content-viewer">
       <div className="file-content-viewer__header">
@@ -523,6 +587,8 @@ export function CommentableFileViewer({
         >
           {lines.map((line) => {
             const commentCount = commentCountsByLine.get(line.number) ?? 0;
+            const lineThreads = commentThreadsByLine.get(line.number) ?? [];
+            const selectedTextThreads = lineThreads.filter((thread) => Boolean(thread.comment.selectedText && thread.comment.columnStart && thread.comment.columnEnd));
             return (
               <div
                 className={commentCount > 0 ? "file-content-viewer__line file-content-viewer__line--commented" : "file-content-viewer__line"}
@@ -543,11 +609,42 @@ export function CommentableFileViewer({
                   </button>
                   <span className="file-content-viewer__line-number">{line.number}</span>
                 </div>
-                <div
-                  className="file-content-viewer__line-content"
-                  data-file-line-content
-                  dangerouslySetInnerHTML={{ __html: line.html }}
-                />
+                <div className="file-content-viewer__line-content-wrap">
+                  <div
+                    className="file-content-viewer__line-content"
+                    data-file-line-content
+                    dangerouslySetInnerHTML={{ __html: line.html }}
+                  />
+                  {selectedTextThreads.map(({ comment }) => {
+                    const start = Math.max(1, comment.columnStart ?? 1);
+                    const end = Math.max(start, comment.columnEnd ?? start);
+                    const width = Math.max(1, end - start + 1);
+                    return (
+                      <button
+                        key={comment.id}
+                        className="file-content-viewer__selected-comment-anchor"
+                        data-role="default-file-selected-comment-anchor"
+                        style={{ left: `${start - 1}ch`, width: `${width}ch` }}
+                        title={comment.message}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const overlay = overlayRef.current;
+                          const target = event.currentTarget.getBoundingClientRect();
+                          const overlayRect = overlay?.getBoundingClientRect();
+                          if (!overlay || !overlayRect) {
+                            return;
+                          }
+                          openThreadPopoverForLine(line.number, target.top - overlayRect.top + 24, target.right - overlayRect.left + 12);
+                        }}
+                      >
+                        <span className="file-content-viewer__selected-comment-highlight" />
+                        <span className="file-content-viewer__selected-comment-icon">💬</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
@@ -582,15 +679,6 @@ export function CommentableFileViewer({
             {floatingComment.anchor.selectedText ? (
               <pre className="file-content-viewer__selection-preview">{floatingComment.anchor.selectedText}</pre>
             ) : null}
-            <label className="field-group">
-              <span className="field-group__label">Author</span>
-              <input
-                className="text-input"
-                data-role="default-file-comment-author"
-                value={commentDraft.author}
-                onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })}
-              />
-            </label>
             <label className="checkbox-row task-comment-composer__interrupt">
               <input
                 data-role="default-file-comment-interrupt"
@@ -641,7 +729,20 @@ export function CommentableFileViewer({
                       <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
                     </div>
                   </div>
-                  <p>{comment.message}</p>
+                  {editingCommentId === comment.id ? (
+                    <label className="field-group">
+                      <span className="field-group__label">Edit comment</span>
+                      <textarea
+                        className="text-area"
+                        data-role="default-file-edit-message"
+                        rows={3}
+                        value={editingMessage}
+                        onChange={(event) => setEditingMessage(event.target.value)}
+                      />
+                    </label>
+                  ) : (
+                    <p>{comment.message}</p>
+                  )}
                   {comment.selectedText ? <pre className="file-content-viewer__selection-preview">{comment.selectedText}</pre> : null}
                   {replies.length ? (
                     <div className="file-content-viewer__thread-replies">
@@ -651,22 +752,61 @@ export function CommentableFileViewer({
                             <span>{reply.author}</span>
                             <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
                           </div>
-                          <p>{reply.message}</p>
+                          {editingCommentId === reply.id ? (
+                            <label className="field-group">
+                              <span className="field-group__label">Edit reply</span>
+                              <textarea
+                                className="text-area"
+                                data-role="default-file-edit-message"
+                                rows={3}
+                                value={editingMessage}
+                                onChange={(event) => setEditingMessage(event.target.value)}
+                              />
+                            </label>
+                          ) : (
+                            <p>{reply.message}</p>
+                          )}
+                          <div className="file-content-viewer__thread-actions">
+                            {editingCommentId === reply.id ? (
+                              <>
+                                <button className="secondary-button" data-role="default-file-save-edit" type="button" onClick={() => void submitEdit(reply.id)}>Save</button>
+                                <button className="secondary-button" type="button" onClick={() => {
+                                  setEditingCommentId(null);
+                                  setEditingMessage("");
+                                }}>Cancel</button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  className="secondary-button file-content-viewer__icon-button"
+                                  data-role="default-file-edit-comment"
+                                  type="button"
+                                  title="Edit reply"
+                                  onClick={() => {
+                                    setEditingCommentId(reply.id);
+                                    setEditingMessage(reply.message);
+                                  }}
+                                >
+                                  ✏️
+                                </button>
+                                <button
+                                  className="secondary-button secondary-button--danger file-content-viewer__icon-button"
+                                  data-role="default-file-delete-comment"
+                                  type="button"
+                                  title="Delete reply"
+                                  onClick={() => void handleDelete(reply.id)}
+                                >
+                                  🗑
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </article>
                       ))}
                     </div>
                   ) : null}
                   {replyTargetCommentId === comment.id ? (
                     <div className="file-content-viewer__reply-composer">
-                      <label className="field-group">
-                        <span className="field-group__label">Reply author</span>
-                        <input
-                          className="text-input"
-                          data-role="default-file-reply-author"
-                          value={commentDraft.author}
-                          onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })}
-                        />
-                      </label>
                       <label className="field-group">
                         <span className="field-group__label">Reply</span>
                         <textarea
@@ -689,21 +829,54 @@ export function CommentableFileViewer({
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <div className="task-comment-composer__actions">
-                      <button
-                        className="secondary-button"
-                        data-role="default-file-open-reply"
-                        type="button"
-                        onClick={() => {
-                          setReplyTargetCommentId(comment.id);
-                          setReplyMessage("");
-                        }}
-                      >
-                        Reply
-                      </button>
-                    </div>
-                  )}
+                  ) : null}
+                  <div className="file-content-viewer__thread-actions">
+                    {editingCommentId === comment.id ? (
+                      <>
+                        <button className="secondary-button" data-role="default-file-save-edit" type="button" onClick={() => void submitEdit(comment.id)}>Save</button>
+                        <button className="secondary-button" type="button" onClick={() => {
+                          setEditingCommentId(null);
+                          setEditingMessage("");
+                        }}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="secondary-button file-content-viewer__icon-button"
+                          data-role="default-file-open-reply"
+                          type="button"
+                          title="Reply"
+                          onClick={() => {
+                            setReplyTargetCommentId(comment.id);
+                            setReplyMessage("");
+                          }}
+                        >
+                          ↩
+                        </button>
+                        <button
+                          className="secondary-button file-content-viewer__icon-button"
+                          data-role="default-file-edit-comment"
+                          type="button"
+                          title="Edit comment"
+                          onClick={() => {
+                            setEditingCommentId(comment.id);
+                            setEditingMessage(comment.message);
+                          }}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          className="secondary-button secondary-button--danger file-content-viewer__icon-button"
+                          data-role="default-file-delete-comment"
+                          type="button"
+                          title="Delete comment"
+                          onClick={() => void handleDelete(comment.id)}
+                        >
+                          🗑
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>

@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::{
     models::{
-        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskDependency,
+        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentInput, TaskCommentUpdateInput, TaskDependency,
         TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
         TaskUpsertInput,
     },
@@ -228,6 +228,43 @@ pub async fn comment_on_task(
         },
         [task_id],
     );
+    Ok(comment)
+}
+
+#[tauri::command]
+pub fn update_task_comment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    comment_id: String,
+    input: TaskCommentUpdateInput,
+) -> Result<TaskComment, String> {
+    let mut connection = database::open_connection()?;
+    let comment = tasks::update_task_comment(&mut connection, &comment_id, input)?;
+    state.log(
+        "info",
+        "task.comment.updated",
+        &format!("Updated comment {} on task {}", comment.id, comment.task_id),
+    );
+    state.log_authorized_action("auth.audit", "update_task_comment", None, None, &comment.id, "success");
+    emit_task_change(&app, "task.comment.updated", [comment.task_id.clone()]);
+    Ok(comment)
+}
+
+#[tauri::command]
+pub fn delete_task_comment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    comment_id: String,
+) -> Result<TaskComment, String> {
+    let mut connection = database::open_connection()?;
+    let comment = tasks::delete_task_comment(&mut connection, &comment_id)?;
+    state.log(
+        "info",
+        "task.comment.deleted",
+        &format!("Deleted comment {} on task {}", comment.id, comment.task_id),
+    );
+    state.log_authorized_action("auth.audit", "delete_task_comment", None, None, &comment.id, "success");
+    emit_task_change(&app, "task.comment.deleted", [comment.task_id.clone()]);
     Ok(comment)
 }
 

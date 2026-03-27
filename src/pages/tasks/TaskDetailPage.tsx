@@ -68,6 +68,8 @@ interface TaskDetailPageProps {
   onRemoveFileReference: (referenceId: string) => void;
   onSetDefaultFileReference: (referenceId: string) => void;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
+  onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
+  onDeleteComment: (commentId: string) => Promise<boolean>;
 }
 
 function formatStatusLabel(status: string) {
@@ -193,6 +195,8 @@ export function TaskDetailPage({
   onRemoveFileReference,
   onSetDefaultFileReference,
   onAddComment,
+  onUpdateComment,
+  onDeleteComment,
 }: TaskDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -1132,6 +1136,8 @@ export function TaskDetailPage({
                         language={detectLanguage(defaultFile.relativePath)}
                         onAddComment={onAddComment}
                         onCommentDraftChange={onCommentDraftChange}
+                        onDeleteComment={onDeleteComment}
+                        onUpdateComment={onUpdateComment}
                         reference={defaultFile}
                       />
                     )
@@ -1152,11 +1158,7 @@ export function TaskDetailPage({
               </div>
 
               <div className="task-comment-composer task-comment-composer--summary">
-                <div className="task-comment-composer__grid">
-                  <label className="field-group">
-                    <span className="field-group__label">Author</span>
-                    <input className="text-input" data-role="default-file-quick-comment-author" value={commentDraft.author} onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })} />
-                  </label>
+                <div className="task-comment-composer__grid task-comment-composer__grid--compact">
                   <label className="checkbox-row task-comment-composer__interrupt">
                     <input data-role="default-file-quick-comment-interrupt" type="checkbox" checked={commentDraft.interruptAgent} onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })} />
                     Interrupt current worker now
