@@ -1613,24 +1613,90 @@ strong {
 
 .task-action-button--pending {
   position: relative;
-  opacity: 0.7;
+  opacity: 0.78;
   pointer-events: none;
+  isolation: isolate;
 }
 
 .task-action-button--pending::after {
   content: "";
   position: absolute;
-  inset: -2px;
+  inset: 0;
   border-radius: inherit;
-  border: 2px solid transparent;
-  border-top-color: currentColor;
-  border-right-color: currentColor;
-  animation: task-action-spin 0.9s linear infinite;
+  padding: 2px;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, currentColor 92%, white 8%) 0deg,
+    color-mix(in srgb, currentColor 22%, transparent) 90deg,
+    color-mix(in srgb, currentColor 18%, transparent) 180deg,
+    color-mix(in srgb, currentColor 18%, transparent) 270deg,
+    color-mix(in srgb, currentColor 92%, white 8%) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: task-action-ring-shift 1.4s steps(1, end) infinite, task-action-ring-pulse 1.15s ease-in-out infinite;
 }
 
-@keyframes task-action-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+@keyframes task-action-ring-shift {
+  0%,
+  24% {
+    background: conic-gradient(
+      from 0deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 0deg,
+      color-mix(in srgb, currentColor 22%, transparent) 90deg,
+      color-mix(in srgb, currentColor 18%, transparent) 180deg,
+      color-mix(in srgb, currentColor 18%, transparent) 270deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 360deg
+    );
+  }
+  25%,
+  49% {
+    background: conic-gradient(
+      from 90deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 0deg,
+      color-mix(in srgb, currentColor 22%, transparent) 90deg,
+      color-mix(in srgb, currentColor 18%, transparent) 180deg,
+      color-mix(in srgb, currentColor 18%, transparent) 270deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 360deg
+    );
+  }
+  50%,
+  74% {
+    background: conic-gradient(
+      from 180deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 0deg,
+      color-mix(in srgb, currentColor 22%, transparent) 90deg,
+      color-mix(in srgb, currentColor 18%, transparent) 180deg,
+      color-mix(in srgb, currentColor 18%, transparent) 270deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 360deg
+    );
+  }
+  75%,
+  100% {
+    background: conic-gradient(
+      from 270deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 0deg,
+      color-mix(in srgb, currentColor 22%, transparent) 90deg,
+      color-mix(in srgb, currentColor 18%, transparent) 180deg,
+      color-mix(in srgb, currentColor 18%, transparent) 270deg,
+      color-mix(in srgb, currentColor 92%, white 8%) 360deg
+    );
+  }
+}
+
+@keyframes task-action-ring-pulse {
+  0%,
+  100% {
+    padding: 2px;
+    opacity: 0.82;
+  }
+  50% {
+    padding: 4px;
+    opacity: 1;
+  }
 }
 
 .task-detail-summary__header,
