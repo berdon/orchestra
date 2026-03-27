@@ -1,4 +1,8 @@
+import { useMemo, useState } from "react";
+
 import type { AgentOperationsDetail } from "../types";
+
+type AgentWorkFilter = "queued" | "active" | "completed";
 
 interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
@@ -19,6 +23,18 @@ function formatDateTime(timestamp?: string | null) {
 }
 
 export function AgentOperationsDetail({ detail, onOpenSession }: AgentOperationsDetailProps) {
+  const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
+  const filteredQueueEntries = useMemo(() => {
+    switch (workFilter) {
+      case "queued":
+        return detail.queueEntries.filter((entry) => entry.status === "queued");
+      case "completed":
+        return detail.queueEntries.filter((entry) => ["completed", "failed", "canceled"].includes(entry.status));
+      default:
+        return detail.queueEntries.filter((entry) => entry.status === "dispatched");
+    }
+  }, [detail.queueEntries, workFilter]);
+
   return (
     <div className="workforce-detail-stack">
       <section className="workflow-section workforce-role-summary">
@@ -81,15 +97,34 @@ export function AgentOperationsDetail({ detail, onOpenSession }: AgentOperations
       </section>
 
       <section className="workflow-section">
-        <div>
-          <p className="eyebrow">Queue</p>
-          <h3>Queued and dispatched work</h3>
+        <div className="workflow-section__header">
+          <div>
+            <p className="eyebrow">Work</p>
+            <h3>Queued, active, and completed work</h3>
+          </div>
+          <div className="filter-chip-row" role="tablist" aria-label="Agent work filters">
+            {([
+              ["queued", "Queued"],
+              ["active", "Active"],
+              ["completed", "Completed"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                className={workFilter === value ? "filter-chip filter-chip--active" : "filter-chip"}
+                data-role={`agent-work-filter-${value}`}
+                type="button"
+                onClick={() => setWorkFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {detail.queueEntries.length === 0 ? <p className="muted-copy">No queued work yet.</p> : null}
+        {filteredQueueEntries.length === 0 ? <p className="muted-copy">No {workFilter} work right now.</p> : null}
 
         <div className="workforce-list">
-          {detail.queueEntries.map((entry) => (
+          {filteredQueueEntries.map((entry) => (
             <article className="workflow-lane-card" key={entry.id}>
               <div className="workflow-section__header">
                 <div>

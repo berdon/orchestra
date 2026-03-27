@@ -304,8 +304,10 @@ describe("desktop task detail reorganization", () => {
       await waitForText(sessionId, "Whips: 0 / 10");
       await waitForText(sessionId, "Pause");
       await waitForText(sessionId, "Whip");
-      await waitForText(sessionId, "Approve");
-      await waitForText(sessionId, "Needs work");
+      const hasApproveNeedsWork = await executeScript<boolean>(sessionId, `
+        return Boolean(document.querySelector('[data-role="approve-task-lane"], [data-role="complete-task-success"], [data-role="send-task-back-for-work"], [data-role="complete-task-failure"]'));
+      `);
+      expect(hasApproveNeedsWork).toBe(false);
 
       await clickSelector(sessionId, '[data-role="whip-task-runtime"]');
       await waitForCondition(

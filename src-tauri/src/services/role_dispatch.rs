@@ -82,7 +82,7 @@ pub fn dispatch_role_queue(
 }
 
 pub fn complete_role_run(session_id: &str) -> Result<(), String> {
-    let connection = crate::services::database::open_connection()?;
+    let mut connection = crate::services::database::open_connection()?;
     let Some(instance_id) = connection
         .query_row(
             "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
@@ -97,26 +97,29 @@ pub fn complete_role_run(session_id: &str) -> Result<(), String> {
 
     let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
     let now = crate::state::now_iso();
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start role completion transaction: {error}"))?;
     if let Some(queue_entry_id) = instance.current_queue_entry_id.as_deref() {
-        connection
-            .execute(
-                "UPDATE role_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE id = ?1",
-                params![queue_entry_id, now],
-            )
-            .map_err(|error| format!("Unable to complete role queue entry {queue_entry_id}: {error}"))?;
+        tx.execute(
+            "UPDATE role_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![queue_entry_id, now],
+        )
+        .map_err(|error| format!("Unable to complete role queue entry {queue_entry_id}: {error}"))?;
     }
 
-    connection
-        .execute(
-            "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, updated_at = ?2 WHERE id = ?1",
-            params![instance.id, now],
-        )
-        .map_err(|error| format!("Unable to mark role instance {} idle: {error}", instance.id))?;
+    tx.execute(
+        "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, updated_at = ?2 WHERE id = ?1",
+        params![instance.id, now],
+    )
+    .map_err(|error| format!("Unable to mark role instance {} idle: {error}", instance.id))?;
+    tx.commit()
+        .map_err(|error| format!("Unable to commit role completion transaction: {error}"))?;
     Ok(())
 }
 
 pub fn fail_role_run(session_id: &str, error_message: &str) -> Result<(), String> {
-    let connection = crate::services::database::open_connection()?;
+    let mut connection = crate::services::database::open_connection()?;
     let Some(instance_id) = connection
         .query_row(
             "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
@@ -131,21 +134,24 @@ pub fn fail_role_run(session_id: &str, error_message: &str) -> Result<(), String
 
     let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
     let now = crate::state::now_iso();
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start role failure transaction: {error}"))?;
     if let Some(queue_entry_id) = instance.current_queue_entry_id.as_deref() {
-        connection
-            .execute(
-                "UPDATE role_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE id = ?1",
-                params![queue_entry_id, now],
-            )
-            .map_err(|error| format!("Unable to finish failed role queue entry {queue_entry_id}: {error}"))?;
+        tx.execute(
+            "UPDATE role_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![queue_entry_id, now],
+        )
+        .map_err(|error| format!("Unable to finish failed role queue entry {queue_entry_id}: {error}"))?;
     }
 
-    connection
-        .execute(
-            "UPDATE role_instances SET status = 'failed', current_queue_entry_id = NULL, last_error = ?2, updated_at = ?3 WHERE id = ?1",
-            params![instance.id, error_message, now],
-        )
-        .map_err(|error| format!("Unable to mark role instance {} failed: {error}", instance.id))?;
+    tx.execute(
+        "UPDATE role_instances SET status = 'failed', current_queue_entry_id = NULL, last_error = ?2, updated_at = ?3 WHERE id = ?1",
+        params![instance.id, error_message, now],
+    )
+    .map_err(|error| format!("Unable to mark role instance {} failed: {error}", instance.id))?;
+    tx.commit()
+        .map_err(|error| format!("Unable to commit role failure transaction: {error}"))?;
     Ok(())
 }
 
