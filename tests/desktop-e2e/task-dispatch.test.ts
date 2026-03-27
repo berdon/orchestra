@@ -7,15 +7,21 @@ import {
   clickByText,
   createReadyWebdriverSession,
   deleteWebdriverSession,
-  dispatchWindowEvent,
   ensureReactReady,
   invokeCommand,
-  invokeCommandNoWait,
-  selectValue,
   sleep,
-  waitForSelectOption,
   waitForText,
 } from "./driver";
+import {
+  addRepositoryViaSettings,
+  createProjectViaSettings,
+  createRoleViaSettings,
+  createTaskViaTasks,
+  createWorkflowViaSettings,
+  dispatchTaskViaUi,
+  openTaskCard,
+  switchProject,
+} from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -24,117 +30,68 @@ describe("desktop task dispatch", () => {
   it.skipIf(!isDesktopE2E)("dispatches a real task lane and creates a real session record", async () => {
     expect(testHome).toBeTruthy();
 
-    const sessionDir = join(testHome!, ".orchestra", "projects", "orchestra", "sessions");
+    const sessionDir = join(testHome!, ".orchestra", "projects", "dispatch-project", "sessions");
     const beforeSessionFiles = existsSync(sessionDir) ? readdirSync(sessionDir).length : 0;
 
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 
-      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Dispatch Project",
-          description: "Real desktop dispatch test project.",
-        },
-      });
-
       const repoHome = join(testHome!, "workspace", "dispatch-repo");
       const repositoryRoot = join(repoHome, "repository");
-      await invokeCommand(sessionId, "create_repository", {
-        projectId: project.id,
-        input: {
-          name: "Dispatch Repo Seed",
-          repositoryPath: repositoryRoot,
-          defaultBranch: "main",
-        },
-      }).catch(() => undefined);
-      const repository = await invokeCommand<{ id: string; repositoryPath: string | null }>(sessionId, "create_repository", {
-        projectId: project.id,
-        input: {
-          name: "Dispatch Repo",
-          repositoryPath: repositoryRoot,
-          defaultBranch: "main",
-        },
-      });
-      await dispatchWindowEvent(sessionId, 'orchestra:projects-changed');
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { value: project.id });
 
-      const role = await invokeCommand<{ id: string; slug: string; name: string }>(sessionId, "create_role", {
-        input: {
-          name: "Developer",
-          description: "Dispatch test developer role.",
-          systemPrompt: null,
-          provider: "openai-codex",
-          model: "gpt-5.3-codex-spark",
-          thinkingLevel: "off",
-          capacity: 1,
-          policyIds: [],
-          directPermissions: [],
-        },
+      await createProjectViaSettings(sessionId, "Dispatch Project", "Real desktop dispatch test project.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Dispatch Repo",
+        path: repositoryRoot,
+        defaultBranch: "main",
+        makeDefault: true,
       });
-
-      const workflow = await invokeCommand<{ id: string; name: string; lanes: Array<{ id: string }> }>(sessionId, "create_workflow", {
-        input: {
-          name: "Dispatch Flow",
-          description: "Single role-owned lane for dispatch testing.",
-          lanes: [
-            {
-              id: null,
-              key: "implement",
-              name: "Implement",
-              description: null,
-              order: 0,
-              assignedEntityType: "role",
-              assignedEntityId: role.slug,
-              entryPromptTemplate: "Implement the requested task.",
-              successTransitionType: "end",
-              successTargetLaneId: null,
-              failureTransitionType: "user_intervention",
-              failureTargetLaneId: null,
-            },
-          ],
-        },
+      await switchProject(sessionId, "Dispatch Project");
+      await createRoleViaSettings(sessionId, {
+        name: "Developer",
+        capacity: "1",
+        description: "Dispatch test developer role.",
+      });
+      await createWorkflowViaSettings(sessionId, {
+        name: "Dispatch Flow",
+        description: "Single role-owned lane for dispatch testing.",
+        lanes: [
+          {
+            name: "Implement",
+            key: "implement",
+            ownerType: "role",
+            ownerReference: "developer",
+            entryPromptTemplate: "Implement the requested task.",
+          },
+        ],
+      });
+      await createTaskViaTasks(sessionId, {
+        title: "Dispatch session task",
+        description: "Drive a real role dispatch and session creation.",
+        repositoryName: "Dispatch Repo",
+        workflowName: "Dispatch Flow",
+        publish: true,
       });
 
-      const task = await invokeCommand<{ id: string; title: string }>(sessionId, "create_task", {
-        projectId: project.id,
-        input: {
-          title: "Dispatch session task",
-          description: "Drive a real role dispatch and session creation.",
-          type: "task",
-          status: "ready",
-          priority: "P2",
-          workflowId: workflow.id,
-          currentLaneId: null,
-          assigneeType: "unassigned",
-          assigneeId: null,
-          repositoryId: repository.id,
-          parentTaskId: null,
-          archived: false,
-        },
-      });
-
-      const createdTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: task.id });
-      expect(createdTask.repositoryId).toBe(repository.id);
-
-      const taskSummaries = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
-        projectId: project.id,
+      const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
         includeArchived: false,
-      });
-      expect(taskSummaries.some((entry) => entry.id === task.id)).toBe(true);
+      }).then((tasks) => tasks.find((entry) => entry.title === 'Dispatch session task'));
+      expect(task).toBeTruthy();
 
-      await selectValue(sessionId, '[data-role="project-switcher"]', project.id);
-      await sleep(1_000);
+      const createdTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: task!.id });
+      expect(createdTask.repositoryName ?? createdTask.repositoryId).toBeTruthy();
 
       const beforeSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_sessions');
-      await invokeCommandNoWait(sessionId, 'dispatch_task_lane', { taskId: task.id });
+      await openTaskCard(sessionId, 'Dispatch session task');
+      await dispatchTaskViaUi(sessionId);
 
       let updatedTask: any = null;
       let afterSessions: Array<{ id: string; title: string }> = beforeSessions;
       let recentLogs: any[] = [];
       const dispatchDeadline = Date.now() + 25_000;
       while (Date.now() < dispatchDeadline) {
-        updatedTask = await invokeCommand(sessionId, 'get_task', { taskId: task.id });
+        updatedTask = await invokeCommand(sessionId, 'get_task', { taskId: task!.id });
         afterSessions = await invokeCommand(sessionId, 'list_sessions');
         recentLogs = await invokeCommand<any[]>(sessionId, 'get_logs');
         const spawnedRuntime = recentLogs.some((entry) => entry.target === 'sessions.runtime.spawn');

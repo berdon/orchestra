@@ -21,6 +21,7 @@ import {
   waitForSelector,
   waitForText,
 } from "./driver";
+import { completeTaskSuccessViaUi } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -180,7 +181,8 @@ describe("desktop file workflow", () => {
       expect(existsSync(targetFile)).toBe(true);
       expect(readFileSync(targetFile, 'utf8')).toBe(targetContents);
 
-      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: savedTask!.id, notes: 'Completed in desktop e2e.' });
+      await clickByText(sessionId, '[role="tab"]', 'Runtime');
+      await completeTaskSuccessViaUi(sessionId);
       await waitForText(sessionId, 'completed');
       await clickByText(sessionId, 'button', 'Sessions');
       await waitForText(sessionId, 'File Builder · ORC-1 · Create /tmp/file.md');
