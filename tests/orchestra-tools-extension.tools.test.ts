@@ -75,24 +75,40 @@ describe("orchestra tools extension bridge tool setup", () => {
       inputJson: '{"taskId":"task-1","notes":"Ship it"}',
     });
 
+    const taskContextTool = registeredTools.find((tool) => tool.name === "get_task_context");
+    expect(taskContextTool.parameters.properties.taskId).toBeTruthy();
+    expect(taskContextTool.parameters.properties.inputJson).toBeUndefined();
+    const taskContextResult = await taskContextTool.execute("tool-call-2", {
+      taskId: "task-1",
+    });
+
     const repoFileTool = registeredTools.find((tool) => tool.name === "add_task_file_reference");
-    const repoFileResult = await repoFileTool.execute("tool-call-2", {
-      inputJson: '{"taskId":"task-1","input":{"repositoryId":"repo-1","relativePath":"docs/design.md"}}',
+    expect(repoFileTool.parameters.properties.taskId).toBeTruthy();
+    expect(repoFileTool.parameters.properties.repositoryId).toBeTruthy();
+    expect(repoFileTool.parameters.properties.relativePath).toBeTruthy();
+    expect(repoFileTool.parameters.properties.inputJson).toBeUndefined();
+    const repoFileResult = await repoFileTool.execute("tool-call-3", {
+      taskId: "task-1",
+      repositoryId: "repo-1",
+      relativePath: "docs/design.md",
     });
 
     const commentTool = registeredTools.find((tool) => tool.name === "comment_on_task");
-    const commentResult = await commentTool.execute("tool-call-3", {
+    const commentResult = await commentTool.execute("tool-call-4", {
       taskId: "task-1",
       author: "Worker",
       message: "Completed a large action because it was required.",
       interruptAgent: false,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
     expect(request.payload).toEqual({ taskId: "task-1", notes: "Ship it" });
-    const repoFileRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const taskContextRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(taskContextRequest.command).toBe("get_task_context");
+    expect(taskContextRequest.payload).toEqual({ taskId: "task-1" });
+    const repoFileRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
     expect(repoFileRequest.command).toBe("add_task_file_reference");
     expect(repoFileRequest.payload).toEqual({
       taskId: "task-1",
@@ -101,7 +117,7 @@ describe("orchestra tools extension bridge tool setup", () => {
         relativePath: "docs/design.md",
       },
     });
-    const commentRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    const commentRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
     expect(commentRequest.command).toBe("comment_on_task");
     expect(commentRequest.payload).toEqual({
       taskId: "task-1",
@@ -114,6 +130,8 @@ describe("orchestra tools extension bridge tool setup", () => {
     });
     expect(result.details.command).toBe("complete_lane_as_success");
     expect(result.content[0]?.text).toContain("complete_lane_as_success");
+    expect(taskContextResult.details.command).toBe("get_task_context");
+    expect(taskContextResult.content[0]?.text).toContain("get_task_context");
     expect(repoFileResult.details.command).toBe("add_task_file_reference");
     expect(repoFileResult.content[0]?.text).toContain("add_task_file_reference");
     expect(commentResult.details.command).toBe("comment_on_task");
