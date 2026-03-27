@@ -5,14 +5,12 @@ import {
   clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
-  dispatchWindowEvent,
   ensureReactReady,
   invokeCommand,
-  selectByLabel,
   setInputValue,
-  waitForSelectedLabel,
   waitForText,
 } from "./driver";
+import { createProjectViaSettings, createTaskViaTasks, switchProject } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
@@ -22,39 +20,21 @@ describe("desktop task comment replies", () => {
     try {
       await ensureReactReady(sessionId);
 
-      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Comment Reply Project",
-          description: "Desktop task comment replies test.",
-        },
+      await createProjectViaSettings(sessionId, "Comment Reply Project", "Desktop task comment replies test.");
+      await switchProject(sessionId, "Comment Reply Project");
+      await createTaskViaTasks(sessionId, {
+        title: "Comment reply task",
+        description: "Exercise threaded comment replies in the task detail UI.",
       });
-
-      const task = await invokeCommand<{ id: string; title: string }>(sessionId, "create_task", {
-        projectId: project.id,
-        input: {
-          title: "Comment reply task",
-          description: "Exercise threaded comment replies in the task detail UI.",
-          type: "task",
-          status: "draft",
-          priority: "P2",
-          workflowId: null,
-          currentLaneId: null,
-          assigneeType: "unassigned",
-          assigneeId: null,
-          repositoryId: null,
-          parentTaskId: null,
-          archived: false,
-        },
-      });
-
-      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await selectByLabel(sessionId, '[data-role="project-switcher"]', project.name);
-      await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
+      const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        includeArchived: false,
+      }).then((tasks) => tasks.find((entry) => entry.title === 'Comment reply task'));
+      expect(task).toBeTruthy();
 
       await clickByText(sessionId, "button", "Tasks");
-      await waitForText(sessionId, task.title);
-      await clickByText(sessionId, '[data-role="task-card"]', task.title);
-      await waitForText(sessionId, task.title);
+      await waitForText(sessionId, "Comment reply task");
+      await clickByText(sessionId, '[data-role="task-card"]', "Comment reply task");
+      await waitForText(sessionId, "Comment reply task");
       await clickByText(sessionId, '[role="tab"]', "Comments");
       await waitForText(sessionId, "Task conversation");
 
@@ -72,7 +52,7 @@ describe("desktop task comment replies", () => {
       await waitForText(sessionId, 'Split complete; follow-up tasks are queued.');
 
       const comments = await invokeCommand<Array<{ id: string; parentCommentId?: string | null; message: string }>>(sessionId, 'list_task_comments', {
-        taskId: task.id,
+        taskId: task!.id,
       });
       expect(comments).toHaveLength(2);
       const parent = comments.find((entry) => entry.message.includes('Please split this into smaller steps.'));
