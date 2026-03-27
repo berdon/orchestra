@@ -49,11 +49,13 @@ pub fn add_task_file_reference(
     tx.commit()
         .map_err(|error| format!("Unable to commit task file reference: {error}"))?;
 
-    let runtime_cwd = crate::services::task_runtime::get_active_lane_assignment(connection, task_id)?
+    let task = crate::services::tasks::get_task(connection, task_id)?;
+    let task_workspace_cwd = crate::services::task_runtime::get_active_lane_assignment(connection, task_id)?
         .as_ref()
-        .and_then(|assignment| assignment.runtime_cwd.as_deref())
-        .map(str::to_string);
-    load_task_file_reference(connection, &reference_id, runtime_cwd.as_deref())
+        .map(|assignment| crate::services::task_runtime::resolve_assignment_workspace_cwd(connection, assignment, task_id, &task.project_id))
+        .transpose()?
+        .flatten();
+    load_task_file_reference(connection, &reference_id, task_workspace_cwd.as_deref())
 }
 
 pub fn remove_task_file_reference(
@@ -220,7 +222,7 @@ fn build_reference(
     created_at: String,
 ) -> Result<TaskFileReference, String> {
     let task_workspace_path = runtime_cwd
-        .map(|cwd| crate::services::task_repositories::task_repository_worktree_path(cwd, task_id.as_str(), repository_slug.as_str()))
+        .map(|workspace_root| crate::services::task_repositories::task_repository_worktree_path(workspace_root, repository_slug.as_str()))
         .map(PathBuf::from);
     let managed_repository_path = repository_local_path.as_deref().map(PathBuf::from);
 
@@ -392,9 +394,9 @@ mod tests {
         )
         .expect("add file reference");
 
-        let runtime_root = root.join("runtime").display().to_string();
+        let task_workspace_root = root.join("runtime").join("tasks").join(&task_id).display().to_string();
         let expected_path = task_repo_root.join("docs").join("design.md").display().to_string();
-        let loaded = load_task_file_reference(&connection, &reference.id, Some(&runtime_root))
+        let loaded = load_task_file_reference(&connection, &reference.id, Some(&task_workspace_root))
             .expect("load task file reference");
         assert!(loaded.exists);
         assert_eq!(loaded.absolute_path.as_deref(), Some(expected_path.as_str()));

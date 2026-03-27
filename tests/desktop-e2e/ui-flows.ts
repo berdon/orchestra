@@ -148,6 +148,20 @@ export async function createWorkflowViaSettings(
     if (lane.entryPromptTemplate !== undefined) {
       await setFieldByLabel(sessionId, 'Entry prompt template', lane.entryPromptTemplate);
     }
+    if (lane.useSeparateWorktree) {
+      const toggled = await executeScript<boolean>(
+        sessionId,
+        `
+          const input = document.querySelector('[data-role="lane-use-separate-worktree"]');
+          if (!(input instanceof HTMLInputElement)) return false;
+          if (!input.checked) input.click();
+          return true;
+        `,
+      );
+      if (!toggled) {
+        throw new Error('Unable to enable separate worktree for lane');
+      }
+    }
     if (lane.requireUserApprovalOnSuccess) {
       const toggled = await executeScript<boolean>(
         sessionId,

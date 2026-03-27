@@ -29,7 +29,7 @@ use crate::{
     services::{
         agents, authorization, command_authorization, database, messages, pi_sessions,
         policies, project_settings, role_runtime, roles, task_attachments,
-        task_file_references, tasks, workflows,
+        task_file_references, task_runtime, tasks, workflows,
     },
 };
 
@@ -1102,12 +1102,15 @@ fn invoke_bridge_command(
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let task = tasks::get_task_context(connection, &task_id)?;
+            let task_workspace_cwd = task.active_lane_assignment
+                .as_ref()
+                .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, assignment, &task_id, &task.project_id))
+                .transpose()?
+                .flatten();
             serde_json::to_value(task_file_references::load_task_file_references(
                 connection,
                 &task_id,
-                task.active_lane_assignment
-                    .as_ref()
-                    .and_then(|assignment| assignment.runtime_cwd.as_deref()),
+                task_workspace_cwd.as_deref(),
             )?)
             .map_err(|error| format!("Unable to serialize task file references: {error}"))
         }

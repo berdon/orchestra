@@ -688,13 +688,82 @@ fn load_worker_overlay_prompt(
     Ok(project_settings::get_worker_overlay(&project.slug, worker_type, worker_slug)?.prompt)
 }
 
-fn ensure_task_repository_workspaces(task: &TaskDetail, base_cwd: &str) -> Result<(), String> {
+pub fn lane_uses_separate_worktree(lane: &WorkflowLane) -> bool {
+    matches!(lane.assigned_entity_type.as_str(), "agent" | "role") && lane.use_separate_worktree
+}
+
+fn resolve_lane_workspace_cwd(
+    connection: &Connection,
+    project_root: &Path,
+    task: &TaskDetail,
+    lane: &WorkflowLane,
+    runtime_cwd: Option<&str>,
+) -> Result<String, String> {
+    if lane_uses_separate_worktree(lane) {
+        let runtime_cwd = runtime_cwd.ok_or_else(|| {
+            format!(
+                "Lane {} requires a separate worktree but no runtime cwd was available",
+                lane.name
+            )
+        })?;
+        return Ok(task_repositories::task_workspace_root(runtime_cwd, &task.id));
+    }
+
+    let shared_root = pi_sessions::session_context_for_project_id(&task.project_id)
+        .map(|context| task_repositories::shared_task_workspaces_root(&context.project_root))
+        .unwrap_or_else(|_| task_repositories::shared_task_workspaces_root(project_root));
+    Ok(task_repositories::task_workspace_root(
+        &shared_root,
+        &task.id,
+    ))
+}
+
+pub fn resolve_assignment_workspace_cwd(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+    task_id: &str,
+    project_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(runtime_cwd) = assignment.runtime_cwd.as_deref() else {
+        return Ok(None);
+    };
+
+    if assignment.worker_type != "agent" {
+        return Ok(Some(runtime_cwd.to_string()));
+    }
+
+    let workflow = workflows::get_workflow(connection, &assignment.workflow_id)?;
+    let lane = workflow
+        .lanes
+        .into_iter()
+        .find(|entry| entry.id == assignment.lane_id)
+        .ok_or_else(|| {
+            format!(
+                "Unable to resolve workflow lane {} for assignment {}",
+                assignment.lane_id, assignment.id
+            )
+        })?;
+
+    if lane_uses_separate_worktree(&lane) {
+        return Ok(Some(task_repositories::task_workspace_root(runtime_cwd, task_id)));
+    }
+
+    let shared_workspace_root = pi_sessions::session_context_for_project_id(project_id)
+        .map(|context| task_repositories::shared_task_workspaces_root(&context.project_root))
+        .unwrap_or_else(|_| runtime_cwd.to_string());
+    Ok(Some(task_repositories::task_workspace_root(
+        &shared_workspace_root,
+        task_id,
+    )))
+}
+
+pub fn ensure_task_repository_workspaces(task: &TaskDetail, task_workspace_root: &str) -> Result<(), String> {
     if task.task_repositories.is_empty() {
         return Ok(());
     }
 
     std::fs::create_dir_all(task_repositories::task_repositories_root(
-        base_cwd, &task.id,
+        task_workspace_root,
     ))
     .map_err(|error| {
         format!(
@@ -704,15 +773,15 @@ fn ensure_task_repository_workspaces(task: &TaskDetail, base_cwd: &str) -> Resul
     })?;
 
     for repository in &task.task_repositories {
-        ensure_task_repository_worktree(task, base_cwd, repository)?;
+        ensure_task_repository_worktree(task, task_workspace_root, repository)?;
     }
 
     Ok(())
 }
 
 fn ensure_task_repository_worktree(
-    task: &TaskDetail,
-    base_cwd: &str,
+    _task: &TaskDetail,
+    task_workspace_root: &str,
     repository: &TaskRepository,
 ) -> Result<(), String> {
     let Some(managed_repository_path) = repository.managed_repository_path.as_deref() else {
@@ -720,8 +789,7 @@ fn ensure_task_repository_worktree(
     };
 
     let destination = task_repositories::task_repository_worktree_path(
-        base_cwd,
-        &task.id,
+        task_workspace_root,
         &repository.repository_slug,
     );
     let destination_path = PathBuf::from(&destination);
@@ -1068,12 +1136,17 @@ fn dispatch_role_lane(
         system_prompt: normalize_optional(role.system_prompt.clone()),
         project_overlay_prompt: load_worker_overlay_prompt(connection, task, "role", &role.slug)?,
     };
+    let queued_workspace_cwd = if lane_uses_separate_worktree(lane) {
+        None
+    } else {
+        Some(resolve_lane_workspace_cwd(connection, project_root, task, lane, None)?)
+    };
     let prompt = build_lane_prompt(
         connection,
         task,
         workflow,
         lane,
-        Some(project_root.display().to_string().as_str()),
+        queued_workspace_cwd.as_deref(),
         Some(&worker_prompt),
     );
 
@@ -1187,7 +1260,8 @@ fn dispatch_agent_lane(
         .runtime_cwd
         .clone()
         .unwrap_or_else(|| project_root.display().to_string());
-    ensure_task_repository_workspaces(task, &runtime_cwd)?;
+    let task_workspace_cwd = resolve_lane_workspace_cwd(connection, project_root, task, lane, Some(runtime_cwd.as_str()))?;
+    ensure_task_repository_workspaces(task, &task_workspace_cwd)?;
     let session_id = if let Some(existing_session_id) = runtime_state.main_session_id.clone() {
         if pi_sessions::get_session(session_dir, &existing_session_id, false).is_ok() {
             existing_session_id
@@ -1215,7 +1289,7 @@ fn dispatch_agent_lane(
         task,
         workflow,
         lane,
-        Some(&runtime_cwd),
+        Some(&task_workspace_cwd),
         Some(&worker_prompt),
     );
 
@@ -2307,7 +2381,7 @@ fn build_lane_prompt(
     task: &TaskDetail,
     workflow: &WorkflowDefinition,
     lane: &WorkflowLane,
-    runtime_cwd: Option<&str>,
+    task_workspace_cwd: Option<&str>,
     worker_prompt: Option<&WorkerPromptContext>,
 ) -> String {
     let project_slug = projects::get_project(connection, &task.project_id)
@@ -2343,13 +2417,8 @@ fn build_lane_prompt(
         task.task_repositories
             .iter()
             .map(|repository| {
-                let workspace_path = runtime_cwd.map(|cwd| {
-                    task_repositories::task_repository_worktree_path(
-                        cwd,
-                        &task.id,
-                        &repository.repository_slug,
-                    )
-                });
+                let workspace_path = task_workspace_cwd
+                    .map(|workspace_root| task_repositories::task_repository_worktree_path(workspace_root, &repository.repository_slug));
                 match workspace_path.as_deref() {
                     Some(path) => format!(
                         "- {} ({}) available in this session at {}",
@@ -2467,7 +2536,7 @@ fn build_lane_prompt(
             "{WORKER.CONTEXT}",
             build_worker_context_block(worker_prompt),
         ),
-        ("{RUNTIME.CWD}", runtime_cwd.unwrap_or("").to_string()),
+        ("{RUNTIME.CWD}", task_workspace_cwd.unwrap_or("").to_string()),
         ("{ORCHESTRA.WORKING_RULES}", orchestra_working_rules_block()),
         ("{ORCHESTRA.TOOL_HELP}", orchestra_tool_help_block()),
         (
@@ -2633,6 +2702,7 @@ mod tests {
                         assigned_entity_type: "user".into(),
                         assigned_entity_id: None,
                         entry_prompt_template: Some("Draft the plan.".into()),
+                        use_separate_worktree: false,
                         require_user_approval_on_success: false,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-implement".into()),
@@ -2648,6 +2718,7 @@ mod tests {
                         assigned_entity_type: "role".into(),
                         assigned_entity_id: Some(role_slug.into()),
                         entry_prompt_template: Some("Implement the task.".into()),
+                        use_separate_worktree: false,
                         require_user_approval_on_success: false,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-review".into()),
@@ -2665,6 +2736,7 @@ mod tests {
                         entry_prompt_template: Some(
                             "Review the work and summarize findings.".into(),
                         ),
+                        use_separate_worktree: false,
                         require_user_approval_on_success: false,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
@@ -2892,6 +2964,7 @@ mod tests {
             assigned_entity_type: "role".into(),
             assigned_entity_id: Some("developer".into()),
             entry_prompt_template: Some("Ship the fix.".into()),
+            use_separate_worktree: false,
             require_user_approval_on_success: false,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
@@ -3033,6 +3106,7 @@ mod tests {
             assigned_entity_type: "user".into(),
             assigned_entity_id: None,
             entry_prompt_template: None,
+            use_separate_worktree: false,
             require_user_approval_on_success: false,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
@@ -3144,7 +3218,7 @@ mod tests {
             .runtime_cwd
             .as_deref()
             .map(|cwd| {
-                task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-role")
+                task_repositories::task_repository_worktree_path(cwd, "runtime-role")
             })
             .expect("role runtime cwd should exist");
         assert!(Path::new(&role_repo_workspace).exists());
@@ -3196,6 +3270,7 @@ mod tests {
                     assigned_entity_type: "role".into(),
                     assigned_entity_id: Some(role.slug.clone()),
                     entry_prompt_template: Some("Implement the task.".into()),
+                    use_separate_worktree: false,
                     require_user_approval_on_success: true,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -3627,6 +3702,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Finish the task.".into()),
+                    use_separate_worktree: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -3811,6 +3887,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Keep going until done.".into()),
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -3911,6 +3988,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Do the work.".into()),
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -3963,13 +4041,14 @@ mod tests {
         assert_eq!(assignment.worker_type, "agent");
         assert_eq!(assignment.worker_id.as_deref(), Some(agent.id.as_str()));
         assert!(assignment.session_id.is_some());
-        let agent_repo_workspace = assignment
-            .runtime_cwd
-            .as_deref()
-            .map(|cwd| {
-                task_repositories::task_repository_worktree_path(cwd, &task.id, "runtime-agent")
-            })
-            .expect("agent runtime cwd should exist");
+        let agent_workspace_cwd = task_repositories::task_workspace_root(
+            &task_repositories::shared_task_workspaces_root(&root),
+            &task.id,
+        );
+        let agent_repo_workspace = task_repositories::task_repository_worktree_path(
+            &agent_workspace_cwd,
+            "runtime-agent",
+        );
         assert!(Path::new(&agent_repo_workspace).exists());
 
         let updated =
@@ -4026,6 +4105,7 @@ mod tests {
                     assigned_entity_type: "agent".into(),
                     assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Handle the task.".into()),
+                    use_separate_worktree: false,
                     require_user_approval_on_success: false,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
@@ -4171,3 +4251,4 @@ mod tests {
         assert!(agent_session.is_none());
     }
 }
+

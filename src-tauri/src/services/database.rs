@@ -503,6 +503,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 assigned_entity_type TEXT NOT NULL,
                 assigned_entity_id TEXT,
                 entry_prompt_template TEXT,
+                use_separate_worktree INTEGER NOT NULL DEFAULT 0,
                 require_user_approval_on_success INTEGER NOT NULL DEFAULT 0,
                 success_transition_type TEXT NOT NULL DEFAULT 'end',
                 success_target_lane_id TEXT,
@@ -1093,6 +1094,15 @@ fn migrate_workflow_worker_references_to_slugs(connection: &Connection) -> Resul
 
 fn ensure_workflow_transition_columns(connection: &Connection) -> Result<(), String> {
     let columns = table_columns(connection, "workflow_lanes")?;
+
+    if !columns.contains("use_separate_worktree") {
+        connection
+            .execute(
+                "ALTER TABLE workflow_lanes ADD COLUMN use_separate_worktree INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("Unable to add use_separate_worktree column: {error}"))?;
+    }
 
     if !columns.contains("require_user_approval_on_success") {
         connection

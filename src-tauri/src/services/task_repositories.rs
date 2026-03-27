@@ -9,7 +9,7 @@ use crate::{
 pub fn load_task_repositories(
     connection: &Connection,
     task_id: &str,
-    runtime_cwd: Option<&str>,
+    task_workspace_root: Option<&str>,
 ) -> Result<Vec<TaskRepository>, String> {
     let mut statement = connection
         .prepare(
@@ -49,8 +49,8 @@ pub fn load_task_repositories(
         .into_iter()
         .map(
             |(task_id, repository_id, repository_name, repository_slug, managed_repository_path, source_path, created_at)| {
-                let task_worktree_path = runtime_cwd
-                    .map(|cwd| task_repository_worktree_path(cwd, task_id.as_str(), repository_slug.as_str()));
+                let task_worktree_path = task_workspace_root
+                    .map(|workspace_root| task_repository_worktree_path(workspace_root, repository_slug.as_str()));
                 Ok(TaskRepository {
                     task_id,
                     repository_id,
@@ -70,6 +70,10 @@ pub fn load_task_repositories(
         .collect()
 }
 
+pub fn shared_task_workspaces_root(project_root: &std::path::Path) -> String {
+    project_root.join("task-workspaces").display().to_string()
+}
+
 pub fn task_workspace_root(base_cwd: &str, task_id: &str) -> String {
     std::path::Path::new(base_cwd)
         .join("tasks")
@@ -78,19 +82,15 @@ pub fn task_workspace_root(base_cwd: &str, task_id: &str) -> String {
         .to_string()
 }
 
-pub fn task_repositories_root(base_cwd: &str, task_id: &str) -> String {
-    std::path::Path::new(base_cwd)
-        .join("tasks")
-        .join(task_id)
+pub fn task_repositories_root(task_workspace_root: &str) -> String {
+    std::path::Path::new(task_workspace_root)
         .join("repos")
         .display()
         .to_string()
 }
 
-pub fn task_repository_worktree_path(base_cwd: &str, task_id: &str, repository_slug: &str) -> String {
-    std::path::Path::new(base_cwd)
-        .join("tasks")
-        .join(task_id)
+pub fn task_repository_worktree_path(task_workspace_root: &str, repository_slug: &str) -> String {
+    std::path::Path::new(task_workspace_root)
         .join("repos")
         .join(repository_slug)
         .display()

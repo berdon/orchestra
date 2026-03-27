@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     models::{RoleInstance, RoleOperationsDetail},
-    services::{git_worktrees, pi_sessions, role_runtime, roles, tasks},
+    services::{git_worktrees, pi_sessions, projects, role_runtime, roles, task_repositories, task_runtime, tasks, workflows},
 };
 
 pub fn dispatch_role_queue(
@@ -51,13 +51,19 @@ pub fn dispatch_role_queue(
         }
 
         let setup_result = (|| -> Result<(), String> {
-            let (_entry_project_root, entry_session_dir) =
+            let (entry_project_root, entry_session_dir) =
                 resolve_queue_entry_context(connection, _project_root, session_dir, &queue_entry)?;
-            let worktree_path =
-                ensure_instance_worktree(connection, &entry_session_dir, &role.slug, &instance)?;
+            let runtime_cwd = resolve_instance_runtime_cwd(
+                connection,
+                &entry_project_root,
+                &entry_session_dir,
+                &role.slug,
+                &instance,
+                &queue_entry,
+            )?;
             let session_id = ensure_instance_session(
                 connection,
-                &worktree_path,
+                &runtime_cwd,
                 &entry_session_dir,
                 &role,
                 &queue_entry,
@@ -68,7 +74,7 @@ pub fn dispatch_role_queue(
                 connection,
                 &instance.id,
                 &session_id,
-                worktree_path.to_string_lossy().as_ref(),
+                runtime_cwd.to_string_lossy().as_ref(),
             )
         })();
 
@@ -229,7 +235,7 @@ pub fn release_role_instance(
 
 pub fn dispose_role_instance(
     connection: &mut Connection,
-    _project_root: &Path,
+    project_root: &Path,
     instance_id: &str,
 ) -> Result<RoleOperationsDetail, String> {
     let instance = role_runtime::get_role_instance(connection, instance_id)?;
@@ -241,7 +247,11 @@ pub fn dispose_role_instance(
     }
 
     if let Some(worktree_path) = instance.worktree_path.as_deref() {
-        git_worktrees::dispose_runtime_dir(Path::new(worktree_path))?;
+        let shared_task_root = Path::new(&task_repositories::shared_task_workspaces_root(project_root)).to_path_buf();
+        let should_dispose = !Path::new(worktree_path).starts_with(&shared_task_root);
+        if should_dispose {
+            git_worktrees::dispose_runtime_dir(Path::new(worktree_path))?;
+        }
     }
 
     let now = crate::state::now_iso();
@@ -306,11 +316,13 @@ fn active_instance_count(connection: &Connection, role_id: &str) -> Result<i64, 
         .map_err(|error| format!("Unable to count active role instances for {role_id}: {error}"))
 }
 
-fn ensure_instance_worktree(
+fn resolve_instance_runtime_cwd(
     connection: &Connection,
+    project_root: &Path,
     session_dir: &Path,
     role_slug: &str,
     instance: &RoleInstance,
+    queue_entry: &crate::models::RoleQueueEntry,
 ) -> Result<std::path::PathBuf, String> {
     let existing = instance
         .worktree_path
@@ -319,27 +331,63 @@ fn ensure_instance_worktree(
         .map(Path::new)
         .map(Path::to_path_buf);
 
-    let path = if let Some(path) = existing {
-        path
+    if let Some(path) = existing {
+        return Ok(path);
+    }
+
+    let path = if let Some(task_id) = queue_entry.source_task_id.as_deref() {
+        let task = tasks::get_task_context(connection, task_id)?;
+        let lane = queue_entry
+            .source_workflow_id
+            .as_deref()
+            .zip(queue_entry.source_lane_id.as_deref())
+            .and_then(|(workflow_id, lane_id)| workflows::get_workflow(connection, workflow_id).ok().and_then(|workflow| workflow.lanes.into_iter().find(|lane| lane.id == lane_id)))
+            .or_else(|| task.current_lane_id.as_deref().and_then(|lane_id| task.workflow_id.as_deref().and_then(|workflow_id| workflows::get_workflow(connection, workflow_id).ok().and_then(|workflow| workflow.lanes.into_iter().find(|lane| lane.id == lane_id)))));
+
+        let runtime_root = if lane.as_ref().is_some_and(task_runtime::lane_uses_separate_worktree) {
+            git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?
+        } else if lane.is_some() {
+            projects::get_project(connection, &task.project_id)
+                .ok()
+                .and_then(|project| crate::services::orchestra_paths::default_orchestra_root().ok().map(|root| crate::services::orchestra_paths::project_root(&root, &project.slug)))
+                .map(|root| Path::new(&task_repositories::shared_task_workspaces_root(&root)).to_path_buf())
+                .unwrap_or_else(|| Path::new(&task_repositories::shared_task_workspaces_root(project_root)).to_path_buf())
+        } else {
+            git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?
+        };
+        Path::new(&task_repositories::task_workspace_root(
+            runtime_root.to_string_lossy().as_ref(),
+            &task.id,
+        ))
+        .to_path_buf()
     } else {
-        let created = git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?;
-        connection
-            .execute(
-                "UPDATE role_instances SET worktree_path = ?2, updated_at = ?3 WHERE id = ?1",
-                params![
-                    instance.id,
-                    created.to_string_lossy(),
-                    crate::state::now_iso()
-                ],
-            )
-            .map_err(|error| {
-                format!(
-                    "Unable to update worktree path for role instance {}: {error}",
-                    instance.id
-                )
-            })?;
-        created
+        git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?
     };
+
+    std::fs::create_dir_all(&path)
+        .map_err(|error| format!("Unable to create role runtime cwd {}: {error}", path.display()))?;
+
+    if let Some(task_id) = queue_entry.source_task_id.as_deref() {
+        if let Ok(task) = tasks::get_task_context(connection, task_id) {
+            let _ = task_runtime::ensure_task_repository_workspaces(&task, path.to_string_lossy().as_ref());
+        }
+    }
+
+    connection
+        .execute(
+            "UPDATE role_instances SET worktree_path = ?2, updated_at = ?3 WHERE id = ?1",
+            params![
+                instance.id,
+                path.to_string_lossy(),
+                crate::state::now_iso()
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to update worktree path for role instance {}: {error}",
+                instance.id
+            )
+        })?;
 
     Ok(path)
 }

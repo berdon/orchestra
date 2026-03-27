@@ -986,6 +986,8 @@ pub struct WorkflowLane {
     pub assigned_entity_id: Option<String>,
     pub entry_prompt_template: Option<String>,
     #[serde(default)]
+    pub use_separate_worktree: bool,
+    #[serde(default)]
     pub require_user_approval_on_success: bool,
     pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
@@ -1025,6 +1027,8 @@ pub struct WorkflowLaneInput {
     pub assigned_entity_type: String,
     pub assigned_entity_id: Option<String>,
     pub entry_prompt_template: Option<String>,
+    #[serde(default)]
+    pub use_separate_worktree: bool,
     #[serde(default)]
     pub require_user_approval_on_success: bool,
     pub success_transition_type: String,

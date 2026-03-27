@@ -666,6 +666,7 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
                                 ...entry,
                                 assignedEntityType: "user",
                                 assignedEntityId: "",
+                                useSeparateWorktree: false,
                                 requireUserApprovalOnSuccess: false,
                               };
                             }
@@ -776,6 +777,34 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
                       }
                     />
                   </label>
+
+                  <div className="field-group workflow-form-grid__full">
+                    <span className="field-group__label">Workspace</span>
+                    <label className="checkbox-row">
+                      <input
+                        data-role="lane-use-separate-worktree"
+                        type="checkbox"
+                        checked={selectedLane.useSeparateWorktree ?? false}
+                        disabled={selectedLane.assignedEntityType === "user"}
+                        onChange={(event) =>
+                          updateWorkflowDraft((draft) => ({
+                            ...draft,
+                            lanes: draft.lanes.map((entry) =>
+                              entry.id === selectedLane.id
+                                ? { ...entry, useSeparateWorktree: event.target.checked }
+                                : entry,
+                            ),
+                          }))
+                        }
+                      />
+                      <span>Use a separate worker-specific worktree instead of the shared task worktree.</span>
+                    </label>
+                    {selectedLane.assignedEntityType === "user" ? (
+                      <span className="muted-copy">User-owned lanes always operate without a dedicated worker worktree.</span>
+                    ) : (
+                      <span className="muted-copy">When off, agent and role lanes share the task worktree by default.</span>
+                    )}
+                  </div>
 
                   <div className="field-group workflow-form-grid__full">
                     <span className="field-group__label">Success review</span>
