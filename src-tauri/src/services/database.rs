@@ -301,9 +301,6 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_comments_task_id
                 ON task_comments(task_id, created_at ASC);
 
-            CREATE INDEX IF NOT EXISTS idx_task_comments_anchor
-                ON task_comments(task_id, repository_id, relative_path, line_start, created_at ASC);
-
             CREATE TABLE IF NOT EXISTS task_comment_receipts (
                 comment_id TEXT NOT NULL,
                 task_id TEXT NOT NULL,
@@ -1511,7 +1508,20 @@ mod tests {
         let connection = Connection::open(&path).expect("migrated database should open");
 
         let columns = table_columns(&connection, "task_comments").expect("task comments columns should load");
-        assert!(columns.contains("parent_comment_id"));
+        for expected in [
+            "parent_comment_id",
+            "repository_id",
+            "relative_path",
+            "line_start",
+            "line_end",
+            "column_start",
+            "column_end",
+            "selected_text",
+            "anchor_commit_hash",
+            "anchor_has_uncommitted_changes",
+        ] {
+            assert!(columns.contains(expected), "missing expected task_comments column: {expected}");
+        }
 
         let indexes = connection
             .prepare("PRAGMA index_list('task_comments')")
@@ -1521,6 +1531,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("indexes should collect");
         assert!(indexes.iter().any(|name| name == "idx_task_comments_parent_comment_id"));
+        assert!(indexes.iter().any(|name| name == "idx_task_comments_anchor"));
     }
 
     #[test]
