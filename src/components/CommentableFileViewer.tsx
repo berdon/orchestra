@@ -27,6 +27,12 @@ interface SelectionCommentAction {
   left: number;
 }
 
+interface OpenFileCommentDraftDetail {
+  anchor: FileCommentAnchor;
+  top?: number;
+  left?: number;
+}
+
 interface CommentableFileViewerProps {
   reference: TaskFileReference;
   content: string;
@@ -197,11 +203,40 @@ export function CommentableFileViewer({
       window.requestAnimationFrame(syncSelectionAction);
     };
 
+    const openSelectionComment = () => {
+      window.requestAnimationFrame(() => {
+        openSelectionCommentFromCurrentSelection();
+      });
+    };
+
+    const openFileCommentDraft = (event: Event) => {
+      const customEvent = event as CustomEvent<OpenFileCommentDraftDetail>;
+      const detail = customEvent.detail;
+      if (!detail?.anchor) {
+        return;
+      }
+      const container = containerRef.current;
+      if (!container) {
+        return;
+      }
+      const top = detail.top ?? container.scrollTop + 24;
+      const left = detail.left ?? container.scrollLeft + 120;
+      openFloatingComment(detail.anchor, top, left);
+    };
+
     document.addEventListener("selectionchange", syncSelectionAction);
     document.addEventListener("mouseup", syncSelectionActionDeferred);
+    document.addEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
+    document.addEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
+    (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft = (detail) => {
+      openFileCommentDraft(new CustomEvent("orchestra:open-file-comment-draft", { detail }));
+    };
     return () => {
       document.removeEventListener("selectionchange", syncSelectionAction);
       document.removeEventListener("mouseup", syncSelectionActionDeferred);
+      document.removeEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
+      document.removeEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
+      delete (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft;
     };
   }, [reference]);
 
@@ -234,11 +269,30 @@ export function CommentableFileViewer({
     setSelectionAction(null);
   }
 
+  function openSelectionCommentFromCurrentSelection() {
+    const container = containerRef.current;
+    const selection = window.getSelection();
+    if (!container || !selection) {
+      return false;
+    }
+
+    const next = buildSelectionCommentAction(container, reference, selection);
+    if (!next) {
+      return false;
+    }
+
+    setSelectionAction(next);
+    openFloatingComment(next.anchor, next.top, next.left);
+    return true;
+  }
+
   function handleSelectionCommentClick() {
-    if (!selectionAction) {
+    if (selectionAction) {
+      openFloatingComment(selectionAction.anchor, selectionAction.top, selectionAction.left);
       return;
     }
-    openFloatingComment(selectionAction.anchor, selectionAction.top, selectionAction.left);
+
+    openSelectionCommentFromCurrentSelection();
   }
 
   function handleLineCommentClick(lineNumber: number, event: ReactMouseEvent<HTMLButtonElement>) {

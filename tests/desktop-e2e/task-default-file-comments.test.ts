@@ -11,6 +11,7 @@ import {
   deleteWebdriverSession,
   dispatchWindowEvent,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   selectByLabel,
   setInputValue,
@@ -23,7 +24,7 @@ const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 
 describe("desktop default-file anchored task comments", () => {
-  it.skipIf(!isDesktopE2E)("supports quick comments plus line comments on the default file preview", async () => {
+  it.skipIf(!isDesktopE2E)("supports quick comments, line comments, and selected-text comments on the default file preview", async () => {
     expect(testHome).toBeTruthy();
 
     const repoPath = join(testHome!, "workspace", "task-default-file-comments-repo", "repository");
@@ -109,6 +110,34 @@ describe("desktop default-file anchored task comments", () => {
       await waitForText(sessionId, 'Please revisit this line.');
       await waitForText(sessionId, 'docs/design.md · line 3');
 
+      await executeScript(sessionId, `
+        const openDraft = window.__orchestraOpenFileCommentDraft;
+        if (typeof openDraft !== 'function') {
+          throw new Error('Comment draft helper was not available');
+        }
+        openDraft({
+          anchor: {
+            repositoryId: ${JSON.stringify(repository.id)},
+            relativePath: 'docs/design.md',
+            absolutePath: ${JSON.stringify(join(repoPath, 'docs', 'design.md'))},
+            lineStart: 2,
+            lineEnd: 2,
+            columnStart: 1,
+            columnEnd: 18,
+            selectedText: 'Beta selected text'
+          },
+          top: 72,
+          left: 220,
+        });
+        return true;
+      `);
+      await waitForText(sessionId, 'Selection');
+      await setInputValue(sessionId, '[data-role="default-file-comment-author"]', 'Selection Reviewer');
+      await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Clarify this selected text.');
+      await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
+      await waitForText(sessionId, 'Clarify this selected text.');
+      await waitForText(sessionId, 'Beta selected text');
+
       const comments = await invokeCommand<Array<{
         message: string;
         relativePath?: string | null;
@@ -121,7 +150,7 @@ describe("desktop default-file anchored task comments", () => {
         anchorHasUncommittedChanges?: boolean | null;
       }>>(sessionId, 'list_task_comments', { taskId: task.id });
 
-      expect(comments).toHaveLength(2);
+      expect(comments).toHaveLength(3);
       expect(comments[0]?.message).toContain('General note under the default file.');
 
       const lineComment = comments.find((entry) => entry.message.includes('Please revisit this line.'));
@@ -133,6 +162,17 @@ describe("desktop default-file anchored task comments", () => {
       expect(lineComment?.selectedText ?? null).toBeNull();
       expect(lineComment?.anchorCommitHash).toBe(commitHash);
       expect(lineComment?.anchorHasUncommittedChanges).toBe(false);
+
+      const selectionComment = comments.find((entry) => entry.message.includes('Clarify this selected text.'));
+      expect(selectionComment).toBeTruthy();
+      expect(selectionComment?.relativePath).toBe('docs/design.md');
+      expect(selectionComment?.lineStart).toBe(2);
+      expect(selectionComment?.lineEnd).toBe(2);
+      expect(selectionComment?.columnStart).toBe(1);
+      expect(selectionComment?.columnEnd).toBe(18);
+      expect(selectionComment?.selectedText).toBe('Beta selected text');
+      expect(selectionComment?.anchorCommitHash).toBe(commitHash);
+      expect(selectionComment?.anchorHasUncommittedChanges).toBe(false);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
