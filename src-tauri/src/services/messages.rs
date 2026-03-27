@@ -56,7 +56,10 @@ pub fn list_user_messages(
     }
 }
 
-pub fn list_task_messages(connection: &Connection, task_id: &str) -> Result<Vec<MailboxMessage>, String> {
+pub fn list_task_messages(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<MailboxMessage>, String> {
     let sql = format!(
         "{} WHERE m.task_id = ?1 ORDER BY m.created_at DESC, d.id DESC",
         mailbox_message_select()
@@ -87,7 +90,10 @@ pub fn mark_user_messages_read(
             .filter(|id| allowed_ids.contains(id.as_str()))
             .cloned()
             .collect::<Vec<_>>(),
-        _ => unread.iter().map(|message| message.delivery_id.clone()).collect::<Vec<_>>(),
+        _ => unread
+            .iter()
+            .map(|message| message.delivery_id.clone())
+            .collect::<Vec<_>>(),
     };
 
     if selected_ids.is_empty() {
@@ -171,7 +177,8 @@ pub fn mark_mail_read_for_authorization(
     task_id: Option<&str>,
     delivery_ids: Option<&[String]>,
 ) -> Result<Vec<MailboxMessage>, String> {
-    let unread = list_unread_mail_for_authorization(connection, authorization, session_id, task_id)?;
+    let unread =
+        list_unread_mail_for_authorization(connection, authorization, session_id, task_id)?;
     if unread.is_empty() {
         return Ok(Vec::new());
     }
@@ -186,7 +193,10 @@ pub fn mark_mail_read_for_authorization(
             .filter(|id| allowed_ids.contains(id.as_str()))
             .cloned()
             .collect::<Vec<_>>(),
-        _ => unread.iter().map(|message| message.delivery_id.clone()).collect::<Vec<_>>(),
+        _ => unread
+            .iter()
+            .map(|message| message.delivery_id.clone())
+            .collect::<Vec<_>>(),
     };
 
     if selected_ids.is_empty() {
@@ -427,7 +437,11 @@ fn resolve_project_id_for_send(
             .ok_or_else(|| format!("Task {} was not found", task_id));
     }
 
-    if let Some(project_id) = input.project_id.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(project_id) = input
+        .project_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         return Ok(project_id.to_string());
     }
 
@@ -504,7 +518,9 @@ fn resolve_recipient(
                 .ok_or_else(|| "recipientId: Assignment recipient id is required.".to_string())?;
             let assignment = load_assignment(connection, assignment_id)?;
             if assignment.status != "active" || assignment.session_id.is_none() {
-                return Err(format!("Assignment {assignment_id} is not active and cannot receive mail."));
+                return Err(format!(
+                    "Assignment {assignment_id} is not active and cannot receive mail."
+                ));
             }
             Ok(ResolvedRecipient {
                 recipient_type: RECIPIENT_ASSIGNMENT.into(),
@@ -514,7 +530,9 @@ fn resolve_recipient(
                 active_assignment: Some(assignment),
             })
         }
-        other => Err(format!("recipientType: Unsupported recipient type {other}.")),
+        other => Err(format!(
+            "recipientType: Unsupported recipient type {other}."
+        )),
     }
 }
 
@@ -537,6 +555,7 @@ fn deliver_message(
                 .as_deref()
                 .ok_or_else(|| "Agent delivery is missing recipient id".to_string())?;
             let message = build_unread_mail_delivery_message(task_id, sender_label, priority);
+            let delivery_mode = resolve_agent_mail_delivery_mode(connection, project_id, agent_id)?;
             agent_runtime::enqueue_agent_work_for_project(
                 connection,
                 project_id,
@@ -546,7 +565,7 @@ fn deliver_message(
                     source_task_id: task_id.map(str::to_string),
                     source_workflow_id: None,
                     source_lane_id: None,
-                    delivery_mode: if priority == PRIORITY_INTERRUPT { "steer" } else { "follow_up" }.into(),
+                    delivery_mode: delivery_mode.into(),
                     title: if let Some(task_id) = task_id {
                         format!("Mail for task {task_id}")
                     } else {
@@ -556,7 +575,11 @@ fn deliver_message(
                 },
             )?;
             mark_delivery_notified(connection, delivery_id)?;
-            let _ = crate::services::app_events::emit_session_change(&app, "mail.sent", Vec::<String>::new());
+            let _ = crate::services::app_events::emit_session_change(
+                &app,
+                "mail.sent",
+                Vec::<String>::new(),
+            );
             Ok(())
         }
         RECIPIENT_ASSIGNMENT => {
@@ -645,7 +668,9 @@ fn resolve_project_id_for_session(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| format!("Unable to resolve session project from assignment {session_id}: {error}"))?
+        .map_err(|error| {
+            format!("Unable to resolve session project from assignment {session_id}: {error}")
+        })?
     {
         return Ok(Some(project_id));
     }
@@ -657,7 +682,9 @@ fn resolve_project_id_for_session(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| format!("Unable to resolve session project from agent runtime {session_id}: {error}"))
+        .map_err(|error| {
+            format!("Unable to resolve session project from agent runtime {session_id}: {error}")
+        })
 }
 
 fn resolve_project_id_for_task(
@@ -697,18 +724,21 @@ fn load_unread_assignment_mail(
     load_messages_with_sql(connection, &sql, vec![&assignment_id])
 }
 
-fn get_message_delivery(connection: &Connection, delivery_id: &str) -> Result<MailboxMessage, String> {
-    let sql = format!(
-        "{} WHERE d.id = ?1 LIMIT 1",
-        mailbox_message_select()
-    );
+fn get_message_delivery(
+    connection: &Connection,
+    delivery_id: &str,
+) -> Result<MailboxMessage, String> {
+    let sql = format!("{} WHERE d.id = ?1 LIMIT 1", mailbox_message_select());
     load_messages_with_sql(connection, &sql, vec![&delivery_id])?
         .into_iter()
         .next()
         .ok_or_else(|| format!("Mailbox delivery {delivery_id} was not found"))
 }
 
-fn load_assignment(connection: &Connection, assignment_id: &str) -> Result<TaskLaneAssignment, String> {
+fn load_assignment(
+    connection: &Connection,
+    assignment_id: &str,
+) -> Result<TaskLaneAssignment, String> {
     connection
         .query_row(
             r#"
@@ -767,7 +797,10 @@ fn load_assignment(connection: &Connection, assignment_id: &str) -> Result<TaskL
         .ok_or_else(|| format!("Assignment {assignment_id} was not found"))
 }
 
-fn build_assignment_label(connection: &Connection, assignment: &TaskLaneAssignment) -> Result<String, String> {
+fn build_assignment_label(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<String, String> {
     let task_number = connection
         .query_row(
             "SELECT number FROM tasks WHERE id = ?1",
@@ -775,7 +808,12 @@ fn build_assignment_label(connection: &Connection, assignment: &TaskLaneAssignme
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| format!("Unable to resolve task number for assignment {}: {error}", assignment.id))?
+        .map_err(|error| {
+            format!(
+                "Unable to resolve task number for assignment {}: {error}",
+                assignment.id
+            )
+        })?
         .unwrap_or_else(|| assignment.task_id.clone());
     let worker_label = match assignment.worker_type.as_str() {
         "agent" => assignment
@@ -801,6 +839,27 @@ fn normalize_priority(priority: Option<&str>) -> Result<String, String> {
         PRIORITY_INTERRUPT => Ok(PRIORITY_INTERRUPT.into()),
         other => Err(format!("priority: Unsupported priority {other}.")),
     }
+}
+
+fn resolve_agent_mail_delivery_mode(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<&'static str, String> {
+    let runtime_state =
+        agent_runtime::ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    if runtime_state.current_queue_entry_id.is_some() || runtime_state.status == "running" {
+        Ok("steer")
+    } else {
+        Ok("prompt")
+    }
+}
+
+pub fn agent_has_unread_direct_mail(
+    connection: &Connection,
+    agent_id: &str,
+) -> Result<bool, String> {
+    Ok(!load_unread_agent_mail(connection, agent_id)?.is_empty())
 }
 
 fn build_unread_mail_delivery_message(
@@ -1008,7 +1067,14 @@ mod tests {
         let now = crate::state::now_iso();
         seed_agent(&connection, "agent-1", "Agent 1", &now);
         let task_id = create_basic_task(&mut connection, "Mailbox runtime task");
-        seed_assignment(&connection, "assignment-1", &task_id, "agent-1", "session-1", &now);
+        seed_assignment(
+            &connection,
+            "assignment-1",
+            &task_id,
+            "agent-1",
+            "session-1",
+            &now,
+        );
         seed_delivery(
             &connection,
             "delivery-agent",
@@ -1058,7 +1124,9 @@ mod tests {
         )
         .expect("mail should mark read");
         assert_eq!(read.len(), 2);
-        assert!(read.iter().all(|message| message.read_session_id.as_deref() == Some("session-1")));
+        assert!(read
+            .iter()
+            .all(|message| message.read_session_id.as_deref() == Some("session-1")));
 
         let unread_after = list_unread_mail_for_authorization(
             &connection,
@@ -1076,7 +1144,14 @@ mod tests {
         let now = crate::state::now_iso();
         seed_agent(&connection, "agent-1", "Agent 1", &now);
         let task_id = create_basic_task(&mut connection, "Mailbox runtime task");
-        seed_assignment(&connection, "assignment-1", &task_id, "agent-1", "session-1", &now);
+        seed_assignment(
+            &connection,
+            "assignment-1",
+            &task_id,
+            "agent-1",
+            "session-1",
+            &now,
+        );
         seed_delivery(
             &connection,
             "delivery-agent-cross-project",
@@ -1107,6 +1182,38 @@ mod tests {
     }
 
     #[test]
+    fn direct_agent_mail_prompts_idle_agents_and_steers_running_agents() {
+        let connection = open_test_connection("messages-agent-delivery-mode");
+        let now = crate::state::now_iso();
+        seed_agent(&connection, "agent-1", "Agent 1", &now);
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', 'agent-1', 'idle', 'session-1', '/tmp/runtime', NULL, NULL, NULL, ?1, ?1)",
+                [&now],
+            )
+            .expect("idle runtime should seed");
+
+        assert_eq!(
+            resolve_agent_mail_delivery_mode(&connection, "orchestra", "agent-1")
+                .expect("idle delivery mode should resolve"),
+            "prompt"
+        );
+
+        connection
+            .execute(
+                "UPDATE agent_runtime_states SET status = 'running', current_queue_entry_id = 'queue-1', updated_at = ?1 WHERE project_id = 'orchestra' AND agent_id = 'agent-1'",
+                [&now],
+            )
+            .expect("runtime should update");
+
+        assert_eq!(
+            resolve_agent_mail_delivery_mode(&connection, "orchestra", "agent-1")
+                .expect("running delivery mode should resolve"),
+            "steer"
+        );
+    }
+
+    #[test]
     fn user_inbox_lists_and_marks_user_messages_read() {
         let connection = open_test_connection("messages-user-inbox");
         let now = crate::state::now_iso();
@@ -1124,7 +1231,8 @@ mod tests {
             &now,
         );
 
-        let inbox = list_user_messages(&connection, Some("orchestra")).expect("user inbox should load");
+        let inbox =
+            list_user_messages(&connection, Some("orchestra")).expect("user inbox should load");
         assert_eq!(inbox.len(), 1);
         assert!(inbox[0].read_at.is_none());
 
@@ -1133,7 +1241,8 @@ mod tests {
         assert_eq!(read.len(), 1);
         assert_eq!(read[0].read_session_id.as_deref(), Some("desktop-user"));
 
-        let inbox_after = list_user_messages(&connection, Some("orchestra")).expect("user inbox should reload");
+        let inbox_after =
+            list_user_messages(&connection, Some("orchestra")).expect("user inbox should reload");
         assert!(inbox_after[0].read_at.is_some());
     }
 }

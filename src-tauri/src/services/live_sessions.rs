@@ -426,13 +426,13 @@ impl SessionRuntime {
         let _ = self.take_current_run_id();
         self.mark_closed();
         if let Ok(mut stdin) = self.stdin.lock() {
-          *stdin = None;
+            *stdin = None;
         }
         if let Ok(mut child) = self.child.lock() {
-          if let Some(child) = child.as_mut() {
-            let _ = child.kill();
-          }
-          *child = None;
+            if let Some(child) = child.as_mut() {
+                let _ = child.kill();
+            }
+            *child = None;
         }
     }
 
@@ -569,7 +569,10 @@ impl SessionRuntime {
         self.app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.teardown",
-            &format!("Tearing down live pi RPC runtime for session {}", self.session_id),
+            &format!(
+                "Tearing down live pi RPC runtime for session {}",
+                self.session_id
+            ),
         );
         self.mark_closed();
         if let Ok(mut stdin) = self.stdin.lock() {
@@ -667,6 +670,24 @@ fn runtime_authorization_context_for_connection(
                 }));
             }
         }
+    }
+
+    let agent_id = connection
+        .query_row(
+            "SELECT agent_id FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
+            [session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to resolve agent runtime authorization context: {error}")
+        })?;
+
+    if let Some(agent_id) = agent_id {
+        return Ok(Some(AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent_id,
+        }));
     }
 
     let role_instance_id = connection
@@ -775,6 +796,15 @@ mod tests {
             .expect("role should seed");
     }
 
+    fn seed_agent(connection: &Connection, agent_id: &str) {
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, description, system_prompt, provider, model, role_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, 'off', '[]', 0, 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                params![agent_id, agent_id, agent_id],
+            )
+            .expect("agent should seed");
+    }
+
     #[test]
     fn runtime_authorization_prefers_active_role_assignment_over_stale_session_binding() {
         let connection = in_memory_connection();
@@ -862,6 +892,25 @@ mod tests {
             .expect("authorization should exist");
         assert_eq!(authorization.actor_type, "agent");
         assert_eq!(authorization.actor_id, "agent-1");
+    }
+
+    #[test]
+    fn runtime_authorization_uses_agent_main_session_when_idle() {
+        let connection = in_memory_connection();
+        seed_agent(&connection, "agent-7");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', 'agent-7', 'idle', 'session-idle-agent', '/tmp/runtime', NULL, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("agent runtime state should seed");
+
+        let authorization =
+            runtime_authorization_context_for_connection(&connection, "session-idle-agent")
+                .expect("authorization should resolve")
+                .expect("authorization should exist");
+        assert_eq!(authorization.actor_type, "agent");
+        assert_eq!(authorization.actor_id, "agent-7");
     }
 }
 
