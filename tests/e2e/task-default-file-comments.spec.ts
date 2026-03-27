@@ -90,14 +90,22 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
-  await page.getByRole("button", { name: "Tasks" }).click();
-  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await page.evaluate(() => {
+    const tasksButton = Array.from(document.querySelectorAll('button')).find((element) =>
+      (element.textContent ?? '').trim() === 'Tasks',
+    ) as HTMLButtonElement | undefined;
+    tasksButton?.click();
+  });
+  await page.evaluate(() => {
+    const match = Array.from(document.querySelectorAll('[data-role="task-card"]')).find((element) =>
+      (element.textContent ?? '').includes('Implement task foundation shell'),
+    ) as HTMLButtonElement | undefined;
+    match?.click();
+  });
   await expect(page.getByRole("heading", { name: "Implement task foundation shell" })).toBeVisible();
 
   await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file.");
-  await page.evaluate(() => {
-    (document.querySelector('[data-role="add-default-file-quick-comment"]') as HTMLButtonElement | null)?.click();
-  });
+  await page.locator('[data-role="add-default-file-quick-comment"]').click();
 
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file.");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
@@ -124,9 +132,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   });
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toBeVisible();
   await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Please revisit this line.");
-  await page.evaluate(() => {
-    (document.querySelector('[data-role="add-default-file-comment"]') as HTMLButtonElement | null)?.click();
-  });
+  await page.locator('[data-role="add-default-file-comment"]').click();
 
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("docs/design.md · line 3");
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
