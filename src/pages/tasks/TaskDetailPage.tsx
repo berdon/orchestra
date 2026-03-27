@@ -384,7 +384,7 @@ export function TaskDetailPage({
         variant: "secondary",
         dataRole: "send-task-back-for-work",
       });
-    } else if (task.activeLaneAssignment || (task.assigneeType === "user" && task.currentLaneId)) {
+    } else if (task.status === "in_review" && !task.activeLaneAssignment && task.assigneeType === "user" && task.currentLaneId) {
       actions.push({
         id: "approve-user",
         label: "Approve",

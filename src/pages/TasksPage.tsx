@@ -812,6 +812,7 @@ export function TasksPage({
         await sendSessionMessage(
           activeSessionId,
           `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool \`complete_lane_as_failure\` (with task ID and optional notes). If you believe you need to escalate to the user - use tool \`request_user_intervention\` (with task ID and optional notes).\n\nCanonical task ID: ${route.taskId}`,
+          `manual-whip-${Date.now()}`,
         );
       }
       await manualTaskWhip(route.taskId);

@@ -86,7 +86,7 @@ pub fn complete_agent_run(
     session_id: &str,
     run_id: Option<&str>,
 ) -> Result<(), String> {
-    let connection = crate::services::database::open_connection()?;
+    let mut connection = crate::services::database::open_connection()?;
     let Some((project_id, agent_id)) = agent_for_session(&connection, session_id)? else {
         return Ok(());
     };
@@ -94,9 +94,12 @@ pub fn complete_agent_run(
         if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
             let queue_entry = agent_runtime::get_agent_queue_entry(&connection, queue_entry_id)?;
             if run_id.is_none() || queue_entry.run_id.as_deref() == run_id {
-                agent_runtime::mark_agent_queue_entry_completed(&connection, queue_entry_id)?;
+                let tx = connection
+                    .transaction()
+                    .map_err(|error| format!("Unable to start agent completion transaction: {error}"))?;
+                agent_runtime::mark_agent_queue_entry_completed(&tx, queue_entry_id)?;
                 let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
-                    &connection,
+                    &tx,
                     &project_id,
                     &agent_id,
                     Some(session_id),
@@ -105,6 +108,8 @@ pub fn complete_agent_run(
                     "idle",
                     None,
                 )?;
+                tx.commit()
+                    .map_err(|error| format!("Unable to commit agent completion transaction: {error}"))?;
             }
         }
     }
@@ -116,7 +121,7 @@ pub fn fail_agent_run(
     run_id: Option<&str>,
     error_message: &str,
 ) -> Result<(), String> {
-    let connection = crate::services::database::open_connection()?;
+    let mut connection = crate::services::database::open_connection()?;
     let Some((project_id, agent_id)) = agent_for_session(&connection, session_id)? else {
         return Ok(());
     };
@@ -124,9 +129,12 @@ pub fn fail_agent_run(
         if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
             let queue_entry = agent_runtime::get_agent_queue_entry(&connection, queue_entry_id)?;
             if run_id.is_none() || queue_entry.run_id.as_deref() == run_id {
-                agent_runtime::mark_agent_queue_entry_failed(&connection, queue_entry_id)?;
+                let tx = connection
+                    .transaction()
+                    .map_err(|error| format!("Unable to start agent failure transaction: {error}"))?;
+                agent_runtime::mark_agent_queue_entry_failed(&tx, queue_entry_id)?;
                 let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
-                    &connection,
+                    &tx,
                     &project_id,
                     &agent_id,
                     Some(session_id),
@@ -135,6 +143,8 @@ pub fn fail_agent_run(
                     "needs_attention",
                     Some(error_message),
                 )?;
+                tx.commit()
+                    .map_err(|error| format!("Unable to commit agent failure transaction: {error}"))?;
             }
         }
     }
