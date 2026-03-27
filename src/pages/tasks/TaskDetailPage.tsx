@@ -5,6 +5,7 @@ import type { AgentSummary, RepositoryRecord, RoleSummary, TaskComment, TaskComm
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
+import { TaskCommentMentionsTextarea } from "../../components/TaskCommentMentionsTextarea";
 import { TaskEditorForm } from "./TaskEditorForm";
 
 interface TaskTimelineItem {
@@ -867,7 +868,15 @@ export function TaskDetailPage({
               </div>
               <label className="field-group">
                 <span className="field-group__label">Add comment</span>
-                <textarea className="text-area" data-role="task-comment-message" rows={4} value={commentDraft.message} onChange={(event) => onCommentDraftChange({ ...commentDraft, message: event.target.value })} />
+                <TaskCommentMentionsTextarea
+                  taskId={task.id}
+                  value={commentDraft.message}
+                  rows={4}
+                  dataRole="task-comment-message"
+                  listDataRole="task-comment-mention-list"
+                  optionDataRole="task-comment-mention-option"
+                  onChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
+                />
               </label>
               <div className="task-comment-composer__actions">
                 <button className="primary-button" data-role="add-task-comment" type="button" onClick={() => void handleAddTopLevelComment()}>Add comment</button>
@@ -931,7 +940,15 @@ export function TaskDetailPage({
                         </div>
                         <label className="field-group">
                           <span className="field-group__label">Reply to {comment.author}</span>
-                          <textarea className="text-area" data-role="task-reply-message" rows={3} value={replyDraft.message} onChange={(event) => setReplyDraft({ ...replyDraft, message: event.target.value })} />
+                          <TaskCommentMentionsTextarea
+                            taskId={task.id}
+                            value={replyDraft.message}
+                            rows={3}
+                            dataRole="task-reply-message"
+                            listDataRole="task-reply-mention-list"
+                            optionDataRole="task-reply-mention-option"
+                            onChange={(message) => setReplyDraft({ ...replyDraft, message })}
+                          />
                         </label>
                         <div className="task-comment-composer__actions">
                           <button className="primary-button" data-role="add-task-reply" type="button" onClick={() => void handleAddReply()}>
@@ -1130,6 +1147,7 @@ export function TaskDetailPage({
                       <p className="muted-copy">Loading file preview…</p>
                     ) : (
                       <CommentableFileViewer
+                        taskId={task.id}
                         commentDraft={commentDraft}
                         comments={task.comments}
                         content={defaultFileContent ?? ""}

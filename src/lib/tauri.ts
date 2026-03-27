@@ -21,6 +21,7 @@ import type {
   TaskFileReference,
   TaskFileReferenceInput,
   TaskComment,
+  TaskCommentFileMentionCandidate,
   TaskChangeEvent,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -2372,6 +2373,14 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
   }
 
   return invoke<TaskDependency>("remove_task_dependency", { dependencyId });
+}
+
+export async function searchTaskCommentFileMentions(taskId: string, query: string, limit = 10): Promise<TaskCommentFileMentionCandidate[]> {
+  if (!isTauriAvailable()) {
+    return [];
+  }
+
+  return invoke<TaskCommentFileMentionCandidate[]>("search_task_comment_file_mentions", { taskId, query, limit });
 }
 
 export async function commentOnTask(taskId: string, input: TaskCommentInput): Promise<TaskComment> {

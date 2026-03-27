@@ -573,6 +573,15 @@ export interface TaskCommentUpdateInput {
   message: string;
 }
 
+export interface TaskCommentFileMentionCandidate {
+  repositoryId: string;
+  repositoryName: string;
+  repositorySlug: string;
+  relativePath: string;
+  displayText: string;
+  insertText: string;
+}
+
 export interface TaskDependency {
   id: string;
   blockerTaskId: string;

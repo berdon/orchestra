@@ -18,10 +18,10 @@ export async function createProjectViaSettings(sessionId: string, name: string, 
   await clickByText(sessionId, "button", "Settings");
   await waitForText(sessionId, "Project catalog");
   await clickByText(sessionId, "button", "New project");
-  await waitForText(sessionId, "New project");
+  await waitForText(sessionId, "Create project");
   await setInputValue(sessionId, '[data-role="project-name"]', name);
   await setInputValue(sessionId, '[data-role="project-description"]', description);
-  await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
+  await clickByText(sessionId, 'button', 'Create project');
   await waitForText(sessionId, name);
 }
 

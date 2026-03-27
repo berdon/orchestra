@@ -41,7 +41,8 @@ use commands::{
         dispatch_task_lane, get_task, get_task_context, get_task_file_content, list_task_comments,
         list_task_file_references, list_task_repositories, list_tasks, manual_task_whip,
         reset_task_runtime, remove_task_attachment, remove_task_dependency, remove_task_file_reference,
-        request_user_intervention, send_lane_back_for_work, set_default_task_file_reference, update_task, update_task_comment,
+        request_user_intervention, search_task_comment_file_mentions, send_lane_back_for_work,
+        set_default_task_file_reference, update_task, update_task_comment,
     },
     workflows::{
         archive_workflow, create_workflow, duplicate_workflow, get_workflow, list_workflows,
@@ -174,6 +175,7 @@ pub fn run() {
             get_task,
             get_task_context,
             list_task_comments,
+            search_task_comment_file_mentions,
             list_task_repositories,
             list_task_file_references,
             set_default_task_file_reference,

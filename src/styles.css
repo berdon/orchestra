@@ -1887,6 +1887,42 @@ strong {
   padding-bottom: 10px;
 }
 
+.task-comment-mentions-input {
+  position: relative;
+}
+
+.task-comment-mentions-input__menu {
+  position: absolute;
+  z-index: 20;
+  inset: calc(100% + 6px) 0 auto 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.task-comment-mentions-input__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+
+.task-comment-mentions-input__option--active,
+.task-comment-mentions-input__option:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: rgba(143, 79, 47, 0.08);
+}
+
 .task-comment-thread,
 .task-comment-thread__replies,
 .task-comment-thread__actions,
