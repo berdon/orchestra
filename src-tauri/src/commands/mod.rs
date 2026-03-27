@@ -2,6 +2,7 @@ pub mod agent_runtime;
 pub mod agents;
 pub mod app;
 pub mod dispatcher;
+pub mod messages;
 pub mod policies;
 pub mod projects;
 pub mod project_settings;

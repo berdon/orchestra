@@ -21,14 +21,15 @@ use uuid::Uuid;
 use crate::{
     models::{
         AuthorizationContext, BridgeCleanupEvent, BridgeClientDiagnostics, BridgeDiagnostics,
-        BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkTaskCommentsReadInput,
-        OrchestraToolDefinition, RoleQueueEntryInput, TaskAttachmentInput, TaskCommentInput,
-        TaskLaneAssignment, TaskUpsertInput,
+        BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkMailboxMessagesReadInput,
+        MarkTaskCommentsReadInput, OrchestraToolDefinition, RoleQueueEntryInput,
+        SendMailboxMessageInput, TaskAttachmentInput, TaskCommentInput, TaskLaneAssignment,
+        TaskUpsertInput,
     },
     services::{
-        agents, authorization, command_authorization, database, pi_sessions, policies,
-        project_settings, role_runtime, roles, task_attachments, task_file_references, tasks,
-        workflows,
+        agents, authorization, command_authorization, database, messages, pi_sessions,
+        policies, project_settings, role_runtime, roles, task_attachments,
+        task_file_references, tasks, workflows,
     },
 };
 
@@ -109,6 +110,9 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_task_comments",
     "get_unread_task_comments",
     "mark_task_comments_read",
+    "get_unread_mail",
+    "mark_mail_read",
+    "send_mail",
     "list_task_repositories",
     "list_task_file_references",
     "add_task_file_reference",
@@ -580,6 +584,7 @@ fn handle_request(
         &connection,
         &request_body.command,
         request_body.authorization.as_ref(),
+        request_body.session_id.as_deref(),
         request_body.payload,
     );
     let finished_at = crate::state::now_iso();
@@ -833,6 +838,7 @@ fn invoke_bridge_command(
     connection: &Connection,
     command: &str,
     authorization: Option<&AuthorizationContext>,
+    session_id: Option<&str>,
     payload: Value,
 ) -> Result<Value, String> {
     #[cfg(test)]
@@ -1030,6 +1036,60 @@ fn invoke_bridge_command(
                 input.comment_ids.as_deref(),
             )?)
             .map_err(|error| format!("Unable to serialize task comment receipts: {error}"))
+        }
+        "get_unread_mail" => {
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let task_id = payload.get("taskId").and_then(Value::as_str);
+            serde_json::to_value(messages::list_unread_mail_for_authorization(
+                connection,
+                authorization,
+                session_id,
+                task_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize unread mail: {error}"))
+        }
+        "mark_mail_read" => {
+            command_authorization::require_permission(connection, authorization, "tasks.comment")?;
+            let task_id = payload.get("taskId").and_then(Value::as_str);
+            let input: MarkMailboxMessagesReadInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or_else(|| {
+                    serde_json::json!({
+                        "deliveryIds": payload.get("deliveryIds").cloned().unwrap_or(Value::Null)
+                    })
+                }))
+                .map_err(|error| format!("Unable to parse mailbox receipt input: {error}"))?;
+            serde_json::to_value(messages::mark_mail_read_for_authorization(
+                connection,
+                authorization,
+                session_id,
+                task_id,
+                input.delivery_ids.as_deref(),
+            )?)
+            .map_err(|error| format!("Unable to serialize mailbox read receipts: {error}"))
+        }
+        "send_mail" => {
+            command_authorization::require_permission(connection, authorization, "tasks.comment")?;
+            let input: SendMailboxMessageInput =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or_else(|| payload.clone()))
+                    .map_err(|error| format!("Unable to parse mailbox send input: {error}"))?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "Orchestra app handle unavailable for mailbox send".to_string())?;
+            let state = app.state::<crate::state::AppState>();
+            let message = messages::send_mailbox_message_from_authorization(
+                app.clone(),
+                &state,
+                connection,
+                authorization,
+                session_id,
+                input,
+            )?;
+            let _ = crate::services::app_events::emit_inbox_change(&app, "mailbox.sent", [message.delivery_id.clone()]);
+            if let Some(task_id) = message.task_id.clone() {
+                let _ = crate::services::app_events::emit_task_change(&app, "mailbox.sent", [task_id]);
+            }
+            serde_json::to_value(message)
+                .map_err(|error| format!("Unable to serialize mailbox message: {error}"))
         }
         "list_task_repositories" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -1641,6 +1701,7 @@ mod tests {
                 actor_type: "user".into(),
                 actor_id: "tester".into(),
             }),
+            None,
             json!({ "taskId": task.id }),
         )
         .expect("list_task_file_references should succeed");
@@ -1688,6 +1749,7 @@ mod tests {
                 actor_type: "agent".into(),
                 actor_id: "agent-1".into(),
             }),
+            None,
             json!({}),
         )
         .expect("bridge call should succeed");
@@ -1702,6 +1764,7 @@ mod tests {
                 actor_type: "agent".into(),
                 actor_id: "agent-1".into(),
             }),
+            None,
             json!({}),
         )
         .expect_err("bridge call should be denied");
@@ -1785,6 +1848,7 @@ mod tests {
             &connection,
             "get_unread_task_comments",
             Some(&authorization),
+            Some("session-bridge"),
             json!({ "taskId": task.id }),
         )
         .expect("unread comments should load through bridge");
@@ -1798,6 +1862,7 @@ mod tests {
             &connection,
             "mark_task_comments_read",
             Some(&authorization),
+            Some("session-bridge"),
             json!({ "taskId": task.id }),
         )
         .expect("comment receipts should record through bridge");
@@ -1809,6 +1874,7 @@ mod tests {
             &connection,
             "get_unread_task_comments",
             Some(&authorization),
+            Some("session-bridge"),
             json!({ "taskId": task.id }),
         )
         .expect("unread comments should reload through bridge");

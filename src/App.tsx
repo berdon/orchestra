@@ -31,6 +31,7 @@ import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
+import { InboxPage } from "./pages/InboxPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import type { TaskBoardViewMode } from "./pages/tasks/TasksOverviewPage";
@@ -59,6 +60,7 @@ import type {
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "tasks", label: "Tasks" },
+  { id: "inbox", label: "Inbox" },
   { id: "agents", label: "Agents" },
   { id: "sessions", label: "Sessions" },
   { id: "settings", label: "Settings" },
@@ -1951,6 +1953,12 @@ export function App() {
               onClearLogs={() => void handleClearLogs()}
             />
           )
+        ) : activePage === "inbox" ? (
+          <InboxPage
+            key={activeProject?.id ?? "default"}
+            projectId={activeProject?.id ?? null}
+            onOpenTask={navigateToTask}
+          />
         ) : activePage === "agents" ? (
           <AgentsPage
             key={activeProject?.id ?? "default"}

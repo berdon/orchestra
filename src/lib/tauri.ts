@@ -5,11 +5,15 @@ import type {
   AppInfo,
   BridgeCleanupEvent,
   BridgeDiagnostics,
+  InboxChangeEvent,
   JsonValue,
   LogEntry,
   LogLevel,
+  MailboxMessage,
+  MarkMailboxMessagesReadInput,
   QueuedSessionMessage,
   RoleSummary,
+  SendMailboxMessageInput,
   SessionChangeEvent,
   SessionEvent,
   SessionModel,
@@ -45,6 +49,7 @@ const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
 const TASK_FILE_CONTENT_STORAGE_KEY = "orchestra.mock.file-contents";
 const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
+const MAILBOX_STORAGE_KEY = "orchestra.mock.mailbox";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
 const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
@@ -135,12 +140,24 @@ function setStoredValue<T>(key: string, value: T) {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
+function getStoredMailboxMessages() {
+  return getStoredValue<MailboxMessage[]>(MAILBOX_STORAGE_KEY) ?? [];
+}
+
+function saveStoredMailboxMessages(messages: MailboxMessage[]) {
+  setStoredValue(MAILBOX_STORAGE_KEY, messages);
+}
+
 function emitMockSessionStream(event: SessionStreamEnvelope) {
   window.dispatchEvent(new CustomEvent("orchestra:session-stream", { detail: event }));
 }
 
 export function emitMockSessionChange(event: SessionChangeEvent) {
   window.dispatchEvent(new CustomEvent("orchestra:session-change", { detail: event }));
+}
+
+function emitMockInboxChange(event: InboxChangeEvent) {
+  window.dispatchEvent(new CustomEvent("orchestra:inbox-change", { detail: event }));
 }
 
 function emitMockTaskChange(event: TaskChangeEvent) {
@@ -1161,6 +1178,21 @@ export async function listenToTaskChanges(
   window.addEventListener("orchestra:task-change", listener);
   return () => {
     window.removeEventListener("orchestra:task-change", listener);
+  };
+}
+
+export async function listenToInboxChanges(
+  handler: (event: InboxChangeEvent) => void,
+): Promise<() => void> {
+  const listener = (event: Event) => {
+    if (event instanceof CustomEvent) {
+      handler(event.detail as InboxChangeEvent);
+    }
+  };
+
+  window.addEventListener("orchestra:inbox-change", listener);
+  return () => {
+    window.removeEventListener("orchestra:inbox-change", listener);
   };
 }
 
@@ -2454,6 +2486,118 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
   }
 
   return invoke<TaskComment>("comment_on_task", { taskId, input });
+}
+
+export async function listInboxMessages(projectId?: string | null): Promise<MailboxMessage[]> {
+  if (!isTauriAvailable()) {
+    return getStoredMailboxMessages()
+      .filter((message) => message.recipientType === "user" && (!projectId || message.projectId === projectId))
+      .sort((left, right) => {
+        if (!left.readAt && right.readAt) return -1;
+        if (left.readAt && !right.readAt) return 1;
+        return right.createdAt.localeCompare(left.createdAt);
+      });
+  }
+
+  return invoke<MailboxMessage[]>("list_inbox_messages", { projectId: projectId ?? null });
+}
+
+export async function listTaskMessages(taskId: string): Promise<MailboxMessage[]> {
+  if (!isTauriAvailable()) {
+    return getStoredMailboxMessages()
+      .filter((message) => message.taskId === taskId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  return invoke<MailboxMessage[]>("list_task_messages", { taskId });
+}
+
+export async function sendMailboxMessage(input: SendMailboxMessageInput): Promise<MailboxMessage> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = input.taskId ? tasks.find((entry) => entry.id === input.taskId) ?? null : null;
+    const projectId = task?.projectId ?? input.projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID;
+    const projects = getStoredValue<Array<{ id: string; repositories: Array<{ id: string; name: string; slug: string; localPath?: string | null }> }>>("orchestra.mock.projects") ?? [];
+    const storedAgents = getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
+    let recipientType = input.recipientType;
+    let recipientId = input.recipientId ?? null;
+    let recipientLabel = "User";
+    let assignmentId: string | null = null;
+
+    if (recipientType === "agent") {
+      const agent = storedAgents.find((entry) => entry.id === input.recipientId);
+      if (!agent) {
+        throw new Error(`Agent ${input.recipientId} was not found`);
+      }
+      recipientLabel = agent.name;
+    } else if (recipientType === "active_assignment") {
+      if (!task?.activeLaneAssignment) {
+        throw new Error(`Task ${input.taskId} has no active assignment mailbox`);
+      }
+      recipientType = "assignment";
+      recipientId = task.activeLaneAssignment.workerId ?? null;
+      assignmentId = task.activeLaneAssignment.id;
+      const agent = storedAgents.find((entry) => entry.id === task.activeLaneAssignment?.workerId);
+      recipientLabel = `${agent?.name ?? task.activeLaneAssignment.workerType} · ${task.number}`;
+    }
+
+    const message: MailboxMessage = {
+      deliveryId: createId("mail-delivery"),
+      messageId: createId("mail-message"),
+      projectId,
+      taskId: task?.id ?? input.taskId ?? null,
+      taskNumber: task?.number ?? null,
+      taskTitle: task?.title ?? null,
+      senderType: "user",
+      senderId: "desktop-user",
+      senderLabel: input.senderLabel?.trim() || "User",
+      recipientType,
+      recipientId,
+      recipientLabel,
+      assignmentId,
+      body: input.body.trim(),
+      priority: input.priority === "interrupt" ? "interrupt" : "normal",
+      readAt: null,
+      readSessionId: null,
+      lastNotifiedAt: recipientType === "user" ? null : nowIso(),
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+
+    saveStoredMailboxMessages([message, ...getStoredMailboxMessages()]);
+    emitMockInboxChange({ deliveryIds: [message.deliveryId], reason: "mailbox.sent" });
+    if (message.taskId) {
+      emitMockTaskChange({ taskIds: [message.taskId], reason: "mailbox.sent" });
+    }
+    appendMockLog("info", "mailbox.sent", `Sent mailbox delivery ${message.deliveryId} to ${message.recipientLabel}`);
+    return message;
+  }
+
+  return invoke<MailboxMessage>("send_mailbox_message", { input });
+}
+
+export async function markMailboxMessagesRead(input: MarkMailboxMessagesReadInput): Promise<MailboxMessage[]> {
+  if (!isTauriAvailable()) {
+    const now = nowIso();
+    const selectedIds = new Set(input.deliveryIds ?? getStoredMailboxMessages().filter((entry) => entry.recipientType === "user" && !entry.readAt).map((entry) => entry.deliveryId));
+    const updated: MailboxMessage[] = [];
+    saveStoredMailboxMessages(
+      getStoredMailboxMessages().map((entry) => {
+        if (entry.recipientType !== "user" || !selectedIds.has(entry.deliveryId)) {
+          return entry;
+        }
+        const nextEntry = { ...entry, readAt: now, readSessionId: "desktop-user", updatedAt: now };
+        updated.push(nextEntry);
+        return nextEntry;
+      }),
+    );
+    if (updated.length) {
+      emitMockInboxChange({ deliveryIds: updated.map((entry) => entry.deliveryId), reason: "mailbox.read" });
+    }
+    return updated;
+  }
+
+  return invoke<MailboxMessage[]>("mark_mailbox_messages_read", { input });
 }
 
 export async function listTaskComments(taskId: string): Promise<TaskComment[]> {

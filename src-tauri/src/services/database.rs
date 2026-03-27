@@ -324,6 +324,51 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_comment_receipts_assignment_id
                 ON task_comment_receipts(assignment_id, read_at ASC);
 
+            CREATE TABLE IF NOT EXISTS mailbox_messages (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                task_id TEXT,
+                sender_type TEXT NOT NULL,
+                sender_id TEXT,
+                sender_label TEXT NOT NULL,
+                body TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_messages_project_id
+                ON mailbox_messages(project_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_messages_task_id
+                ON mailbox_messages(task_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS mailbox_message_deliveries (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                recipient_type TEXT NOT NULL,
+                recipient_id TEXT,
+                recipient_label TEXT NOT NULL,
+                assignment_id TEXT,
+                read_at TEXT,
+                read_session_id TEXT,
+                last_notified_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(message_id) REFERENCES mailbox_messages(id) ON DELETE CASCADE,
+                FOREIGN KEY(assignment_id) REFERENCES task_lane_assignments(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_recipient
+                ON mailbox_message_deliveries(recipient_type, recipient_id, read_at ASC, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_assignment
+                ON mailbox_message_deliveries(assignment_id, read_at ASC, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_message
+                ON mailbox_message_deliveries(message_id);
+
             CREATE TABLE IF NOT EXISTS task_lane_runs (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -487,6 +532,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_roles_slug_index(connection)?;
     ensure_tasks_table_columns(connection)?;
     ensure_task_comments_table_columns(connection)?;
+    ensure_mailbox_tables(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
     ensure_task_file_references_table_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
@@ -882,6 +928,60 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
             )
         })?;
 
+    Ok(())
+}
+
+fn ensure_mailbox_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS mailbox_messages (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                task_id TEXT,
+                sender_type TEXT NOT NULL,
+                sender_id TEXT,
+                sender_label TEXT NOT NULL,
+                body TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_messages_project_id
+                ON mailbox_messages(project_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_messages_task_id
+                ON mailbox_messages(task_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS mailbox_message_deliveries (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                recipient_type TEXT NOT NULL,
+                recipient_id TEXT,
+                recipient_label TEXT NOT NULL,
+                assignment_id TEXT,
+                read_at TEXT,
+                read_session_id TEXT,
+                last_notified_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(message_id) REFERENCES mailbox_messages(id) ON DELETE CASCADE,
+                FOREIGN KEY(assignment_id) REFERENCES task_lane_assignments(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_recipient
+                ON mailbox_message_deliveries(recipient_type, recipient_id, read_at ASC, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_assignment
+                ON mailbox_message_deliveries(assignment_id, read_at ASC, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_message
+                ON mailbox_message_deliveries(message_id);
+            "#,
+        )
+        .map_err(|error| format!("Unable to ensure mailbox tables: {error}"))?;
     Ok(())
 }
 

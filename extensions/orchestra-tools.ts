@@ -235,6 +235,81 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       },
     };
   }
+
+  if (tool.name === "get_unread_mail") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional taskId to include the active assignment mailbox.`,
+      parameters: Type.Object({
+        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id, e.g. task-123" })),
+      }),
+      async execute(_toolCallId: string, params: { taskId?: string }) {
+        const payload = params.taskId ? { taskId: params.taskId } : {};
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "mark_mail_read") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional taskId and deliveryIds.`,
+      parameters: Type.Object({
+        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id, e.g. task-123" })),
+        deliveryIds: Type.Optional(Type.Array(Type.String({ description: "Mailbox delivery id to acknowledge as read." }))),
+      }),
+      async execute(_toolCallId: string, params: { taskId?: string; deliveryIds?: string[] }) {
+        const payload = {
+          ...(params.taskId ? { taskId: params.taskId } : {}),
+          input: {
+            deliveryIds: params.deliveryIds,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "send_mail") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide recipientType, body, and optionally projectId, taskId, recipientId, and priority.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id for general agent mail without a task context." })),
+        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id, e.g. task-123" })),
+        recipientType: Type.String({ description: "Mailbox recipient type: user, agent, or active_assignment." }),
+        recipientId: Type.Optional(Type.String({ description: "Recipient id for agent or assignment delivery targets." })),
+        body: Type.String({ description: "Mailbox message body." }),
+        priority: Type.Optional(Type.String({ description: "Optional priority: normal or interrupt." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId?: string; taskId?: string; recipientType: string; recipientId?: string; body: string; priority?: string }) {
+        const payload = {
+          ...(params.projectId ? { projectId: params.projectId } : {}),
+          ...(params.taskId ? { taskId: params.taskId } : {}),
+          recipientType: params.recipientType,
+          ...(params.recipientId ? { recipientId: params.recipientId } : {}),
+          body: params.body,
+          ...(params.priority ? { priority: params.priority } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
   return {
     name: tool.name,
     label: `Orchestra · ${tool.name}`,

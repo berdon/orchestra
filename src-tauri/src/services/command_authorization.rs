@@ -133,6 +133,21 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "tasks.comment",
     ),
     (
+        "get_unread_mail",
+        "Get unread mailbox messages for the current worker session",
+        "tasks.read",
+    ),
+    (
+        "mark_mail_read",
+        "Acknowledge mailbox messages as read for the current worker session",
+        "tasks.comment",
+    ),
+    (
+        "send_mail",
+        "Send a mailbox message to the user, an agent, or an active assignment mailbox",
+        "tasks.comment",
+    ),
+    (
         "list_task_repositories",
         "List task repositories and their workspace paths",
         "tasks.read",

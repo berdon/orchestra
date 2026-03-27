@@ -32,10 +32,13 @@ import {
   setDefaultTaskFileReference,
   stopSessionRuntime,
   manualTaskWhip,
+  listTaskMessages,
+  sendMailboxMessage,
   updateTask,
 } from "../lib/tauri";
 import type {
   AgentSummary,
+  MailboxMessage,
   RepositoryRecord,
   RoleSummary,
   SessionStreamEnvelope,
@@ -188,6 +191,7 @@ export function TasksPage({
   const [taskDraft, setTaskDraft] = useState<TaskUpsertInput>(createBlankTaskDraft);
   const [commentDraft, setCommentDraft] = useState<TaskCommentInput>(createBlankCommentDraft);
   const [fileReferenceDraft, setFileReferenceDraft] = useState<TaskFileReferenceInput>(createBlankFileReferenceDraft);
+  const [taskMessages, setTaskMessages] = useState<MailboxMessage[]>([]);
   const [taskDraftDirty, setTaskDraftDirty] = useState(false);
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -195,6 +199,7 @@ export function TasksPage({
   const [savingTask, setSavingTask] = useState(false);
   const [publishingTask, setPublishingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
+  const [sendingTaskMail, setSendingTaskMail] = useState(false);
   const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
@@ -358,8 +363,9 @@ export function TasksPage({
       setTaskActionError(null);
     }
     try {
-      const task = await getTask(taskId);
+      const [task, messages] = await Promise.all([getTask(taskId), listTaskMessages(taskId)]);
       setTaskDetail((current) => (sameData(current, task) ? current : task));
+      setTaskMessages((current) => (sameData(current, messages) ? current : messages));
       if (!options?.silent) {
         setCommentDraft(createBlankCommentDraft());
         setFileReferenceDraft({
@@ -768,6 +774,29 @@ export function TasksPage({
     }
   }
 
+  async function handleSendTaskMail(body: string, interrupt: boolean) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setSendingTaskMail(true);
+    setTaskActionError(null);
+    try {
+      await sendMailboxMessage({
+        projectId: taskDetail?.projectId ?? projectId ?? null,
+        taskId: route.taskId,
+        recipientType: "active_assignment",
+        body,
+        priority: interrupt ? "interrupt" : "normal",
+      });
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to send task mail.");
+      throw error;
+    } finally {
+      setSendingTaskMail(false);
+    }
+  }
+
   async function handleDispatchTaskLane() {
     if (route.kind !== "detail") {
       return;
@@ -974,9 +1003,12 @@ export function TasksPage({
           repositories={repositories}
           saving={savingTask}
           selectedBlockerTaskId={selectedBlockerTaskId}
+          sendingMail={sendingTaskMail}
           task={taskDetail}
+          taskMessages={taskMessages}
           timelineItems={timelineItems}
           workflows={workflowSummaries}
+          onSendMail={(body, interrupt) => handleSendTaskMail(body, interrupt)}
         />
       ) : (
         <section className="panel empty-state">

@@ -16,6 +16,10 @@ use commands::{
         get_session_storage_info, list_pi_models, open_logs_window,
     },
     dispatcher::run_dispatcher_tick,
+    messages::{
+        list_inbox_messages, list_task_messages, mark_mailbox_messages_read,
+        send_mailbox_message,
+    },
     policies::{
         get_agent_permissions, get_policy, get_role_instance_permissions, get_role_permissions,
         list_orchestra_tools, list_policies,
@@ -151,6 +155,10 @@ pub fn run() {
             create_project,
             update_project,
             delete_project,
+            list_inbox_messages,
+            list_task_messages,
+            send_mailbox_message,
+            mark_mailbox_messages_read,
             list_repositories,
             create_repository,
             update_repository,
