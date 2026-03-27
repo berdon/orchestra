@@ -757,7 +757,7 @@ export function TaskDetailPage({
                         </div>
                       </div>
                       <p className="muted-copy">Repository slug: {reference.repositorySlug}</p>
-                      <p className="muted-copy">Absolute path: {reference.absolutePath ?? "Unavailable"}</p>
+                      <p className="muted-copy">Resolved path: {reference.relativePath}</p>
                     </article>
                   );
                 })()}
@@ -799,7 +799,7 @@ export function TaskDetailPage({
                         <span className="muted-copy">{reference.relativePath}</span>
                       </div>
                       <p className="muted-copy">
-                        This file cannot be found at {reference.absolutePath || "the expected location"}.
+                        This file cannot be found at {reference.relativePath} in the resolved worktree or repository.
                         It may have been moved, deleted, or the task worktree has not been materialized yet.
                       </p>
                     </div>
@@ -1120,13 +1120,14 @@ export function TaskDetailPage({
               </div>
               {defaultFile ? (
                 <>
-                  <p className="muted-copy">{defaultFile.exists ? (defaultFile.absolutePath ?? "Available") : "File is currently missing from the resolved workspace path."}</p>
+                  <p className="muted-copy">{defaultFile.exists ? `Resolved file: ${defaultFile.relativePath}` : `File is currently missing from the resolved workspace path for ${defaultFile.relativePath}.`}</p>
                   {defaultFile.exists ? (
                     loadingDefaultFileContent ? (
                       <p className="muted-copy">Loading file preview…</p>
                     ) : (
                       <CommentableFileViewer
                         commentDraft={commentDraft}
+                        comments={task.comments}
                         content={defaultFileContent ?? ""}
                         language={detectLanguage(defaultFile.relativePath)}
                         onAddComment={onAddComment}

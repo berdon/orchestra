@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import hljs from "highlight.js";
 
-import type { TaskCommentInput, TaskFileReference } from "../types";
+import type { TaskComment, TaskCommentInput, TaskFileReference } from "../types";
 
 interface FileCommentAnchor {
   repositoryId: string;
@@ -33,14 +33,30 @@ interface OpenFileCommentDraftDetail {
   left?: number;
 }
 
+interface FileCommentThread {
+  comment: TaskComment;
+  replies: TaskComment[];
+}
+
+interface ThreadPopoverState {
+  lineNumber: number;
+  threads: FileCommentThread[];
+  top: number;
+  left: number;
+}
+
 interface CommentableFileViewerProps {
   reference: TaskFileReference;
   content: string;
   language: string;
+  comments: TaskComment[];
   commentDraft: TaskCommentInput;
   onCommentDraftChange: (draft: TaskCommentInput) => void;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
 }
+
+const DEFAULT_VIEWPORT_HEIGHT_PX = 720;
+const MINIMIZED_VIEWPORT_HEIGHT_PX = 180;
 
 function escapeHtml(value: string) {
   return value
@@ -97,15 +113,16 @@ function textOffsetWithin(container: HTMLElement, node: Node, offset: number) {
   }
 }
 
-function clampPopoverPosition(container: HTMLElement, top: number, left: number) {
+function clampOverlayPosition(container: HTMLElement, top: number, left: number, width = 360) {
   return {
     top: Math.max(8, top),
-    left: Math.max(8, Math.min(left, Math.max(container.scrollWidth - 280, 8))),
+    left: Math.max(8, Math.min(left, Math.max(container.clientWidth - width - 8, 8))),
   };
 }
 
 function buildSelectionCommentAction(
-  container: HTMLElement,
+  viewport: HTMLElement,
+  overlay: HTMLElement,
   reference: TaskFileReference,
   selection: Selection,
 ): SelectionCommentAction | null {
@@ -114,7 +131,7 @@ function buildSelectionCommentAction(
   }
 
   const range = selection.getRangeAt(0);
-  if (range.collapsed || !container.contains(range.commonAncestorContainer)) {
+  if (range.collapsed || !viewport.contains(range.commonAncestorContainer)) {
     return null;
   }
 
@@ -140,11 +157,12 @@ function buildSelectionCommentAction(
   }
 
   const rangeRect = range.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-  const position = clampPopoverPosition(
-    container,
-    rangeRect.top - containerRect.top + container.scrollTop - 42,
-    rangeRect.right - containerRect.left + container.scrollLeft + 8,
+  const overlayRect = overlay.getBoundingClientRect();
+  const position = clampOverlayPosition(
+    overlay,
+    rangeRect.top - overlayRect.top - 44,
+    rangeRect.right - overlayRect.left + 8,
+    200,
   );
 
   return {
@@ -162,17 +180,78 @@ function buildSelectionCommentAction(
   };
 }
 
+function isCommentAnchoredToReference(comment: TaskComment, reference: TaskFileReference) {
+  return comment.repositoryId === reference.repositoryId && comment.relativePath === reference.relativePath;
+}
+
+function commentTouchesLine(comment: TaskComment, lineNumber: number) {
+  const start = comment.lineStart ?? 0;
+  const end = comment.lineEnd ?? start;
+  return start > 0 && lineNumber >= start && lineNumber <= end;
+}
+
+function formatLineLabel(comment: TaskComment) {
+  if (!comment.lineStart) {
+    return null;
+  }
+
+  return comment.lineEnd && comment.lineEnd !== comment.lineStart
+    ? `Lines ${comment.lineStart}-${comment.lineEnd}`
+    : `Line ${comment.lineStart}`;
+}
+
+function buildFileCommentThreads(comments: TaskComment[], reference: TaskFileReference) {
+  const repliesByParent = new Map<string, TaskComment[]>();
+  const topLevelComments: TaskComment[] = [];
+
+  for (const comment of comments) {
+    if (!comment.parentCommentId) {
+      if (isCommentAnchoredToReference(comment, reference)) {
+        topLevelComments.push(comment);
+      }
+      continue;
+    }
+
+    const replies = repliesByParent.get(comment.parentCommentId) ?? [];
+    replies.push(comment);
+    repliesByParent.set(comment.parentCommentId, replies);
+  }
+
+  return topLevelComments.map((comment) => ({
+    comment,
+    replies: repliesByParent.get(comment.id) ?? [],
+  }));
+}
+
+function lineCommentCounts(threads: FileCommentThread[]) {
+  const counts = new Map<number, number>();
+  for (const thread of threads) {
+    const start = thread.comment.lineStart ?? 0;
+    const end = thread.comment.lineEnd ?? start;
+    for (let line = start; line <= end; line += 1) {
+      counts.set(line, (counts.get(line) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 export function CommentableFileViewer({
   reference,
   content,
   language,
+  comments,
   commentDraft,
   onCommentDraftChange,
   onAddComment,
 }: CommentableFileViewerProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionCommentAction | null>(null);
   const [floatingComment, setFloatingComment] = useState<FloatingCommentState | null>(null);
+  const [threadPopover, setThreadPopover] = useState<ThreadPopoverState | null>(null);
+  const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
+  const [replyMessage, setReplyMessage] = useState("");
+  const [isMinimized, setIsMinimized] = useState(false);
 
   const lines = useMemo(
     () => content.replace(/\r\n/g, "\n").split("\n").map((line, index) => ({
@@ -181,27 +260,31 @@ export function CommentableFileViewer({
     })),
     [content, language],
   );
+  const fileCommentThreads = useMemo(() => buildFileCommentThreads(comments, reference), [comments, reference]);
+  const commentCountsByLine = useMemo(() => lineCommentCounts(fileCommentThreads), [fileCommentThreads]);
 
   useEffect(() => {
     setSelectionAction(null);
     setFloatingComment(null);
+    setThreadPopover(null);
+    setReplyTargetCommentId(null);
+    setReplyMessage("");
   }, [content, reference.absolutePath, reference.id]);
 
   useEffect(() => {
     function syncSelectionAction() {
       const selection = window.getSelection();
-      const container = containerRef.current;
-      if (!container || !selection || selection.isCollapsed || !container.contains(selection.anchorNode)) {
+      const overlay = overlayRef.current;
+      const viewport = viewportRef.current;
+      if (!overlay || !viewport || !selection || selection.isCollapsed || !viewport.contains(selection.anchorNode)) {
         setSelectionAction(null);
         return;
       }
 
-      setSelectionAction(buildSelectionCommentAction(container, reference, selection));
+      setSelectionAction(buildSelectionCommentAction(viewport, overlay, reference, selection));
     }
 
-    const syncSelectionActionDeferred = () => {
-      window.requestAnimationFrame(syncSelectionAction);
-    };
+    const deferredSync = () => window.requestAnimationFrame(syncSelectionAction);
 
     const openSelectionComment = () => {
       window.requestAnimationFrame(() => {
@@ -212,54 +295,61 @@ export function CommentableFileViewer({
     const openFileCommentDraft = (event: Event) => {
       const customEvent = event as CustomEvent<OpenFileCommentDraftDetail>;
       const detail = customEvent.detail;
-      if (!detail?.anchor) {
+      const overlay = overlayRef.current;
+      if (!overlay || !detail?.anchor) {
         return;
       }
-      const container = containerRef.current;
-      if (!container) {
-        return;
-      }
-      const top = detail.top ?? container.scrollTop + 24;
-      const left = detail.left ?? container.scrollLeft + 120;
-      openFloatingComment(detail.anchor, top, left);
+      const position = clampOverlayPosition(overlay, detail.top ?? 72, detail.left ?? 220);
+      openFloatingComment(detail.anchor, position.top, position.left);
     };
 
     document.addEventListener("selectionchange", syncSelectionAction);
-    document.addEventListener("mouseup", syncSelectionActionDeferred);
+    document.addEventListener("mouseup", deferredSync);
+    document.addEventListener("keyup", deferredSync);
     document.addEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
     document.addEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
     (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft = (detail) => {
       openFileCommentDraft(new CustomEvent("orchestra:open-file-comment-draft", { detail }));
     };
+
     return () => {
       document.removeEventListener("selectionchange", syncSelectionAction);
-      document.removeEventListener("mouseup", syncSelectionActionDeferred);
+      document.removeEventListener("mouseup", deferredSync);
+      document.removeEventListener("keyup", deferredSync);
       document.removeEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
       document.removeEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
       delete (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft;
     };
   }, [reference]);
 
-  function handleMouseUp() {
+  function closeOverlays() {
+    setSelectionAction(null);
+    setFloatingComment(null);
+    setThreadPopover(null);
+    setReplyTargetCommentId(null);
+    setReplyMessage("");
+  }
+
+  function handleViewportMouseUp() {
     window.requestAnimationFrame(() => {
-      const container = containerRef.current;
+      const overlay = overlayRef.current;
+      const viewport = viewportRef.current;
       const selection = window.getSelection();
-      if (!container || !selection) {
+      if (!overlay || !viewport || !selection) {
         setSelectionAction(null);
         return;
       }
-
-      const next = buildSelectionCommentAction(container, reference, selection);
-      setSelectionAction(next);
+      setSelectionAction(buildSelectionCommentAction(viewport, overlay, reference, selection));
     });
   }
 
   function openFloatingComment(anchor: FileCommentAnchor, top: number, left: number) {
-    const container = containerRef.current;
-    if (!container) {
+    const overlay = overlayRef.current;
+    if (!overlay) {
       return;
     }
-    const position = clampPopoverPosition(container, top, left);
+    const position = clampOverlayPosition(overlay, top, left);
+    setThreadPopover(null);
     setFloatingComment({
       anchor,
       top: position.top,
@@ -267,16 +357,19 @@ export function CommentableFileViewer({
       message: "",
     });
     setSelectionAction(null);
+    setReplyTargetCommentId(null);
+    setReplyMessage("");
   }
 
   function openSelectionCommentFromCurrentSelection() {
-    const container = containerRef.current;
+    const overlay = overlayRef.current;
+    const viewport = viewportRef.current;
     const selection = window.getSelection();
-    if (!container || !selection) {
+    if (!overlay || !viewport || !selection) {
       return false;
     }
 
-    const next = buildSelectionCommentAction(container, reference, selection);
+    const next = buildSelectionCommentAction(viewport, overlay, reference, selection);
     if (!next) {
       return false;
     }
@@ -284,6 +377,29 @@ export function CommentableFileViewer({
     setSelectionAction(next);
     openFloatingComment(next.anchor, next.top, next.left);
     return true;
+  }
+
+  function openThreadPopoverForLine(lineNumber: number, top: number, left: number) {
+    const overlay = overlayRef.current;
+    if (!overlay) {
+      return;
+    }
+    const matchingThreads = fileCommentThreads.filter((thread) => commentTouchesLine(thread.comment, lineNumber));
+    if (!matchingThreads.length) {
+      return;
+    }
+
+    const position = clampOverlayPosition(overlay, top, left);
+    setFloatingComment(null);
+    setSelectionAction(null);
+    setReplyTargetCommentId(null);
+    setReplyMessage("");
+    setThreadPopover({
+      lineNumber,
+      threads: matchingThreads,
+      top: position.top,
+      left: position.left,
+    });
   }
 
   function handleSelectionCommentClick() {
@@ -298,14 +414,23 @@ export function CommentableFileViewer({
   function handleLineCommentClick(lineNumber: number, event: ReactMouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
-    const container = containerRef.current;
-    if (!container) {
+    const overlay = overlayRef.current;
+    if (!overlay) {
       return;
     }
 
     window.getSelection()?.removeAllRanges();
     const buttonRect = event.currentTarget.getBoundingClientRect();
-    const containerRect = container.getBoundingClientRect();
+    const overlayRect = overlay.getBoundingClientRect();
+    const top = buttonRect.top - overlayRect.top - 12;
+    const left = buttonRect.right - overlayRect.left + 12;
+    const hasExistingComments = (commentCountsByLine.get(lineNumber) ?? 0) > 0;
+
+    if (hasExistingComments) {
+      openThreadPopoverForLine(lineNumber, top, left);
+      return;
+    }
+
     openFloatingComment(
       {
         repositoryId: reference.repositoryId,
@@ -317,8 +442,8 @@ export function CommentableFileViewer({
         columnEnd: null,
         selectedText: null,
       },
-      buttonRect.top - containerRect.top + container.scrollTop - 12,
-      buttonRect.right - containerRect.left + container.scrollLeft + 12,
+      top,
+      left,
     );
   }
 
@@ -342,40 +467,91 @@ export function CommentableFileViewer({
     });
 
     if (created) {
-      setFloatingComment(null);
+      closeOverlays();
       window.getSelection()?.removeAllRanges();
+    }
+  }
+
+  async function submitReply(parentCommentId: string) {
+    if (!replyMessage.trim()) {
+      return;
+    }
+
+    const created = await onAddComment({
+      ...commentDraft,
+      message: replyMessage,
+      parentCommentId,
+      repositoryId: null,
+      relativePath: null,
+      absolutePath: null,
+      lineStart: null,
+      lineEnd: null,
+      columnStart: null,
+      columnEnd: null,
+      selectedText: null,
+    });
+
+    if (created) {
+      setReplyTargetCommentId(null);
+      setReplyMessage("");
     }
   }
 
   return (
     <div className="file-content-viewer">
-      <div
-        className="file-content-viewer__code file-content-viewer__code--interactive"
-        data-role="default-file-code-viewer"
-        onMouseUp={handleMouseUp}
-        ref={containerRef}
-      >
-        {lines.map((line) => (
-          <div className="file-content-viewer__line" data-file-line-row data-line-number={String(line.number)} key={line.number}>
-            <div className="file-content-viewer__line-gutter">
-              <button
-                className="file-content-viewer__line-comment-button"
-                data-role="default-file-line-comment-button"
+      <div className="file-content-viewer__header">
+        <strong>File preview</strong>
+        <div className="action-cluster action-cluster--wrap">
+          <span className="status-badge status-badge--neutral">Resizable</span>
+          <button
+            className="secondary-button"
+            data-role="default-file-viewer-toggle"
+            type="button"
+            onClick={() => setIsMinimized((current) => !current)}
+          >
+            {isMinimized ? "Expand" : "Minimize"}
+          </button>
+        </div>
+      </div>
+
+      <div className={isMinimized ? "file-content-viewer__shell file-content-viewer__shell--minimized" : "file-content-viewer__shell"} ref={overlayRef}>
+        <div
+          className={isMinimized ? "file-content-viewer__viewport file-content-viewer__viewport--minimized" : "file-content-viewer__viewport"}
+          data-role="default-file-code-viewer"
+          onMouseUp={handleViewportMouseUp}
+          ref={viewportRef}
+        >
+          {lines.map((line) => {
+            const commentCount = commentCountsByLine.get(line.number) ?? 0;
+            return (
+              <div
+                className={commentCount > 0 ? "file-content-viewer__line file-content-viewer__line--commented" : "file-content-viewer__line"}
+                data-file-line-row
                 data-line-number={String(line.number)}
-                type="button"
-                onClick={(event) => handleLineCommentClick(line.number, event)}
+                key={line.number}
               >
-                💬
-              </button>
-              <span className="file-content-viewer__line-number">{line.number}</span>
-            </div>
-            <div
-              className="file-content-viewer__line-content"
-              data-file-line-content
-              dangerouslySetInnerHTML={{ __html: line.html }}
-            />
-          </div>
-        ))}
+                <div className="file-content-viewer__line-gutter">
+                  <button
+                    className={commentCount > 0 ? "file-content-viewer__line-comment-button file-content-viewer__line-comment-button--active" : "file-content-viewer__line-comment-button"}
+                    data-role="default-file-line-comment-button"
+                    data-line-number={String(line.number)}
+                    type="button"
+                    onClick={(event) => handleLineCommentClick(line.number, event)}
+                  >
+                    💬
+                    {commentCount > 0 ? <span className="file-content-viewer__line-comment-count">{commentCount}</span> : null}
+                  </button>
+                  <span className="file-content-viewer__line-number">{line.number}</span>
+                </div>
+                <div
+                  className="file-content-viewer__line-content"
+                  data-file-line-content
+                  dangerouslySetInnerHTML={{ __html: line.html }}
+                />
+              </div>
+            );
+          })}
+        </div>
 
         {selectionAction ? (
           <button
@@ -438,9 +614,98 @@ export function CommentableFileViewer({
               <button className="primary-button" data-role="add-default-file-comment" type="button" onClick={() => void submitFloatingComment()}>
                 Add comment
               </button>
-              <button className="secondary-button" data-role="cancel-default-file-comment" type="button" onClick={() => setFloatingComment(null)}>
+              <button className="secondary-button" data-role="cancel-default-file-comment" type="button" onClick={closeOverlays}>
                 Cancel
               </button>
+            </div>
+          </div>
+        ) : null}
+
+        {threadPopover ? (
+          <div
+            className="file-content-viewer__thread-popover"
+            data-role="default-file-thread-popover"
+            style={{ top: `${threadPopover.top}px`, left: `${threadPopover.left}px` }}
+          >
+            <div className="file-content-viewer__comment-meta">
+              <strong>Comments on line {threadPopover.lineNumber}</strong>
+              <button className="secondary-button" type="button" onClick={closeOverlays}>Close</button>
+            </div>
+            <div className="file-content-viewer__thread-list">
+              {threadPopover.threads.map(({ comment, replies }) => (
+                <article className="file-content-viewer__thread-card" key={comment.id}>
+                  <div className="transcript-event__meta">
+                    <span>{comment.author}</span>
+                    <div className="transcript-event__meta-group">
+                      {formatLineLabel(comment) ? <span className="status-badge status-badge--accent">{formatLineLabel(comment)}</span> : null}
+                      <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                    </div>
+                  </div>
+                  <p>{comment.message}</p>
+                  {comment.selectedText ? <pre className="file-content-viewer__selection-preview">{comment.selectedText}</pre> : null}
+                  {replies.length ? (
+                    <div className="file-content-viewer__thread-replies">
+                      {replies.map((reply) => (
+                        <article className="file-content-viewer__thread-reply" key={reply.id}>
+                          <div className="transcript-event__meta">
+                            <span>{reply.author}</span>
+                            <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
+                          </div>
+                          <p>{reply.message}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                  {replyTargetCommentId === comment.id ? (
+                    <div className="file-content-viewer__reply-composer">
+                      <label className="field-group">
+                        <span className="field-group__label">Reply author</span>
+                        <input
+                          className="text-input"
+                          data-role="default-file-reply-author"
+                          value={commentDraft.author}
+                          onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })}
+                        />
+                      </label>
+                      <label className="field-group">
+                        <span className="field-group__label">Reply</span>
+                        <textarea
+                          className="text-area"
+                          data-role="default-file-reply-message"
+                          rows={3}
+                          value={replyMessage}
+                          onChange={(event) => setReplyMessage(event.target.value)}
+                        />
+                      </label>
+                      <div className="task-comment-composer__actions">
+                        <button className="primary-button" data-role="add-default-file-reply" type="button" onClick={() => void submitReply(comment.id)}>
+                          Add reply
+                        </button>
+                        <button className="secondary-button" type="button" onClick={() => {
+                          setReplyTargetCommentId(null);
+                          setReplyMessage("");
+                        }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="task-comment-composer__actions">
+                      <button
+                        className="secondary-button"
+                        data-role="default-file-open-reply"
+                        type="button"
+                        onClick={() => {
+                          setReplyTargetCommentId(comment.id);
+                          setReplyMessage("");
+                        }}
+                      >
+                        Reply
+                      </button>
+                    </div>
+                  )}
+                </article>
+              ))}
             </div>
           </div>
         ) : null}
