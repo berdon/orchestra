@@ -554,6 +554,34 @@ pub async fn send_lane_back_for_work(
     Ok(task)
 }
 
+#[tauri::command]
+pub async fn manual_task_whip(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let connection = database::open_connection()?;
+    let task = tasks::get_task_context(&connection, &task_id)?;
+    let assignment = task
+        .active_lane_assignment
+        .clone()
+        .ok_or_else(|| format!("Task {} does not have an active lane assignment to whip", task_id))?;
+
+    if assignment.status != "active" {
+        return Err(format!("Task {} is not active and cannot be whipped right now", task_id));
+    }
+
+    task_runtime::record_task_whip_sent(&connection, &assignment.id, assignment.whip_count)?;
+
+    if let Some(session_id) = assignment.session_id.clone() {
+        emit_session_change(&app, "task.whip.sent", [session_id]);
+    }
+    let updated_task = tasks::get_task_context(&connection, &task_id)?;
+    state.log("info", "task.whip.sent", &format!("Sent manual whip for task {}", task_id));
+    emit_task_change(&app, "task.whip.sent", [updated_task.id.clone()]);
+    Ok(updated_task)
+}
+
 async fn complete_lane_command(
     app: AppHandle,
     state: State<'_, AppState>,

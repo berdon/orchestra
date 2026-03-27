@@ -157,6 +157,8 @@ describe("desktop approval-gated workflow lanes", () => {
       await waitForText(sessionId, "Tasks");
       await clickByText(sessionId, "button", createdTask.title);
       await waitForText(sessionId, createdTask.title);
+      await clickByText(sessionId, '[role="tab"]', 'Runtime');
+      await waitForText(sessionId, 'Lane execution');
 
       await invokeCommand<any>(sessionId, "complete_lane_as_success", {
         taskId: createdTask.id,

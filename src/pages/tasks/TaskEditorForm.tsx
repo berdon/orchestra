@@ -11,19 +11,23 @@ interface TaskEditorFormProps {
   roles: RoleSummary[];
   repositories: RepositoryRecord[];
   showStatusField?: boolean;
+  detailLayout?: boolean;
+  showAssigneeFields?: boolean;
   onChange: (nextDraft: TaskUpsertInput) => void;
 }
 
-export function TaskEditorForm({ draft, workflows, agents, roles, repositories, showStatusField = true, onChange }: TaskEditorFormProps) {
-  const availableAssignees = draft.assigneeType === "agent"
-    ? agents.map((agent) => ({ value: agent.slug, label: agent.name }))
-    : draft.assigneeType === "role"
-      ? roles.map((role) => ({ value: role.slug, label: role.name }))
-      : [];
-
+export function TaskEditorForm({
+  draft,
+  workflows,
+  repositories,
+  showStatusField = true,
+  detailLayout = false,
+  showAssigneeFields = true,
+  onChange,
+}: TaskEditorFormProps) {
   return (
-    <div className="task-editor-grid">
-      <label className="field-group">
+    <div className={detailLayout ? "task-editor-grid task-editor-grid--detail" : "task-editor-grid"}>
+      <label className="field-group task-editor-grid__full">
         <span className="field-group__label">Title</span>
         <input className="text-input" data-role="task-title" value={draft.title} onChange={(event) => onChange({ ...draft, title: event.target.value })} />
       </label>
@@ -73,31 +77,27 @@ export function TaskEditorForm({ draft, workflows, agents, roles, repositories, 
       </label>
 
       <label className="field-group">
-        <span className="field-group__label">Assignee type</span>
-        <select
-          className="select-input"
-          data-role="task-assignee-type"
-          value={draft.assigneeType}
-          onChange={(event) => onChange({ ...draft, assigneeType: event.target.value, assigneeId: null })}
-        >
-          <option value="unassigned">unassigned</option>
-          <option value="user">user</option>
-          <option value="agent">agent</option>
-          <option value="role">role</option>
-        </select>
+        <span className="field-group__label">Whip max attempts</span>
+        <input
+          className="text-input"
+          data-role="task-whip-max-attempts"
+          type="number"
+          min={1}
+          value={draft.whipMaxAttempts ?? 10}
+          onChange={(event) => onChange({ ...draft, whipMaxAttempts: Math.max(1, Number(event.target.value || 10)) })}
+        />
       </label>
 
-      {draft.assigneeType === "agent" || draft.assigneeType === "role" ? (
-        <label className="field-group task-editor-grid__full">
-          <span className="field-group__label">{draft.assigneeType === "agent" ? "Agent" : "Role"}</span>
-          <select className="select-input" data-role="task-assignee-id" value={draft.assigneeId ?? ""} onChange={(event) => onChange({ ...draft, assigneeId: event.target.value || null })}>
-            <option value="">Select a {draft.assigneeType}</option>
-            {availableAssignees.map((assignee) => (
-              <option key={assignee.value} value={assignee.value}>{assignee.label}</option>
-            ))}
-          </select>
-        </label>
-      ) : null}
+      {showAssigneeFields ? null : null}
+
+      <div className="task-editor-grid__full muted-copy">
+        Orchestra re-prompts idle agent-owned task lanes to keep working. If the lane still is not completed after this many whip attempts, Orchestra automatically escalates the task to user intervention.
+      </div>
+
+      <label className="field-group task-editor-grid__full">
+        <span className="field-group__label">Description</span>
+        <textarea className="text-area" data-role="task-description" rows={6} value={draft.description ?? ""} onChange={(event) => onChange({ ...draft, description: event.target.value })} />
+      </label>
 
       <label className="field-group task-editor-grid__full">
         <span className="field-group__label">Task repositories</span>
@@ -119,27 +119,6 @@ export function TaskEditorForm({ draft, workflows, agents, roles, repositories, 
             <option key={repository.id} value={repository.id}>{repository.name}</option>
           ))}
         </select>
-      </label>
-
-      <label className="field-group">
-        <span className="field-group__label">Whip max attempts</span>
-        <input
-          className="text-input"
-          data-role="task-whip-max-attempts"
-          type="number"
-          min={1}
-          value={draft.whipMaxAttempts ?? 10}
-          onChange={(event) => onChange({ ...draft, whipMaxAttempts: Math.max(1, Number(event.target.value || 10)) })}
-        />
-      </label>
-
-      <div className="task-editor-grid__full muted-copy">
-        Orchestra re-prompts idle agent-owned task lanes to keep working. If the lane still is not completed after this many whip attempts, Orchestra automatically escalates the task to user intervention.
-      </div>
-
-      <label className="field-group task-editor-grid__full">
-        <span className="field-group__label">Description</span>
-        <textarea className="text-area" data-role="task-description" rows={6} value={draft.description ?? ""} onChange={(event) => onChange({ ...draft, description: event.target.value })} />
       </label>
     </div>
   );
