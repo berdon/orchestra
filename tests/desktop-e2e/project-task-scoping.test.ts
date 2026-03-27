@@ -9,7 +9,6 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
-  invokeCommand,
   selectByLabel,
   selectValue,
   setInputValue,
@@ -17,6 +16,7 @@ import {
   waitForSelectOption,
   waitForText,
 } from "./driver";
+import { addRepositoryViaSettings, createProjectViaSettings, switchProject } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -90,24 +90,13 @@ describe("desktop project task scoping", () => {
       await clickByText(sessionId, "button", "Tasks");
       await waitForText(sessionId, 'Tasks');
 
-      const scopedProject = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: {
-          name: "Scoped Project",
-          description: "Desktop task scoping project.",
-        },
+      await createProjectViaSettings(sessionId, "Scoped Project", "Desktop task scoping project.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Scoped Repo",
+        path: join(testHome!, "workspace", "scoped-repo"),
+        defaultBranch: "main",
       });
-      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); return true;`);
-      await sleep(1_000);
-      await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: scopedProject.name });
-      await selectByLabel(sessionId, '[data-role="project-switcher"]', scopedProject.name);
-      await invokeCommand(sessionId, "create_repository", {
-        projectId: scopedProject.id,
-        input: {
-          name: "Scoped Repo",
-          repositoryPath: join(testHome!, "workspace", "scoped-repo"),
-          defaultBranch: "main",
-        },
-      });
+      await switchProject(sessionId, "Scoped Project");
       await clickByText(sessionId, "button", "Tasks");
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', "Orchestra");
@@ -125,9 +114,6 @@ describe("desktop project task scoping", () => {
       await clickSelector(sessionId, '[data-role="save-task"]');
       await sleep(1_000);
 
-      const orchestraTasks = await invokeCommand<Array<{ title: string; projectId: string }>>(sessionId, "list_tasks", { includeArchived: false, projectId: orchestraSwitcherState.value });
-      expect(orchestraTasks.some((task) => task.title === "Default project task")).toBe(true);
-
       let visibleTaskCards = await waitForTaskCards(
         sessionId,
         (texts) => texts.some((text) => text.includes("Default project task")) && !texts.some((text) => text.includes("Scoped project task")),
@@ -139,6 +125,7 @@ describe("desktop project task scoping", () => {
       await sleep(500);
       const scopedSwitcherState = await readProjectSwitcherState(sessionId);
       expect(scopedSwitcherState.options.some((option) => option.label === "Scoped Project")).toBe(true);
+      expect(scopedSwitcherState.value).not.toBe("");
       visibleTaskCards = await waitForTaskCards(
         sessionId,
         (texts) => !texts.some((text) => text.includes("Default project task")),
@@ -153,9 +140,6 @@ describe("desktop project task scoping", () => {
       await selectValue(sessionId, '[data-role="task-status"]', 'ready');
       await clickSelector(sessionId, '[data-role="save-task"]');
       await sleep(1_000);
-
-      const scopedTasks = await invokeCommand<Array<{ title: string; projectId: string }>>(sessionId, "list_tasks", { includeArchived: false, projectId: scopedProject.id });
-      expect(scopedTasks.some((task) => task.title === "Scoped project task")).toBe(true);
 
       visibleTaskCards = await waitForTaskCards(
         sessionId,

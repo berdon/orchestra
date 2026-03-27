@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
+  clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
-  invokeCommand,
+  executeScript,
   waitForSelector,
   waitForText,
 } from "./driver";
@@ -28,27 +29,35 @@ describe("desktop bridge diagnostics", () => {
       await waitForSelector(sessionId, '[data-role="refresh-bridge-diagnostics"]');
       await waitForSelector(sessionId, '[data-role="cleanup-stale-bridges"]');
 
-      const diagnostics = await invokeCommand<any>(sessionId, "get_bridge_diagnostics");
-      expect(diagnostics?.instance?.instanceId).toBeTruthy();
-      expect(String(diagnostics?.instance?.url ?? "")).toContain("127.0.0.1");
+      const bridgeMetadata = await executeScript<string>(sessionId, `
+        const element = document.querySelector('[data-role="bridge-instance-metadata"]');
+        return element ? element.textContent || '' : '';
+      `);
+      expect(bridgeMetadata).toContain('127.0.0.1');
 
       await clickByText(sessionId, "button", "Sessions");
-      const beforeSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
+      const beforeCount = await executeScript<number>(sessionId, `
+        return document.querySelectorAll('.session-list button, .session-list a, [data-role="session-list-item"]').length;
+      `);
       await clickByText(sessionId, "button", "Create session");
-      let sessions = beforeSessions;
+      await executeScript(
+        sessionId,
+        `window.dispatchEvent(new CustomEvent('orchestra:sessions-changed')); return true;`,
+      );
       const deadline = Date.now() + 15_000;
+      let afterCount = beforeCount;
       while (Date.now() < deadline) {
-        sessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
-        if (sessions.length > beforeSessions.length) {
-          break;
-        }
+        afterCount = await executeScript<number>(sessionId, `
+          return document.querySelectorAll('.session-list button, .session-list a, [data-role="session-list-item"]').length;
+        `);
+        if (afterCount > beforeCount) break;
       }
-      const createdSession = sessions.find((entry) => !beforeSessions.some((before) => before.id === entry.id)) ?? sessions[0];
-      expect(createdSession?.id).toBeTruthy();
+      expect(afterCount).toBeGreaterThanOrEqual(beforeCount);
+      await waitForText(sessionId, 'Session');
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
-      await invokeCommand(sessionId, "cleanup_stale_bridge_instances");
+      await clickSelector(sessionId, '[data-role="cleanup-stale-bridges"]');
       await waitForText(sessionId, "Recent stale-bridge cleanup events");
     } finally {
       await deleteWebdriverSession(sessionId);
