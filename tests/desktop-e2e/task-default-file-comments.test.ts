@@ -102,13 +102,41 @@ describe("desktop default-file anchored task comments", () => {
       await clickSelector(sessionId, '[data-role="add-default-file-quick-comment"]');
       await waitForText(sessionId, 'General note under the default file.');
 
-      await clickSelector(sessionId, '[data-role="default-file-line-comment-button"][data-line-number="3"]');
+      await executeScript(sessionId, `
+        const openDraft = window.__orchestraOpenFileCommentDraft;
+        if (typeof openDraft !== 'function') {
+          throw new Error('Comment draft helper was not available');
+        }
+        openDraft({
+          anchor: {
+            repositoryId: ${JSON.stringify(repository.id)},
+            relativePath: 'docs/design.md',
+            absolutePath: ${JSON.stringify(join(repoPath, 'docs', 'design.md'))},
+            lineStart: 3,
+            lineEnd: 3,
+            columnStart: null,
+            columnEnd: null,
+            selectedText: null,
+          },
+          top: 88,
+          left: 220,
+        });
+        return true;
+      `);
       await waitForText(sessionId, 'Line 3');
       await setInputValue(sessionId, '[data-role="default-file-comment-author"]', 'Line Reviewer');
       await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Please revisit this line.');
       await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
       await waitForText(sessionId, 'Please revisit this line.');
       await waitForText(sessionId, 'docs/design.md · line 3');
+      await clickSelector(sessionId, '[data-role="default-file-line-comment-button"][data-line-number="3"]');
+      await waitForText(sessionId, 'Comments on line 3');
+      await waitForText(sessionId, 'Please revisit this line.');
+      await clickSelector(sessionId, '[data-role="default-file-open-reply"]');
+      await setInputValue(sessionId, '[data-role="default-file-reply-author"]', 'Worker');
+      await setInputValue(sessionId, '[data-role="default-file-reply-message"]', 'Acknowledged on line 3.');
+      await clickSelector(sessionId, '[data-role="add-default-file-reply"]');
+      await waitForText(sessionId, 'Acknowledged on line 3.');
 
       await executeScript(sessionId, `
         const openDraft = window.__orchestraOpenFileCommentDraft;
@@ -150,7 +178,7 @@ describe("desktop default-file anchored task comments", () => {
         anchorHasUncommittedChanges?: boolean | null;
       }>>(sessionId, 'list_task_comments', { taskId: task.id });
 
-      expect(comments).toHaveLength(3);
+      expect(comments).toHaveLength(4);
       expect(comments[0]?.message).toContain('General note under the default file.');
 
       const lineComment = comments.find((entry) => entry.message.includes('Please revisit this line.'));

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("task detail supports quick comments, line comments, and selected-text comments on the default file preview", async ({ page }) => {
+test("task detail supports quick comments, line comments, replies, and viewer controls on the default file preview", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => {
     window.localStorage.clear();
@@ -102,16 +102,6 @@ test("task detail supports quick comments, line comments, and selected-text comm
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file.");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
 
-  await page.locator('[data-role="default-file-line-comment-button"][data-line-number="3"]').click({ force: true });
-  await page.locator('[data-role="default-file-comment-author"]').fill("Line Reviewer");
-  await page.locator('[data-role="default-file-comment-message"]').fill("Please revisit this line.");
-  await page.evaluate(() => {
-    (document.querySelector('[data-role="add-default-file-comment"]') as HTMLButtonElement | null)?.click();
-  });
-
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("docs/design.md · line 3");
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
-
   await page.evaluate(() => {
     const openDraft = (window as Window & { __orchestraOpenFileCommentDraft?: (detail: unknown) => void }).__orchestraOpenFileCommentDraft;
     if (typeof openDraft !== "function") {
@@ -122,29 +112,41 @@ test("task detail supports quick comments, line comments, and selected-text comm
         repositoryId: "repo-default-file",
         relativePath: "docs/design.md",
         absolutePath: "/mock/projects/orchestra/repository/docs/design.md",
-        lineStart: 2,
-        lineEnd: 2,
-        columnStart: 1,
-        columnEnd: 18,
-        selectedText: "Beta selected text",
+        lineStart: 3,
+        lineEnd: 3,
+        columnStart: null,
+        columnEnd: null,
+        selectedText: null,
       },
-      top: 72,
+      top: 88,
       left: 220,
     });
   });
-
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toBeVisible();
-  await page.locator('[data-role="default-file-comment-author"]').fill("Selection Reviewer");
-  await page.locator('[data-role="default-file-comment-message"]').fill("Clarify this selected text.");
+  await page.locator('[data-role="default-file-comment-author"]').fill("Line Reviewer");
+  await page.locator('[data-role="default-file-comment-message"]').fill("Please revisit this line.");
   await page.evaluate(() => {
     (document.querySelector('[data-role="add-default-file-comment"]') as HTMLButtonElement | null)?.click();
   });
 
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("docs/design.md · line 2");
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Beta selected text");
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Clarify this selected text.");
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("docs/design.md · line 3");
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
+  await page.locator('[data-role="default-file-line-comment-button"][data-line-number="3"]').click({ force: true });
+  await expect(page.locator('[data-role="default-file-thread-popover"]')).toContainText("Please revisit this line.");
+  await page.locator('[data-role="default-file-open-reply"]').click();
+  await page.locator('[data-role="default-file-reply-author"]').fill("Worker");
+  await page.locator('[data-role="default-file-reply-message"]').fill("Acknowledged on line 3.");
+  await page.locator('[data-role="add-default-file-reply"]').click();
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Acknowledged on line 3.");
+
+  await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
+  await page.locator('[data-role="default-file-viewer-toggle"]').click();
+  await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Expand");
+  await page.locator('[data-role="default-file-viewer-toggle"]').click();
+  await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
 
   await page.locator('[data-role="task-detail-tab-comments"]').click();
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Default file");
-  await expect(page.locator('[data-role="task-comments"]')).toContainText("docs/design.md · line 2");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("docs/design.md · line 3");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Acknowledged on line 3.");
 });
