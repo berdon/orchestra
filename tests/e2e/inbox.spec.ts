@@ -46,6 +46,9 @@ test("Inbox shows user messages, attention tasks, and supports marking mail read
 
   await page.getByRole("button", { name: "Inbox" }).click();
   await expect(page.locator('[data-role="inbox-unread-count"]')).toContainText("1 unread");
+  await expect(page.locator('[data-role="inbox-compose-panel"]')).toHaveCount(0);
+  await page.locator('[data-role="open-inbox-compose"]').click();
+  await expect(page.locator('[data-role="inbox-compose-panel"]')).toBeVisible();
   await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Please review the latest automation output.");
   await expect(page.locator('[data-role="inbox-attention-tasks"]')).toContainText("Open task");
   await expect(page.locator('[data-role="inbox-attention-tasks"]')).toContainText("ORC-");
