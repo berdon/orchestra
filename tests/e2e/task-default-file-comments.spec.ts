@@ -104,11 +104,13 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   });
   await expect(page.getByRole("heading", { name: "Implement task foundation shell" })).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file.");
+  await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file. See @docs/design.md");
   await page.locator('[data-role="add-default-file-quick-comment"]').click();
 
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file.");
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file. See @docs/design.md");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
+  await page.locator('[data-role="task-comment-file-mention-link"]').first().click();
+  await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
 
   await page.evaluate(() => {
     const openDraft = (window as Window & { __orchestraOpenFileCommentDraft?: (detail: unknown) => void }).__orchestraOpenFileCommentDraft;
