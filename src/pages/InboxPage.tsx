@@ -40,6 +40,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [messageBody, setMessageBody] = useState("");
   const [interruptPriority, setInterruptPriority] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
 
   const attentionTasks = useMemo(
     () => tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
@@ -110,6 +111,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
       });
       setMessageBody("");
       setInterruptPriority(false);
+      setComposeOpen(false);
       await loadData();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to send message.");
@@ -146,6 +148,14 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
               <span className="status-badge status-badge--neutral" data-role="inbox-unread-count">{unreadCount} unread</span>
               <button
                 className="secondary-button"
+                data-role="open-inbox-compose"
+                type="button"
+                onClick={() => setComposeOpen((current) => !current)}
+              >
+                {composeOpen ? "Hide compose" : "Compose"}
+              </button>
+              <button
+                className="secondary-button"
                 data-role="mark-all-inbox-read"
                 type="button"
                 disabled={!unreadCount || markingRead === "all"}
@@ -158,38 +168,43 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
 
           {error ? <p className="error-copy">{error}</p> : null}
 
-          <div className="task-editor-grid">
-            <label className="field-group">
-              <span className="field-group__label">Send to agent</span>
-              <select className="text-input" data-role="inbox-compose-agent" value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)}>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span className="field-group__label">Related task</span>
-              <select className="text-input" data-role="inbox-compose-task" value={selectedTaskId} onChange={(event) => setSelectedTaskId(event.target.value)}>
-                <option value="">None</option>
-                {tasks.map((task) => (
-                  <option key={task.id} value={task.id}>{task.number} · {task.title}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field-group task-editor-grid__full">
-              <span className="field-group__label">Message</span>
-              <textarea className="text-area" data-role="inbox-compose-body" rows={4} value={messageBody} onChange={(event) => setMessageBody(event.target.value)} />
-            </label>
-            <label className="checkbox-field task-editor-grid__full">
-              <input data-role="inbox-compose-interrupt" type="checkbox" checked={interruptPriority} onChange={(event) => setInterruptPriority(event.target.checked)} />
-              <span>Interrupt recipient</span>
-            </label>
-            <div className="task-editor-grid__full">
-              <button className="primary-button" data-role="send-inbox-message" type="button" disabled={sending || !selectedAgentId || !messageBody.trim()} onClick={() => void handleSend()}>
-                {sending ? "Sending…" : "Send message"}
-              </button>
+          {composeOpen ? (
+            <div className="task-editor-grid" data-role="inbox-compose-panel">
+              <label className="field-group">
+                <span className="field-group__label">Send to agent</span>
+                <select className="text-input" data-role="inbox-compose-agent" value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)}>
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>{agent.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-group">
+                <span className="field-group__label">Related task</span>
+                <select className="text-input" data-role="inbox-compose-task" value={selectedTaskId} onChange={(event) => setSelectedTaskId(event.target.value)}>
+                  <option value="">None</option>
+                  {tasks.map((task) => (
+                    <option key={task.id} value={task.id}>{task.number} · {task.title}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-group task-editor-grid__full">
+                <span className="field-group__label">Message</span>
+                <textarea className="text-area" data-role="inbox-compose-body" rows={4} value={messageBody} onChange={(event) => setMessageBody(event.target.value)} />
+              </label>
+              <label className="checkbox-field task-editor-grid__full">
+                <input data-role="inbox-compose-interrupt" type="checkbox" checked={interruptPriority} onChange={(event) => setInterruptPriority(event.target.checked)} />
+                <span>Interrupt recipient</span>
+              </label>
+              <div className="task-editor-grid__full action-cluster">
+                <button className="primary-button" data-role="send-inbox-message" type="button" disabled={sending || !selectedAgentId || !messageBody.trim()} onClick={() => void handleSend()}>
+                  {sending ? "Sending…" : "Send message"}
+                </button>
+                <button className="secondary-button" data-role="cancel-inbox-compose" type="button" disabled={sending} onClick={() => setComposeOpen(false)}>
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="task-section-list" data-role="user-inbox-messages">
             {messages.length ? messages.map((message) => (
