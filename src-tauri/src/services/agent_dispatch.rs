@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     models::{AgentQueueEntry, AgentRuntimeState},
-    services::{agent_runtime, agents, live_sessions, pi_sessions},
+    services::{agent_runtime, agents, live_sessions, messages, pi_sessions},
     state::{generate_id, AppState},
 };
 
@@ -44,8 +44,14 @@ pub fn dispatch_agent_queue(
     agent_id: &str,
 ) -> Result<bool, String> {
     let connection = crate::services::database::open_connection()?;
-    let runtime_state = agent_runtime::ensure_agent_runtime_state_for_project(&connection, project_id, agent_id)?;
-    let queue_entries = agent_runtime::list_agent_queue_entries_for_project(&connection, project_id, Some(agent_id), false)?;
+    let runtime_state =
+        agent_runtime::ensure_agent_runtime_state_for_project(&connection, project_id, agent_id)?;
+    let queue_entries = agent_runtime::list_agent_queue_entries_for_project(
+        &connection,
+        project_id,
+        Some(agent_id),
+        false,
+    )?;
     drop(connection);
 
     if queue_entries.is_empty() {
@@ -62,13 +68,22 @@ pub fn dispatch_agent_queue(
             if entry.delivery_mode == "prompt" {
                 continue;
             }
-            deliver_nonblocking_entry(app.clone(), state, project_root, session_dir, &runtime_state, &entry)?;
+            deliver_nonblocking_entry(
+                app.clone(),
+                state,
+                project_root,
+                session_dir,
+                &runtime_state,
+                &entry,
+            )?;
             delivered = true;
         }
         return Ok(delivered);
     }
 
-    let next_entry = queue_entries.into_iter().find(|entry| entry.status == "queued");
+    let next_entry = queue_entries
+        .into_iter()
+        .find(|entry| entry.status == "queued");
     let Some(entry) = next_entry else {
         return Ok(false);
     };
@@ -77,26 +92,32 @@ pub fn dispatch_agent_queue(
     if entry.delivery_mode == "prompt" {
         deliver_prompt_entry(app, state, session_dir, &runtime_state, &entry)?;
     } else {
-        deliver_nonblocking_entry(app, state, project_root, session_dir, &runtime_state, &entry)?;
+        deliver_nonblocking_entry(
+            app,
+            state,
+            project_root,
+            session_dir,
+            &runtime_state,
+            &entry,
+        )?;
     }
     Ok(true)
 }
 
-pub fn complete_agent_run(
-    session_id: &str,
-    run_id: Option<&str>,
-) -> Result<(), String> {
+pub fn complete_agent_run(session_id: &str, run_id: Option<&str>) -> Result<(), String> {
     let mut connection = crate::services::database::open_connection()?;
     let Some((project_id, agent_id)) = agent_for_session(&connection, session_id)? else {
         return Ok(());
     };
-    if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(&connection, &project_id, &agent_id)? {
+    if let Some(runtime_state) =
+        agent_runtime::get_agent_runtime_state_for_project(&connection, &project_id, &agent_id)?
+    {
         if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
             let queue_entry = agent_runtime::get_agent_queue_entry(&connection, queue_entry_id)?;
             if run_id.is_none() || queue_entry.run_id.as_deref() == run_id {
-                let tx = connection
-                    .transaction()
-                    .map_err(|error| format!("Unable to start agent completion transaction: {error}"))?;
+                let tx = connection.transaction().map_err(|error| {
+                    format!("Unable to start agent completion transaction: {error}")
+                })?;
                 agent_runtime::mark_agent_queue_entry_completed(&tx, queue_entry_id)?;
                 let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
                     &tx,
@@ -108,8 +129,9 @@ pub fn complete_agent_run(
                     "idle",
                     None,
                 )?;
-                tx.commit()
-                    .map_err(|error| format!("Unable to commit agent completion transaction: {error}"))?;
+                tx.commit().map_err(|error| {
+                    format!("Unable to commit agent completion transaction: {error}")
+                })?;
             }
         }
     }
@@ -125,13 +147,15 @@ pub fn fail_agent_run(
     let Some((project_id, agent_id)) = agent_for_session(&connection, session_id)? else {
         return Ok(());
     };
-    if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(&connection, &project_id, &agent_id)? {
+    if let Some(runtime_state) =
+        agent_runtime::get_agent_runtime_state_for_project(&connection, &project_id, &agent_id)?
+    {
         if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
             let queue_entry = agent_runtime::get_agent_queue_entry(&connection, queue_entry_id)?;
             if run_id.is_none() || queue_entry.run_id.as_deref() == run_id {
-                let tx = connection
-                    .transaction()
-                    .map_err(|error| format!("Unable to start agent failure transaction: {error}"))?;
+                let tx = connection.transaction().map_err(|error| {
+                    format!("Unable to start agent failure transaction: {error}")
+                })?;
                 agent_runtime::mark_agent_queue_entry_failed(&tx, queue_entry_id)?;
                 let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
                     &tx,
@@ -143,8 +167,9 @@ pub fn fail_agent_run(
                     "needs_attention",
                     Some(error_message),
                 )?;
-                tx.commit()
-                    .map_err(|error| format!("Unable to commit agent failure transaction: {error}"))?;
+                tx.commit().map_err(|error| {
+                    format!("Unable to commit agent failure transaction: {error}")
+                })?;
             }
         }
     }
@@ -168,7 +193,15 @@ fn deliver_prompt_entry(
         .ok_or_else(|| format!("Agent {} has no runtime cwd", runtime_state.agent_id))?;
     let run_id = generate_id("agent-dispatch");
     let connection = crate::services::database::open_connection()?;
-    let claimed = agent_runtime::mark_agent_queue_entry_dispatched(&connection, &entry.id, session_id, &run_id)?;
+    if skip_cleared_mail_entry(&connection, entry)? {
+        return Ok(());
+    }
+    let claimed = agent_runtime::mark_agent_queue_entry_dispatched(
+        &connection,
+        &entry.id,
+        session_id,
+        &run_id,
+    )?;
     if claimed.is_none() {
         return Ok(());
     }
@@ -229,7 +262,15 @@ fn deliver_nonblocking_entry(
         .unwrap_or_else(|| project_root.to_str().unwrap_or("."));
     let run_id = format!("queued-{}", Uuid::new_v4().simple());
     let connection = crate::services::database::open_connection()?;
-    let claimed = agent_runtime::mark_agent_queue_entry_dispatched(&connection, &entry.id, session_id, &run_id)?;
+    if skip_cleared_mail_entry(&connection, entry)? {
+        return Ok(());
+    }
+    let claimed = agent_runtime::mark_agent_queue_entry_dispatched(
+        &connection,
+        &entry.id,
+        session_id,
+        &run_id,
+    )?;
     if claimed.is_none() {
         return Ok(());
     }
@@ -252,6 +293,20 @@ fn deliver_nonblocking_entry(
     }
 }
 
+fn skip_cleared_mail_entry(
+    connection: &rusqlite::Connection,
+    entry: &AgentQueueEntry,
+) -> Result<bool, String> {
+    if entry.source_type != "mail" {
+        return Ok(false);
+    }
+    if messages::agent_has_unread_direct_mail(connection, &entry.agent_id)? {
+        return Ok(false);
+    }
+    agent_runtime::mark_agent_queue_entry_completed(connection, &entry.id)?;
+    Ok(true)
+}
+
 pub fn ensure_main_session(
     project_root: &Path,
     session_dir: &Path,
@@ -259,7 +314,8 @@ pub fn ensure_main_session(
     agent_id: &str,
 ) -> Result<AgentRuntimeState, String> {
     let connection = crate::services::database::open_connection()?;
-    let runtime_state = agent_runtime::ensure_agent_runtime_state_for_project(&connection, project_id, agent_id)?;
+    let runtime_state =
+        agent_runtime::ensure_agent_runtime_state_for_project(&connection, project_id, agent_id)?;
     if let Some(session_id) = runtime_state.main_session_id.as_deref() {
         if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
             return Ok(runtime_state);
@@ -275,9 +331,20 @@ pub fn ensure_main_session(
         false,
     )?;
     if let (Some(provider), Some(model)) = (agent.provider.as_deref(), agent.model.as_deref()) {
-        let _ = pi_sessions::set_session_model(project_root, session_dir, &created.record.id, provider, model)?;
+        let _ = pi_sessions::set_session_model(
+            project_root,
+            session_dir,
+            &created.record.id,
+            provider,
+            model,
+        )?;
     }
-    let _ = pi_sessions::set_session_thinking_level(project_root, session_dir, &created.record.id, &agent.thinking_level)?;
+    let _ = pi_sessions::set_session_thinking_level(
+        project_root,
+        session_dir,
+        &created.record.id,
+        &agent.thinking_level,
+    )?;
     agent_runtime::update_agent_runtime_dispatch_state_for_project(
         &connection,
         project_id,
@@ -290,7 +357,10 @@ pub fn ensure_main_session(
     )
 }
 
-fn agent_for_session(connection: &rusqlite::Connection, session_id: &str) -> Result<Option<(String, String)>, String> {
+fn agent_for_session(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<(String, String)>, String> {
     connection
         .query_row(
             "SELECT project_id, agent_id FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
