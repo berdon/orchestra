@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import hljs from "highlight.js";
 
 import type { TaskComment, TaskCommentInput, TaskFileReference } from "../types";
@@ -272,6 +272,7 @@ export function CommentableFileViewer({
 }: CommentableFileViewerProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const selectionRangeRef = useRef<Range | null>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionCommentAction | null>(null);
   const [floatingComment, setFloatingComment] = useState<FloatingCommentState | null>(null);
   const [threadPopover, setThreadPopover] = useState<ThreadPopoverState | null>(null);
@@ -361,7 +362,6 @@ export function CommentableFileViewer({
 
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => {
-      document.removeEventListener("selectionchange", syncSelectionAction);
       document.removeEventListener("mouseup", deferredSync);
       document.removeEventListener("keyup", deferredSync);
       document.removeEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
@@ -379,6 +379,7 @@ export function CommentableFileViewer({
     setReplyMessage("");
     setEditingCommentId(null);
     setEditingMessage("");
+    selectionRangeRef.current = null;
   }
 
   function handleViewportMouseUp() {
@@ -430,7 +431,7 @@ export function CommentableFileViewer({
     return true;
   }
 
-  function openThreadPopoverForLine(lineNumber: number, top: number, left: number) {
+  const openThreadPopoverForLine = useCallback((lineNumber: number, top: number, left: number) => {
     const overlay = overlayRef.current;
     if (!overlay) {
       return;
@@ -451,7 +452,7 @@ export function CommentableFileViewer({
       top: position.top,
       left: position.left,
     });
-  }
+  }, [fileCommentThreads]);
 
   function handleSelectionCommentClick() {
     if (selectionAction) {
@@ -462,7 +463,7 @@ export function CommentableFileViewer({
     openSelectionCommentFromCurrentSelection();
   }
 
-  function handleLineCommentClick(lineNumber: number, event: ReactMouseEvent<HTMLButtonElement>) {
+  const handleLineCommentClick = useCallback((lineNumber: number, event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     const overlay = overlayRef.current;
@@ -496,7 +497,7 @@ export function CommentableFileViewer({
       top,
       left,
     );
-  }
+  }, [commentCountsByLine, openFloatingComment, openThreadPopoverForLine, reference.absolutePath, reference.relativePath, reference.repositoryId]);
 
   async function submitFloatingComment() {
     if (!floatingComment || !floatingComment.message.trim()) {
@@ -569,6 +570,73 @@ export function CommentableFileViewer({
     }
   }
 
+  const renderedLines = useMemo(
+    () => lines.map((line) => {
+      const commentCount = commentCountsByLine.get(line.number) ?? 0;
+      const lineThreads = commentThreadsByLine.get(line.number) ?? [];
+      const selectedTextThreads = lineThreads.filter((thread) => Boolean(thread.comment.selectedText && thread.comment.columnStart && thread.comment.columnEnd));
+      return (
+        <div
+          className={commentCount > 0 ? "file-content-viewer__line file-content-viewer__line--commented" : "file-content-viewer__line"}
+          data-file-line-row
+          data-line-number={String(line.number)}
+          key={line.number}
+        >
+          <div className="file-content-viewer__line-gutter">
+            <button
+              className={commentCount > 0 ? "file-content-viewer__line-comment-button file-content-viewer__line-comment-button--active" : "file-content-viewer__line-comment-button"}
+              data-role="default-file-line-comment-button"
+              data-line-number={String(line.number)}
+              type="button"
+              onClick={(event) => handleLineCommentClick(line.number, event)}
+            >
+              💬
+              {commentCount > 0 ? <span className="file-content-viewer__line-comment-count">{commentCount}</span> : null}
+            </button>
+            <span className="file-content-viewer__line-number">{line.number}</span>
+          </div>
+          <div className="file-content-viewer__line-content-wrap">
+            <div
+              className="file-content-viewer__line-content"
+              data-file-line-content
+              dangerouslySetInnerHTML={{ __html: line.html }}
+            />
+            {selectedTextThreads.map(({ comment }) => {
+              const start = Math.max(1, comment.columnStart ?? 1);
+              const end = Math.max(start, comment.columnEnd ?? start);
+              const width = Math.max(1, end - start + 1);
+              return (
+                <button
+                  key={comment.id}
+                  className="file-content-viewer__selected-comment-anchor"
+                  data-role="default-file-selected-comment-anchor"
+                  style={{ left: `${start - 1}ch`, width: `${width}ch` }}
+                  title={comment.message}
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const overlay = overlayRef.current;
+                    const target = event.currentTarget.getBoundingClientRect();
+                    const overlayRect = overlay?.getBoundingClientRect();
+                    if (!overlay || !overlayRect) {
+                      return;
+                    }
+                    openThreadPopoverForLine(line.number, target.top - overlayRect.top + 24, target.right - overlayRect.left + 12);
+                  }}
+                >
+                  <span className="file-content-viewer__selected-comment-highlight" />
+                  <span className="file-content-viewer__selected-comment-icon">💬</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }),
+    [commentCountsByLine, commentThreadsByLine, handleLineCommentClick, lines, openThreadPopoverForLine],
+  );
+
   return (
     <div className="file-content-viewer">
       <div className="file-content-viewer__header">
@@ -593,69 +661,7 @@ export function CommentableFileViewer({
           onMouseUp={handleViewportMouseUp}
           ref={viewportRef}
         >
-          {lines.map((line) => {
-            const commentCount = commentCountsByLine.get(line.number) ?? 0;
-            const lineThreads = commentThreadsByLine.get(line.number) ?? [];
-            const selectedTextThreads = lineThreads.filter((thread) => Boolean(thread.comment.selectedText && thread.comment.columnStart && thread.comment.columnEnd));
-            return (
-              <div
-                className={commentCount > 0 ? "file-content-viewer__line file-content-viewer__line--commented" : "file-content-viewer__line"}
-                data-file-line-row
-                data-line-number={String(line.number)}
-                key={line.number}
-              >
-                <div className="file-content-viewer__line-gutter">
-                  <button
-                    className={commentCount > 0 ? "file-content-viewer__line-comment-button file-content-viewer__line-comment-button--active" : "file-content-viewer__line-comment-button"}
-                    data-role="default-file-line-comment-button"
-                    data-line-number={String(line.number)}
-                    type="button"
-                    onClick={(event) => handleLineCommentClick(line.number, event)}
-                  >
-                    💬
-                    {commentCount > 0 ? <span className="file-content-viewer__line-comment-count">{commentCount}</span> : null}
-                  </button>
-                  <span className="file-content-viewer__line-number">{line.number}</span>
-                </div>
-                <div className="file-content-viewer__line-content-wrap">
-                  <div
-                    className="file-content-viewer__line-content"
-                    data-file-line-content
-                    dangerouslySetInnerHTML={{ __html: line.html }}
-                  />
-                  {selectedTextThreads.map(({ comment }) => {
-                    const start = Math.max(1, comment.columnStart ?? 1);
-                    const end = Math.max(start, comment.columnEnd ?? start);
-                    const width = Math.max(1, end - start + 1);
-                    return (
-                      <button
-                        key={comment.id}
-                        className="file-content-viewer__selected-comment-anchor"
-                        data-role="default-file-selected-comment-anchor"
-                        style={{ left: `${start - 1}ch`, width: `${width}ch` }}
-                        title={comment.message}
-                        type="button"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          const overlay = overlayRef.current;
-                          const target = event.currentTarget.getBoundingClientRect();
-                          const overlayRect = overlay?.getBoundingClientRect();
-                          if (!overlay || !overlayRect) {
-                            return;
-                          }
-                          openThreadPopoverForLine(line.number, target.top - overlayRect.top + 24, target.right - overlayRect.left + 12);
-                        }}
-                      >
-                        <span className="file-content-viewer__selected-comment-highlight" />
-                        <span className="file-content-viewer__selected-comment-icon">💬</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+          {renderedLines}
         </div>
 
         {selectionAction ? (

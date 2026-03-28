@@ -135,27 +135,65 @@ describe("desktop default-file anchored task comments", () => {
       await clickSelector(sessionId, '[data-role="add-default-file-reply"]');
       await waitForText(sessionId, 'Acknowledged on line 3.');
 
-      await executeScript(sessionId, `
-        const openDraft = window.__orchestraOpenFileCommentDraft;
-        if (typeof openDraft !== 'function') {
-          throw new Error('Comment draft helper was not available');
+      const selectedText = await executeScript<string>(sessionId, `
+        const lineContent = document.querySelector('[data-file-line-row][data-line-number="2"] [data-file-line-content]');
+        if (!(lineContent instanceof HTMLElement)) {
+          throw new Error('Line 2 content was not available');
         }
-        openDraft({
-          anchor: {
-            repositoryId: ${JSON.stringify(repository.id)},
-            relativePath: 'docs/design.md',
-            absolutePath: ${JSON.stringify(join(repoPath, 'docs', 'design.md'))},
-            lineStart: 2,
-            lineEnd: 2,
-            columnStart: 1,
-            columnEnd: 18,
-            selectedText: 'Beta selected text'
-          },
-          top: 72,
-          left: 220,
-        });
-        return true;
+
+        const textNodes = [];
+        const walker = document.createTreeWalker(lineContent, NodeFilter.SHOW_TEXT);
+        let current = walker.nextNode();
+        while (current) {
+          if (current.textContent && current.textContent.length > 0) {
+            textNodes.push(current);
+          }
+          current = walker.nextNode();
+        }
+
+        const selection = window.getSelection();
+        if (!selection) {
+          throw new Error('Selection API was not available');
+        }
+
+        const locate = (targetOffset) => {
+          let traversed = 0;
+          for (const node of textNodes) {
+            const value = node.textContent ?? '';
+            const nextTraversed = traversed + value.length;
+            if (targetOffset <= nextTraversed) {
+              return { node, offset: Math.max(0, targetOffset - traversed) };
+            }
+            traversed = nextTraversed;
+          }
+          return null;
+        };
+
+        const start = locate(0);
+        const end = locate('Beta selected text'.length);
+        if (!start || !end) {
+          throw new Error('Unable to resolve selection offsets inside line 2');
+        }
+
+        const range = document.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        return selection.toString();
       `);
+      expect(selectedText).toBe('Beta selected text');
+
+      await sleep(250);
+      const persistedSelection = await executeScript<{ hasCommentButton: boolean }>(sessionId, `
+        return {
+          hasCommentButton: Boolean(document.querySelector('[data-role="default-file-selection-comment-button"]')),
+        };
+      `);
+      expect(persistedSelection.hasCommentButton).toBe(true);
+
+      await clickSelector(sessionId, '[data-role="default-file-selection-comment-button"]');
       await waitForText(sessionId, 'Selection');
       await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Clarify this selected text.');
       await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
