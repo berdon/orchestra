@@ -12,6 +12,7 @@ import {
   executeScript,
   invokeCommand,
   selectByLabel,
+  sleep,
   waitForSelectedLabel,
   waitForText,
 } from "./driver";
@@ -99,12 +100,28 @@ describe("desktop task comment file mention links", () => {
         return true;
       `);
       await waitForText(sessionId, "Tracked repository file changes and references");
-      const selectedLabel = await executeScript<string>(sessionId, `
-        const select = document.querySelector('[data-role="task-file-references"] select');
-        if (!(select instanceof HTMLSelectElement)) return '';
-        return select.options[select.selectedIndex]?.textContent || '';
-      `);
-      expect(selectedLabel).toContain("docs/design.md");
+      let repoFileState: { selectedLabel: string; cardTop: number | null } | null = null;
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        repoFileState = await executeScript<{ selectedLabel: string; cardTop: number | null }>(sessionId, `
+          const select = document.querySelector('[data-role="task-file-references"] select');
+          const card = document.querySelector('[data-role="selected-task-file-reference-card"]');
+          return {
+            selectedLabel: select instanceof HTMLSelectElement ? (select.options[select.selectedIndex]?.textContent || '') : '',
+            cardTop: card instanceof HTMLElement ? card.getBoundingClientRect().top : null,
+          };
+        `);
+        if (repoFileState.cardTop !== null) {
+          break;
+        }
+        await sleep(250);
+      }
+      if (!repoFileState) {
+        throw new Error('Unable to read repo file navigation state');
+      }
+      expect(repoFileState.selectedLabel).toContain("docs/design.md");
+      expect(repoFileState.cardTop).not.toBeNull();
+      expect((repoFileState.cardTop ?? 0) >= 0).toBe(true);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

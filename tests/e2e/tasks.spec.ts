@@ -223,11 +223,19 @@ test("task detail opens tracked repo files when clicking @file mentions in comme
 
   await page.locator('[data-role="task-comment-file-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
-  const selectedFileLabel = await page.evaluate(() => {
+  await expect(page.locator('[data-role="selected-task-file-reference-card"]')).toBeVisible();
+  const repoFileState = await page.evaluate(() => {
     const select = document.querySelector('[data-role="task-file-references"] select');
-    return select instanceof HTMLSelectElement ? select.options[select.selectedIndex]?.textContent ?? "" : "";
+    const card = document.querySelector('[data-role="selected-task-file-reference-card"]');
+    return {
+      selectedLabel: select instanceof HTMLSelectElement ? select.options[select.selectedIndex]?.textContent ?? "" : "",
+      cardTop: card instanceof HTMLElement ? card.getBoundingClientRect().top : null,
+      viewportHeight: window.innerHeight,
+    };
   });
-  expect(selectedFileLabel).toContain("docs/design.md");
+  expect(repoFileState.selectedLabel).toContain("docs/design.md");
+  expect(repoFileState.cardTop).not.toBeNull();
+  expect((repoFileState.cardTop ?? 0) < repoFileState.viewportHeight).toBe(true);
 });
 
 test("task detail supports attachments, comments, timeline, and review inbox filtering", async ({ page }) => {
