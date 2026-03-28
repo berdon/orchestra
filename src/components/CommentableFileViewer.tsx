@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import hljs from "highlight.js";
 
 import type { TaskComment, TaskCommentInput, TaskFileReference } from "../types";
-import { TaskCommentMentionsTextarea } from "./TaskCommentMentionsTextarea";
+import { TaskCommentComposer } from "./TaskCommentComposer";
 import { TaskCommentMessage } from "./TaskCommentMessage";
 
 interface FileCommentAnchor {
@@ -693,35 +693,26 @@ export function CommentableFileViewer({
             {floatingComment.anchor.selectedText ? (
               <pre className="file-content-viewer__selection-preview">{floatingComment.anchor.selectedText}</pre>
             ) : null}
-            <label className="checkbox-row task-comment-composer__interrupt">
-              <input
-                data-role="default-file-comment-interrupt"
-                type="checkbox"
-                checked={commentDraft.interruptAgent}
-                onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })}
-              />
-              Interrupt current worker now
-            </label>
-            <label className="field-group">
-              <span className="field-group__label">Comment</span>
-              <TaskCommentMentionsTextarea
-                taskId={taskId}
-                value={floatingComment.message}
-                rows={3}
-                dataRole="default-file-comment-message"
-                listDataRole="default-file-comment-mention-list"
-                optionDataRole="default-file-comment-mention-option"
-                onChange={(message) => setFloatingComment((current) => current ? { ...current, message } : current)}
-              />
-            </label>
-            <div className="task-comment-composer__actions">
-              <button className="primary-button" data-role="add-default-file-comment" type="button" onClick={() => void submitFloatingComment()}>
-                Add comment
-              </button>
-              <button className="secondary-button" data-role="cancel-default-file-comment" type="button" onClick={closeOverlays}>
-                Cancel
-              </button>
-            </div>
+            <TaskCommentComposer
+              taskId={taskId}
+              className="task-comment-composer"
+              interruptChecked={commentDraft.interruptAgent}
+              interruptDataRole="default-file-comment-interrupt"
+              message={floatingComment.message}
+              messageDataRole="default-file-comment-message"
+              messageLabel="Comment"
+              mentionListDataRole="default-file-comment-mention-list"
+              mentionOptionDataRole="default-file-comment-mention-option"
+              onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
+              onMessageChange={(message) => setFloatingComment((current) => current ? { ...current, message } : current)}
+              onSubmit={() => void submitFloatingComment()}
+              rows={3}
+              submitDataRole="add-default-file-comment"
+              submitLabel="Add comment"
+              cancelDataRole="cancel-default-file-comment"
+              cancelLabel="Cancel"
+              onCancel={closeOverlays}
+            />
           </div>
         ) : null}
 
@@ -832,29 +823,24 @@ export function CommentableFileViewer({
                     </div>
                   ) : null}
                   {replyTargetCommentId === comment.id ? (
-                    <div className="file-content-viewer__reply-composer">
-                      <label className="field-group">
-                        <span className="field-group__label">Reply</span>
-                        <textarea
-                          className="text-area"
-                          data-role="default-file-reply-message"
-                          rows={3}
-                          value={replyMessage}
-                          onChange={(event) => setReplyMessage(event.target.value)}
-                        />
-                      </label>
-                      <div className="task-comment-composer__actions">
-                        <button className="primary-button" data-role="add-default-file-reply" type="button" onClick={() => void submitReply(comment.id)}>
-                          Add reply
-                        </button>
-                        <button className="secondary-button" type="button" onClick={() => {
-                          setReplyTargetCommentId(null);
-                          setReplyMessage("");
-                        }}>
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
+                    <TaskCommentComposer
+                      taskId={taskId}
+                      className="file-content-viewer__reply-composer"
+                      message={replyMessage}
+                      messageDataRole="default-file-reply-message"
+                      messageLabel="Reply"
+                      mentionListDataRole="default-file-reply-mention-list"
+                      mentionOptionDataRole="default-file-reply-mention-option"
+                      onMessageChange={setReplyMessage}
+                      onSubmit={() => void submitReply(comment.id)}
+                      rows={3}
+                      submitDataRole="add-default-file-reply"
+                      submitLabel="Add reply"
+                      onCancel={() => {
+                        setReplyTargetCommentId(null);
+                        setReplyMessage("");
+                      }}
+                    />
                   ) : null}
                   <div className="file-content-viewer__thread-actions">
                     {editingCommentId === comment.id ? (

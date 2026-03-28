@@ -5,7 +5,7 @@ import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskC
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
-import { TaskCommentMentionsTextarea } from "../../components/TaskCommentMentionsTextarea";
+import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
 
@@ -921,33 +921,25 @@ export function TaskDetailPage({
               </div>
             </div>
 
-            <div className="task-comment-composer">
-              <div className="task-comment-composer__grid">
-                <label className="field-group">
-                  <span className="field-group__label">Author</span>
-                  <input className="text-input" data-role="task-comment-author" value={commentDraft.author} onChange={(event) => onCommentDraftChange({ ...commentDraft, author: event.target.value })} />
-                </label>
-                <label className="checkbox-row task-comment-composer__interrupt">
-                  <input data-role="task-comment-interrupt" type="checkbox" checked={commentDraft.interruptAgent} onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })} />
-                  Interrupt current worker now
-                </label>
-              </div>
-              <label className="field-group">
-                <span className="field-group__label">Add comment</span>
-                <TaskCommentMentionsTextarea
-                  taskId={task.id}
-                  value={commentDraft.message}
-                  rows={4}
-                  dataRole="task-comment-message"
-                  listDataRole="task-comment-mention-list"
-                  optionDataRole="task-comment-mention-option"
-                  onChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
-                />
-              </label>
-              <div className="task-comment-composer__actions">
-                <button className="primary-button" data-role="add-task-comment" type="button" onClick={() => void handleAddTopLevelComment()}>Add comment</button>
-              </div>
-            </div>
+            <TaskCommentComposer
+              author={commentDraft.author}
+              authorDataRole="task-comment-author"
+              message={commentDraft.message}
+              messageDataRole="task-comment-message"
+              messageLabel="Add comment"
+              mentionListDataRole="task-comment-mention-list"
+              mentionOptionDataRole="task-comment-mention-option"
+              onAuthorChange={(author) => onCommentDraftChange({ ...commentDraft, author })}
+              onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
+              onMessageChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
+              onSubmit={() => void handleAddTopLevelComment()}
+              rows={4}
+              submitDataRole="add-task-comment"
+              submitLabel="Add comment"
+              taskId={task.id}
+              interruptChecked={commentDraft.interruptAgent}
+              interruptDataRole="task-comment-interrupt"
+            />
 
             {commentThreads.length ? (
               <div className="task-section-list" data-role="task-comments">
@@ -1003,41 +995,32 @@ export function TaskDetailPage({
                     ) : null}
 
                     {replyTargetCommentId === comment.id ? (
-                      <div className="task-comment-reply-composer" data-role="task-comment-reply-composer">
-                        <div className="task-comment-composer__grid">
-                          <label className="field-group">
-                            <span className="field-group__label">Reply author</span>
-                            <input className="text-input" data-role="task-reply-author" value={replyDraft.author} onChange={(event) => setReplyDraft({ ...replyDraft, author: event.target.value })} />
-                          </label>
-                          <label className="checkbox-row task-comment-composer__interrupt">
-                            <input data-role="task-reply-interrupt" type="checkbox" checked={replyDraft.interruptAgent} onChange={(event) => setReplyDraft({ ...replyDraft, interruptAgent: event.target.checked })} />
-                            Interrupt current worker now
-                          </label>
-                        </div>
-                        <label className="field-group">
-                          <span className="field-group__label">Reply to {comment.author}</span>
-                          <TaskCommentMentionsTextarea
-                            taskId={task.id}
-                            value={replyDraft.message}
-                            rows={3}
-                            dataRole="task-reply-message"
-                            listDataRole="task-reply-mention-list"
-                            optionDataRole="task-reply-mention-option"
-                            onChange={(message) => setReplyDraft({ ...replyDraft, message })}
-                          />
-                        </label>
-                        <div className="task-comment-composer__actions">
-                          <button className="primary-button" data-role="add-task-reply" type="button" onClick={() => void handleAddReply()}>
-                            Add reply
-                          </button>
-                          <button className="secondary-button" data-role="cancel-task-reply" type="button" onClick={() => {
-                            setReplyTargetCommentId(null);
-                            setReplyDraft(createReplyDraft(commentDraft.author));
-                          }}>
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
+                      <TaskCommentComposer
+                        author={replyDraft.author}
+                        authorDataRole="task-reply-author"
+                        className="task-comment-reply-composer"
+                        interruptChecked={replyDraft.interruptAgent}
+                        interruptDataRole="task-reply-interrupt"
+                        message={replyDraft.message}
+                        messageDataRole="task-reply-message"
+                        messageLabel={`Reply to ${comment.author}`}
+                        mentionListDataRole="task-reply-mention-list"
+                        mentionOptionDataRole="task-reply-mention-option"
+                        onAuthorChange={(author) => setReplyDraft({ ...replyDraft, author })}
+                        onCancel={() => {
+                          setReplyTargetCommentId(null);
+                          setReplyDraft(createReplyDraft(commentDraft.author));
+                        }}
+                        onInterruptChange={(interruptAgent) => setReplyDraft({ ...replyDraft, interruptAgent })}
+                        onMessageChange={(message) => setReplyDraft({ ...replyDraft, message })}
+                        onSubmit={() => void handleAddReply()}
+                        rows={3}
+                        submitDataRole="add-task-reply"
+                        submitLabel="Add reply"
+                        cancelDataRole="cancel-task-reply"
+                        cancelLabel="Cancel"
+                        taskId={task.id}
+                      />
                     ) : null}
                   </article>
                 ))}
@@ -1253,21 +1236,24 @@ export function TaskDetailPage({
                 <span className="status-badge status-badge--neutral">{task.commentCount}</span>
               </div>
 
-              <div className="task-comment-composer task-comment-composer--summary">
-                <div className="task-comment-composer__grid task-comment-composer__grid--compact">
-                  <label className="checkbox-row task-comment-composer__interrupt">
-                    <input data-role="default-file-quick-comment-interrupt" type="checkbox" checked={commentDraft.interruptAgent} onChange={(event) => onCommentDraftChange({ ...commentDraft, interruptAgent: event.target.checked })} />
-                    Interrupt current worker now
-                  </label>
-                </div>
-                <label className="field-group">
-                  <span className="field-group__label">Quick comment</span>
-                  <textarea className="text-area" data-role="default-file-quick-comment-message" rows={3} value={commentDraft.message} onChange={(event) => onCommentDraftChange({ ...commentDraft, message: event.target.value })} />
-                </label>
-                <div className="task-comment-composer__actions">
-                  <button className="primary-button" data-role="add-default-file-quick-comment" type="button" onClick={() => void handleAddTopLevelComment()}>Add comment</button>
-                </div>
-              </div>
+              <TaskCommentComposer
+                className="task-comment-composer task-comment-composer--summary"
+                compactMeta
+                interruptChecked={commentDraft.interruptAgent}
+                interruptDataRole="default-file-quick-comment-interrupt"
+                message={commentDraft.message}
+                messageDataRole="default-file-quick-comment-message"
+                messageLabel="Quick comment"
+                mentionListDataRole="default-file-quick-comment-mention-list"
+                mentionOptionDataRole="default-file-quick-comment-mention-option"
+                onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
+                onMessageChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
+                onSubmit={() => void handleAddTopLevelComment()}
+                rows={3}
+                submitDataRole="add-default-file-quick-comment"
+                submitLabel="Add comment"
+                taskId={task.id}
+              />
 
               {summaryComments.length ? (
                 <div className="task-section-list" data-role="default-file-comment-summary">
