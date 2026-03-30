@@ -353,6 +353,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 assignment_id TEXT,
                 read_at TEXT,
                 read_session_id TEXT,
+                archived_at TEXT,
                 last_notified_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -534,6 +535,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_tasks_table_columns(connection)?;
     ensure_task_comments_table_columns(connection)?;
     ensure_mailbox_tables(connection)?;
+    ensure_mailbox_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
     ensure_task_file_references_table_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
@@ -965,6 +967,7 @@ fn ensure_mailbox_tables(connection: &Connection) -> Result<(), String> {
                 assignment_id TEXT,
                 read_at TEXT,
                 read_session_id TEXT,
+                archived_at TEXT,
                 last_notified_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -983,6 +986,25 @@ fn ensure_mailbox_tables(connection: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|error| format!("Unable to ensure mailbox tables: {error}"))?;
+    Ok(())
+}
+
+fn ensure_mailbox_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "mailbox_message_deliveries")?;
+
+    if !columns.contains("archived_at") {
+        connection
+            .execute(
+                "ALTER TABLE mailbox_message_deliveries ADD COLUMN archived_at TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add archived_at column to mailbox_message_deliveries: {error}"
+                )
+            })?;
+    }
+
     Ok(())
 }
 

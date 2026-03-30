@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Inbox shows user messages, attention tasks, and supports marking mail read", async ({ page }) => {
+test("Inbox shows user messages, attention tasks, and supports read/archive filters", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     window.localStorage.setItem(
@@ -24,6 +24,30 @@ test("Inbox shows user messages, attention tasks, and supports marking mail read
           priority: "interrupt",
           readAt: null,
           readSessionId: null,
+          archivedAt: null,
+          lastNotifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          deliveryId: "delivery-user-2",
+          messageId: "message-user-2",
+          projectId: "orchestra",
+          taskId: null,
+          taskNumber: null,
+          taskTitle: null,
+          senderType: "agent",
+          senderId: "reviewer",
+          senderLabel: "Reviewer",
+          recipientType: "user",
+          recipientId: "desktop-user",
+          recipientLabel: "User",
+          assignmentId: null,
+          body: "Already handled yesterday.",
+          priority: "normal",
+          readAt: new Date().toISOString(),
+          readSessionId: "desktop-user",
+          archivedAt: null,
           lastNotifiedAt: new Date().toISOString(),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -33,6 +57,8 @@ test("Inbox shows user messages, attention tasks, and supports marking mail read
   });
 
   await page.goto("/");
+  await expect(page.getByText("Environment")).toHaveCount(0);
+  await expect(page.getByText("Backend")).toHaveCount(0);
   await page.evaluate(() => {
     const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
     const target = tasks.find((task: { title: string }) => task.title === "Implement task foundation shell");
@@ -50,12 +76,33 @@ test("Inbox shows user messages, attention tasks, and supports marking mail read
   await page.locator('[data-role="open-inbox-compose"]').click();
   await expect(page.locator('[data-role="inbox-compose-panel"]')).toBeVisible();
   await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Please review the latest automation output.");
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Already handled yesterday.");
   await expect(page.locator('[data-role="inbox-attention-tasks"]')).toContainText("Open task");
   await expect(page.locator('[data-role="inbox-attention-tasks"]')).toContainText("ORC-");
 
+  await page.locator('[data-role="inbox-filter-unread"]').click();
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Please review the latest automation output.");
+  await expect(page.locator('[data-role="user-inbox-messages"]')).not.toContainText("Already handled yesterday.");
+
   await page.locator('[data-role="mark-inbox-read-delivery-user-1"]').click();
   await expect(page.locator('[data-role="inbox-unread-count"]')).toContainText("0 unread");
-  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Read");
+
+  await page.locator('[data-role="inbox-filter-read"]').click();
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Please review the latest automation output.");
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Already handled yesterday.");
+
+  await page.locator('[data-role="inbox-filter-all"]').click();
+  await page.locator('[data-role="archive-inbox-message-delivery-user-1"]').click();
+  await expect(page.locator('[data-role="user-inbox-messages"]')).not.toContainText("Please review the latest automation output.");
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Already handled yesterday.");
+
+  await page.locator('[data-role="inbox-filter-archived"]').click();
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Please review the latest automation output.");
+  await expect(page.locator('[data-role="user-inbox-messages"]')).toContainText("Archived");
+
+  const storedMailbox = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.mailbox") ?? "[]"));
+  const archivedMessage = storedMailbox.find((message: { deliveryId: string }) => message.deliveryId === "delivery-user-1");
+  expect(archivedMessage?.archivedAt).toBeTruthy();
 });
 
 test("task runtime can send mail to the active assignment mailbox through the UI", async ({ page }) => {

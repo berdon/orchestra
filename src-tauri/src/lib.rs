@@ -18,8 +18,8 @@ use commands::{
     },
     dispatcher::run_dispatcher_tick,
     messages::{
-        list_inbox_messages, list_task_messages, mark_mailbox_messages_read,
-        send_mailbox_message,
+        archive_mailbox_messages, list_inbox_messages, list_task_messages,
+        mark_mailbox_messages_read, send_mailbox_message,
     },
     policies::{
         get_agent_permissions, get_policy, get_role_instance_permissions, get_role_permissions,
@@ -161,6 +161,7 @@ pub fn run() {
             list_task_messages,
             send_mailbox_message,
             mark_mailbox_messages_read,
+            archive_mailbox_messages,
             list_repositories,
             create_repository,
             update_repository,

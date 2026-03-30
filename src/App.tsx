@@ -1790,16 +1790,6 @@ export function App() {
             <h1>Logs</h1>
           </div>
 
-          <div className="status-cluster">
-            <div className="status-pill">
-              <span className="status-pill__label">Environment</span>
-              <strong>{appInfo?.environment ?? "loading"}</strong>
-            </div>
-            <div className="status-pill">
-              <span className="status-pill__label">Backend</span>
-              <strong>{appInfo?.backendStatus ?? "loading"}</strong>
-            </div>
-          </div>
         </header>
 
         <RuntimeLogPanel
@@ -1916,14 +1906,6 @@ export function App() {
             <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
               Open logs
             </button>
-            <div className="status-pill">
-              <span className="status-pill__label">Environment</span>
-              <strong>{appInfo?.environment ?? "loading"}</strong>
-            </div>
-            <div className="status-pill">
-              <span className="status-pill__label">Backend</span>
-              <strong>{appInfo?.backendStatus ?? "loading"}</strong>
-            </div>
           </div>
         </header>
 

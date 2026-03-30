@@ -37,16 +37,25 @@ struct ResolvedRecipient {
 pub fn list_user_messages(
     connection: &Connection,
     project_id: Option<&str>,
+    include_archived: bool,
 ) -> Result<Vec<MailboxMessage>, String> {
+    let archived_clause = if include_archived {
+        ""
+    } else {
+        " AND d.archived_at IS NULL"
+    };
+
     let sql = if project_id.is_some() {
         format!(
-            "{} WHERE d.recipient_type = 'user' AND m.project_id = ?1 ORDER BY d.read_at IS NOT NULL ASC, m.created_at DESC, d.id DESC",
-            mailbox_message_select()
+            "{} WHERE d.recipient_type = 'user' AND m.project_id = ?1{} ORDER BY d.archived_at IS NOT NULL ASC, d.read_at IS NOT NULL ASC, m.created_at DESC, d.id DESC",
+            mailbox_message_select(),
+            archived_clause,
         )
     } else {
         format!(
-            "{} WHERE d.recipient_type = 'user' ORDER BY d.read_at IS NOT NULL ASC, m.created_at DESC, d.id DESC",
-            mailbox_message_select()
+            "{} WHERE d.recipient_type = 'user'{} ORDER BY d.archived_at IS NOT NULL ASC, d.read_at IS NOT NULL ASC, m.created_at DESC, d.id DESC",
+            mailbox_message_select(),
+            archived_clause,
         )
     };
 
@@ -118,6 +127,67 @@ pub fn mark_user_messages_read(
     connection
         .execute(&sql, params_from_iter(params))
         .map_err(|error| format!("Unable to mark user mail read: {error}"))?;
+
+    let follow_up_sql = format!(
+        "{} WHERE d.id IN ({placeholders}) ORDER BY m.created_at DESC, d.id DESC",
+        mailbox_message_select()
+    );
+    let follow_up_params = selected_ids
+        .iter()
+        .map(|id| id as &dyn ToSql)
+        .collect::<Vec<_>>();
+    load_messages_with_sql(connection, &follow_up_sql, follow_up_params)
+}
+
+pub fn archive_user_messages(
+    connection: &Connection,
+    delivery_ids: Option<&[String]>,
+) -> Result<Vec<MailboxMessage>, String> {
+    let sql = format!(
+        "{} WHERE d.recipient_type = 'user' AND d.archived_at IS NULL ORDER BY m.created_at DESC, d.id DESC",
+        mailbox_message_select()
+    );
+    let visible = load_messages_with_sql(connection, &sql, Vec::new())?;
+    if visible.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let allowed_ids = visible
+        .iter()
+        .map(|message| message.delivery_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let selected_ids = match delivery_ids {
+        Some(ids) if !ids.is_empty() => ids
+            .iter()
+            .filter(|id| allowed_ids.contains(id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>(),
+        _ => visible
+            .iter()
+            .map(|message| message.delivery_id.clone())
+            .collect::<Vec<_>>(),
+    };
+
+    if selected_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let now = now_iso();
+    let placeholders = std::iter::repeat("?")
+        .take(selected_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(selected_ids.len() + 1);
+    params.push(&now);
+    for id in &selected_ids {
+        params.push(id);
+    }
+    let sql = format!(
+        "UPDATE mailbox_message_deliveries SET archived_at = ?1, updated_at = ?1 WHERE id IN ({placeholders})"
+    );
+    connection
+        .execute(&sql, params_from_iter(params))
+        .map_err(|error| format!("Unable to archive user mail: {error}"))?;
 
     let follow_up_sql = format!(
         "{} WHERE d.id IN ({placeholders}) ORDER BY m.created_at DESC, d.id DESC",
@@ -913,6 +983,7 @@ fn mailbox_message_select() -> String {
         m.priority,
         d.read_at,
         d.read_session_id,
+        d.archived_at,
         d.last_notified_at,
         m.created_at,
         d.updated_at
@@ -951,9 +1022,10 @@ fn load_messages_with_sql(
                 priority: row.get(14)?,
                 read_at: row.get(15)?,
                 read_session_id: row.get(16)?,
-                last_notified_at: row.get(17)?,
-                created_at: row.get(18)?,
-                updated_at: row.get(19)?,
+                archived_at: row.get(17)?,
+                last_notified_at: row.get(18)?,
+                created_at: row.get(19)?,
+                updated_at: row.get(20)?,
             })
         })
         .map_err(|error| format!("Unable to query mailbox messages: {error}"))?;
@@ -1232,7 +1304,7 @@ mod tests {
         );
 
         let inbox =
-            list_user_messages(&connection, Some("orchestra")).expect("user inbox should load");
+            list_user_messages(&connection, Some("orchestra"), false).expect("user inbox should load");
         assert_eq!(inbox.len(), 1);
         assert!(inbox[0].read_at.is_none());
 
@@ -1242,7 +1314,40 @@ mod tests {
         assert_eq!(read[0].read_session_id.as_deref(), Some("desktop-user"));
 
         let inbox_after =
-            list_user_messages(&connection, Some("orchestra")).expect("user inbox should reload");
+            list_user_messages(&connection, Some("orchestra"), false).expect("user inbox should reload");
         assert!(inbox_after[0].read_at.is_some());
+    }
+
+    #[test]
+    fn user_inbox_can_archive_messages_and_show_them_when_requested() {
+        let connection = open_test_connection("messages-user-archive");
+        let now = crate::state::now_iso();
+        seed_delivery(
+            &connection,
+            "delivery-user-archive",
+            "message-user-archive",
+            "orchestra",
+            None,
+            "Agent 1",
+            "user",
+            Some("desktop-user"),
+            "User",
+            None,
+            &now,
+        );
+
+        let archived = archive_user_messages(&connection, Some(&["delivery-user-archive".into()]))
+            .expect("user inbox should archive messages");
+        assert_eq!(archived.len(), 1);
+        assert!(archived[0].archived_at.is_some());
+
+        let visible = list_user_messages(&connection, Some("orchestra"), false)
+            .expect("unarchived inbox should load");
+        assert!(visible.is_empty());
+
+        let all_messages = list_user_messages(&connection, Some("orchestra"), true)
+            .expect("archived inbox should load");
+        assert_eq!(all_messages.len(), 1);
+        assert!(all_messages[0].archived_at.is_some());
     }
 }

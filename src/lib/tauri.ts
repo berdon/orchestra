@@ -3,6 +3,7 @@ import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import type {
   AgentSummary,
   AppInfo,
+  ArchiveMailboxMessagesInput,
   BridgeCleanupEvent,
   BridgeDiagnostics,
   InboxChangeEvent,
@@ -2492,18 +2493,21 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
   return invoke<TaskComment>("comment_on_task", { taskId, input });
 }
 
-export async function listInboxMessages(projectId?: string | null): Promise<MailboxMessage[]> {
+export async function listInboxMessages(projectId?: string | null, includeArchived = false): Promise<MailboxMessage[]> {
   if (!isTauriAvailable()) {
     return getStoredMailboxMessages()
       .filter((message) => message.recipientType === "user" && (!projectId || message.projectId === projectId))
+      .filter((message) => includeArchived || !message.archivedAt)
       .sort((left, right) => {
+        if (!left.archivedAt && right.archivedAt) return -1;
+        if (left.archivedAt && !right.archivedAt) return 1;
         if (!left.readAt && right.readAt) return -1;
         if (left.readAt && !right.readAt) return 1;
         return right.createdAt.localeCompare(left.createdAt);
       });
   }
 
-  return invoke<MailboxMessage[]>("list_inbox_messages", { projectId: projectId ?? null });
+  return invoke<MailboxMessage[]>("list_inbox_messages", { projectId: projectId ?? null, includeArchived });
 }
 
 export async function listTaskMessages(taskId: string): Promise<MailboxMessage[]> {
@@ -2563,6 +2567,7 @@ export async function sendMailboxMessage(input: SendMailboxMessageInput): Promis
       priority: input.priority === "interrupt" ? "interrupt" : "normal",
       readAt: null,
       readSessionId: null,
+      archivedAt: null,
       lastNotifiedAt: recipientType === "user" ? null : nowIso(),
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -2602,6 +2607,30 @@ export async function markMailboxMessagesRead(input: MarkMailboxMessagesReadInpu
   }
 
   return invoke<MailboxMessage[]>("mark_mailbox_messages_read", { input });
+}
+
+export async function archiveMailboxMessages(input: ArchiveMailboxMessagesInput): Promise<MailboxMessage[]> {
+  if (!isTauriAvailable()) {
+    const now = nowIso();
+    const selectedIds = new Set(input.deliveryIds ?? getStoredMailboxMessages().filter((entry) => entry.recipientType === "user" && !entry.archivedAt).map((entry) => entry.deliveryId));
+    const updated: MailboxMessage[] = [];
+    saveStoredMailboxMessages(
+      getStoredMailboxMessages().map((entry) => {
+        if (entry.recipientType !== "user" || !selectedIds.has(entry.deliveryId)) {
+          return entry;
+        }
+        const nextEntry = { ...entry, archivedAt: now, updatedAt: now };
+        updated.push(nextEntry);
+        return nextEntry;
+      }),
+    );
+    if (updated.length) {
+      emitMockInboxChange({ deliveryIds: updated.map((entry) => entry.deliveryId), reason: "mailbox.archived" });
+    }
+    return updated;
+  }
+
+  return invoke<MailboxMessage[]>("archive_mailbox_messages", { input });
 }
 
 export async function listTaskComments(taskId: string): Promise<TaskComment[]> {

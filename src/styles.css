@@ -445,6 +445,12 @@ strong {
   color: var(--text-muted);
 }
 
+.status-badge--compact {
+  min-height: 20px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+}
+
 .session-shell {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);

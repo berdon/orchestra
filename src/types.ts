@@ -605,6 +605,10 @@ export interface MarkMailboxMessagesReadInput {
   deliveryIds?: string[] | null;
 }
 
+export interface ArchiveMailboxMessagesInput {
+  deliveryIds?: string[] | null;
+}
+
 export interface MailboxMessage {
   deliveryId: string;
   messageId: string;
@@ -623,6 +627,7 @@ export interface MailboxMessage {
   priority: MailboxPriority | string;
   readAt?: string | null;
   readSessionId?: string | null;
+  archivedAt?: string | null;
   lastNotifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
