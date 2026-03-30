@@ -228,6 +228,7 @@ export function TaskDetailPage({
     return [5, 10, 25].includes(stored) ? stored : 5;
   });
   const deleteHoldTimerRef = useRef<number | null>(null);
+  const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
@@ -1415,11 +1416,6 @@ export function TaskDetailPage({
             </div>
           </section>
         </div>
-      ) : null}
-    </>
-  );
-}
-</div>
       ) : null}
     </>
   );
