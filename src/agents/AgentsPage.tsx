@@ -19,11 +19,12 @@ import type {
 } from "../types";
 
 interface AgentsPageProps {
+  activeProjectId?: string | null;
   selectedWorkerRequest?: { type: "role" | "agent"; id: string; token: number } | null;
   onOpenAgentSession: (agentId: string) => void;
 }
 
-export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }: AgentsPageProps) {
+export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession }: AgentsPageProps) {
   const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
@@ -64,7 +65,7 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
     setError(null);
 
     try {
-      const detail = await getAgentOperations(agentId);
+      const detail = await getAgentOperations(agentId, activeProjectId);
       setSelectedAgentDetail(detail);
       setSelectedRoleDetail(null);
     } catch (nextError) {
@@ -79,7 +80,7 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
     setError(null);
 
     try {
-      const [nextAgentSnapshots, nextRoleSnapshots] = await Promise.all([listAgentOperations(), listRoleOperations()]);
+      const [nextAgentSnapshots, nextRoleSnapshots] = await Promise.all([listAgentOperations(false, activeProjectId), listRoleOperations()]);
       setAgentSnapshots(nextAgentSnapshots);
       setRoleSnapshots(nextRoleSnapshots);
       setSelectedWorker((current) => {
@@ -106,7 +107,7 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
 
   useEffect(() => {
     void loadWorkforce();
-  }, []);
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (!selectedWorker) {
@@ -133,7 +134,7 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
   }, [selectedWorkerRequest]);
 
   async function refreshSelectedRole(roleId: string) {
-    const [roleOps, detail, nextAgentSnapshots] = await Promise.all([listRoleOperations(), getRoleOperations(roleId), listAgentOperations()]);
+    const [roleOps, detail, nextAgentSnapshots] = await Promise.all([listRoleOperations(), getRoleOperations(roleId), listAgentOperations(false, activeProjectId)]);
     setRoleSnapshots(roleOps);
     setAgentSnapshots(nextAgentSnapshots);
     setSelectedWorker({ type: "role", id: roleId });
@@ -141,7 +142,7 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
   }
 
   async function refreshSelectedAgent(agentId: string) {
-    const [detail, nextAgentSnapshots] = await Promise.all([getAgentOperations(agentId), listAgentOperations()]);
+    const [detail, nextAgentSnapshots] = await Promise.all([getAgentOperations(agentId, activeProjectId), listAgentOperations(false, activeProjectId)]);
     setAgentSnapshots(nextAgentSnapshots);
     setSelectedWorker({ type: "agent", id: agentId });
     setSelectedAgentDetail(detail);

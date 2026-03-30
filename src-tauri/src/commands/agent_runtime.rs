@@ -9,15 +9,29 @@ use crate::{
 #[tauri::command]
 pub fn list_agent_operations(
     include_archived: Option<bool>,
+    project_id: Option<String>,
 ) -> Result<Vec<AgentOperationsSnapshot>, String> {
     let connection = database::open_connection()?;
-    agent_runtime::list_agent_operations(&connection, include_archived.unwrap_or(false))
+    match project_id.as_deref() {
+        Some(project_id) => agent_runtime::list_agent_operations_for_project(
+            &connection,
+            project_id,
+            include_archived.unwrap_or(false),
+        ),
+        None => agent_runtime::list_agent_operations(&connection, include_archived.unwrap_or(false)),
+    }
 }
 
 #[tauri::command]
-pub fn get_agent_operations(agent_id: String) -> Result<AgentOperationsDetail, String> {
+pub fn get_agent_operations(
+    agent_id: String,
+    project_id: Option<String>,
+) -> Result<AgentOperationsDetail, String> {
     let connection = database::open_connection()?;
-    agent_runtime::get_agent_operations(&connection, &agent_id)
+    match project_id.as_deref() {
+        Some(project_id) => agent_runtime::get_agent_operations_for_project(&connection, project_id, &agent_id),
+        None => agent_runtime::get_agent_operations(&connection, &agent_id),
+    }
 }
 
 #[tauri::command]
@@ -47,9 +61,22 @@ pub async fn ensure_agent_session(
     app: AppHandle,
     state: State<'_, AppState>,
     agent_id: String,
+    project_id: Option<String>,
 ) -> Result<SessionRecord, String> {
-    let context = detect_session_context(None)?;
-    let runtime_state = agent_dispatch::ensure_main_session(&context.project_root, &context.session_dir, "orchestra", &agent_id)?;
+    let (context, resolved_project_id) = if let Some(project_id) = project_id {
+        (
+            crate::services::pi_sessions::session_context_for_project_id(&project_id)?,
+            project_id,
+        )
+    } else {
+        (detect_session_context(None)?, "orchestra".to_string())
+    };
+    let runtime_state = agent_dispatch::ensure_main_session(
+        &context.project_root,
+        &context.session_dir,
+        &resolved_project_id,
+        &agent_id,
+    )?;
     let session_id = runtime_state
         .main_session_id
         .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
