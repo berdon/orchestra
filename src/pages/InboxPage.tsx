@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { listAgents } from "../lib/agents";
 import {
+  archiveMailboxMessages,
   listInboxMessages,
   listenToInboxChanges,
   listenToTaskChanges,
@@ -15,6 +16,8 @@ interface InboxPageProps {
   projectId?: string | null;
   onOpenTask: (taskId: string) => void;
 }
+
+type InboxMailFilter = "all" | "unread" | "read";
 
 function summarizeAttentionReason(task: TaskSummary) {
   if (task.status === "in_review") {
@@ -35,21 +38,37 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [sending, setSending] = useState(false);
   const [markingRead, setMarkingRead] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [messageBody, setMessageBody] = useState("");
   const [interruptPriority, setInterruptPriority] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [mailFilter, setMailFilter] = useState<InboxMailFilter>("all");
+  const [showArchived, setShowArchived] = useState(false);
 
   const attentionTasks = useMemo(
     () => tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
     [tasks],
   );
 
+  const filteredMessages = useMemo(() => messages.filter((message) => {
+    if (!showArchived && message.archivedAt) {
+      return false;
+    }
+    if (mailFilter === "unread") {
+      return !message.readAt;
+    }
+    if (mailFilter === "read") {
+      return Boolean(message.readAt);
+    }
+    return true;
+  }), [mailFilter, messages, showArchived]);
+
   async function loadData() {
     const [nextMessages, nextTasks, nextAgents] = await Promise.all([
-      listInboxMessages(projectId),
+      listInboxMessages(projectId, true),
       listTasks(false, projectId),
       listAgents(false),
     ]);
@@ -133,7 +152,20 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     }
   }
 
-  const unreadCount = messages.filter((message) => !message.readAt).length;
+  async function handleArchive(deliveryId: string) {
+    setArchiving(deliveryId);
+    setError(null);
+    try {
+      await archiveMailboxMessages({ deliveryIds: [deliveryId] });
+      await loadData();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to archive message.");
+    } finally {
+      setArchiving(null);
+    }
+  }
+
+  const unreadCount = messages.filter((message) => !message.readAt && !message.archivedAt).length;
 
   return (
     <section className="tasks-overview-page">
@@ -145,7 +177,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
               <h3>User Inbox</h3>
             </div>
             <div className="action-cluster">
-              <span className="status-badge status-badge--neutral" data-role="inbox-unread-count">{unreadCount} unread</span>
+              <span className="status-badge status-badge--neutral status-badge--compact" data-role="inbox-unread-count">{unreadCount} unread</span>
               <button
                 className="secondary-button"
                 data-role="open-inbox-compose"
@@ -167,6 +199,32 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
           </div>
 
           {error ? <p className="error-copy">{error}</p> : null}
+
+          <div className="filter-chip-row" role="tablist" aria-label="Inbox mail filters">
+            {([
+              ["all", "All mail"],
+              ["unread", "Unread"],
+              ["read", "Read"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                className={mailFilter === value ? "filter-chip filter-chip--active" : "filter-chip"}
+                data-role={`inbox-filter-${value}`}
+                type="button"
+                onClick={() => setMailFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              className={showArchived ? "filter-chip filter-chip--active" : "filter-chip"}
+              data-role="inbox-filter-archived"
+              type="button"
+              onClick={() => setShowArchived((current) => !current)}
+            >
+              {showArchived ? "Hide archived" : "Show archived"}
+            </button>
+          </div>
 
           {composeOpen ? (
             <div className="task-editor-grid" data-role="inbox-compose-panel">
@@ -207,7 +265,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
           ) : null}
 
           <div className="task-section-list" data-role="user-inbox-messages">
-            {messages.length ? messages.map((message) => (
+            {filteredMessages.length ? filteredMessages.map((message) => (
               <article className="task-history-card" key={message.deliveryId}>
                 <div className="workflow-section__header">
                   <div>
@@ -215,10 +273,16 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
                     <p className="muted-copy">to {message.recipientLabel}</p>
                   </div>
                   <div className="action-cluster">
-                    {!message.readAt ? <span className="status-badge status-badge--warning">Unread</span> : <span className="status-badge status-badge--neutral">Read</span>}
+                    {message.archivedAt ? <span className="status-badge status-badge--neutral status-badge--compact">Archived</span> : null}
+                    {!message.readAt ? <span className="status-badge status-badge--warning status-badge--compact">Unread</span> : <span className="status-badge status-badge--neutral status-badge--compact">Read</span>}
                     <button className="secondary-button" data-role={`mark-inbox-read-${message.deliveryId}`} type="button" disabled={Boolean(message.readAt) || markingRead === message.deliveryId} onClick={() => void handleMarkRead(message.deliveryId)}>
                       Mark read
                     </button>
+                    {!message.archivedAt ? (
+                      <button className="secondary-button" data-role={`archive-inbox-message-${message.deliveryId}`} type="button" disabled={archiving === message.deliveryId} onClick={() => void handleArchive(message.deliveryId)}>
+                        {archiving === message.deliveryId ? "Archiving…" : "Archive"}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 {message.taskId ? (
@@ -228,7 +292,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
                 ) : null}
                 <p className="pre-wrap" data-role="inbox-message-body">{message.body}</p>
               </article>
-            )) : <p className="muted-copy">No user messages yet.</p>}
+            )) : <p className="muted-copy">No {showArchived ? "matching" : "active"} user messages right now.</p>}
           </div>
         </section>
 
@@ -238,7 +302,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
               <p className="eyebrow">Workflow attention</p>
               <h3>Review & intervention requests</h3>
             </div>
-            <span className="status-badge status-badge--neutral">{attentionTasks.length}</span>
+            <span className="status-badge status-badge--neutral status-badge--compact">{attentionTasks.length}</span>
           </div>
           <div className="task-section-list">
             {attentionTasks.length ? attentionTasks.map((task) => (

@@ -769,6 +769,12 @@ pub struct MarkMailboxMessagesReadInput {
     pub delivery_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveMailboxMessagesInput {
+    pub delivery_ids: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MailboxMessage {
@@ -789,6 +795,7 @@ pub struct MailboxMessage {
     pub priority: String,
     pub read_at: Option<String>,
     pub read_session_id: Option<String>,
+    pub archived_at: Option<String>,
     pub last_notified_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,

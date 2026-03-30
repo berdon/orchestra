@@ -1,15 +1,25 @@
 use tauri::{AppHandle, State};
 
 use crate::{
-    models::{MailboxMessage, MarkMailboxMessagesReadInput, SendMailboxMessageInput},
+    models::{
+        ArchiveMailboxMessagesInput, MailboxMessage, MarkMailboxMessagesReadInput,
+        SendMailboxMessageInput,
+    },
     services::{app_events, database, messages},
     state::AppState,
 };
 
 #[tauri::command]
-pub fn list_inbox_messages(project_id: Option<String>) -> Result<Vec<MailboxMessage>, String> {
+pub fn list_inbox_messages(
+    project_id: Option<String>,
+    include_archived: Option<bool>,
+) -> Result<Vec<MailboxMessage>, String> {
     let connection = database::open_connection()?;
-    messages::list_user_messages(&connection, project_id.as_deref())
+    messages::list_user_messages(
+        &connection,
+        project_id.as_deref(),
+        include_archived.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
@@ -55,6 +65,29 @@ pub fn mark_mailbox_messages_read(
         let _ = app_events::emit_inbox_change(
             &app,
             "mailbox.read",
+            messages.iter().map(|message| message.delivery_id.clone()),
+        );
+    }
+    Ok(messages)
+}
+
+#[tauri::command]
+pub fn archive_mailbox_messages(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: ArchiveMailboxMessagesInput,
+) -> Result<Vec<MailboxMessage>, String> {
+    let connection = database::open_connection()?;
+    let messages = messages::archive_user_messages(&connection, input.delivery_ids.as_deref())?;
+    if !messages.is_empty() {
+        state.log(
+            "info",
+            "mailbox.archived",
+            &format!("Archived {} mailbox deliveries", messages.len()),
+        );
+        let _ = app_events::emit_inbox_change(
+            &app,
+            "mailbox.archived",
             messages.iter().map(|message| message.delivery_id.clone()),
         );
     }
