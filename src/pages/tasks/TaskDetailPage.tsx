@@ -219,6 +219,7 @@ export function TaskDetailPage({
   const [defaultFileContent, setDefaultFileContent] = useState<string | null>(null);
   const [loadingDefaultFileContent, setLoadingDefaultFileContent] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [pendingScrollReferenceId, setPendingScrollReferenceId] = useState<string | null>(null);
   const [historyLimit, setHistoryLimit] = useState<number>(() => {
     if (typeof window === "undefined") {
       return 5;
@@ -227,6 +228,7 @@ export function TaskDetailPage({
     return [5, 10, 25].includes(stored) ? stored : 5;
   });
   const deleteHoldTimerRef = useRef<number | null>(null);
+  const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const commentThreads = groupTaskComments(task.comments);
@@ -268,6 +270,28 @@ export function TaskDetailPage({
       loadFileContent(fileToSelect);
     }
   }, [activeTab, defaultFile, task.fileReferences, selectedFileReference]);
+
+  useEffect(() => {
+    if (activeTab !== "repo-files" || !pendingScrollReferenceId || pendingScrollReferenceId !== selectedFileReference) {
+      return;
+    }
+
+    let timeoutId: number | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      repoFilesPanelRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+      timeoutId = window.setTimeout(() => {
+        selectedFileReferenceCardRef.current?.scrollIntoView({ block: "center", behavior: "auto" });
+        setPendingScrollReferenceId(null);
+      }, 50);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [activeTab, pendingScrollReferenceId, selectedFileReference]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -525,6 +549,7 @@ export function TaskDetailPage({
   }
 
   function handleOpenCommentFileReference(reference: TaskFileReference) {
+    setPendingScrollReferenceId(reference.id);
     setActiveTab("repo-files");
     setSelectedFileReference(reference.id);
     loadFileContent(reference);
@@ -718,7 +743,7 @@ export function TaskDetailPage({
         );
       case "repo-files":
         return (
-          <section className="task-section" data-role="task-detail-tabpanel-repo-files">
+          <section className="task-section" data-role="task-detail-tabpanel-repo-files" ref={repoFilesPanelRef}>
             <div className="task-section__header">
               <div>
                 <p className="eyebrow">Repo files</p>
@@ -799,7 +824,16 @@ export function TaskDetailPage({
                   const language = detectLanguage(reference.relativePath);
 
                   return (
-                    <article className="task-history-card task-history-card--file-reference" key={reference.id}>
+                    <article
+                      className="task-history-card task-history-card--file-reference"
+                      data-role={reference.id === selectedFileReference ? "selected-task-file-reference-card" : undefined}
+                      key={reference.id}
+                      ref={(element) => {
+                        if (reference.id === selectedFileReference) {
+                          selectedFileReferenceCardRef.current = element;
+                        }
+                      }}
+                    >
                       <div className="workflow-section__header">
                         <strong>
                           {reference.repositoryName} · {reference.relativePath}
@@ -1381,6 +1415,11 @@ export function TaskDetailPage({
             </div>
           </section>
         </div>
+      ) : null}
+    </>
+  );
+}
+</div>
       ) : null}
     </>
   );
