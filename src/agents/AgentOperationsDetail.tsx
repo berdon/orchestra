@@ -7,6 +7,8 @@ type AgentWorkFilter = "queued" | "active" | "completed";
 interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
   onOpenSession: (agentId: string) => void;
+  onDeleteQueuedEntry: (queueEntryId: string) => void;
+  busy?: boolean;
 }
 
 function formatDateTime(timestamp?: string | null) {
@@ -22,7 +24,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail, onOpenSession }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, onOpenSession, onDeleteQueuedEntry, busy = false }: AgentOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -143,6 +145,19 @@ export function AgentOperationsDetail({ detail, onOpenSession }: AgentOperations
                 <span>Run: {entry.runId ?? "—"}</span>
                 <span>Created: {formatDateTime(entry.createdAt)}</span>
               </div>
+              {entry.status === "queued" ? (
+                <div className="action-cluster">
+                  <button
+                    className="secondary-button secondary-button--danger"
+                    data-role={`delete-agent-queue-entry-${entry.id}`}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onDeleteQueuedEntry(entry.id)}
+                  >
+                    Delete queued item
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
         </div>

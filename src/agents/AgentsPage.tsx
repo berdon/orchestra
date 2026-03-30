@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getAgentOperations, listAgentOperations } from "../lib/agents";
+import { deleteAgentQueueEntry, getAgentOperations, listAgentOperations } from "../lib/agents";
 import {
   dispatchRoleQueue,
   disposeRoleInstance,
@@ -140,6 +140,13 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
     setSelectedRoleDetail(detail);
   }
 
+  async function refreshSelectedAgent(agentId: string) {
+    const [detail, nextAgentSnapshots] = await Promise.all([getAgentOperations(agentId), listAgentOperations()]);
+    setAgentSnapshots(nextAgentSnapshots);
+    setSelectedWorker({ type: "agent", id: agentId });
+    setSelectedAgentDetail(detail);
+  }
+
   async function runBusyAction(action: () => Promise<void>) {
     setBusy(true);
     setError(null);
@@ -245,7 +252,17 @@ export function AgentsPage({ selectedWorkerRequest = null, onOpenAgentSession }:
             }
           />
         ) : selectedWorker?.type === "agent" && selectedAgentDetail ? (
-          <AgentOperationsDetail detail={selectedAgentDetail} onOpenSession={onOpenAgentSession} />
+          <AgentOperationsDetail
+            busy={busy}
+            detail={selectedAgentDetail}
+            onDeleteQueuedEntry={(queueEntryId) =>
+              runBusyAction(async () => {
+                await deleteAgentQueueEntry(queueEntryId);
+                await refreshSelectedAgent(selectedAgentDetail.agent.id);
+              })
+            }
+            onOpenSession={onOpenAgentSession}
+          />
         ) : (
           <div className="empty-state">
             <p className="eyebrow">No worker selected</p>
