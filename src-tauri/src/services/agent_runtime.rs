@@ -25,10 +25,18 @@ pub fn list_agent_operations(
     connection: &Connection,
     include_archived: bool,
 ) -> Result<Vec<AgentOperationsSnapshot>, String> {
+    list_agent_operations_for_project(connection, DEFAULT_PROJECT_ID, include_archived)
+}
+
+pub fn list_agent_operations_for_project(
+    connection: &Connection,
+    project_id: &str,
+    include_archived: bool,
+) -> Result<Vec<AgentOperationsSnapshot>, String> {
     let agents = agents::list_agents(connection, include_archived)?;
     agents
         .into_iter()
-        .map(|agent| build_agent_operations_snapshot(connection, &agent.id))
+        .map(|agent| build_agent_operations_snapshot(connection, project_id, &agent.id))
         .collect()
 }
 
@@ -36,9 +44,17 @@ pub fn get_agent_operations(
     connection: &Connection,
     agent_id: &str,
 ) -> Result<AgentOperationsDetail, String> {
+    get_agent_operations_for_project(connection, DEFAULT_PROJECT_ID, agent_id)
+}
+
+pub fn get_agent_operations_for_project(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<AgentOperationsDetail, String> {
     let agent = agents::get_agent(connection, agent_id)?;
-    let runtime_state = ensure_agent_runtime_state(connection, agent_id)?;
-    let queue_entries = list_agent_queue_entries(connection, Some(agent_id), false)?;
+    let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
     Ok(AgentOperationsDetail {
         agent,
@@ -475,11 +491,12 @@ pub fn reconcile_agent_runtime_states(connection: &Connection) -> Result<(), Str
 
 fn build_agent_operations_snapshot(
     connection: &Connection,
+    project_id: &str,
     agent_id: &str,
 ) -> Result<AgentOperationsSnapshot, String> {
     let agent = agents::get_agent(connection, agent_id)?;
-    let runtime_state = ensure_agent_runtime_state(connection, agent_id)?;
-    let queue_entries = list_agent_queue_entries(connection, Some(agent_id), false)?;
+    let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
     Ok(AgentOperationsSnapshot {
         agent,
@@ -656,6 +673,63 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "First");
         assert_eq!(entries[1].title, "Second");
+    }
+
+    #[test]
+    fn project_scoped_agent_operations_are_isolated() {
+        let mut connection = in_memory_connection();
+        let agent_id = create_agent(&mut connection);
+        let now = now_iso();
+
+        enqueue_agent_work_for_project(
+            &connection,
+            "project-a",
+            AgentQueueEntryInput {
+                agent_id: agent_id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                delivery_mode: "prompt".into(),
+                title: "Project A work".into(),
+                message: "Run in project A".into(),
+            },
+        )
+        .expect("project a queue entry");
+        ensure_agent_runtime_state_for_project(&connection, "project-b", &agent_id)
+            .expect("project b runtime state");
+        update_agent_runtime_dispatch_state_for_project(
+            &connection,
+            "project-a",
+            &agent_id,
+            Some("session-project-a"),
+            Some("/tmp/project-a"),
+            None,
+            "idle",
+            None,
+        )
+        .expect("project a runtime update");
+        update_agent_runtime_dispatch_state_for_project(
+            &connection,
+            "project-b",
+            &agent_id,
+            Some("session-project-b"),
+            Some("/tmp/project-b"),
+            None,
+            "idle",
+            Some(&format!("updated-{now}")),
+        )
+        .expect("project b runtime update");
+
+        let project_a = get_agent_operations_for_project(&connection, "project-a", &agent_id)
+            .expect("project a operations");
+        let project_b = get_agent_operations_for_project(&connection, "project-b", &agent_id)
+            .expect("project b operations");
+
+        assert_eq!(project_a.runtime_state.main_session_id.as_deref(), Some("session-project-a"));
+        assert_eq!(project_b.runtime_state.main_session_id.as_deref(), Some("session-project-b"));
+        assert_eq!(project_a.queue_entries.len(), 1);
+        assert!(project_b.queue_entries.is_empty());
     }
 
     #[test]

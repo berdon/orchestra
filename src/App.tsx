@@ -1572,7 +1572,7 @@ export function App() {
   async function handleOpenAgentSession(agentId: string, options?: { openQuickChat?: boolean }) {
     setSessionActionError(null);
     try {
-      const session = await ensureAgentSession(agentId);
+      const session = await ensureAgentSession(agentId, activeProject?.id ?? null);
       mergeSessionRecord(session, { select: !options?.openQuickChat });
       if (options?.openQuickChat) {
         setSupervisorSessionId(session.id);
@@ -1592,7 +1592,7 @@ export function App() {
       const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows] = await Promise.all([
         listSessions(),
         listTasks(false, activeProjectId),
-        listAgentOperations(false),
+        listAgentOperations(false, activeProjectId),
         listRoleOperations(false),
         listWorkflows(false),
       ]);
@@ -1962,6 +1962,7 @@ export function App() {
         ) : activePage === "agents" ? (
           <AgentsPage
             key={activeProject?.id ?? "default"}
+            activeProjectId={activeProject?.id ?? null}
             onOpenAgentSession={(agentId) => void handleOpenAgentSession(agentId)}
             selectedWorkerRequest={agentsSelectionRequest}
           />

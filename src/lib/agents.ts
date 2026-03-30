@@ -353,17 +353,17 @@ export async function getAgent(agentId: string): Promise<AgentDefinition> {
   return invoke<AgentDefinition>("get_agent", { agentId });
 }
 
-export async function listAgentOperations(includeArchived = false): Promise<AgentOperationsSnapshot[]> {
+export async function listAgentOperations(includeArchived = false, projectId?: string | null): Promise<AgentOperationsSnapshot[]> {
   if (!isTauriAvailable()) {
     return ensureMockAgents()
       .filter((agent) => includeArchived || !agent.archived)
       .map((agent) => summarizeAgentOperations(agent));
   }
 
-  return invoke<AgentOperationsSnapshot[]>("list_agent_operations", { includeArchived });
+  return invoke<AgentOperationsSnapshot[]>("list_agent_operations", { includeArchived, projectId: projectId ?? null });
 }
 
-export async function getAgentOperations(agentId: string): Promise<AgentOperationsDetail> {
+export async function getAgentOperations(agentId: string, projectId?: string | null): Promise<AgentOperationsDetail> {
   if (!isTauriAvailable()) {
     const agent = await getAgent(agentId);
     const snapshot = summarizeAgentOperations(agent);
@@ -375,10 +375,10 @@ export async function getAgentOperations(agentId: string): Promise<AgentOperatio
     };
   }
 
-  return invoke<AgentOperationsDetail>("get_agent_operations", { agentId });
+  return invoke<AgentOperationsDetail>("get_agent_operations", { agentId, projectId: projectId ?? null });
 }
 
-export async function ensureAgentSession(agentId: string): Promise<SessionRecord> {
+export async function ensureAgentSession(agentId: string, projectId?: string | null): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const agent = await getAgent(agentId);
     const runtime = ensureMockAgentRuntime(agentId);
@@ -428,7 +428,7 @@ export async function ensureAgentSession(agentId: string): Promise<SessionRecord
     return session;
   }
 
-  return invoke<SessionRecord>("ensure_agent_session", { agentId });
+  return invoke<SessionRecord>("ensure_agent_session", { agentId, projectId: projectId ?? null });
 }
 
 export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry> {
