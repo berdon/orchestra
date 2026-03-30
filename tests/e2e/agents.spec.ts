@@ -113,6 +113,70 @@ test("agents page launches and reuses a persistent agent session", async ({ page
   expect(storedState).toBe(1);
 });
 
+test("agents page deletes queued work items from an agent queue", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const now = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.agents",
+      JSON.stringify([
+        {
+          id: "agent-delete-queue",
+          slug: "queue-cleaner",
+          name: "Queue Cleaner",
+          description: "Agent used to verify queued work deletion.",
+          provider: null,
+          model: null,
+          roleId: null,
+          thinkingLevel: "medium",
+          policyIds: [],
+          directPermissions: [],
+          system: false,
+          immutable: false,
+          archived: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.agent-queue",
+      JSON.stringify([
+        {
+          id: "agent-queue-delete-me",
+          projectId: "orchestra",
+          agentId: "agent-delete-queue",
+          status: "queued",
+          sourceType: "manual",
+          sourceTaskId: null,
+          sourceWorkflowId: null,
+          sourceLaneId: null,
+          deliveryMode: "follow_up",
+          title: "Queued cleanup item",
+          message: "Remove this queued work item.",
+          sessionId: null,
+          runId: null,
+          dispatchedAt: null,
+          completedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Queue Cleaner/i }).click();
+  await page.locator('[data-role="agent-work-filter-queued"]').click();
+  await expect(page.locator('.workflow-lane-card')).toContainText("Queued cleanup item");
+  await page.locator('[data-role="delete-agent-queue-entry-agent-queue-delete-me"]').click();
+  await expect(page.locator('.workflow-lane-card')).toHaveCount(0);
+
+  const storedQueue = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.agent-queue") ?? "[]"));
+  expect(storedQueue).toHaveLength(0);
+});
+
 test("agents page shows project-scoped agent runtime state from dispatched task work", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -460,6 +460,23 @@ export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<Age
   return invoke<AgentQueueEntry>("enqueue_agent_work", { input });
 }
 
+export async function deleteAgentQueueEntry(queueEntryId: string): Promise<AgentQueueEntry> {
+  if (!isTauriAvailable()) {
+    const entries = getStoredAgentQueue();
+    const entry = entries.find((current) => current.id === queueEntryId);
+    if (!entry) {
+      throw new Error(`Agent queue entry ${queueEntryId} was not found`);
+    }
+    if (entry.status !== "queued") {
+      throw new Error(`Agent queue entry ${queueEntryId} is ${entry.status} and cannot be deleted unless it is queued`);
+    }
+    saveStoredAgentQueue(entries.filter((current) => current.id !== queueEntryId));
+    return entry;
+  }
+
+  return invoke<AgentQueueEntry>("delete_agent_queue_entry", { queueEntryId });
+}
+
 export async function validateAgent(input: AgentUpsertInput): Promise<AgentValidationResult> {
   if (!isTauriAvailable()) {
     return buildMockAgentValidation(input);

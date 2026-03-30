@@ -32,6 +32,17 @@ pub fn enqueue_agent_work(
 }
 
 #[tauri::command]
+pub fn delete_agent_queue_entry(
+    state: State<'_, AppState>,
+    queue_entry_id: String,
+) -> Result<AgentQueueEntry, String> {
+    let connection = database::open_connection()?;
+    let entry = agent_runtime::delete_agent_queue_entry(&connection, &queue_entry_id)?;
+    state.log("info", "agent.queue.updated", &format!("Deleted queued agent work {}", entry.id));
+    Ok(entry)
+}
+
+#[tauri::command]
 pub async fn ensure_agent_session(
     app: AppHandle,
     state: State<'_, AppState>,

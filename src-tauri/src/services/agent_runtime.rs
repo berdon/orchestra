@@ -369,6 +369,31 @@ pub fn mark_agent_queue_entry_failed(
     Ok(())
 }
 
+pub fn delete_agent_queue_entry(
+    connection: &Connection,
+    queue_entry_id: &str,
+) -> Result<AgentQueueEntry, String> {
+    let entry = get_agent_queue_entry(connection, queue_entry_id)?;
+    if entry.status != QUEUE_STATUS_QUEUED {
+        return Err(format!(
+            "Agent queue entry {queue_entry_id} is {} and cannot be deleted unless it is queued",
+            entry.status
+        ));
+    }
+
+    let deleted = connection
+        .execute(
+            "DELETE FROM agent_queue_entries WHERE id = ?1 AND status = 'queued'",
+            params![queue_entry_id],
+        )
+        .map_err(|error| format!("Unable to delete agent queue entry {queue_entry_id}: {error}"))?;
+    if deleted == 0 {
+        return Err(format!("Agent queue entry {queue_entry_id} could not be deleted"));
+    }
+
+    Ok(entry)
+}
+
 pub fn update_agent_runtime_dispatch_state(
     connection: &Connection,
     agent_id: &str,
@@ -661,5 +686,53 @@ mod tests {
         let second = claim_next_agent_queue_entry(&connection, &agent_id, "session-1", "run-2")
             .expect("second claim should succeed");
         assert!(second.is_none());
+    }
+
+    #[test]
+    fn deletes_only_queued_agent_queue_entries() {
+        let mut connection = in_memory_connection();
+        let agent_id = create_agent(&mut connection);
+        let queued = enqueue_agent_work(
+            &connection,
+            AgentQueueEntryInput {
+                agent_id: agent_id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                delivery_mode: "follow_up".into(),
+                title: "Queued".into(),
+                message: "Delete me".into(),
+            },
+        )
+        .expect("queued entry");
+
+        let deleted = delete_agent_queue_entry(&connection, &queued.id).expect("queued entry should delete");
+        assert_eq!(deleted.id, queued.id);
+        assert!(list_agent_queue_entries(&connection, Some(&agent_id), false)
+            .expect("queue entries should load")
+            .is_empty());
+
+        let dispatched = enqueue_agent_work(
+            &connection,
+            AgentQueueEntryInput {
+                agent_id: agent_id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                delivery_mode: "prompt".into(),
+                title: "Dispatched".into(),
+                message: "Do not delete me".into(),
+            },
+        )
+        .expect("dispatched seed entry");
+        let _ = mark_agent_queue_entry_dispatched(&connection, &dispatched.id, "session-1", "run-1")
+            .expect("dispatch should succeed")
+            .expect("entry should dispatch");
+
+        let error = delete_agent_queue_entry(&connection, &dispatched.id)
+            .expect_err("dispatched entry should not be deletable");
+        assert!(error.contains("cannot be deleted unless it is queued"));
     }
 }
