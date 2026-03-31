@@ -118,6 +118,7 @@ describe("command palette items", () => {
 
     expect(items.some((item) => item.action.type === "create-task")).toBe(true);
     expect(items.some((item) => item.action.type === "launch-agent-session" && item.action.agentId === "agent-1")).toBe(true);
+    expect(items.some((item) => item.action.type === "launch-agent-session-terminal" && item.action.agentId === "agent-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-role" && item.action.roleId === "role-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-workflow" && item.action.workflowId === "workflow-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-session" && item.action.sessionId === "session-1")).toBe(true);

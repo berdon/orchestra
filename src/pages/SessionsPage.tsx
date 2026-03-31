@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+
 import { TranscriptEventCard } from "../components/TranscriptEventCard";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
@@ -45,6 +46,7 @@ interface SessionsPageProps {
   selectedSessionPending: boolean;
   selectedSessionDisplayStatus: SessionStatus;
   selectedModelState?: SessionModelState;
+  selectedSessionReadOnly?: boolean;
   loadingSessions: boolean;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
@@ -75,6 +77,7 @@ export function SessionsPage({
   selectedSessionPending,
   selectedSessionDisplayStatus,
   selectedModelState,
+  selectedSessionReadOnly = false,
   loadingSessions,
   loadingModelSessionId,
   changingModelSessionId,
@@ -219,8 +222,8 @@ export function SessionsPage({
                   >
                     <div className="session-list-link__content">
                       <span className="session-list-link__title">{session.title}</span>
-                      <span className={`status-badge status-badge--${getActivityTone(session.activityState)}`}>
-                        {formatActivityLabel(session.activityState, session.activeToolName)}
+                      <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : getActivityTone(session.activityState)}`}>
+                        {session.terminalAttached ? "Terminal attached" : formatActivityLabel(session.activityState, session.activeToolName)}
                       </span>
                     </div>
                   </a>
@@ -247,7 +250,11 @@ export function SessionsPage({
         </aside>
 
         <div className="session-detail-column">
-          <section className="panel session-detail-panel session-chat-panel" data-role="session-chat-panel">
+          <section
+            className={selectedSessionReadOnly ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
+            data-role="session-chat-panel"
+            data-terminal-attached={selectedSessionReadOnly ? "true" : "false"}
+          >
             {selectedSession ? (
               <>
                 <div className="panel__header panel__header--session-detail">
@@ -260,6 +267,7 @@ export function SessionsPage({
                     <span className={`status-badge status-badge--${getActivityTone(selectedSession.activityState)}`}>
                       {formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}
                     </span>
+                    {selectedSessionReadOnly ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
                   </div>
                 </div>
 
@@ -296,7 +304,23 @@ export function SessionsPage({
                       />
                     ))}
                   </div>
+                  {transcriptScrollIndicator.visible ? (
+                    <div
+                      className="session-transcript-scroll-indicator"
+                      aria-hidden="true"
+                      style={{
+                        height: `${transcriptScrollIndicator.heightPercent}%`,
+                        transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
+                      }}
+                    />
+                  ) : null}
                 </div>
+
+                {selectedSessionReadOnly ? (
+                  <div className="session-readonly-banner" data-role="session-terminal-readonly">
+                    This session is currently attached to an embedded terminal window. Close that window to resume chat here.
+                  </div>
+                ) : null}
 
                 <form className="composer" onSubmit={handleComposerSubmit}>
                   <label className="field-group field-group--composer">
@@ -307,6 +331,7 @@ export function SessionsPage({
                       rows={4}
                       placeholder="Tell the session what to do next…"
                       value={draftMessage}
+                      disabled={selectedSessionReadOnly}
                       onChange={handleDraftChange}
                       onKeyDown={handleComposerKeyDown}
                     />
@@ -314,7 +339,11 @@ export function SessionsPage({
                   <div className="composer__footer">
                     <div className="composer__meta">
                       <p className="muted-copy">
-                        {selectedSessionPending ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
+                        {selectedSessionReadOnly
+                          ? "This session is read-only while the embedded terminal window is attached."
+                          : selectedSessionPending
+                            ? "Response in progress…"
+                            : "Press Ctrl+Enter or ⌘+Enter to send."}
                       </p>
                       <div className="session-detail__meta session-detail__meta--footer">
                         <span>Created {formatDateTime(selectedSession.createdAt)}</span>
@@ -328,6 +357,7 @@ export function SessionsPage({
                           aria-label="Session model"
                           value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
                           disabled={
+                            selectedSessionReadOnly ||
                             loadingModelSessionId === selectedSession.id ||
                             changingModelSessionId === selectedSession.id ||
                             selectedSessionPending
@@ -348,7 +378,7 @@ export function SessionsPage({
                         className="secondary-button"
                         data-role="stop-session-runtime"
                         type="button"
-                        disabled={!selectedSessionPending}
+                        disabled={selectedSessionReadOnly || !selectedSessionPending}
                         onClick={onStopSession}
                       >
                         Stop
@@ -357,7 +387,7 @@ export function SessionsPage({
                         className="primary-button"
                         data-role="send-message"
                         type="submit"
-                        disabled={draftMessage.trim().length === 0}
+                        disabled={selectedSessionReadOnly || draftMessage.trim().length === 0}
                       >
                         Send
                       </button>

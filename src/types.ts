@@ -157,6 +157,7 @@ export interface SessionRecord {
   updatedAt: string;
   subscribed: boolean;
   events: SessionEvent[];
+  terminalAttached?: boolean;
   activityState?: SessionActivityState;
   activeToolName?: string | null;
   lastActivityAt?: string | null;
@@ -245,6 +246,7 @@ export interface AgentRuntimeState {
   currentQueueEntryId?: string | null;
   lastDispatchAt?: string | null;
   lastError?: string | null;
+  terminalAttached?: boolean;
   createdAt: string;
   updatedAt: string;
 }

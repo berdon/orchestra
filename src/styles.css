@@ -200,6 +200,23 @@ strong {
   gap: 16px;
 }
 
+.agent-terminal-window {
+  min-height: 100vh;
+}
+
+.agent-terminal-window__surface {
+  min-height: min(76vh, 820px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #111318;
+  overflow: hidden;
+}
+
+.agent-terminal-window__terminal {
+  width: 100%;
+  height: min(76vh, 820px);
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -498,6 +515,19 @@ strong {
   overflow: hidden;
 }
 
+.session-chat-panel--readonly {
+  opacity: 0.82;
+}
+
+.session-readonly-banner {
+  border: 1px solid rgba(189, 120, 55, 0.32);
+  background: rgba(189, 120, 55, 0.12);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 0.92rem;
+}
+
 .session-debug-toggle {
   justify-self: start;
   border: 0;
@@ -564,6 +594,16 @@ strong {
 .session-list-footer {
   padding-top: 8px;
   border-top: 1px solid var(--border);
+}
+
+.session-transcript-scroll-indicator {
+  position: absolute;
+  right: 10px;
+  top: 48px;
+  width: 4px;
+  border-radius: 999px;
+  background: rgba(143, 79, 47, 0.25);
+  pointer-events: none;
 }
 
 .filter-chip-row {
@@ -1069,6 +1109,10 @@ strong {
 
 .action-cluster--session-tools {
   align-items: flex-start;
+}
+
+.action-cluster--wrap {
+  flex-wrap: wrap;
 }
 
 .composer__meta {

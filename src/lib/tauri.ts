@@ -1283,6 +1283,25 @@ export async function isCurrentLogsWindow(): Promise<boolean> {
   return getCurrentWebviewWindow().label === "logs";
 }
 
+export async function isCurrentAgentTerminalWindow(): Promise<boolean> {
+  if (!isTauriAvailable()) {
+    return new URLSearchParams(window.location.search).get("view") === "agent-terminal";
+  }
+
+  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  return getCurrentWebviewWindow().label.startsWith("agent-terminal-");
+}
+
+export async function getCurrentAgentTerminalSessionId(): Promise<string | null> {
+  if (!isTauriAvailable()) {
+    return new URLSearchParams(window.location.search).get("sessionId");
+  }
+
+  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const label = getCurrentWebviewWindow().label;
+  return label.startsWith("agent-terminal-") ? label.slice("agent-terminal-".length) : null;
+}
+
 export async function listSessions(): Promise<SessionRecord[]> {
   if (!isTauriAvailable()) {
     return sortSessions(ensureMockSessions());

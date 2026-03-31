@@ -266,6 +266,40 @@ function ensureMockAgents() {
   return seeded;
 }
 
+function openMockAgentTerminalWindow(sessionId: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", "agent-terminal");
+  url.searchParams.set("sessionId", sessionId);
+  const popup = window.open(url.toString(), `orchestra-agent-terminal-${sessionId}`, "popup=yes,width=1180,height=820,resizable=yes,scrollbars=yes");
+
+  if (!popup) {
+    return;
+  }
+
+  const detach = () => {
+    const timestamp = nowIso();
+    saveStoredSessions(
+      getStoredSessions().map((session) =>
+        session.id === sessionId ? { ...session, subscribed: true, terminalAttached: false, updatedAt: timestamp } : session,
+      ),
+    );
+    saveStoredAgentRuntimes(
+      getStoredAgentRuntimes().map((entry) =>
+        entry.mainSessionId === sessionId ? { ...entry, terminalAttached: false, updatedAt: timestamp } : entry,
+      ),
+    );
+    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.terminal.detach" });
+  };
+
+  const intervalId = window.setInterval(() => {
+    if (!popup.closed) {
+      return;
+    }
+    window.clearInterval(intervalId);
+    detach();
+  }, 250);
+}
+
 function ensureMockAgentRuntime(agentId: string) {
   const projectId = activeProjectId();
   const runtimes = getStoredAgentRuntimes();
@@ -283,6 +317,7 @@ function ensureMockAgentRuntime(agentId: string) {
     currentQueueEntryId: null,
     lastDispatchAt: null,
     lastError: null,
+    terminalAttached: false,
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
@@ -387,13 +422,14 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
       : null;
 
     const session: SessionRecord = existingSession
-      ? { ...existingSession, subscribed: true, status: "active", updatedAt: nowIso() }
+      ? { ...existingSession, subscribed: true, terminalAttached: runtime.terminalAttached ?? false, status: "active", updatedAt: nowIso() }
       : {
           ...createMockSessionRecord(
             `${agent.name} main session`,
             `${agent.name} is ready. This persistent session keeps the agent's context and can be reopened from anywhere in Orchestra.`,
           ),
           subscribed: true,
+          terminalAttached: false,
         };
 
     upsertMockSession(session);
@@ -418,6 +454,7 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
               mainSessionId: session.id,
               runtimeCwd: entry.runtimeCwd ?? getProjectRuntimeCwd(activeProjectId()),
               status: entry.currentQueueEntryId ? "running" : "idle",
+              terminalAttached: entry.terminalAttached ?? false,
               updatedAt: nowIso(),
             }
           : entry,
@@ -429,6 +466,76 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
   }
 
   return invoke<SessionRecord>("ensure_agent_session", { agentId, projectId: projectId ?? null });
+}
+
+export async function openAgentSessionInTerminal(agentId: string, projectId?: string | null): Promise<SessionRecord> {
+  if (!isTauriAvailable()) {
+    const runtime = ensureMockAgentRuntime(agentId);
+    if (runtime.status === "running" || runtime.currentQueueEntryId) {
+      throw new Error("Only idle agent sessions can be opened in a terminal window.");
+    }
+
+    const session = await ensureAgentSession(agentId, projectId);
+    const timestamp = nowIso();
+    const nextSession: SessionRecord = { ...session, subscribed: false, terminalAttached: true, updatedAt: timestamp };
+    upsertMockSession(nextSession);
+    saveStoredAgentRuntimes(
+      getStoredAgentRuntimes().map((entry) =>
+        entry.agentId === agentId && entry.projectId === activeProjectId()
+          ? { ...entry, mainSessionId: session.id, terminalAttached: true, updatedAt: timestamp }
+          : entry,
+      ),
+    );
+    openMockAgentTerminalWindow(session.id);
+    emitMockSessionChange({ sessionIds: [session.id], reason: "sessions.terminal.attach" });
+    return nextSession;
+  }
+
+  return invoke<SessionRecord>("open_agent_session_terminal", { agentId, projectId: projectId ?? null });
+}
+
+export async function writeAgentTerminalInput(sessionId: string, data: string): Promise<void> {
+  if (!isTauriAvailable()) {
+    return;
+  }
+
+  await invoke("write_agent_terminal_input", { sessionId, data });
+}
+
+export async function resizeAgentTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
+  if (!isTauriAvailable()) {
+    return;
+  }
+
+  await invoke("resize_agent_terminal", { sessionId, cols, rows });
+}
+
+export async function getAgentTerminalBuffer(sessionId: string): Promise<string> {
+  if (!isTauriAvailable()) {
+    return `Connected to ${sessionId}\r\nEmbedded mock terminal ready.\r\n`;
+  }
+
+  return invoke<string>("get_agent_terminal_buffer", { sessionId });
+}
+
+export async function shutdownAgentTerminalSession(sessionId: string): Promise<void> {
+  if (!isTauriAvailable()) {
+    const timestamp = nowIso();
+    saveStoredSessions(
+      getStoredSessions().map((session) =>
+        session.id === sessionId ? { ...session, subscribed: true, terminalAttached: false, updatedAt: timestamp } : session,
+      ),
+    );
+    saveStoredAgentRuntimes(
+      getStoredAgentRuntimes().map((entry) =>
+        entry.mainSessionId === sessionId ? { ...entry, terminalAttached: false, updatedAt: timestamp } : entry,
+      ),
+    );
+    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.terminal.detach" });
+    return;
+  }
+
+  await invoke("shutdown_agent_terminal_session", { sessionId });
 }
 
 export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry> {
