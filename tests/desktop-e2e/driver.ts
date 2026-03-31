@@ -571,6 +571,49 @@ export async function invokeCommand<T>(sessionId: string, command: string, args:
   return response?.value?.value as T;
 }
 
+export async function getWindowHandles(sessionId: string) {
+  const response = await webdriverRequest(`/session/${sessionId}/window/handles`, { method: "GET" });
+  return (response?.value ?? []) as string[];
+}
+
+export async function getCurrentWindowHandle(sessionId: string) {
+  const response = await webdriverRequest(`/session/${sessionId}/window`, { method: "GET" });
+  return String(response?.value ?? "");
+}
+
+export async function switchToWindow(sessionId: string, handle: string) {
+  const response = await webdriverRequest(`/session/${sessionId}/window`, {
+    method: "POST",
+    body: JSON.stringify({ handle }),
+  });
+  const errorMessage = String(response?.value?.message ?? response?.value?.error ?? "");
+  if (errorMessage) {
+    throw new Error(`Unable to switch to window ${handle}: ${JSON.stringify(response)}`);
+  }
+}
+
+export async function closeCurrentWindow(sessionId: string) {
+  const response = await webdriverRequest(`/session/${sessionId}/window`, { method: "DELETE" });
+  const errorMessage = String(response?.value?.message ?? response?.value?.error ?? "");
+  if (errorMessage) {
+    throw new Error(`Unable to close current window: ${JSON.stringify(response)}`);
+  }
+  return (response?.value ?? []) as string[];
+}
+
+export async function waitForWindowCount(sessionId: string, expectedCount: number, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastHandles: string[] = [];
+  while (Date.now() < deadline) {
+    lastHandles = await getWindowHandles(sessionId);
+    if (lastHandles.length === expectedCount) {
+      return lastHandles;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Expected ${expectedCount} windows, got ${lastHandles.length}: ${JSON.stringify(lastHandles)}`);
+}
+
 export async function ensureReactReady(sessionId: string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastDom = "";

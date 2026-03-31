@@ -12,6 +12,7 @@ test("ctrl+o opens the command palette and can launch an agent session", async (
   });
 
   await page.goto("/");
+  await expect(page.getByRole("button", { name: "Search · Ctrl+O" })).toBeVisible();
   await triggerShortcut(page, "o");
   await expect(page.locator('[data-role="command-palette-overlay"]')).toBeVisible();
 
@@ -20,6 +21,27 @@ test("ctrl+o opens the command palette and can launch an agent session", async (
 
   await expect(page.getByRole("button", { name: "Sessions" })).toHaveClass(/nav-item--active/);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
+});
+
+test("command palette can open an agent terminal window", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("open data in terminal");
+
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    page.keyboard.press("Enter"),
+  ]);
+
+  await expect(page.locator('[data-role="session-terminal-readonly"]')).toBeVisible();
+  await popup.waitForLoadState();
+  await expect.poll(() => popup.url()).toContain("view=agent-terminal");
+  await popup.close();
+  await expect(page.locator('[data-role="session-terminal-readonly"]')).toHaveCount(0);
 });
 
 test("command palette can jump directly to a role definition", async ({ page }) => {

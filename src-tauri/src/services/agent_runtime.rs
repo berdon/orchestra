@@ -564,6 +564,7 @@ fn read_agent_runtime_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRu
         current_queue_entry_id: row.get(5)?,
         last_dispatch_at: row.get(6)?,
         last_error: row.get(7)?,
+        terminal_attached: false,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
     })

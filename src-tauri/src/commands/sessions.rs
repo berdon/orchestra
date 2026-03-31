@@ -138,9 +138,11 @@ fn load_session_debug_info(
 
 fn decorate_session_record_with_connection(
     connection: &rusqlite::Connection,
+    terminal_attached_session_ids: &std::collections::HashSet<String>,
     mut record: SessionRecord,
 ) -> Result<SessionRecord, String> {
     record.debug_info = load_session_debug_info(connection, &record.id)?;
+    record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
 
     let is_persistent_agent_session = connection
         .query_row(
@@ -186,18 +188,22 @@ fn decorate_session_record_with_connection(
     Ok(record)
 }
 
-fn decorate_session_record(record: SessionRecord) -> Result<SessionRecord, String> {
+fn decorate_session_record(
+    terminal_attached_session_ids: &std::collections::HashSet<String>,
+    record: SessionRecord,
+) -> Result<SessionRecord, String> {
     let connection = database::open_connection()?;
-    decorate_session_record_with_connection(&connection, record)
+    decorate_session_record_with_connection(&connection, terminal_attached_session_ids, record)
 }
 
 fn load_decorated_session_record(
     session_dir: &std::path::Path,
     session_id: &str,
     subscribed: bool,
+    terminal_attached_session_ids: &std::collections::HashSet<String>,
 ) -> Result<SessionRecord, String> {
     let record = get_session(session_dir, session_id, subscribed)?;
-    decorate_session_record(record)
+    decorate_session_record(terminal_attached_session_ids, record)
 }
 
 fn resolve_session_runtime_root(
@@ -237,6 +243,7 @@ fn resolve_session_paths(session_id: &str) -> Result<(PathBuf, PathBuf), String>
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     spawn_blocking(move || {
         let mut sessions = all_session_contexts()?
             .into_iter()
@@ -244,7 +251,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionReco
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .flatten()
-            .map(decorate_session_record)
+            .map(|record| decorate_session_record(&terminal_attached_session_ids, record))
             .collect::<Result<Vec<_>, _>>()?;
         sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         Ok::<_, String>(sessions)
@@ -259,10 +266,11 @@ pub async fn get_session_record(
     session_id: String,
 ) -> Result<SessionRecord, String> {
     let subscribed = state.subscribed_session_ids()?.contains(&session_id);
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
         let context = find_session_context_for_session(&session_id_for_task)?;
-        load_decorated_session_record(&context.session_dir, &session_id_for_task, subscribed)
+        load_decorated_session_record(&context.session_dir, &session_id_for_task, subscribed, &terminal_attached_session_ids)
     })
     .await
     .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
@@ -307,8 +315,9 @@ pub async fn create_session(
     );
     let _ = app_events::emit_session_change(&app, "sessions.create", [created.record.id.clone()]);
 
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let decorated_record = spawn_blocking(move || {
-        load_decorated_session_record(&session_dir, &created.record.id, true)
+        load_decorated_session_record(&session_dir, &created.record.id, true, &terminal_attached_session_ids)
     })
     .await
     .map_err(|error| format!("Unable to join create_session record task: {error}"))??;
@@ -362,9 +371,10 @@ pub async fn resume_session(
         &session_id,
     )?;
 
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
-        load_decorated_session_record(&session_dir, &session_id_for_task, true)
+        load_decorated_session_record(&session_dir, &session_id_for_task, true, &terminal_attached_session_ids)
     })
     .await
     .map_err(|error| format!("Unable to join resume_session record task: {error}"))??;
@@ -397,9 +407,10 @@ pub async fn subscribe_session(
     )?;
     runtime.set_subscribed(true);
 
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
-        load_decorated_session_record(&session_dir, &session_id_for_task, true)
+        load_decorated_session_record(&session_dir, &session_id_for_task, true, &terminal_attached_session_ids)
     })
     .await
     .map_err(|error| format!("Unable to join subscribe_session record task: {error}"))??;
@@ -421,10 +432,11 @@ pub async fn unsubscribe_session(
         runtime.set_subscribed(false);
     }
 
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
         let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
-        load_decorated_session_record(&session_dir, &session_id_for_task, false)
+        load_decorated_session_record(&session_dir, &session_id_for_task, false, &terminal_attached_session_ids)
     })
     .await
     .map_err(|error| format!("Unable to join unsubscribe_session task: {error}"))??;
@@ -536,10 +548,11 @@ pub async fn stop_session_runtime(
     };
     state.clear_active_session_run(&session_id)?;
 
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
     let mut record = spawn_blocking(move || {
         let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
-        load_decorated_session_record(&session_dir, &session_id_for_task, true)
+        load_decorated_session_record(&session_dir, &session_id_for_task, true, &terminal_attached_session_ids)
     })
     .await
     .map_err(|error| format!("Unable to join stop_session_runtime task: {error}"))??;
@@ -678,6 +691,7 @@ mod tests {
                 message: "hello".into(),
                 timestamp: "2026-03-21T00:00:00Z".into(),
             }],
+            terminal_attached: false,
             debug_info: None,
         }
     }
@@ -731,9 +745,12 @@ mod tests {
             )
             .expect("lane run insert should succeed");
 
-        let decorated =
-            decorate_session_record_with_connection(&connection, make_session_record("session-1"))
-                .expect("session decoration should succeed");
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            make_session_record("session-1"),
+        )
+        .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "closed");
     }
@@ -797,9 +814,12 @@ mod tests {
             )
             .expect("assignment insert should succeed");
 
-        let decorated =
-            decorate_session_record_with_connection(&connection, make_session_record("session-1"))
-                .expect("session decoration should succeed");
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            make_session_record("session-1"),
+        )
+        .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "active");
     }

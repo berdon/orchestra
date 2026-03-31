@@ -9,6 +9,8 @@ import {
   getLogs,
   getSessionModelState,
   getSessionRecord,
+  getCurrentAgentTerminalSessionId,
+  isCurrentAgentTerminalWindow,
   isCurrentLogsWindow,
   listSessions,
   listTasks,
@@ -22,7 +24,7 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
-import { ensureAgentSession, listAgentOperations } from "./lib/agents";
+import { ensureAgentSession, listAgentOperations, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
@@ -32,6 +34,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
 import { InboxPage } from "./pages/InboxPage";
+import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import type { TaskBoardViewMode } from "./pages/tasks/TasksOverviewPage";
@@ -400,6 +403,7 @@ function deriveSessionActivityState(session: SessionRecord): SessionActivityStat
 function normalizeSessionRecord(session: SessionRecord): SessionRecord {
   return {
     ...session,
+    terminalAttached: session.terminalAttached ?? false,
     activityState: session.activityState ?? deriveSessionActivityState(session),
     lastActivityAt: session.lastActivityAt ?? session.updatedAt,
   };
@@ -472,6 +476,8 @@ export function App() {
   const [loadingBridgeDiagnostics, setLoadingBridgeDiagnostics] = useState(false);
   const [refreshingBridgeDiagnostics, setRefreshingBridgeDiagnostics] = useState(false);
   const [isLogsWindow, setIsLogsWindow] = useState(false);
+  const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(false);
+  const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -524,6 +530,7 @@ export function App() {
   );
   const supervisorSessionDraftMessage = supervisorSession ? draftMessages[supervisorSession.id] ?? "" : "";
   const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
+  const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
 
   useEffect(() => {
     window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, taskBoardViewMode);
@@ -1222,6 +1229,8 @@ export function App() {
 
     void getAppInfo().then(setAppInfo);
     void isCurrentLogsWindow().then(setIsLogsWindow);
+    void isCurrentAgentTerminalWindow().then(setIsAgentTerminalWindow);
+    void getCurrentAgentTerminalSessionId().then(setAgentTerminalSessionId);
     loadProjectCatalog();
     const onProjectsChanged = () => loadProjectCatalog();
     window.addEventListener("orchestra:projects-changed", onProjectsChanged);
@@ -1270,7 +1279,7 @@ export function App() {
   }, [activeProjectId, draftMessages, supervisorSessionId]);
 
   useEffect(() => {
-    if (isLogsWindow) {
+    if (isDetachedWindow) {
       return;
     }
 
@@ -1310,7 +1319,7 @@ export function App() {
       unlistenStream?.();
       unlistenChanges?.();
     };
-  }, [handleSessionStreamEvent, isLogsWindow]);
+  }, [handleSessionStreamEvent, isDetachedWindow]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -1323,11 +1332,13 @@ export function App() {
       };
     }
 
-    void loadSessions();
-  }, [activeProjectId, isLogsWindow]);
+    if (!isAgentTerminalWindow) {
+      void loadSessions();
+    }
+  }, [activeProjectId, isLogsWindow, isAgentTerminalWindow]);
 
   useEffect(() => {
-    if (isLogsWindow || activePage !== "sessions") {
+    if (isDetachedWindow || activePage !== "sessions") {
       return;
     }
 
@@ -1346,10 +1357,10 @@ export function App() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshOnFocus);
     };
-  }, [activePage, isLogsWindow]);
+  }, [activePage, isDetachedWindow]);
 
   useEffect(() => {
-    if (isLogsWindow || activePage !== "settings" || settingsTab !== "general") {
+    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
       return;
     }
 
@@ -1363,10 +1374,10 @@ export function App() {
     }, 5000);
 
     return () => window.clearInterval(intervalId);
-  }, [activePage, settingsTab, isLogsWindow, activeProject?.slug]);
+  }, [activePage, settingsTab, isDetachedWindow, activeProject?.slug]);
 
   useEffect(() => {
-    if (isLogsWindow) {
+    if (isDetachedWindow) {
       return;
     }
 
@@ -1391,7 +1402,7 @@ export function App() {
 
     let cancelled = false;
 
-    if (!selectedSession.subscribed) {
+    if (!selectedSession.subscribed && !selectedSession.terminalAttached) {
       void subscribeSession(selectedSession.id)
         .then((record) => {
           if (!cancelled) {
@@ -1432,10 +1443,10 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, isLogsWindow, selectedSession?.id, selectedSession?.subscribed, applySessionUpdate, mergeSessionRecord]);
+  }, [activePage, isDetachedWindow, selectedSession?.id, selectedSession?.subscribed, selectedSession?.terminalAttached, applySessionUpdate, mergeSessionRecord]);
 
   useEffect(() => {
-    if (isLogsWindow || activePage !== "sessions" || !selectedSession?.id || selectedSession.status !== "active") {
+    if (isDetachedWindow || activePage !== "sessions" || !selectedSession?.id || selectedSession.status !== "active") {
       return;
     }
 
@@ -1466,10 +1477,10 @@ export function App() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshSelectedSession);
     };
-  }, [activePage, isLogsWindow, mergeSessionRecord, selectedSession?.id, selectedSession?.status]);
+  }, [activePage, isDetachedWindow, mergeSessionRecord, selectedSession?.id, selectedSession?.status]);
 
   useEffect(() => {
-    if (isLogsWindow) {
+    if (isDetachedWindow) {
       return;
     }
 
@@ -1479,7 +1490,7 @@ export function App() {
     }
 
     node.scrollTop = node.scrollHeight;
-  }, [displayedEvents, isLogsWindow, selectedSession?.id, sessionScrollState.lockedToBottom]);
+  }, [displayedEvents, isDetachedWindow, selectedSession?.id, sessionScrollState.lockedToBottom]);
 
   useEffect(() => {
     setSessionScrollState({ lockedToBottom: true });
@@ -1586,6 +1597,18 @@ export function App() {
     }
   }
 
+  async function handleOpenAgentSessionTerminal(agentId: string) {
+    setSessionActionError(null);
+    try {
+      const session = await openAgentSessionInTerminal(agentId, activeProject?.id ?? null);
+      mergeSessionRecord(session);
+      setActivePage("sessions");
+      setSelectedSessionId(session.id);
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to open agent terminal window.");
+    }
+  }
+
   async function refreshCommandPaletteItems() {
     setCommandPaletteLoading(true);
     try {
@@ -1667,6 +1690,9 @@ export function App() {
         return;
       case "launch-agent-session":
         await handleOpenAgentSession(item.action.agentId);
+        return;
+      case "launch-agent-session-terminal":
+        await handleOpenAgentSessionTerminal(item.action.agentId);
         return;
       default:
         return;
@@ -1779,7 +1805,7 @@ export function App() {
 
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isLogsWindow, sessions, draftMessages, pendingRuns]);
+  }, [isDetachedWindow, sessions, draftMessages, pendingRuns]);
 
   if (isLogsWindow) {
     return (
@@ -1946,6 +1972,7 @@ export function App() {
             key={activeProject?.id ?? "default"}
             activeProjectId={activeProject?.id ?? null}
             onOpenAgentSession={(agentId) => void handleOpenAgentSession(agentId)}
+            onOpenAgentSessionTerminal={(agentId) => void handleOpenAgentSessionTerminal(agentId)}
             selectedWorkerRequest={agentsSelectionRequest}
           />
         ) : activePage === "sessions" ? (
@@ -1958,6 +1985,7 @@ export function App() {
             selectedSessionPending={Boolean(selectedSessionPendingRun)}
             selectedSessionDisplayStatus={selectedSessionDisplayStatus}
             selectedModelState={selectedModelState}
+            selectedSessionReadOnly={Boolean(selectedSession?.terminalAttached)}
             loadingSessions={loadingSessions}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
@@ -1980,6 +2008,9 @@ export function App() {
               }
             }}
             onSendMessage={() => {
+              if (selectedSession?.terminalAttached) {
+                return;
+              }
               if (selectedSession) {
                 handleSendMessage(selectedSession.id);
               }

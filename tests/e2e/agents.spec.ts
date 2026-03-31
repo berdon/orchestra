@@ -105,12 +105,39 @@ test("agents page launches and reuses a persistent agent session", async ({ page
   await page.getByRole("link", { name: /Data/i }).click();
   await page.locator('[data-role="open-agent-session"]').click();
 
-  const storedState = await page.evaluate(() => {
-    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
-    return sessions.filter((session: { title: string }) => session.title === "Data main session").length;
+  await expect(page.locator('[data-role="session-link"]').filter({ hasText: "Data main session" })).toHaveCount(1);
+});
+
+test("agents page opens an embedded terminal window and locks the session chat until it closes", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
   });
 
-  expect(storedState).toBe(1);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    page.locator('[data-role="open-agent-session-terminal"]').click(),
+  ]);
+
+  await expect(page.getByRole("button", { name: "Sessions" })).toHaveClass(/nav-item--active/);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
+  await expect(page.locator('[data-role="session-terminal-readonly"]')).toContainText("embedded terminal window");
+  await expect(page.locator('[data-role="send-message"]')).toBeDisabled();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-terminal-attached", "true");
+
+  await popup.waitForLoadState();
+  await expect.poll(() => popup.url()).toContain("view=agent-terminal");
+
+  await popup.close();
+  await page.bringToFront();
+
+  await expect(page.locator('[data-role="session-terminal-readonly"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-terminal-attached", "false");
+  await page.locator('[data-role="composer-input"]').fill("Back in chat");
+  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
 });
 
 test("agents page deletes queued work items from an agent queue", async ({ page }) => {

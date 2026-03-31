@@ -7,6 +7,7 @@ type AgentWorkFilter = "queued" | "active" | "completed";
 interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
   onOpenSession: (agentId: string) => void;
+  onOpenSessionTerminal: (agentId: string) => void;
   onDeleteQueuedEntry: (queueEntryId: string) => void;
   busy?: boolean;
 }
@@ -24,7 +25,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail, onOpenSession, onDeleteQueuedEntry, busy = false }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, busy = false }: AgentOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -37,6 +38,8 @@ export function AgentOperationsDetail({ detail, onOpenSession, onDeleteQueuedEnt
     }
   }, [detail.queueEntries, workFilter]);
 
+  const canOpenTerminal = !busy && detail.runtimeState.status !== "running" && !detail.runtimeState.terminalAttached;
+
   return (
     <div className="workforce-detail-stack">
       <section className="workflow-section workforce-role-summary">
@@ -47,7 +50,7 @@ export function AgentOperationsDetail({ detail, onOpenSession, onDeleteQueuedEnt
             <p>{detail.agent.description ?? "No description yet."}</p>
           </div>
 
-          <div className="action-cluster">
+          <div className="action-cluster action-cluster--wrap">
             <button
               className="primary-button"
               data-role="open-agent-session"
@@ -56,9 +59,19 @@ export function AgentOperationsDetail({ detail, onOpenSession, onDeleteQueuedEnt
             >
               {detail.runtimeState.mainSessionId ? "Open session" : "Launch session"}
             </button>
+            <button
+              className="secondary-button"
+              data-role="open-agent-session-terminal"
+              type="button"
+              disabled={!canOpenTerminal}
+              onClick={() => onOpenSessionTerminal(detail.agent.id)}
+            >
+              Open in terminal
+            </button>
             <span className={`status-badge status-badge--${detail.runtimeState.status === "running" ? "success" : detail.runtimeState.status === "needs_attention" ? "error" : "neutral"}`}>
               {detail.runtimeState.status}
             </span>
+            {detail.runtimeState.terminalAttached ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
           </div>
         </div>
 

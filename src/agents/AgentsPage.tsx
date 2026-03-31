@@ -22,9 +22,10 @@ interface AgentsPageProps {
   activeProjectId?: string | null;
   selectedWorkerRequest?: { type: "role" | "agent"; id: string; token: number } | null;
   onOpenAgentSession: (agentId: string) => void;
+  onOpenAgentSessionTerminal: (agentId: string) => void;
 }
 
-export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession }: AgentsPageProps) {
+export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession, onOpenAgentSessionTerminal }: AgentsPageProps) {
   const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
@@ -263,6 +264,7 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
               })
             }
             onOpenSession={onOpenAgentSession}
+            onOpenSessionTerminal={onOpenAgentSessionTerminal}
           />
         ) : (
           <div className="empty-state">

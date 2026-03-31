@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     models::{AuthorizationContext, LogEntry},
-    services::{live_sessions::SessionRuntime, tool_bridge::ToolBridgeConfig},
+    services::{agent_terminal::AgentTerminalSession, live_sessions::SessionRuntime, tool_bridge::ToolBridgeConfig},
 };
 
 pub struct AppState {
@@ -13,6 +13,8 @@ pub struct AppState {
     subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
     pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    terminal_windows: Mutex<HashMap<String, String>>,
+    terminal_sessions: Mutex<HashMap<String, Arc<AgentTerminalSession>>>,
     pub dispatcher_tick_active: Mutex<bool>,
     pub tool_bridge: Arc<ToolBridgeConfig>,
 }
@@ -49,6 +51,8 @@ impl AppState {
             subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
             session_runtimes: Mutex::new(HashMap::new()),
+            terminal_windows: Mutex::new(HashMap::new()),
+            terminal_sessions: Mutex::new(HashMap::new()),
             dispatcher_tick_active: Mutex::new(false),
             tool_bridge,
         }
@@ -90,11 +94,7 @@ impl AppState {
         );
     }
 
-    pub fn set_session_subscription(
-        &self,
-        session_id: &str,
-        subscribed: bool,
-    ) -> Result<(), String> {
+    pub fn set_session_subscription(&self, session_id: &str, subscribed: bool) -> Result<(), String> {
         let mut sessions = self
             .subscribed_sessions
             .lock()
@@ -136,10 +136,7 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access active session run state".to_string())?;
 
-        if active_runs
-            .get(session_id)
-            .is_some_and(|current| current == run_id)
-        {
+        if active_runs.get(session_id).is_some_and(|current| current == run_id) {
             active_runs.remove(session_id);
         }
 
@@ -161,10 +158,70 @@ impl AppState {
             .map_err(|_| "Unable to access active session run state".to_string())
     }
 
+    pub fn set_terminal_window(&self, session_id: &str, window_label: &str) -> Result<(), String> {
+        self.terminal_windows
+            .lock()
+            .map_err(|_| "Unable to access terminal window state".to_string())?
+            .insert(session_id.to_string(), window_label.to_string());
+        Ok(())
+    }
+
+    pub fn get_terminal_window_label(&self, session_id: &str) -> Result<Option<String>, String> {
+        self.terminal_windows
+            .lock()
+            .map_err(|_| "Unable to access terminal window state".to_string())
+            .map(|windows| windows.get(session_id).cloned())
+    }
+
+    pub fn clear_terminal_window(&self, session_id: &str) -> Result<(), String> {
+        self.terminal_windows
+            .lock()
+            .map_err(|_| "Unable to access terminal window state".to_string())?
+            .remove(session_id);
+        Ok(())
+    }
+
+    pub fn terminal_attached_session_ids(&self) -> Result<HashSet<String>, String> {
+        self.terminal_windows
+            .lock()
+            .map_err(|_| "Unable to access terminal window state".to_string())
+            .map(|windows| windows.keys().cloned().collect())
+    }
+
+    pub fn insert_terminal_session(&self, session_id: &str, session: Arc<AgentTerminalSession>) -> Result<(), String> {
+        self.terminal_sessions
+            .lock()
+            .map_err(|_| "Unable to access terminal session state".to_string())?
+            .insert(session_id.to_string(), session);
+        Ok(())
+    }
+
+    pub fn get_terminal_session(&self, session_id: &str) -> Result<Option<Arc<AgentTerminalSession>>, String> {
+        self.terminal_sessions
+            .lock()
+            .map_err(|_| "Unable to access terminal session state".to_string())
+            .map(|sessions| sessions.get(session_id).cloned())
+    }
+
+    pub fn remove_terminal_session(&self, session_id: &str) -> Result<Option<Arc<AgentTerminalSession>>, String> {
+        self.terminal_sessions
+            .lock()
+            .map_err(|_| "Unable to access terminal session state".to_string())
+            .map(|mut sessions| sessions.remove(session_id))
+    }
+
     pub fn clear_session_tracking(&self, session_id: &str) -> Result<(), String> {
         self.subscribed_sessions
             .lock()
             .map_err(|_| "Unable to access session subscription state".to_string())?
+            .remove(session_id);
+        self.terminal_windows
+            .lock()
+            .map_err(|_| "Unable to access terminal window state".to_string())?
+            .remove(session_id);
+        self.terminal_sessions
+            .lock()
+            .map_err(|_| "Unable to access terminal session state".to_string())?
             .remove(session_id);
         self.active_session_runs
             .lock()
@@ -173,10 +230,7 @@ impl AppState {
         Ok(())
     }
 
-    pub fn remove_session_runtime(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<Arc<SessionRuntime>>, String> {
+    pub fn remove_session_runtime(&self, session_id: &str) -> Result<Option<Arc<SessionRuntime>>, String> {
         self.session_runtimes
             .lock()
             .map_err(|_| "Unable to access session runtime state".to_string())
