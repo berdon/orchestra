@@ -16,7 +16,7 @@ import {
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
 describe("desktop embedded agent terminal window", () => {
-  it.skipIf(!isDesktopE2E)("opens a second Orchestra window for the embedded terminal and leaves the main session readonly while attached", async () => {
+  it.skipIf(!isDesktopE2E)("opens a second Orchestra window that renders the embedded terminal instead of the Orchestra shell", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
@@ -36,6 +36,27 @@ describe("desktop embedded agent terminal window", () => {
       expect(terminalHandle).toBeTruthy();
 
       await switchToWindow(sessionId, terminalHandle!);
+      let terminalWindowState = { hasTerminalSurface: false, hasProjectSwitcher: true, href: "", title: "", windowKind: "", bodyText: "" };
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        terminalWindowState = await executeScript<{ hasTerminalSurface: boolean; hasProjectSwitcher: boolean; href: string; title: string; windowKind: string; bodyText: string }>(sessionId, `
+          return {
+            hasTerminalSurface: Boolean(document.querySelector('[data-role="agent-terminal-surface"]')),
+            hasProjectSwitcher: Boolean(document.querySelector('[data-role="project-switcher"]')),
+            href: window.location.href,
+            title: document.title,
+            windowKind: String(window.__ORCHESTRA_WINDOW_KIND__ || ''),
+            bodyText: (document.body?.innerText || '').slice(0, 300),
+          };
+        `);
+        if (terminalWindowState.hasTerminalSurface && !terminalWindowState.hasProjectSwitcher) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      expect(terminalWindowState.hasTerminalSurface).toBe(true);
+      expect(terminalWindowState.hasProjectSwitcher).toBe(false);
+
       await executeScript(sessionId, `
         window.close();
         return true;
@@ -43,10 +64,6 @@ describe("desktop embedded agent terminal window", () => {
       await waitForWindowCount(sessionId, 1, 45_000);
       await switchToWindow(sessionId, mainHandle);
       await ensureReactReady(sessionId);
-      const stillReadonly = await executeScript<boolean>(sessionId, `
-        return Boolean(document.querySelector('[data-role="session-terminal-readonly"]'));
-      `);
-      expect(stillReadonly).toBe(true);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

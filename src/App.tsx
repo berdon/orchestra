@@ -6,6 +6,9 @@ import {
   deleteSession,
   getAppInfo,
   getBridgeDiagnostics,
+  getInitialAgentTerminalSessionId,
+  getInitialAgentTerminalWindowFlag,
+  getInitialLogsWindowFlag,
   getLogs,
   getSessionModelState,
   getSessionRecord,
@@ -475,9 +478,9 @@ export function App() {
   const [clearingLogs, setClearingLogs] = useState(false);
   const [loadingBridgeDiagnostics, setLoadingBridgeDiagnostics] = useState(false);
   const [refreshingBridgeDiagnostics, setRefreshingBridgeDiagnostics] = useState(false);
-  const [isLogsWindow, setIsLogsWindow] = useState(false);
-  const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(false);
-  const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(null);
+  const [isLogsWindow, setIsLogsWindow] = useState(() => getInitialLogsWindowFlag());
+  const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(() => getInitialAgentTerminalWindowFlag());
+  const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(() => getInitialAgentTerminalSessionId());
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -1827,6 +1830,10 @@ export function App() {
         />
       </main>
     );
+  }
+
+  if (isAgentTerminalWindow && agentTerminalSessionId) {
+    return <AgentTerminalWindowPage sessionId={agentTerminalSessionId} />;
   }
 
   return (
