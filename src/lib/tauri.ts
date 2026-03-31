@@ -59,6 +59,32 @@ const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
 const CURRENT_PROJECT_ID = "orchestra";
 
+type OrchestraWindowGlobals = Window & {
+  __ORCHESTRA_WINDOW_KIND__?: string;
+  __ORCHESTRA_AGENT_TERMINAL_SESSION_ID__?: string;
+};
+
+function getInjectedWindowKind() {
+  const windowKind = (window as OrchestraWindowGlobals).__ORCHESTRA_WINDOW_KIND__;
+  return typeof windowKind === "string" ? windowKind : null;
+}
+
+export function getInitialLogsWindowFlag() {
+  return getInjectedWindowKind() === "logs" || new URLSearchParams(window.location.search).get("view") === "logs";
+}
+
+export function getInitialAgentTerminalWindowFlag() {
+  return getInjectedWindowKind() === "agent-terminal" || new URLSearchParams(window.location.search).get("view") === "agent-terminal";
+}
+
+export function getInitialAgentTerminalSessionId() {
+  const injectedSessionId = (window as OrchestraWindowGlobals).__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__;
+  if (typeof injectedSessionId === "string" && injectedSessionId.length > 0) {
+    return injectedSessionId;
+  }
+  return new URLSearchParams(window.location.search).get("sessionId");
+}
+
 function sessionStorageKey() {
   return `${SESSION_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
 }
@@ -1276,7 +1302,7 @@ export async function openLogsWindow(): Promise<void> {
 
 export async function isCurrentLogsWindow(): Promise<boolean> {
   if (!isTauriAvailable()) {
-    return new URLSearchParams(window.location.search).get("view") === "logs";
+    return getInitialLogsWindowFlag();
   }
 
   const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -1285,7 +1311,7 @@ export async function isCurrentLogsWindow(): Promise<boolean> {
 
 export async function isCurrentAgentTerminalWindow(): Promise<boolean> {
   if (!isTauriAvailable()) {
-    return new URLSearchParams(window.location.search).get("view") === "agent-terminal";
+    return getInitialAgentTerminalWindowFlag();
   }
 
   const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -1294,7 +1320,7 @@ export async function isCurrentAgentTerminalWindow(): Promise<boolean> {
 
 export async function getCurrentAgentTerminalSessionId(): Promise<string | null> {
   if (!isTauriAvailable()) {
-    return new URLSearchParams(window.location.search).get("sessionId");
+    return getInitialAgentTerminalSessionId();
   }
 
   const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");

@@ -204,7 +204,13 @@ pub async fn open_agent_session_terminal(
 
     state.set_terminal_window(&session_id, &window_label)?;
 
+    let initialization_script = format!(
+        "window.__ORCHESTRA_WINDOW_KIND__ = 'agent-terminal'; window.__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__ = {};",
+        serde_json::to_string(&session_id).map_err(|error| format!("Unable to serialize agent terminal session id: {error}"))?
+    );
+
     let window = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App(PathBuf::from("index.html")))
+        .initialization_script(initialization_script)
         .title(&format!("{} · Terminal", detail.agent.name))
         .inner_size(1180.0, 820.0)
         .resizable(true)
