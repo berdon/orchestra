@@ -228,6 +228,8 @@ pub struct SessionRecord {
     pub updated_at: String,
     pub subscribed: bool,
     pub events: Vec<SessionEvent>,
+    #[serde(default)]
+    pub terminal_attached: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug_info: Option<SessionDebugInfo>,
 }
@@ -326,6 +328,10 @@ pub struct AgentRuntimeState {
     pub current_queue_entry_id: Option<String>,
     pub last_dispatch_at: Option<String>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub terminal_attached: bool,
+    pub terminal_pid: Option<u32>,
+    pub terminal_opened_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

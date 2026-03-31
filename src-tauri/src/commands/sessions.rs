@@ -141,6 +141,9 @@ fn decorate_session_record_with_connection(
     mut record: SessionRecord,
 ) -> Result<SessionRecord, String> {
     record.debug_info = load_session_debug_info(connection, &record.id)?;
+    record.terminal_attached = crate::services::agent_runtime::reconcile_agent_terminal_state_for_session(connection, &record.id)?
+        .map(|runtime_state| runtime_state.terminal_attached)
+        .unwrap_or(false);
 
     let is_persistent_agent_session = connection
         .query_row(
@@ -260,12 +263,14 @@ pub async fn get_session_record(
 ) -> Result<SessionRecord, String> {
     let subscribed = state.subscribed_session_ids()?.contains(&session_id);
     let session_id_for_task = session_id.clone();
-    spawn_blocking(move || {
+    let mut record = spawn_blocking(move || {
         let context = find_session_context_for_session(&session_id_for_task)?;
         load_decorated_session_record(&context.session_dir, &session_id_for_task, subscribed)
     })
     .await
-    .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
+    .map_err(|error| format!("Unable to join get_session_record task: {error}"))??;
+    record.terminal_attached = state.reconcile_terminal_session_attachment(&record.id)?.is_some();
+    Ok(record)
 }
 
 #[tauri::command]
@@ -678,6 +683,7 @@ mod tests {
                 message: "hello".into(),
                 timestamp: "2026-03-21T00:00:00Z".into(),
             }],
+            terminal_attached: false,
             debug_info: None,
         }
     }

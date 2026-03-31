@@ -13,6 +13,7 @@ pub struct AppState {
     subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
     pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    terminal_session_attachments: Mutex<HashMap<String, u32>>,
     pub dispatcher_tick_active: Mutex<bool>,
     pub tool_bridge: Arc<ToolBridgeConfig>,
 }
@@ -49,6 +50,7 @@ impl AppState {
             subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
             session_runtimes: Mutex::new(HashMap::new()),
+            terminal_session_attachments: Mutex::new(HashMap::new()),
             dispatcher_tick_active: Mutex::new(false),
             tool_bridge,
         }
@@ -90,11 +92,7 @@ impl AppState {
         );
     }
 
-    pub fn set_session_subscription(
-        &self,
-        session_id: &str,
-        subscribed: bool,
-    ) -> Result<(), String> {
+    pub fn set_session_subscription(&self, session_id: &str, subscribed: bool) -> Result<(), String> {
         let mut sessions = self
             .subscribed_sessions
             .lock()
@@ -136,10 +134,7 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access active session run state".to_string())?;
 
-        if active_runs
-            .get(session_id)
-            .is_some_and(|current| current == run_id)
-        {
+        if active_runs.get(session_id).is_some_and(|current| current == run_id) {
             active_runs.remove(session_id);
         }
 
@@ -161,10 +156,49 @@ impl AppState {
             .map_err(|_| "Unable to access active session run state".to_string())
     }
 
+    pub fn set_terminal_session_attachment(&self, session_id: &str, pid: u32) -> Result<(), String> {
+        self.terminal_session_attachments
+            .lock()
+            .map_err(|_| "Unable to access terminal session attachment state".to_string())?
+            .insert(session_id.to_string(), pid);
+        Ok(())
+    }
+
+    pub fn reconcile_terminal_session_attachment(&self, session_id: &str) -> Result<Option<u32>, String> {
+        let mut attachments = self
+            .terminal_session_attachments
+            .lock()
+            .map_err(|_| "Unable to access terminal session attachment state".to_string())?;
+        let Some(pid) = attachments.get(session_id).copied() else {
+            return Ok(None);
+        };
+        let status_path = format!("/proc/{pid}/status");
+        let is_live = std::fs::read_to_string(&status_path)
+            .map(|status| !status.contains("State:\tZ") && !status.contains("State:\tX"))
+            .unwrap_or(false);
+        if is_live {
+            return Ok(Some(pid));
+        }
+        attachments.remove(session_id);
+        Ok(None)
+    }
+
+    pub fn clear_terminal_session_attachment(&self, session_id: &str) -> Result<(), String> {
+        self.terminal_session_attachments
+            .lock()
+            .map_err(|_| "Unable to access terminal session attachment state".to_string())?
+            .remove(session_id);
+        Ok(())
+    }
+
     pub fn clear_session_tracking(&self, session_id: &str) -> Result<(), String> {
         self.subscribed_sessions
             .lock()
             .map_err(|_| "Unable to access session subscription state".to_string())?
+            .remove(session_id);
+        self.terminal_session_attachments
+            .lock()
+            .map_err(|_| "Unable to access terminal session attachment state".to_string())?
             .remove(session_id);
         self.active_session_runs
             .lock()
@@ -173,10 +207,7 @@ impl AppState {
         Ok(())
     }
 
-    pub fn remove_session_runtime(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<Arc<SessionRuntime>>, String> {
+    pub fn remove_session_runtime(&self, session_id: &str) -> Result<Option<Arc<SessionRuntime>>, String> {
         self.session_runtimes
             .lock()
             .map_err(|_| "Unable to access session runtime state".to_string())

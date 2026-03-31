@@ -50,6 +50,28 @@ test("command palette can jump directly to a workflow definition", async ({ page
   await expect(page.getByRole("heading", { name: "Development" })).toBeVisible();
 });
 
+test("command palette can open an idle agent in terminal mode and lock the session chat", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("data");
+  await page.locator('[data-role="command-palette-item"]').filter({ hasText: 'Open Data in terminal' }).first().click();
+
+  await expect(page.getByRole("button", { name: "Sessions" })).toHaveClass(/nav-item--active/);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
+  await expect(page.locator('[data-role="send-message"]')).toBeDisabled();
+  await expect(page.getByText(/currently attached to a terminal window/i)).toBeVisible();
+
+  const storedState = await page.evaluate(() => {
+    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
+    return sessions.find((entry: { title: string }) => entry.title === "Data main session") ?? null;
+  });
+  expect(storedState?.terminalAttached).toBe(true);
+});
+
 test("command palette can open the new task flow and closes with escape", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

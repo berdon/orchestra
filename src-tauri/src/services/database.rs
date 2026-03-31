@@ -532,6 +532,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_roles_table_columns(connection)?;
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
+    ensure_agent_runtime_state_columns(connection)?;
     ensure_tasks_table_columns(connection)?;
     ensure_task_comments_table_columns(connection)?;
     ensure_mailbox_tables(connection)?;
@@ -794,6 +795,46 @@ fn ensure_roles_slug_index(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to create unique roles slug index: {error}"))?;
+    Ok(())
+}
+
+fn ensure_agent_runtime_state_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "agent_runtime_states")?;
+
+    if !columns.contains("terminal_attached") {
+        connection
+            .execute(
+                "ALTER TABLE agent_runtime_states ADD COLUMN terminal_attached INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("Unable to add terminal_attached column to agent_runtime_states: {error}"))?;
+    }
+
+    if !columns.contains("terminal_pid") {
+        connection
+            .execute(
+                "ALTER TABLE agent_runtime_states ADD COLUMN terminal_pid INTEGER",
+                [],
+            )
+            .map_err(|error| format!("Unable to add terminal_pid column to agent_runtime_states: {error}"))?;
+    }
+
+    if !columns.contains("terminal_opened_at") {
+        connection
+            .execute(
+                "ALTER TABLE agent_runtime_states ADD COLUMN terminal_opened_at TEXT",
+                [],
+            )
+            .map_err(|error| format!("Unable to add terminal_opened_at column to agent_runtime_states: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "UPDATE agent_runtime_states SET terminal_attached = 0 WHERE terminal_attached IS NULL",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill terminal_attached for agent_runtime_states: {error}"))?;
+
     Ok(())
 }
 

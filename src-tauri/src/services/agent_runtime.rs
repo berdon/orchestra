@@ -53,7 +53,7 @@ pub fn get_agent_operations_for_project(
     agent_id: &str,
 ) -> Result<AgentOperationsDetail, String> {
     let agent = agents::get_agent(connection, agent_id)?;
-    let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    let runtime_state = reconcile_agent_terminal_state_for_project(connection, project_id, agent_id)?;
     let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
     Ok(AgentOperationsDetail {
@@ -120,7 +120,7 @@ pub fn get_agent_runtime_state_for_project(
     connection
         .query_row(
             r#"
-            SELECT project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at
+            SELECT project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, terminal_attached, terminal_pid, terminal_opened_at, created_at, updated_at
             FROM agent_runtime_states
             WHERE project_id = ?1 AND agent_id = ?2
             "#,
@@ -472,6 +472,86 @@ pub fn update_agent_runtime_dispatch_state_for_project(
         .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after update"))
 }
 
+pub fn update_agent_terminal_state_for_project(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+    attached: bool,
+    pid: Option<u32>,
+    opened_at: Option<&str>,
+) -> Result<AgentRuntimeState, String> {
+    let now = now_iso();
+    connection
+        .execute(
+            r#"
+            UPDATE agent_runtime_states
+            SET terminal_attached = ?3,
+                terminal_pid = ?4,
+                terminal_opened_at = ?5,
+                updated_at = ?6
+            WHERE project_id = ?1 AND agent_id = ?2
+            "#,
+            params![
+                project_id,
+                agent_id,
+                if attached { 1 } else { 0 },
+                pid,
+                if attached { opened_at } else { None },
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to update agent terminal state for {agent_id} in project {project_id}: {error}"))?;
+
+    get_agent_runtime_state_for_project(connection, project_id, agent_id)?
+        .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after terminal update"))
+}
+
+pub fn reconcile_agent_terminal_state_for_project(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<AgentRuntimeState, String> {
+    let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    if !runtime_state.terminal_attached {
+        return Ok(runtime_state);
+    }
+
+    let is_alive = runtime_state
+        .terminal_pid
+        .map(|pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/status"))
+                .map(|status| !status.contains("State:\tZ") && !status.contains("State:\tX"))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    if is_alive {
+        return Ok(runtime_state);
+    }
+
+    update_agent_terminal_state_for_project(connection, project_id, agent_id, false, None, None)
+}
+
+pub fn reconcile_agent_terminal_state_for_session(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<Option<AgentRuntimeState>, String> {
+    let binding = connection
+        .query_row(
+            "SELECT project_id, agent_id FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
+            [session_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to resolve agent terminal state for session {session_id}: {error}"))?;
+
+    let Some((project_id, agent_id)) = binding else {
+        return Ok(None);
+    };
+
+    reconcile_agent_terminal_state_for_project(connection, &project_id, &agent_id).map(Some)
+}
+
 pub fn reconcile_agent_runtime_states(connection: &Connection) -> Result<(), String> {
     let now = now_iso();
     connection
@@ -486,6 +566,17 @@ pub fn reconcile_agent_runtime_states(connection: &Connection) -> Result<(), Str
             [now],
         )
         .map_err(|error| format!("Unable to reconcile agent runtime states: {error}"))?;
+
+    let bindings = connection
+        .prepare("SELECT project_id, agent_id FROM agent_runtime_states WHERE terminal_attached = 1")
+        .map_err(|error| format!("Unable to prepare agent terminal reconciliation query: {error}"))?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|error| format!("Unable to query terminal-attached agents: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect terminal-attached agents: {error}"))?;
+    for (project_id, agent_id) in bindings {
+        let _ = reconcile_agent_terminal_state_for_project(connection, &project_id, &agent_id)?;
+    }
     Ok(())
 }
 
@@ -495,7 +586,7 @@ fn build_agent_operations_snapshot(
     agent_id: &str,
 ) -> Result<AgentOperationsSnapshot, String> {
     let agent = agents::get_agent(connection, agent_id)?;
-    let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    let runtime_state = reconcile_agent_terminal_state_for_project(connection, project_id, agent_id)?;
     let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
     Ok(AgentOperationsSnapshot {
@@ -564,8 +655,11 @@ fn read_agent_runtime_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRu
         current_queue_entry_id: row.get(5)?,
         last_dispatch_at: row.get(6)?,
         last_error: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        terminal_attached: row.get::<_, i64>(8)? != 0,
+        terminal_pid: row.get(9)?,
+        terminal_opened_at: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 

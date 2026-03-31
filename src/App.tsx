@@ -22,7 +22,7 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
-import { ensureAgentSession, listAgentOperations } from "./lib/agents";
+import { ensureAgentSession, listAgentOperations, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
@@ -477,6 +477,7 @@ export function App() {
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [draftMessages, setDraftMessages] = useState<Record<string, string>>({});
+  const [terminalAttachedSessions, setTerminalAttachedSessions] = useState<Record<string, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingSessionRun>>({});
   const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
@@ -515,6 +516,9 @@ export function App() {
   );
 
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
+  const selectedSessionTerminalAttached = selectedSession
+    ? Boolean(selectedSession.terminalAttached) || Boolean(terminalAttachedSessions[selectedSession.id])
+    : false;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
   const displayedEvents = selectedSession?.events ?? [];
   const selectedSessionDraftMessage = selectedSession ? draftMessages[selectedSession.id] ?? "" : "";
@@ -765,6 +769,14 @@ export function App() {
 
     try {
       const nextSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
+      setTerminalAttachedSessions((current) => {
+        const attachedIds = new Set(nextSessions.filter((session) => session.terminalAttached).map((session) => session.id));
+        return Object.fromEntries(
+          Object.keys(current)
+            .filter((sessionId) => attachedIds.has(sessionId))
+            .map((sessionId) => [sessionId, true]),
+        );
+      });
       setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
       setSelectedSessionId((current) => {
         const nextSelectedSessionId = current && nextSessions.some((session) => session.id === current)
@@ -1586,6 +1598,37 @@ export function App() {
     }
   }
 
+  async function handleOpenAgentSessionTerminal(agentId: string) {
+    setSessionActionError(null);
+    try {
+      const runtimeState = await openAgentSessionInTerminal(agentId, activeProject?.id ?? null);
+      if (runtimeState.mainSessionId) {
+        const session = normalizeSessionRecord(await getSessionRecord(runtimeState.mainSessionId));
+        setTerminalAttachedSessions((current) => ({ ...current, [runtimeState.mainSessionId!]: true }));
+        mergeSessionRecord({ ...session, terminalAttached: true, subscribed: false }, { select: true });
+        await loadSessions({ background: true });
+        setActivePage("sessions");
+        setSelectedSessionId(session.id);
+      }
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to open agent session in a terminal window.");
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedSession) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadSessions({ background: true });
+    }, 1500);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [selectedSession?.id]);
+
   async function refreshCommandPaletteItems() {
     setCommandPaletteLoading(true);
     try {
@@ -1667,6 +1710,9 @@ export function App() {
         return;
       case "launch-agent-session":
         await handleOpenAgentSession(item.action.agentId);
+        return;
+      case "launch-agent-session-terminal":
+        await handleOpenAgentSessionTerminal(item.action.agentId);
         return;
       default:
         return;
@@ -1946,6 +1992,7 @@ export function App() {
             key={activeProject?.id ?? "default"}
             activeProjectId={activeProject?.id ?? null}
             onOpenAgentSession={(agentId) => void handleOpenAgentSession(agentId)}
+            onOpenAgentSessionTerminal={(agentId) => void handleOpenAgentSessionTerminal(agentId)}
             selectedWorkerRequest={agentsSelectionRequest}
           />
         ) : activePage === "sessions" ? (
@@ -1956,6 +2003,7 @@ export function App() {
             selectedSession={selectedSession}
             displayedEvents={displayedEvents}
             selectedSessionPending={Boolean(selectedSessionPendingRun)}
+            selectedSessionTerminalAttached={selectedSessionTerminalAttached}
             selectedSessionDisplayStatus={selectedSessionDisplayStatus}
             selectedModelState={selectedModelState}
             loadingSessions={loadingSessions}
