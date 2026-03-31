@@ -21,11 +21,10 @@ import type {
 interface AgentsPageProps {
   activeProjectId?: string | null;
   selectedWorkerRequest?: { type: "role" | "agent"; id: string; token: number } | null;
-  onOpenAgentSession: (agentId: string) => Promise<void> | void;
-  onOpenAgentSessionTerminal: (agentId: string) => Promise<void> | void;
+  onOpenAgentSession: (agentId: string) => void;
 }
 
-export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession, onOpenAgentSessionTerminal }: AgentsPageProps) {
+export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession }: AgentsPageProps) {
   const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
@@ -133,20 +132,6 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
     selectedWorkerRequestTokenRef.current = selectedWorkerRequest.token;
     setSelectedWorker({ type: selectedWorkerRequest.type, id: selectedWorkerRequest.id });
   }, [selectedWorkerRequest]);
-
-  useEffect(() => {
-    const hasTerminalAttachedAgent = agentSnapshots.some((snapshot) => snapshot.runtimeState.terminalAttached);
-    if (!hasTerminalAttachedAgent) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      void loadWorkforce();
-    }, 1500);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [agentSnapshots]);
 
   async function refreshSelectedRole(roleId: string) {
     const [roleOps, detail, nextAgentSnapshots] = await Promise.all([listRoleOperations(), getRoleOperations(roleId), listAgentOperations(false, activeProjectId)]);
@@ -278,7 +263,6 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
               })
             }
             onOpenSession={onOpenAgentSession}
-            onOpenSessionTerminal={onOpenAgentSessionTerminal}
           />
         ) : (
           <div className="empty-state">

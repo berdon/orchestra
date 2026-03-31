@@ -6,8 +6,7 @@ type AgentWorkFilter = "queued" | "active" | "completed";
 
 interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
-  onOpenSession: (agentId: string) => void | Promise<void>;
-  onOpenSessionTerminal: (agentId: string) => void | Promise<void>;
+  onOpenSession: (agentId: string) => void;
   onDeleteQueuedEntry: (queueEntryId: string) => void;
   busy?: boolean;
 }
@@ -25,7 +24,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, busy = false }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, onOpenSession, onDeleteQueuedEntry, busy = false }: AgentOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -53,23 +52,13 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
               className="primary-button"
               data-role="open-agent-session"
               type="button"
-              onClick={() => void onOpenSession(detail.agent.id)}
+              onClick={() => onOpenSession(detail.agent.id)}
             >
               {detail.runtimeState.mainSessionId ? "Open session" : "Launch session"}
-            </button>
-            <button
-              className="secondary-button"
-              data-role="open-agent-session-terminal"
-              type="button"
-              disabled={busy || detail.runtimeState.terminalAttached || detail.runtimeState.status === "running"}
-              onClick={() => void onOpenSessionTerminal(detail.agent.id)}
-            >
-              {detail.runtimeState.terminalAttached ? "Terminal attached" : "Open in terminal"}
             </button>
             <span className={`status-badge status-badge--${detail.runtimeState.status === "running" ? "success" : detail.runtimeState.status === "needs_attention" ? "error" : "neutral"}`}>
               {detail.runtimeState.status}
             </span>
-            {detail.runtimeState.terminalAttached ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
           </div>
         </div>
 
@@ -90,10 +79,6 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
             <span className="metric-card__label">Runtime cwd</span>
             <strong>{detail.runtimeState.runtimeCwd ?? "—"}</strong>
           </article>
-          <article className="metric-card">
-            <span className="metric-card__label">Terminal</span>
-            <strong>{detail.runtimeState.terminalAttached ? `Attached (${detail.runtimeState.terminalPid ?? "pid?"})` : "—"}</strong>
-          </article>
         </div>
       </section>
 
@@ -106,7 +91,6 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
         <div className="workforce-meta-grid muted-copy">
           <span>Last dispatch: {formatDateTime(detail.runtimeState.lastDispatchAt)}</span>
           <span>Current queue entry: {detail.runtimeState.currentQueueEntryId ?? "—"}</span>
-          <span>Terminal opened: {formatDateTime(detail.runtimeState.terminalOpenedAt)}</span>
           <span>Updated: {formatDateTime(detail.runtimeState.updatedAt)}</span>
           <span>Created: {formatDateTime(detail.runtimeState.createdAt)}</span>
         </div>

@@ -21,8 +21,7 @@ export type CommandPaletteAction =
   | { type: "create-session" }
   | { type: "open-logs" }
   | { type: "open-supervisor-chat" }
-  | { type: "launch-agent-session"; agentId: string }
-  | { type: "launch-agent-session-terminal"; agentId: string };
+  | { type: "launch-agent-session"; agentId: string };
 
 export interface CommandPaletteItem extends FuzzySearchCandidate {
   title: string;
@@ -187,16 +186,6 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       group: "Actions",
       keywords: [snapshot.agent.name, snapshot.agent.slug, "launch", "agent", "session"],
       action: { type: "launch-agent-session", agentId: snapshot.agent.id },
-    }),
-    commandItem({
-      id: `agent-terminal-${snapshot.agent.id}`,
-      title: `Open ${snapshot.agent.name} in terminal`,
-      subtitle: snapshot.runtimeState.terminalAttached
-        ? "Terminal already attached to this agent session"
-        : "Open the idle persistent agent session in a terminal window",
-      group: "Actions",
-      keywords: [snapshot.agent.name, snapshot.agent.slug, "terminal", "ghostty", "agent", "session"],
-      action: { type: "launch-agent-session-terminal", agentId: snapshot.agent.id },
     }),
   ]);
 

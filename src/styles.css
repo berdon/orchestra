@@ -1634,51 +1634,6 @@ strong {
   position: relative;
 }
 
-.inline-menu {
-  position: relative;
-  display: inline-flex;
-  gap: 6px;
-}
-
-.inline-menu__popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
-  min-width: 200px;
-  display: grid;
-  gap: 4px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: white;
-  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
-}
-
-.inline-menu__item {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.inline-menu__item:hover,
-.inline-menu__item:focus-visible {
-  background: var(--accent-soft);
-  border-color: var(--accent-soft);
-}
-
-.inline-menu__item:disabled {
-  color: var(--text-muted);
-  cursor: not-allowed;
-  background: transparent;
-  border-color: transparent;
-}
-
 .task-action-menu__dropdown {
   position: absolute;
   top: calc(100% + 8px);

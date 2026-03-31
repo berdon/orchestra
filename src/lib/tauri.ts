@@ -435,7 +435,6 @@ export function createMockSessionRecord(title: string, openingAssistantMessage: 
     createdAt: timestamp,
     updatedAt: timestamp,
     subscribed: false,
-    terminalAttached: false,
     events: [
       createEvent("system", `${title} created from Orchestra runtime.`),
       createEvent("assistant", openingAssistantMessage),

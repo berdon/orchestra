@@ -43,7 +43,6 @@ interface SessionsPageProps {
   selectedSession: SessionRecord | null;
   displayedEvents: SessionEvent[];
   selectedSessionPending: boolean;
-  selectedSessionTerminalAttached: boolean;
   selectedSessionDisplayStatus: SessionStatus;
   selectedModelState?: SessionModelState;
   loadingSessions: boolean;
@@ -74,7 +73,6 @@ export function SessionsPage({
   selectedSession,
   displayedEvents,
   selectedSessionPending,
-  selectedSessionTerminalAttached,
   selectedSessionDisplayStatus,
   selectedModelState,
   loadingSessions,
@@ -307,23 +305,17 @@ export function SessionsPage({
                       className="text-area"
                       data-role="composer-input"
                       rows={4}
-                      placeholder={selectedSessionTerminalAttached ? "Terminal-attached sessions are read-only here…" : "Tell the session what to do next…"}
+                      placeholder="Tell the session what to do next…"
                       value={draftMessage}
-                      disabled={selectedSessionTerminalAttached}
-                      readOnly={selectedSessionTerminalAttached}
                       onChange={handleDraftChange}
                       onKeyDown={handleComposerKeyDown}
                     />
                   </label>
                   <div className="composer__footer">
                     <div className="composer__meta">
-                      {selectedSessionTerminalAttached ? (
-                        <p className="muted-copy">This session is currently attached to a terminal window. Close the terminal to resume chat here.</p>
-                      ) : (
-                        <p className="muted-copy">
-                          {selectedSessionPending ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
-                        </p>
-                      )}
+                      <p className="muted-copy">
+                        {selectedSessionPending ? "Response in progress…" : "Press Ctrl+Enter or ⌘+Enter to send."}
+                      </p>
                       <div className="session-detail__meta session-detail__meta--footer">
                         <span>Created {formatDateTime(selectedSession.createdAt)}</span>
                         <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
@@ -338,8 +330,7 @@ export function SessionsPage({
                           disabled={
                             loadingModelSessionId === selectedSession.id ||
                             changingModelSessionId === selectedSession.id ||
-                            selectedSessionPending ||
-                            selectedSessionTerminalAttached
+                            selectedSessionPending
                           }
                           onChange={(event) => onModelChange(event.target.value)}
                         >
@@ -357,7 +348,7 @@ export function SessionsPage({
                         className="secondary-button"
                         data-role="stop-session-runtime"
                         type="button"
-                        disabled={!selectedSessionPending || selectedSessionTerminalAttached}
+                        disabled={!selectedSessionPending}
                         onClick={onStopSession}
                       >
                         Stop
@@ -366,7 +357,7 @@ export function SessionsPage({
                         className="primary-button"
                         data-role="send-message"
                         type="submit"
-                        disabled={selectedSessionTerminalAttached || draftMessage.trim().length === 0}
+                        disabled={draftMessage.trim().length === 0}
                       >
                         Send
                       </button>

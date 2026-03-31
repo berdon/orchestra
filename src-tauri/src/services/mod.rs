@@ -1,7 +1,6 @@
 pub mod agent_dispatch;
 pub mod agent_files;
 pub mod agent_runtime;
-pub mod agent_terminal;
 pub mod agents;
 pub mod app_events;
 pub mod auth_bootstrap;
