@@ -590,6 +590,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
             updated_at,
             subscribed,
             events,
+            terminal_attached: false,
             debug_info: None,
         },
     })

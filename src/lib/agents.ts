@@ -418,6 +418,9 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
               mainSessionId: session.id,
               runtimeCwd: entry.runtimeCwd ?? getProjectRuntimeCwd(activeProjectId()),
               status: entry.currentQueueEntryId ? "running" : "idle",
+              terminalAttached: entry.terminalAttached ?? false,
+              terminalPid: entry.terminalPid ?? null,
+              terminalOpenedAt: entry.terminalOpenedAt ?? null,
               updatedAt: nowIso(),
             }
           : entry,
@@ -429,6 +432,33 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
   }
 
   return invoke<SessionRecord>("ensure_agent_session", { agentId, projectId: projectId ?? null });
+}
+
+export async function openAgentSessionInTerminal(agentId: string, projectId?: string | null): Promise<AgentRuntimeState> {
+  if (!isTauriAvailable()) {
+    const runtime = ensureMockAgentRuntime(agentId);
+    const session = await ensureAgentSession(agentId, projectId);
+    const updatedRuntime: AgentRuntimeState = {
+      ...runtime,
+      mainSessionId: session.id,
+      terminalAttached: true,
+      terminalPid: 4242,
+      terminalOpenedAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    saveStoredAgentRuntimes(
+      getStoredAgentRuntimes().map((entry) =>
+        entry.agentId === agentId && entry.projectId === activeProjectId()
+          ? updatedRuntime
+          : entry,
+      ),
+    );
+    upsertMockSession({ ...session, subscribed: false, terminalAttached: true, updatedAt: nowIso() });
+    emitMockSessionChange({ sessionIds: [session.id], reason: "sessions.terminal.attach" });
+    return updatedRuntime;
+  }
+
+  return invoke<AgentRuntimeState>("open_agent_session_terminal", { agentId, projectId: projectId ?? null });
 }
 
 export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry> {

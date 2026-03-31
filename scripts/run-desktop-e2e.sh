@@ -51,6 +51,7 @@ run_inner() {
   export CARGO_HOME="${REAL_HOME}/.cargo"
   export NPM_CONFIG_CACHE="${TEST_HOME}/.npm"
   export PATH="/workspace/orchestra/node_modules/.bin:${PATH}"
+  export ORCHESTRA_AGENT_TERMINAL_TEMPLATE="${ORCHESTRA_AGENT_TERMINAL_TEMPLATE:-sleep 8}"
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
   rm -rf "${TEST_HOME}/.pi"
   if [[ -d "${REAL_HOME}/.pi" ]]; then
@@ -114,6 +115,7 @@ run_inner() {
   fi
 
   ORCHESTRA_DESKTOP_E2E=1 \
+  ORCHESTRA_AGENT_TERMINAL_TEMPLATE="${ORCHESTRA_AGENT_TERMINAL_TEMPLATE:-sleep 8}" \
   ORCHESTRA_TAURI_BINARY="${BINARY_PATH}" \
   ORCHESTRA_TEST_HOME="${TEST_HOME}" \
   ORCHESTRA_WEBDRIVER_URL="http://127.0.0.1:${WEBDRIVER_PORT}" \

@@ -6,7 +6,7 @@ mod state;
 use commands::{
     agent_runtime::{
         delete_agent_queue_entry, enqueue_agent_work, ensure_agent_session,
-        get_agent_operations, list_agent_operations,
+        get_agent_operations, list_agent_operations, open_agent_session_terminal,
     },
     agents::{
         archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent,
@@ -140,6 +140,7 @@ pub fn run() {
             enqueue_agent_work,
             delete_agent_queue_entry,
             ensure_agent_session,
+            open_agent_session_terminal,
             get_agent,
             validate_agent,
             create_agent,
