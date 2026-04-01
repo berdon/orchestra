@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FitAddon, Terminal, init as initGhostty } from "ghostty-web";
+import { FitAddon, Terminal, init as initGhostty } from "../vendor/ghostty-web/ghostty-web";
 
 import { getSessionRecord } from "../lib/tauri";
 import { getAgentTerminalBuffer, resizeAgentTerminal, shutdownAgentTerminalSession, writeAgentTerminalInput } from "../lib/agents";
