@@ -5,7 +5,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::{
-    ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryUpsertInput,
+    ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryRemoteInput,
+    RepositoryUpsertInput,
 };
 use crate::services::orchestra_paths::{
     default_orchestra_root, managed_repository_checkout_dir, managed_repository_root, project_root,
@@ -70,7 +71,10 @@ pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectD
         .ok_or_else(|| format!("Project {project_id} was not found"))?;
 
     let repositories = list_repositories(connection, Some(project_id))?;
-    Ok(ProjectDetail { repositories, ..project })
+    Ok(ProjectDetail {
+        repositories,
+        ..project
+    })
 }
 
 pub fn create_project(
@@ -128,14 +132,14 @@ pub fn list_repositories(
     ensure_default_project(connection)?;
     let sql = if project_id.is_some() {
         r#"
-        SELECT id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at
+        SELECT id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at
         FROM repositories
         WHERE project_id = ?1
         ORDER BY updated_at DESC, name ASC
         "#
     } else {
         r#"
-        SELECT id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at
+        SELECT id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at
         FROM repositories
         ORDER BY updated_at DESC, name ASC
         "#
@@ -147,7 +151,9 @@ pub fn list_repositories(
     let rows = if let Some(project_id) = project_id {
         statement
             .query_map([project_id], read_repository)
-            .map_err(|error| format!("Unable to query repositories for project {project_id}: {error}"))?
+            .map_err(|error| {
+                format!("Unable to query repositories for project {project_id}: {error}")
+            })?
     } else {
         statement
             .query_map([], read_repository)
@@ -167,33 +173,47 @@ pub fn create_repository(
     if normalized.name.is_empty() {
         return Err("Repository name is required.".into());
     }
-    if normalized.repository_path.is_none() {
-        return Err("Repository path is required.".into());
+
+    let mode = normalized.mode.as_deref().unwrap_or("existing");
+    if mode == "existing" && normalized.repository_path.is_none() {
+        return Err("Repository path is required when adding an existing repository.".into());
     }
 
     let project = get_project(connection, project_id)?;
     let repository_id = format!("repo-{}", Uuid::new_v4().simple());
     let slug = unique_repository_slug(connection, project_id, &normalized.name, None)?;
-    let source_path = normalized
-        .repository_path
-        .as_deref()
-        .expect("validated repository path");
     let managed_checkout_dir = ensure_managed_repository_checkout(
         &project,
         &slug,
-        source_path,
+        normalized.repository_path.as_deref(),
         normalized.default_branch.as_deref().unwrap_or("main"),
     )?;
+    let source_path = if mode == "existing" {
+        normalized.repository_path.clone()
+    } else {
+        None
+    };
     let now = now_iso();
     connection
         .execute(
             r#"
-            INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+            INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
             "#,
-            params![repository_id, project_id, slug, normalized.name, managed_checkout_dir.display().to_string(), Some(source_path.to_string()), normalized.default_branch, now],
+            params![repository_id, project_id, slug, normalized.name, managed_checkout_dir.display().to_string(), source_path, mode, normalized.default_branch, now],
         )
         .map_err(|error| format!("Unable to create repository: {error}"))?;
+
+    if project.default_repository_id.is_none() {
+        connection
+            .execute(
+                "UPDATE projects SET default_repository_id = ?2, updated_at = ?3 WHERE id = ?1",
+                params![project_id, repository_id, now],
+            )
+            .map_err(|error| {
+                format!("Unable to set default repository for project {project_id}: {error}")
+            })?;
+    }
 
     get_repository(connection, &repository_id)
 }
@@ -209,24 +229,109 @@ pub fn update_repository(
     let slug = if sanitize_slug(&normalized.name) == sanitize_slug(&existing.name) {
         existing.slug.clone()
     } else {
-        unique_repository_slug(connection, &existing.project_id, &normalized.name, Some(repository_id))?
+        unique_repository_slug(
+            connection,
+            &existing.project_id,
+            &normalized.name,
+            Some(repository_id),
+        )?
     };
-    let source_path = normalized
-        .repository_path
+    let mode = normalized
+        .mode
         .as_deref()
-        .expect("validated repository path");
+        .unwrap_or(existing.mode.as_deref().unwrap_or("existing"));
+    let source_path = if mode == "existing" {
+        normalized
+            .repository_path
+            .clone()
+            .or(existing.source_path.clone())
+    } else {
+        existing.source_path.clone()
+    };
+    if mode == "existing" && source_path.is_none() {
+        return Err("Repository path is required when updating an existing repository.".into());
+    }
     let managed_checkout_dir = ensure_managed_repository_checkout(
         &project,
         &slug,
-        source_path,
-        normalized.default_branch.as_deref().unwrap_or("main"),
+        if mode == "existing" {
+            source_path.as_deref()
+        } else {
+            None
+        },
+        normalized
+            .default_branch
+            .as_deref()
+            .or(existing.default_branch.as_deref())
+            .unwrap_or("main"),
     )?;
     connection
         .execute(
-            "UPDATE repositories SET slug = ?2, name = ?3, local_path = ?4, remote_url = ?5, default_branch = ?6, updated_at = ?7 WHERE id = ?1",
-            params![repository_id, slug, normalized.name, managed_checkout_dir.display().to_string(), Some(source_path.to_string()), normalized.default_branch, now_iso()],
+            "UPDATE repositories SET slug = ?2, name = ?3, local_path = ?4, remote_url = ?5, mode = ?6, default_branch = ?7, updated_at = ?8 WHERE id = ?1",
+            params![repository_id, slug, normalized.name, managed_checkout_dir.display().to_string(), source_path, mode, normalized.default_branch.or(existing.default_branch), now_iso()],
         )
         .map_err(|error| format!("Unable to update repository {repository_id}: {error}"))?;
+    get_repository(connection, repository_id)
+}
+
+pub fn attach_repository_remote(
+    connection: &Connection,
+    repository_id: &str,
+    input: RepositoryRemoteInput,
+) -> Result<RepositoryRecord, String> {
+    let repository = get_repository(connection, repository_id)?;
+    let repository_path = repository.repository_path.as_deref().ok_or_else(|| {
+        format!("Repository {repository_id} does not have a managed repository path")
+    })?;
+    let remote_url = input.remote_url.trim();
+    if remote_url.is_empty() {
+        return Err("Remote URL is required.".into());
+    }
+    let remote_name = input
+        .remote_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("origin");
+
+    let repo_dir = PathBuf::from(repository_path);
+    let has_remote = std::process::Command::new("git")
+        .args(["remote", "get-url", remote_name])
+        .current_dir(&repo_dir)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    let status = if has_remote {
+        std::process::Command::new("git")
+            .args(["remote", "set-url", remote_name, remote_url])
+            .current_dir(&repo_dir)
+            .status()
+            .map_err(|error| format!("Unable to update repository remote: {error}"))?
+    } else {
+        std::process::Command::new("git")
+            .args(["remote", "add", remote_name, remote_url])
+            .current_dir(&repo_dir)
+            .status()
+            .map_err(|error| format!("Unable to add repository remote: {error}"))?
+    };
+
+    if !status.success() {
+        return Err(format!(
+            "Unable to configure remote {remote_name} for repository {}",
+            repository.name
+        ));
+    }
+
+    connection
+        .execute(
+            "UPDATE repositories SET remote_url = ?2, updated_at = ?3 WHERE id = ?1",
+            params![repository_id, remote_url, now_iso()],
+        )
+        .map_err(|error| {
+            format!("Unable to persist repository remote for {repository_id}: {error}")
+        })?;
+
     get_repository(connection, repository_id)
 }
 
@@ -255,29 +360,34 @@ pub fn delete_repository(
         return Err("The default Orchestra repository cannot be deleted.".into());
     }
 
-    let fallback_default_repository_id = if project.default_repository_id.as_deref() == Some(repository_id) {
-        project
-            .repositories
-            .iter()
-            .find(|entry| entry.id != repository_id)
-            .map(|entry| entry.id.clone())
-    } else {
-        project.default_repository_id.clone()
-    };
+    let fallback_default_repository_id =
+        if project.default_repository_id.as_deref() == Some(repository_id) {
+            project
+                .repositories
+                .iter()
+                .find(|entry| entry.id != repository_id)
+                .map(|entry| entry.id.clone())
+        } else {
+            project.default_repository_id.clone()
+        };
 
     connection
         .execute(
             "UPDATE tasks SET repository_id = NULL, updated_at = ?2 WHERE repository_id = ?1",
             params![repository_id, now_iso()],
         )
-        .map_err(|error| format!("Unable to clear task repository references for {repository_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to clear task repository references for {repository_id}: {error}")
+        })?;
 
     connection
         .execute(
             "UPDATE projects SET default_repository_id = ?2, updated_at = ?3 WHERE id = ?1",
             params![project.id, fallback_default_repository_id, now_iso()],
         )
-        .map_err(|error| format!("Unable to update project default repository before deletion: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to update project default repository before deletion: {error}")
+        })?;
 
     connection
         .execute("DELETE FROM repositories WHERE id = ?1", [repository_id])
@@ -310,18 +420,25 @@ pub fn delete_project(connection: &Connection, project_id: &str) -> Result<Proje
     let orchestra_root = default_orchestra_root()?;
     let root = project_root(&orchestra_root, &project.slug);
     if root.exists() {
-        fs::remove_dir_all(&root)
-            .map_err(|error| format!("Unable to remove project directory {}: {error}", root.display()))?;
+        fs::remove_dir_all(&root).map_err(|error| {
+            format!(
+                "Unable to remove project directory {}: {error}",
+                root.display()
+            )
+        })?;
     }
 
     Ok(project)
 }
 
-pub fn get_repository(connection: &Connection, repository_id: &str) -> Result<RepositoryRecord, String> {
+pub fn get_repository(
+    connection: &Connection,
+    repository_id: &str,
+) -> Result<RepositoryRecord, String> {
     connection
         .query_row(
             r#"
-            SELECT id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at
+            SELECT id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at
             FROM repositories
             WHERE id = ?1
             "#,
@@ -350,7 +467,12 @@ fn ensure_default_project(connection: &Connection) -> Result<(), String> {
         .and_then(|path| path.parent())
         .and_then(|path| path.parent())
         .map(|path| path.join("orchestra").join("repository"))
-        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf());
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        });
     connection
         .execute(
             "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', ?2, ?3, ?3)",
@@ -359,7 +481,7 @@ fn ensure_default_project(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("Unable to seed default project: {error}"))?;
     connection
         .execute(
-            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'main', ?4, ?4)",
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'existing', 'main', ?4, ?4)",
             params![DEFAULT_REPOSITORY_ID, DEFAULT_PROJECT_ID, default_path.display().to_string(), now],
         )
         .map_err(|error| format!("Unable to seed default repository: {error}"))?;
@@ -370,13 +492,25 @@ fn normalize_project_input(mut input: ProjectUpsertInput) -> ProjectUpsertInput 
     input.name = input.name.trim().to_string();
     input.description = input.description.and_then(|value| {
         let trimmed = value.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     });
     input
 }
 
 fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUpsertInput {
     input.name = input.name.trim().to_string();
+    input.mode = input.mode.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
     input.repository_path = input.repository_path.and_then(|value| {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -384,12 +518,20 @@ fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUps
         } else if is_remote_repository_path(trimmed) {
             Some(trimmed.to_string())
         } else {
-            Some(normalize_repository_local_path(trimmed).display().to_string())
+            Some(
+                normalize_repository_local_path(trimmed)
+                    .display()
+                    .to_string(),
+            )
         }
     });
     input.default_branch = input.default_branch.and_then(|value| {
         let trimmed = value.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     });
     input
 }
@@ -420,7 +562,13 @@ fn is_scp_style_without_user(path: &str) -> bool {
         None => return false,
     };
     // Windows drive letter like "C:" - not a remote
-    if colon_pos == 1 && path.as_bytes().get(0).map(|&b| b.is_ascii_alphabetic()).unwrap_or(false) {
+    if colon_pos == 1
+        && path
+            .as_bytes()
+            .get(0)
+            .map(|&b| b.is_ascii_alphabetic())
+            .unwrap_or(false)
+    {
         return false;
     }
     // After colon should look like a path (contains '/' or '.git' or similar)
@@ -431,19 +579,24 @@ fn is_scp_style_without_user(path: &str) -> bool {
 fn ensure_project_root_exists(project_slug: &str) -> Result<PathBuf, String> {
     let orchestra_root = default_orchestra_root()?;
     let root = project_root(&orchestra_root, project_slug);
-    fs::create_dir_all(&root)
-        .map_err(|error| format!("Unable to create project directory {}: {error}", root.display()))?;
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "Unable to create project directory {}: {error}",
+            root.display()
+        )
+    })?;
     Ok(root)
 }
 
 fn ensure_managed_repository_checkout(
     project: &ProjectDetail,
     repository_slug: &str,
-    source_path: &str,
+    source_path: Option<&str>,
     default_branch: &str,
 ) -> Result<PathBuf, String> {
     let orchestra_root = default_orchestra_root()?;
-    let managed_checkout_dir = managed_repository_checkout_dir(&orchestra_root, &project.slug, repository_slug);
+    let managed_checkout_dir =
+        managed_repository_checkout_dir(&orchestra_root, &project.slug, repository_slug);
     if let Some(parent) = managed_checkout_dir.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -457,38 +610,47 @@ fn ensure_managed_repository_checkout(
         return Ok(managed_checkout_dir);
     }
 
-    if is_remote_repository_path(source_path) {
-        let status = std::process::Command::new("git")
-            .arg("clone")
-            .arg(source_path)
-            .arg(&managed_checkout_dir)
-            .status()
-            .map_err(|error| format!("Unable to clone repository from {source_path}: {error}"))?;
-        if !status.success() {
-            return Err(format!(
-                "Unable to clone repository from {source_path} into {}",
-                managed_checkout_dir.display()
-            ));
+    if let Some(source_path) = source_path {
+        if is_remote_repository_path(source_path) {
+            let status = std::process::Command::new("git")
+                .arg("clone")
+                .arg(source_path)
+                .arg(&managed_checkout_dir)
+                .status()
+                .map_err(|error| {
+                    format!("Unable to clone repository from {source_path}: {error}")
+                })?;
+            if !status.success() {
+                return Err(format!(
+                    "Unable to clone repository from {source_path} into {}",
+                    managed_checkout_dir.display()
+                ));
+            }
+            return Ok(managed_checkout_dir);
         }
-        return Ok(managed_checkout_dir);
-    }
 
-    let source = PathBuf::from(source_path);
-    if source.join(".git").exists() {
-        let status = std::process::Command::new("git")
-            .arg("clone")
-            .arg(source.as_os_str())
-            .arg(&managed_checkout_dir)
-            .status()
-            .map_err(|error| format!("Unable to clone repository from {}: {error}", source.display()))?;
-        if !status.success() {
-            return Err(format!(
-                "Unable to clone repository from {} into {}",
-                source.display(),
-                managed_checkout_dir.display()
-            ));
+        let source = PathBuf::from(source_path);
+        if source.join(".git").exists() {
+            let status = std::process::Command::new("git")
+                .arg("clone")
+                .arg(source.as_os_str())
+                .arg(&managed_checkout_dir)
+                .status()
+                .map_err(|error| {
+                    format!(
+                        "Unable to clone repository from {}: {error}",
+                        source.display()
+                    )
+                })?;
+            if !status.success() {
+                return Err(format!(
+                    "Unable to clone repository from {} into {}",
+                    source.display(),
+                    managed_checkout_dir.display()
+                ));
+            }
+            return Ok(managed_checkout_dir);
         }
-        return Ok(managed_checkout_dir);
     }
 
     std::fs::create_dir_all(&managed_checkout_dir).map_err(|error| {
@@ -503,7 +665,12 @@ fn ensure_managed_repository_checkout(
         .arg(default_branch)
         .current_dir(&managed_checkout_dir)
         .status()
-        .map_err(|error| format!("Unable to initialize managed repository {}: {error}", managed_checkout_dir.display()))?;
+        .map_err(|error| {
+            format!(
+                "Unable to initialize managed repository {}: {error}",
+                managed_checkout_dir.display()
+            )
+        })?;
     if !init_status.success() {
         return Err(format!(
             "Unable to initialize managed repository {}",
@@ -519,7 +686,11 @@ fn ensure_managed_repository_checkout(
         .args(["config", "user.name", "Orchestra"])
         .current_dir(&managed_checkout_dir)
         .status();
-    std::fs::write(managed_checkout_dir.join("README.md"), format!("# {}\n", project.name)).map_err(|error| {
+    std::fs::write(
+        managed_checkout_dir.join("README.md"),
+        format!("# {}\n", project.name),
+    )
+    .map_err(|error| {
         format!(
             "Unable to seed managed repository README in {}: {error}",
             managed_checkout_dir.display()
@@ -537,7 +708,11 @@ fn ensure_managed_repository_checkout(
     Ok(managed_checkout_dir)
 }
 
-fn unique_project_slug(connection: &Connection, name: &str, exclude_project_id: Option<&str>) -> Result<String, String> {
+fn unique_project_slug(
+    connection: &Connection,
+    name: &str,
+    exclude_project_id: Option<&str>,
+) -> Result<String, String> {
     let base = sanitize_slug(name);
     let mut candidate = base.clone();
     let mut index = 2;
@@ -548,7 +723,12 @@ fn unique_project_slug(connection: &Connection, name: &str, exclude_project_id: 
     Ok(candidate)
 }
 
-fn unique_repository_slug(connection: &Connection, project_id: &str, name: &str, exclude_repository_id: Option<&str>) -> Result<String, String> {
+fn unique_repository_slug(
+    connection: &Connection,
+    project_id: &str,
+    name: &str,
+    exclude_repository_id: Option<&str>,
+) -> Result<String, String> {
     let base = sanitize_slug(name);
     let mut candidate = base.clone();
     let mut index = 2;
@@ -559,7 +739,12 @@ fn unique_repository_slug(connection: &Connection, project_id: &str, name: &str,
     Ok(candidate)
 }
 
-fn slug_exists(connection: &Connection, table: &str, slug: &str, exclude_id: Option<&str>) -> Result<bool, String> {
+fn slug_exists(
+    connection: &Connection,
+    table: &str,
+    slug: &str,
+    exclude_id: Option<&str>,
+) -> Result<bool, String> {
     let sql = format!("SELECT 1 FROM {table} WHERE slug = ?1 AND (?2 IS NULL OR id != ?2) LIMIT 1");
     connection
         .query_row(&sql, params![slug, exclude_id], |_| Ok(()))
@@ -568,7 +753,12 @@ fn slug_exists(connection: &Connection, table: &str, slug: &str, exclude_id: Opt
         .map(|row| row.is_some())
 }
 
-fn repository_slug_exists(connection: &Connection, project_id: &str, slug: &str, exclude_id: Option<&str>) -> Result<bool, String> {
+fn repository_slug_exists(
+    connection: &Connection,
+    project_id: &str,
+    slug: &str,
+    exclude_id: Option<&str>,
+) -> Result<bool, String> {
     connection
         .query_row(
             "SELECT 1 FROM repositories WHERE project_id = ?1 AND slug = ?2 AND (?3 IS NULL OR id != ?3) LIMIT 1",
@@ -583,9 +773,16 @@ fn repository_slug_exists(connection: &Connection, project_id: &str, slug: &str,
 fn read_repository(row: &rusqlite::Row<'_>) -> rusqlite::Result<RepositoryRecord> {
     let repository_path = row.get::<_, Option<String>>(4)?;
     let source_path = row.get::<_, Option<String>>(5)?;
+    let mode = row.get::<_, Option<String>>(6)?;
     let source_kind = source_path
         .as_deref()
-        .map(|value| if is_remote_repository_path(value) { "remote" } else { "local" })
+        .map(|value| {
+            if is_remote_repository_path(value) {
+                "remote"
+            } else {
+                "local"
+            }
+        })
         .map(str::to_string);
 
     Ok(RepositoryRecord {
@@ -596,9 +793,10 @@ fn read_repository(row: &rusqlite::Row<'_>) -> rusqlite::Result<RepositoryRecord
         repository_path,
         source_path,
         source_kind,
-        default_branch: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        mode,
+        default_branch: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -612,7 +810,9 @@ mod tests {
 
     #[test]
     fn test_is_remote_repository_path_detects_https() {
-        assert!(is_remote_repository_path("https://github.com/user/repo.git"));
+        assert!(is_remote_repository_path(
+            "https://github.com/user/repo.git"
+        ));
         assert!(is_remote_repository_path("https://gitlab.com/user/repo"));
     }
 
@@ -623,7 +823,9 @@ mod tests {
 
     #[test]
     fn test_is_remote_repository_path_detects_ssh_protocol() {
-        assert!(is_remote_repository_path("ssh://git@github.com/user/repo.git"));
+        assert!(is_remote_repository_path(
+            "ssh://git@github.com/user/repo.git"
+        ));
     }
 
     #[test]

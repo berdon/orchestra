@@ -529,6 +529,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_agents_table_columns(connection)?;
     backfill_missing_agent_slugs(connection)?;
     ensure_agents_slug_index(connection)?;
+    ensure_repositories_table_columns(connection)?;
     ensure_roles_table_columns(connection)?;
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
@@ -541,6 +542,21 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
+    Ok(())
+}
+
+fn ensure_repositories_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "repositories")?;
+
+    if !columns.contains("mode") {
+        connection
+            .execute(
+                "ALTER TABLE repositories ADD COLUMN mode TEXT NOT NULL DEFAULT 'existing'",
+                [],
+            )
+            .map_err(|error| format!("Unable to add mode column to repositories: {error}"))?;
+    }
+
     Ok(())
 }
 
@@ -826,7 +842,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("parent_comment_id") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN parent_comment_id TEXT", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN parent_comment_id TEXT",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add parent_comment_id column to task_comments: {error}")
             })?;
@@ -834,7 +853,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("repository_id") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN repository_id TEXT", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN repository_id TEXT",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add repository_id column to task_comments: {error}")
             })?;
@@ -842,7 +864,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("relative_path") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN relative_path TEXT", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN relative_path TEXT",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add relative_path column to task_comments: {error}")
             })?;
@@ -850,7 +875,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("line_start") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN line_start INTEGER", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN line_start INTEGER",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add line_start column to task_comments: {error}")
             })?;
@@ -859,14 +887,15 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
     if !columns.contains("line_end") {
         connection
             .execute("ALTER TABLE task_comments ADD COLUMN line_end INTEGER", [])
-            .map_err(|error| {
-                format!("Unable to add line_end column to task_comments: {error}")
-            })?;
+            .map_err(|error| format!("Unable to add line_end column to task_comments: {error}"))?;
     }
 
     if !columns.contains("column_start") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN column_start INTEGER", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN column_start INTEGER",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add column_start column to task_comments: {error}")
             })?;
@@ -874,7 +903,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("column_end") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN column_end INTEGER", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN column_end INTEGER",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add column_end column to task_comments: {error}")
             })?;
@@ -882,7 +914,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("selected_text") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN selected_text TEXT", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN selected_text TEXT",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add selected_text column to task_comments: {error}")
             })?;
@@ -890,7 +925,10 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
 
     if !columns.contains("anchor_commit_hash") {
         connection
-            .execute("ALTER TABLE task_comments ADD COLUMN anchor_commit_hash TEXT", [])
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN anchor_commit_hash TEXT",
+                [],
+            )
             .map_err(|error| {
                 format!("Unable to add anchor_commit_hash column to task_comments: {error}")
             })?;
@@ -999,9 +1037,7 @@ fn ensure_mailbox_table_columns(connection: &Connection) -> Result<(), String> {
                 [],
             )
             .map_err(|error| {
-                format!(
-                    "Unable to add archived_at column to mailbox_message_deliveries: {error}"
-                )
+                format!("Unable to add archived_at column to mailbox_message_deliveries: {error}")
             })?;
     }
 
@@ -1639,7 +1675,8 @@ mod tests {
         initialize_database_at(&path).expect("database migration should succeed");
         let connection = Connection::open(&path).expect("migrated database should open");
 
-        let columns = table_columns(&connection, "task_comments").expect("task comments columns should load");
+        let columns =
+            table_columns(&connection, "task_comments").expect("task comments columns should load");
         for expected in [
             "parent_comment_id",
             "repository_id",
@@ -1652,7 +1689,10 @@ mod tests {
             "anchor_commit_hash",
             "anchor_has_uncommitted_changes",
         ] {
-            assert!(columns.contains(expected), "missing expected task_comments column: {expected}");
+            assert!(
+                columns.contains(expected),
+                "missing expected task_comments column: {expected}"
+            );
         }
 
         let indexes = connection
@@ -1662,8 +1702,12 @@ mod tests {
             .expect("index query should execute")
             .collect::<Result<Vec<_>, _>>()
             .expect("indexes should collect");
-        assert!(indexes.iter().any(|name| name == "idx_task_comments_parent_comment_id"));
-        assert!(indexes.iter().any(|name| name == "idx_task_comments_anchor"));
+        assert!(indexes
+            .iter()
+            .any(|name| name == "idx_task_comments_parent_comment_id"));
+        assert!(indexes
+            .iter()
+            .any(|name| name == "idx_task_comments_anchor"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  attachRepositoryRemote,
   createProject,
   createRepository,
   deleteProject,
@@ -11,14 +12,24 @@ import {
   updateProject,
   updateRepository,
 } from "../lib/projects";
-import type { ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryUpsertInput } from "../types";
+import type {
+  ProjectDetail,
+  ProjectSummary,
+  ProjectUpsertInput,
+  RepositoryRemoteInput,
+  RepositoryUpsertInput,
+} from "../types";
 
 function createBlankProjectDraft(): ProjectUpsertInput {
   return { name: "", description: "" };
 }
 
 function createBlankRepositoryDraft(): RepositoryUpsertInput {
-  return { name: "", repositoryPath: "", defaultBranch: "main" };
+  return { name: "", mode: "existing", repositoryPath: "", defaultBranch: "main" };
+}
+
+function createBlankRemoteDraft(): RepositoryRemoteInput {
+  return { remoteUrl: "", remoteName: "origin" };
 }
 
 export function ProjectsPanel() {
@@ -27,6 +38,8 @@ export function ProjectsPanel() {
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [projectDraft, setProjectDraft] = useState<ProjectUpsertInput>(createBlankProjectDraft);
   const [repositoryDraft, setRepositoryDraft] = useState<RepositoryUpsertInput>(createBlankRepositoryDraft);
+  const [attachRemoteRepositoryId, setAttachRemoteRepositoryId] = useState<string | null>(null);
+  const [remoteDraft, setRemoteDraft] = useState<RepositoryRemoteInput>(createBlankRemoteDraft);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -153,6 +166,26 @@ export function ProjectsPanel() {
     }
   }
 
+  async function handleAttachRemote(repositoryId: string) {
+    if (!selectedProject?.id) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await attachRepositoryRemote(repositoryId, remoteDraft);
+      setAttachRemoteRepositoryId(null);
+      setRemoteDraft(createBlankRemoteDraft());
+      await loadProjectDetail(selectedProject.id);
+      await loadProjects();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to attach repository remote.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDeleteProject() {
     if (!selectedProject?.id || selectedProject.id === "orchestra") {
       return;
@@ -193,6 +226,8 @@ export function ProjectsPanel() {
             setProjectDetail(null);
             setProjectDraft(createBlankProjectDraft());
             setRepositoryDraft(createBlankRepositoryDraft());
+            setAttachRemoteRepositoryId(null);
+            setRemoteDraft(createBlankRemoteDraft());
             setIsCreatingProject(true);
           }}>
             New project
@@ -264,10 +299,14 @@ export function ProjectsPanel() {
                   <article className="task-history-card" key={repository.id}>
                     <div className="workflow-section__header">
                       <strong>{repository.name}</strong>
-                      {projectDetail.defaultRepositoryId === repository.id ? <span className="status-badge status-badge--success">Default</span> : null}
+                      <div className="action-cluster">
+                        {projectDetail.defaultRepositoryId === repository.id ? <span className="status-badge status-badge--success">Default</span> : null}
+                        {repository.sourceKind === "remote" ? <span className="status-badge status-badge--accent">Remote attached</span> : <span className="status-badge status-badge--neutral">Local only</span>}
+                      </div>
                     </div>
                     <p className="muted-copy">{repository.repositoryPath ?? "No repository path"}</p>
                     <div className="workforce-meta-grid muted-copy">
+                      <span>Mode: {repository.mode === "local_new" ? "New local repository" : "Existing repository"}</span>
                       <span>Source: {repository.sourcePath ?? "—"}</span>
                       <span>Kind: {repository.sourceKind ?? "—"}</span>
                       <span>Default branch: {repository.defaultBranch ?? "—"}</span>
@@ -279,6 +318,18 @@ export function ProjectsPanel() {
                         </button>
                       ) : null}
                       <button
+                        className="secondary-button"
+                        data-role={`toggle-repository-remote-${repository.id}`}
+                        type="button"
+                        disabled={saving}
+                        onClick={() => {
+                          setAttachRemoteRepositoryId((current: string | null) => current === repository.id ? null : repository.id);
+                          setRemoteDraft({ remoteUrl: repository.sourceKind === "remote" ? repository.sourcePath ?? "" : "", remoteName: "origin" });
+                        }}
+                      >
+                        {repository.sourceKind === "remote" ? "Update remote" : "Add remote"}
+                      </button>
+                      <button
                         className="secondary-button secondary-button--danger"
                         data-role={`delete-repository-${repository.id}`}
                         type="button"
@@ -288,19 +339,62 @@ export function ProjectsPanel() {
                         Delete repository
                       </button>
                     </div>
+                    {attachRemoteRepositoryId === repository.id ? (
+                      <div className="task-editor-grid" data-role={`repository-remote-panel-${repository.id}`}>
+                        <label className="field-group task-editor-grid__full">
+                          <span className="field-group__label">Remote URL</span>
+                          <input className="text-input" data-role="repository-remote-url" value={remoteDraft.remoteUrl ?? ""} onChange={(event) => setRemoteDraft((current) => ({ ...current, remoteUrl: event.target.value }))} />
+                        </label>
+                        <div className="task-editor-grid__full action-cluster">
+                          <button className="secondary-button" data-role={`attach-repository-remote-${repository.id}`} type="button" disabled={saving || !remoteDraft.remoteUrl.trim()} onClick={() => void handleAttachRemote(repository.id)}>
+                            {repository.sourceKind === "remote" ? "Update remote" : "Attach remote"}
+                          </button>
+                          <button className="secondary-button" type="button" disabled={saving} onClick={() => setAttachRemoteRepositoryId(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
 
               <div className="task-editor-grid">
+                <div className="task-editor-grid__full">
+                  <p className="eyebrow">Add repository</p>
+                  <div className="filter-chip-row" role="tablist" aria-label="Repository creation mode">
+                    <button
+                      className={repositoryDraft.mode === "local_new" ? "filter-chip filter-chip--active" : "filter-chip"}
+                      data-role="repository-mode-local-new"
+                      type="button"
+                      onClick={() => setRepositoryDraft((current) => ({ ...current, mode: "local_new", repositoryPath: "" }))}
+                    >
+                      New local repository
+                    </button>
+                    <button
+                      className={repositoryDraft.mode !== "local_new" ? "filter-chip filter-chip--active" : "filter-chip"}
+                      data-role="repository-mode-existing"
+                      type="button"
+                      onClick={() => setRepositoryDraft((current) => ({ ...current, mode: "existing" }))}
+                    >
+                      Existing repository
+                    </button>
+                  </div>
+                </div>
                 <label className="field-group">
                   <span className="field-group__label">Repository name</span>
                   <input className="text-input" data-role="repository-name" value={repositoryDraft.name ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, name: event.target.value }))} />
                 </label>
-                <label className="field-group task-editor-grid__full">
-                  <span className="field-group__label">Repository Path</span>
-                  <input className="text-input" data-role="repository-path" value={repositoryDraft.repositoryPath ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, repositoryPath: event.target.value }))} />
-                </label>
+                {repositoryDraft.mode === "local_new" ? (
+                  <div className="field-group task-editor-grid__full muted-copy" data-role="repository-local-help">
+                    Orchestra will create and manage a new git repository for this project. The managed repository directory becomes the main repository directory immediately.
+                  </div>
+                ) : (
+                  <label className="field-group task-editor-grid__full">
+                    <span className="field-group__label">Repository Path</span>
+                    <input className="text-input" data-role="repository-path" value={repositoryDraft.repositoryPath ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, repositoryPath: event.target.value }))} />
+                  </label>
+                )}
                 <label className="field-group">
                   <span className="field-group__label">Default branch</span>
                   <input className="text-input" data-role="repository-default-branch" value={repositoryDraft.defaultBranch ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, defaultBranch: event.target.value }))} />

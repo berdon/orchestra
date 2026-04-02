@@ -31,6 +31,7 @@ pub struct RepositoryRecord {
     pub repository_path: Option<String>,
     pub source_path: Option<String>,
     pub source_kind: Option<String>,
+    pub mode: Option<String>,
     pub default_branch: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -60,8 +61,16 @@ pub struct ProjectUpsertInput {
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryUpsertInput {
     pub name: String,
+    pub mode: Option<String>,
     pub repository_path: Option<String>,
     pub default_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryRemoteInput {
+    pub remote_url: String,
+    pub remote_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
