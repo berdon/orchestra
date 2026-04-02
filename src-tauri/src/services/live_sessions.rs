@@ -67,17 +67,22 @@ impl SessionRuntime {
         let extension_path = resolve_orchestra_extension_path(&app)?;
 
         let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
-        let mut child = Command::new(&pi_executable)
-            .arg("--offline")
-            .arg("--mode")
-            .arg("rpc")
-            .arg("--session")
-            .arg(&session_path)
-            .arg("--session-dir")
-            .arg(&session_dir)
-            .arg("--no-extensions")
-            .arg("--extension")
-            .arg(&extension_path)
+        let args = vec![
+            "--offline".to_string(),
+            "--mode".to_string(),
+            "rpc".to_string(),
+            "--session".to_string(),
+            session_path.display().to_string(),
+            "--session-dir".to_string(),
+            session_dir.display().to_string(),
+            "--no-extensions".to_string(),
+            "--extension".to_string(),
+            extension_path.display().to_string(),
+        ];
+        let (shell, shell_args) =
+            crate::services::pi_sessions::wrap_command_for_user_shell(&pi_executable, &args, &[])?;
+        let mut child = Command::new(&shell)
+            .args(&shell_args)
             .env("ORCHESTRA_BRIDGE_URL", &bridge_config.url)
             .env("ORCHESTRA_BRIDGE_TOKEN", &bridge_config.token)
             .env("ORCHESTRA_BRIDGE_INSTANCE_ID", &bridge_config.instance_id)
@@ -99,7 +104,12 @@ impl SessionRuntime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("Unable to start pi RPC process: {error}"))?;
+            .map_err(|error| {
+                format!(
+                    "Unable to start pi RPC process via {}: {error}",
+                    shell.display()
+                )
+            })?;
 
         let stdin = child
             .stdin
