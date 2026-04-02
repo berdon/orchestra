@@ -8,6 +8,7 @@ import {
   ensureReactReady,
   executeScript,
   getCurrentWindowHandle,
+  invokeCommand,
   switchToWindow,
   waitForText,
   waitForWindowCount,
@@ -36,26 +37,97 @@ describe("desktop embedded agent terminal window", () => {
       expect(terminalHandle).toBeTruthy();
 
       await switchToWindow(sessionId, terminalHandle!);
-      let terminalWindowState = { hasTerminalSurface: false, hasProjectSwitcher: true, href: "", title: "", windowKind: "", bodyText: "" };
+      let terminalWindowState = {
+        hasTerminalSurface: false,
+        hasProjectSwitcher: true,
+        hasError: false,
+        ready: false,
+        terminalSessionId: "",
+        bufferLength: 0,
+        href: "",
+        title: "",
+        windowKind: "",
+        bodyText: "",
+        shellPadding: "",
+        shellMargin: "",
+        surfaceBorderRadius: "",
+        fillsViewport: false,
+      };
       const deadline = Date.now() + 20_000;
       while (Date.now() < deadline) {
-        terminalWindowState = await executeScript<{ hasTerminalSurface: boolean; hasProjectSwitcher: boolean; href: string; title: string; windowKind: string; bodyText: string }>(sessionId, `
+        terminalWindowState = await executeScript<{
+          hasTerminalSurface: boolean;
+          hasProjectSwitcher: boolean;
+          hasError: boolean;
+          ready: boolean;
+          terminalSessionId: string;
+          bufferLength: number;
+          href: string;
+          title: string;
+          windowKind: string;
+          bodyText: string;
+          shellPadding: string;
+          shellMargin: string;
+          surfaceBorderRadius: string;
+          fillsViewport: boolean;
+        }>(sessionId, `
+          const shell = document.querySelector('[data-role="agent-terminal-window"]');
+          const surface = document.querySelector('[data-role="agent-terminal-surface"]');
+          const shellStyle = shell ? window.getComputedStyle(shell) : null;
+          const surfaceRect = surface?.getBoundingClientRect();
+          const shellRect = shell?.getBoundingClientRect();
           return {
-            hasTerminalSurface: Boolean(document.querySelector('[data-role="agent-terminal-surface"]')),
+            hasTerminalSurface: Boolean(surface),
             hasProjectSwitcher: Boolean(document.querySelector('[data-role="project-switcher"]')),
+            hasError: Boolean(document.querySelector('[data-role="agent-terminal-error"]')),
+            ready: shell?.getAttribute('data-terminal-ready') === 'true',
+            terminalSessionId: shell?.getAttribute('data-session-id') || window.__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__ || '',
+            bufferLength: 0,
             href: window.location.href,
             title: document.title,
             windowKind: String(window.__ORCHESTRA_WINDOW_KIND__ || ''),
             bodyText: (document.body?.innerText || '').slice(0, 300),
+            shellPadding: shellStyle?.padding || '',
+            shellMargin: shellStyle?.margin || '',
+            surfaceBorderRadius: surface ? window.getComputedStyle(surface).borderRadius : '',
+            fillsViewport: Boolean(surfaceRect && shellRect
+              && Math.abs(shellRect.width - window.innerWidth) < 2
+              && Math.abs(shellRect.height - window.innerHeight) < 2
+              && Math.abs(surfaceRect.width - window.innerWidth) < 2
+              && Math.abs(surfaceRect.height - window.innerHeight) < 2),
           };
         `);
-        if (terminalWindowState.hasTerminalSurface && !terminalWindowState.hasProjectSwitcher) {
+        if (terminalWindowState.terminalSessionId) {
+          try {
+            const buffer = await invokeCommand<string>(sessionId, 'get_agent_terminal_buffer', {
+              sessionId: terminalWindowState.terminalSessionId,
+            });
+            terminalWindowState.bufferLength = typeof buffer === 'string' ? buffer.length : 0;
+          } catch {
+            terminalWindowState.bufferLength = 0;
+          }
+        }
+        if (
+          terminalWindowState.hasTerminalSurface
+          && !terminalWindowState.hasProjectSwitcher
+          && !terminalWindowState.hasError
+          && terminalWindowState.ready
+          && terminalWindowState.bufferLength > 0
+          && terminalWindowState.fillsViewport
+        ) {
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
       expect(terminalWindowState.hasTerminalSurface).toBe(true);
       expect(terminalWindowState.hasProjectSwitcher).toBe(false);
+      expect(terminalWindowState.hasError).toBe(false);
+      expect(terminalWindowState.ready).toBe(true);
+      expect(terminalWindowState.bufferLength).toBeGreaterThan(0);
+      expect(terminalWindowState.shellPadding).toBe('0px');
+      expect(terminalWindowState.shellMargin).toBe('0px');
+      expect(terminalWindowState.surfaceBorderRadius).toBe('0px');
+      expect(terminalWindowState.fillsViewport).toBe(true);
 
       await executeScript(sessionId, `
         window.close();
