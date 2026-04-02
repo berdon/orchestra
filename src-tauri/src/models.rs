@@ -148,6 +148,13 @@ pub struct SessionStorageInfo {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PiExecutableDiagnostic {
+    pub resolved_path: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionModel {
     pub id: String,
     pub name: String,

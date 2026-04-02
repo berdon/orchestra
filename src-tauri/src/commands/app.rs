@@ -4,9 +4,10 @@ use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::{
     models::{
-        AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, SessionModel, SessionStorageInfo,
+        AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
+        SessionModel, SessionStorageInfo,
     },
-    services::pi_sessions::{detect_session_context, list_available_models},
+    services::pi_sessions::{detect_session_context, list_available_models, resolve_pi_executable},
     state::AppState,
 };
 
@@ -79,6 +80,20 @@ pub fn get_session_storage_info(
         project_slug: context.project_slug,
         session_dir: context.session_dir.display().to_string(),
     })
+}
+
+#[tauri::command]
+pub fn get_pi_executable_diagnostic() -> PiExecutableDiagnostic {
+    match resolve_pi_executable(None) {
+        Ok(path) => PiExecutableDiagnostic {
+            resolved_path: Some(path.display().to_string()),
+            error: None,
+        },
+        Err(error) => PiExecutableDiagnostic {
+            resolved_path: None,
+            error: Some(error),
+        },
+    }
 }
 
 #[tauri::command]

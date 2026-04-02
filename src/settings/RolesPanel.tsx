@@ -4,8 +4,9 @@ import { AccessEditor } from "../components/access/AccessEditor";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import { getPolicy, listPolicies } from "../lib/policies";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
-import { listPiModels } from "../lib/tauri";
+import { getPiExecutableDiagnostic, listPiModels } from "../lib/tauri";
 import type {
+  PiExecutableDiagnostic,
   PolicyDefinition,
   RoleDefinition,
   RoleSummary,
@@ -64,6 +65,7 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
   const [loadedRoleId, setLoadedRoleId] = useState<string | null>(null);
   const [loadedRoleArchived, setLoadedRoleArchived] = useState(false);
   const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
+  const [piExecutableDiagnostic, setPiExecutableDiagnostic] = useState<PiExecutableDiagnostic | null>(null);
   const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
   const selectionRequestTokenRef = useRef<number>(0);
@@ -142,10 +144,11 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
   useEffect(() => {
     let cancelled = false;
     setLoadingModelOptions(true);
-    void listPiModels()
-      .then((models) => {
+    void Promise.all([listPiModels(), getPiExecutableDiagnostic()])
+      .then(([models, diagnostic]) => {
         if (!cancelled) {
           setAvailableModels(models);
+          setPiExecutableDiagnostic(diagnostic);
         }
       })
       .catch((error) => {
@@ -462,6 +465,10 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
                 </label>
+
+                <div className="workflow-form-grid__full muted-copy" data-role="role-pi-executable-diagnostic">
+                  PI executable: {piExecutableDiagnostic?.resolvedPath ?? piExecutableDiagnostic?.error ?? "Loading…"}
+                </div>
 
                 <label className="field-group workflow-form-grid__full">
                   <span className="field-group__label">Description</span>

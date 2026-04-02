@@ -5,6 +5,7 @@ import type {
   AppInfo,
   ArchiveMailboxMessagesInput,
   BridgeCleanupEvent,
+  PiExecutableDiagnostic,
   BridgeDiagnostics,
   InboxChangeEvent,
   JsonValue,
@@ -1469,6 +1470,14 @@ export async function stopSessionRuntime(sessionId: string): Promise<SessionReco
   }
 
   return invoke<SessionRecord>("stop_session_runtime", { sessionId });
+}
+
+export async function getPiExecutableDiagnostic(): Promise<PiExecutableDiagnostic> {
+  if (!isTauriAvailable()) {
+    return { resolvedPath: "/mock/bin/pi", error: null };
+  }
+
+  return invoke<PiExecutableDiagnostic>("get_pi_executable_diagnostic");
 }
 
 export async function listPiModels(): Promise<SessionModel[]> {
