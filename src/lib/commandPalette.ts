@@ -65,11 +65,19 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       action: { type: "navigate-page", page: "agents" },
     }),
     commandItem({
+      id: "page-chat",
+      title: "Go to Chat",
+      subtitle: "Focused main-session agent chat",
+      group: "Pages",
+      keywords: ["chat", "agents", "conversation", "main session"],
+      action: { type: "navigate-page", page: "chat" },
+    }),
+    commandItem({
       id: "page-sessions",
       title: "Go to Sessions",
       subtitle: "Live execution transcripts",
       group: "Pages",
-      keywords: ["sessions", "chat", "transcript"],
+      keywords: ["sessions", "debug", "transcript"],
       action: { type: "navigate-page", page: "sessions" },
     }),
     commandItem({

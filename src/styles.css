@@ -521,6 +521,10 @@ strong {
   overflow-y: auto;
 }
 
+.session-detail-column--standalone {
+  min-height: calc(100vh - 140px);
+}
+
 .session-detail-panel {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
@@ -1106,6 +1110,12 @@ strong {
   display: grid;
   gap: 4px;
   padding-left: 6px;
+}
+
+.settings-subnav__hint {
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
 }
 
 .settings-subnav__item {

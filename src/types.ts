@@ -1,4 +1,4 @@
-export type PrimaryPage = "tasks" | "inbox" | "agents" | "sessions" | "settings";
+export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
 export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };

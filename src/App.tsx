@@ -37,6 +37,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
 import { InboxPage } from "./pages/InboxPage";
+import { AgentChatPage } from "./pages/AgentChatPage";
 import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
@@ -47,6 +48,7 @@ import { RolesPanel } from "./settings/RolesPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
+  AgentOperationsSnapshot,
   AppInfo,
   BridgeDiagnostics,
   JsonValue,
@@ -68,6 +70,7 @@ const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "tasks", label: "Tasks" },
   { id: "inbox", label: "Inbox" },
   { id: "agents", label: "Agents" },
+  { id: "chat", label: "Chat" },
   { id: "sessions", label: "Sessions" },
   { id: "settings", label: "Settings" },
 ];
@@ -483,6 +486,11 @@ export function App() {
   const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(() => getInitialAgentTerminalSessionId());
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
+  const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
+  const [loadingChatAgents, setLoadingChatAgents] = useState(false);
+  const [loadingChatSessionAgentId, setLoadingChatSessionAgentId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [draftMessages, setDraftMessages] = useState<Record<string, string>>({});
@@ -523,10 +531,21 @@ export function App() {
     [filteredSessions, selectedSessionId],
   );
 
-  const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
-  const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
-  const displayedEvents = selectedSession?.events ?? [];
-  const selectedSessionDraftMessage = selectedSession ? draftMessages[selectedSession.id] ?? "" : "";
+  const selectedChatAgent = useMemo(
+    () => chatAgents.find((agent) => agent.agent.id === selectedChatAgentId)?.agent ?? null,
+    [chatAgents, selectedChatAgentId],
+  );
+
+  const chatSession = useMemo(
+    () => sessions.find((session) => session.id === chatSessionId) ?? null,
+    [chatSessionId, sessions],
+  );
+
+  const viewedSession = activePage === "chat" ? chatSession : selectedSession;
+  const viewedSessionPendingRun = viewedSession ? pendingRuns[viewedSession.id] : undefined;
+  const viewedModelState = viewedSession ? modelStates[viewedSession.id] : undefined;
+  const displayedEvents = viewedSession?.events ?? [];
+  const viewedSessionDraftMessage = viewedSession ? draftMessages[viewedSession.id] ?? "" : "";
   const supervisorSession = useMemo(
     () => sessions.find((session) => session.id === supervisorSessionId) ?? null,
     [sessions, supervisorSessionId],
@@ -782,11 +801,35 @@ export function App() {
           : nextSessions[0]?.id ?? null;
         return current === nextSelectedSessionId ? current : nextSelectedSessionId;
       });
+      setChatSessionId((current) => (current && nextSessions.some((session) => session.id === current) ? current : null));
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to load sessions.");
     } finally {
       if (!options?.background) {
         setLoadingSessions(false);
+      }
+    }
+  }
+
+  async function loadChatAgents(options?: { background?: boolean }) {
+    if (!options?.background) {
+      setLoadingChatAgents(true);
+    }
+
+    try {
+      const nextAgents = await listAgentOperations(false, activeProjectId);
+      setChatAgents(nextAgents);
+      setSelectedChatAgentId((current) => {
+        if (current && nextAgents.some((agent) => agent.agent.id === current)) {
+          return current;
+        }
+        return nextAgents[0]?.agent.id ?? null;
+      });
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to load chat agents.");
+    } finally {
+      if (!options?.background) {
+        setLoadingChatAgents(false);
       }
     }
   }
@@ -1244,6 +1287,7 @@ export function App() {
     if (activeProjectId) {
       setActiveProjectId(activeProjectId);
     }
+    setChatSessionId(null);
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -1341,7 +1385,7 @@ export function App() {
   }, [activeProjectId, isLogsWindow, isAgentTerminalWindow]);
 
   useEffect(() => {
-    if (isDetachedWindow || activePage !== "sessions") {
+    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat")) {
       return;
     }
 
@@ -1361,6 +1405,47 @@ export function App() {
       window.removeEventListener("focus", refreshOnFocus);
     };
   }, [activePage, isDetachedWindow]);
+
+  useEffect(() => {
+    if (isDetachedWindow || activePage !== "chat") {
+      return;
+    }
+
+    void loadChatAgents();
+  }, [activePage, activeProjectId, isDetachedWindow]);
+
+  useEffect(() => {
+    if (isDetachedWindow || activePage !== "chat" || !selectedChatAgentId) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingChatSessionAgentId(selectedChatAgentId);
+    setSessionActionError(null);
+
+    void ensureAgentSession(selectedChatAgentId, activeProject?.id ?? null)
+      .then((session) => {
+        if (cancelled) {
+          return;
+        }
+        mergeSessionRecord(session, { select: false });
+        setChatSessionId(session.id);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSessionActionError(error instanceof Error ? error.message : "Unable to open agent chat session.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingChatSessionAgentId((current) => (current === selectedChatAgentId ? null : current));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, activeProject?.id, isDetachedWindow, mergeSessionRecord, selectedChatAgentId]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
@@ -1385,7 +1470,7 @@ export function App() {
     }
 
     const previousViewedSessionId = viewedSessionIdRef.current;
-    const nextViewedSessionId = activePage === "sessions" ? selectedSession?.id ?? null : null;
+    const nextViewedSessionId = (activePage === "sessions" || activePage === "chat") ? viewedSession?.id ?? null : null;
 
     viewedSessionIdRef.current = nextViewedSessionId;
 
@@ -1399,14 +1484,14 @@ export function App() {
         });
     }
 
-    if (activePage !== "sessions" || !selectedSession) {
+    if ((activePage !== "sessions" && activePage !== "chat") || !viewedSession) {
       return;
     }
 
     let cancelled = false;
 
-    if (!selectedSession.subscribed && !selectedSession.terminalAttached) {
-      void subscribeSession(selectedSession.id)
+    if (!viewedSession.subscribed && !viewedSession.terminalAttached) {
+      void subscribeSession(viewedSession.id)
         .then((record) => {
           if (!cancelled) {
             applySessionUpdate(record);
@@ -1419,9 +1504,9 @@ export function App() {
         });
     }
 
-    setLoadingModelSessionId(selectedSession.id);
+    setLoadingModelSessionId(viewedSession.id);
 
-    void getSessionModelState(selectedSession.id)
+    void getSessionModelState(viewedSession.id)
       .then((state) => {
         if (cancelled) {
           return;
@@ -1439,17 +1524,17 @@ export function App() {
       })
       .finally(() => {
         if (!cancelled) {
-          setLoadingModelSessionId((current) => (current === selectedSession.id ? null : current));
+          setLoadingModelSessionId((current) => (current === viewedSession.id ? null : current));
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [activePage, isDetachedWindow, selectedSession?.id, selectedSession?.subscribed, selectedSession?.terminalAttached, applySessionUpdate, mergeSessionRecord]);
+  }, [activePage, isDetachedWindow, viewedSession?.id, viewedSession?.subscribed, viewedSession?.terminalAttached, applySessionUpdate, mergeSessionRecord]);
 
   useEffect(() => {
-    if (isDetachedWindow || activePage !== "sessions" || !selectedSession?.id || selectedSession.status !== "active") {
+    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat") || !viewedSession?.id || viewedSession.status !== "active") {
       return;
     }
 
@@ -1460,7 +1545,7 @@ export function App() {
         return;
       }
 
-      void getSessionRecord(selectedSession.id)
+      void getSessionRecord(viewedSession.id)
         .then((record) => {
           if (!cancelled) {
             mergeSessionRecord(record, { select: false });
@@ -1480,7 +1565,7 @@ export function App() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshSelectedSession);
     };
-  }, [activePage, isDetachedWindow, mergeSessionRecord, selectedSession?.id, selectedSession?.status]);
+  }, [activePage, isDetachedWindow, mergeSessionRecord, viewedSession?.id, viewedSession?.status]);
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -1493,11 +1578,11 @@ export function App() {
     }
 
     node.scrollTop = node.scrollHeight;
-  }, [displayedEvents, isDetachedWindow, selectedSession?.id, sessionScrollState.lockedToBottom]);
+  }, [displayedEvents, isDetachedWindow, viewedSession?.id, sessionScrollState.lockedToBottom]);
 
   useEffect(() => {
     setSessionScrollState({ lockedToBottom: true });
-  }, [selectedSession?.id]);
+  }, [viewedSession?.id]);
 
   useEffect(() => {
     const node = transcriptRef.current;
@@ -1513,7 +1598,7 @@ export function App() {
 
     node.addEventListener("orchestra:session-scroll-lock-change", handleScrollLockChange as EventListener);
     return () => node.removeEventListener("orchestra:session-scroll-lock-change", handleScrollLockChange as EventListener);
-  }, [selectedSession?.id]);
+  }, [viewedSession?.id]);
 
   useEffect(() => {
     const node = transcriptRef.current;
@@ -1529,13 +1614,21 @@ export function App() {
     syncScrollLockState();
     window.addEventListener("resize", syncScrollLockState);
     return () => window.removeEventListener("resize", syncScrollLockState);
-  }, [displayedEvents.length, selectedSession?.id]);
+  }, [displayedEvents.length, viewedSession?.id]);
 
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
+  const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
+  const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
+  const selectedSessionDraftMessage = selectedSession ? draftMessages[selectedSession.id] ?? "" : "";
+  const chatSessionPendingRun = chatSession ? pendingRuns[chatSession.id] : undefined;
+  const chatModelState = chatSession ? modelStates[chatSession.id] : undefined;
+  const chatSessionDraftMessage = chatSession ? draftMessages[chatSession.id] ?? "" : "";
   const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun ? "streaming" : selectedSession?.status ?? "idle";
+  const chatSessionDisplayStatus: SessionStatus = chatSessionPendingRun ? "streaming" : chatSession?.status ?? "idle";
 
-  async function handleModelChange(value: string) {
-    if (!selectedSession) {
+  async function handleModelChange(sessionId: string, value: string) {
+    const session = sessions.find((entry) => entry.id === sessionId);
+    if (!session) {
       return;
     }
 
@@ -1546,10 +1639,10 @@ export function App() {
     }
 
     setSessionActionError(null);
-    setChangingModelSessionId(selectedSession.id);
+    setChangingModelSessionId(session.id);
 
     try {
-      const state = await setSessionModel(selectedSession.id, provider, modelId);
+      const state = await setSessionModel(session.id, provider, modelId);
       setModelStates((current) => ({
         ...current,
         [state.sessionId]: state,
@@ -1557,7 +1650,7 @@ export function App() {
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to change models.");
     } finally {
-      setChangingModelSessionId((current) => (current === selectedSession.id ? null : current));
+      setChangingModelSessionId((current) => (current === session.id ? null : current));
     }
   }
 
@@ -1569,6 +1662,11 @@ export function App() {
   function navigateToAgent(agentId: string) {
     setActivePage("agents");
     setAgentsSelectionRequest((current) => ({ type: "agent", id: agentId, token: (current?.token ?? 0) + 1 }));
+  }
+
+  function navigateToChatAgent(agentId: string) {
+    setActivePage("chat");
+    setSelectedChatAgentId(agentId);
   }
 
   function navigateToRole(roleId: string) {
@@ -1858,14 +1956,46 @@ export function App() {
 
           <nav className="primary-nav" aria-label="Primary">
             {activeNavItems.map((item) => (
-              <button
-                key={item.id}
-                className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
-                type="button"
-                onClick={() => setActivePage(item.id)}
-              >
-                {item.label}
-              </button>
+              item.id === "chat" ? (
+                <div className="settings-nav" key={item.id}>
+                  <button
+                    className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
+                    type="button"
+                    onClick={() => setActivePage(item.id)}
+                  >
+                    {item.label}
+                  </button>
+
+                  {activePage === "chat" ? (
+                    <div className="settings-subnav" role="tablist" aria-label="Chat agents">
+                      {loadingChatAgents ? <span className="settings-subnav__hint">Loading agents…</span> : null}
+                      {!loadingChatAgents && chatAgents.length === 0 ? <span className="settings-subnav__hint">No agents yet.</span> : null}
+                      {chatAgents.map((agentSnapshot) => (
+                        <button
+                          key={agentSnapshot.agent.id}
+                          className={selectedChatAgentId === agentSnapshot.agent.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                          type="button"
+                          role="tab"
+                          aria-selected={selectedChatAgentId === agentSnapshot.agent.id}
+                          data-role={`chat-agent-nav-${agentSnapshot.agent.slug}`}
+                          onClick={() => navigateToChatAgent(agentSnapshot.agent.id)}
+                        >
+                          {agentSnapshot.agent.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <button
+                  key={item.id}
+                  className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
+                  type="button"
+                  onClick={() => setActivePage(item.id)}
+                >
+                  {item.label}
+                </button>
+              )
             ))}
           </nav>
         </div>
@@ -1982,13 +2112,59 @@ export function App() {
             onOpenAgentSessionTerminal={(agentId) => void handleOpenAgentSessionTerminal(agentId)}
             selectedWorkerRequest={agentsSelectionRequest}
           />
+        ) : activePage === "chat" ? (
+          <AgentChatPage
+            agent={selectedChatAgent}
+            session={chatSession}
+            displayedEvents={displayedEvents}
+            sessionPending={Boolean(chatSessionPendingRun)}
+            sessionDisplayStatus={chatSessionDisplayStatus}
+            selectedModelState={chatModelState}
+            sessionReadOnly={Boolean(chatSession?.terminalAttached)}
+            loadingAgents={loadingChatAgents}
+            loadingSession={Boolean(selectedChatAgent && loadingChatSessionAgentId === selectedChatAgent.id && !chatSession)}
+            loadingModelSessionId={loadingModelSessionId}
+            changingModelSessionId={changingModelSessionId}
+            draftMessage={chatSessionDraftMessage}
+            error={sessionActionError}
+            transcriptRef={transcriptRef}
+            scrollState={sessionScrollState}
+            formatDateTime={formatDateTime}
+            formatTimestamp={formatTimestamp}
+            formatModelOptionLabel={formatModelOptionLabel}
+            getStatusTone={getStatusTone}
+            getEventTone={getEventTone}
+            onModelChange={(value) => {
+              if (chatSession) {
+                void handleModelChange(chatSession.id, value);
+              }
+            }}
+            onDraftChange={(value) => {
+              if (chatSession) {
+                updateDraftMessage(chatSession.id, value);
+              }
+            }}
+            onSendMessage={() => {
+              if (chatSession?.terminalAttached) {
+                return;
+              }
+              if (chatSession) {
+                handleSendMessage(chatSession.id);
+              }
+            }}
+            onStopSession={() => {
+              if (chatSession) {
+                handleStopSession(chatSession.id);
+              }
+            }}
+          />
         ) : activePage === "sessions" ? (
           <SessionsPage
             sessions={filteredSessions}
             sessionFilter={sessionFilter}
             onSessionFilterChange={setSessionFilter}
             selectedSession={selectedSession}
-            displayedEvents={displayedEvents}
+            displayedEvents={selectedSession?.events ?? []}
             selectedSessionPending={Boolean(selectedSessionPendingRun)}
             selectedSessionDisplayStatus={selectedSessionDisplayStatus}
             selectedModelState={selectedModelState}
@@ -2008,7 +2184,11 @@ export function App() {
             onSelectSession={setSelectedSessionId}
             onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
             onDeleteClosedSessions={() => void handleDeleteClosedSessions()}
-            onModelChange={(value) => void handleModelChange(value)}
+            onModelChange={(value) => {
+              if (selectedSession) {
+                void handleModelChange(selectedSession.id, value);
+              }
+            }}
             onDraftChange={(value) => {
               if (selectedSession) {
                 updateDraftMessage(selectedSession.id, value);
