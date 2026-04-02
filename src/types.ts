@@ -98,6 +98,7 @@ export interface RepositoryRecord {
   repositoryPath?: string | null;
   sourcePath?: string | null;
   sourceKind?: "local" | "remote" | null;
+  mode?: "existing" | "local_new" | null;
   defaultBranch?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -114,8 +115,14 @@ export interface ProjectUpsertInput {
 
 export interface RepositoryUpsertInput {
   name: string;
+  mode?: "existing" | "local_new" | null;
   repositoryPath?: string | null;
   defaultBranch?: string | null;
+}
+
+export interface RepositoryRemoteInput {
+  remoteUrl: string;
+  remoteName?: string | null;
 }
 
 export interface SessionModel {

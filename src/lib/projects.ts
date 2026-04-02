@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryUpsertInput } from "../types";
+import type {
+  ProjectDetail,
+  ProjectSummary,
+  ProjectUpsertInput,
+  RepositoryRecord,
+  RepositoryRemoteInput,
+  RepositoryUpsertInput,
+} from "../types";
 
 const PROJECT_STORAGE_KEY = "orchestra.mock.projects";
 const ACTIVE_PROJECT_STORAGE_KEY = "orchestra.mock.active-project-id";
@@ -54,6 +61,7 @@ function seedMockProjects(): ProjectDetail[] {
           repositoryPath: "/home/openclaw/workspace/orchestra/repository",
           sourcePath: "/home/openclaw/workspace/orchestra/repository",
           sourceKind: "local",
+          mode: "existing",
           defaultBranch: "main",
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -212,14 +220,20 @@ export async function createRepository(projectId: string, input: RepositoryUpser
     if (!project) {
       throw new Error(`Project ${projectId} was not found`);
     }
+    const mode = input.mode === "local_new" ? "local_new" : "existing";
     const repository: RepositoryRecord = {
       id: createId("repo"),
       projectId,
       slug: slugify(input.name),
       name: input.name.trim(),
-      repositoryPath: input.repositoryPath?.trim() || null,
-      sourcePath: input.repositoryPath?.trim() || null,
-      sourceKind: null,
+      repositoryPath: mode === "local_new"
+        ? `/mock/projects/${project.slug}/repositories/${slugify(input.name)}/repository`
+        : input.repositoryPath?.trim() || null,
+      sourcePath: mode === "existing" ? input.repositoryPath?.trim() || null : null,
+      sourceKind: mode === "existing"
+        ? (input.repositoryPath?.trim() ? (input.repositoryPath!.includes("://") || input.repositoryPath!.includes("@") ? "remote" : "local") : null)
+        : null,
+      mode,
       defaultBranch: input.defaultBranch?.trim() || null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -253,17 +267,20 @@ export async function updateRepository(repositoryId: string, input: RepositoryUp
           if (repository.id !== repositoryId) {
             return repository;
           }
+          const mode = repository.mode ?? (input.mode === "local_new" ? "local_new" : "existing");
+          const nextSourcePath = mode === "local_new" ? repository.sourcePath ?? null : input.repositoryPath?.trim() || null;
           updatedRepository = {
             ...repository,
             slug: slugify(input.name),
             name: input.name.trim(),
-            repositoryPath: input.repositoryPath?.trim() || null,
-            sourcePath: input.repositoryPath?.trim() || null,
-            sourceKind: repository.sourceKind ?? null,
+            repositoryPath: mode === "local_new" ? repository.repositoryPath ?? null : input.repositoryPath?.trim() || null,
+            sourcePath: nextSourcePath,
+            sourceKind: mode === "local_new" ? repository.sourceKind ?? null : (nextSourcePath ? (nextSourcePath.includes("://") || nextSourcePath.includes("@") ? "remote" : "local") : null),
+            mode,
             defaultBranch: input.defaultBranch?.trim() || null,
             updatedAt: nowIso(),
           };
-          return updatedRepository;
+          return updatedRepository as RepositoryRecord;
         }),
       })),
     );
@@ -305,6 +322,38 @@ export async function deleteRepository(repositoryId: string): Promise<Repository
   }
 
   const repository = await invoke<RepositoryRecord>("delete_repository", { repositoryId });
+  emitProjectsChanged();
+  return repository;
+}
+
+export async function attachRepositoryRemote(repositoryId: string, input: RepositoryRemoteInput): Promise<RepositoryRecord> {
+  if (!isTauriAvailable()) {
+    const projects = ensureMockProjects();
+    let updatedRepository: RepositoryRecord | null = null;
+    saveStoredProjects(
+      projects.map((project) => ({
+        ...project,
+        repositories: project.repositories.map((repository) => {
+          if (repository.id !== repositoryId) {
+            return repository;
+          }
+          updatedRepository = {
+            ...repository,
+            sourcePath: input.remoteUrl.trim(),
+            sourceKind: "remote",
+            updatedAt: nowIso(),
+          };
+          return updatedRepository as RepositoryRecord;
+        }),
+      })),
+    );
+    if (!updatedRepository) {
+      throw new Error(`Repository ${repositoryId} was not found`);
+    }
+    return updatedRepository;
+  }
+
+  const repository = await invoke<RepositoryRecord>("attach_repository_remote", { repositoryId, input });
   emitProjectsChanged();
   return repository;
 }
