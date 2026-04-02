@@ -311,6 +311,7 @@ pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String
             home.join(".local/bin/pi"),
             home.join(".volta/bin/pi"),
             home.join(".pi/agent/bin/pi"),
+            PathBuf::from("/opt/homebrew/bin/pi"),
         ] {
             if let Some(resolved) = resolve_pi_candidate(&candidate) {
                 return Ok(resolved);
@@ -319,10 +320,71 @@ pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String
         }
     }
 
+    if let Some(resolved) = resolve_pi_via_user_shell(&mut searched) {
+        return Ok(resolved);
+    }
+
     Err(format!(
         "Unable to locate the pi executable. Checked: {}. Set ORCHESTRA_PI_EXECUTABLE to the full pi path if Orchestra cannot find it from the app environment.",
         searched.join(", ")
     ))
+}
+
+fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
+    let mut shells = Vec::new();
+    if let Ok(shell) = env::var("SHELL") {
+        shells.push(PathBuf::from(shell));
+    }
+    shells.push(PathBuf::from("/bin/bash"));
+    shells.push(PathBuf::from("/bin/zsh"));
+    shells.push(PathBuf::from("/bin/sh"));
+
+    let mut seen = HashSet::new();
+    for shell in shells {
+        let key = shell.display().to_string();
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        if !shell.exists() {
+            searched.push(format!("{} (missing shell)", shell.display()));
+            continue;
+        }
+
+        searched.push(format!("{} -lc 'command -v pi'", shell.display()));
+        let output = if shell.file_name().and_then(|name| name.to_str()) == Some("fish") {
+            Command::new(&shell)
+                .arg("-l")
+                .arg("-c")
+                .arg("command -v pi")
+                .output()
+        } else {
+            Command::new(&shell)
+                .arg("-lc")
+                .arg("command -v pi")
+                .output()
+        };
+
+        let Ok(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let candidate = stdout
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(PathBuf::from);
+        if let Some(candidate) = candidate {
+            if let Some(resolved) = resolve_pi_candidate(&candidate) {
+                return Some(resolved);
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_pi_candidate(candidate: &Path) -> Option<PathBuf> {
