@@ -39,7 +39,7 @@ impl AgentTerminalSession {
             })
             .map_err(|error| format!("Unable to create terminal PTY: {error}"))?;
 
-        let pi_executable = std::env::var("ORCHESTRA_PI_EXECUTABLE").unwrap_or_else(|_| "pi".to_string());
+        let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
         let mut command = CommandBuilder::new(&pi_executable);
         command.cwd(runtime_cwd);
         command.arg("--session");

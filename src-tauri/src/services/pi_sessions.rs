@@ -15,8 +15,9 @@ use uuid::Uuid;
 use crate::{
     models::{SessionEvent, SessionModel, SessionModelState, SessionRecord, SessionStreamEvent},
     services::{
-        database, projects,
+        database,
         orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
+        projects,
     },
 };
 
@@ -101,10 +102,15 @@ pub fn find_session_context_for_session(session_id: &str) -> Result<SessionConte
             return Ok(context);
         }
     }
-    Err(format!("Session {session_id} was not found in any Orchestra project session directory"))
+    Err(format!(
+        "Session {session_id} was not found in any Orchestra project session directory"
+    ))
 }
 
-pub fn get_session_header_cwd(session_dir: &Path, session_id: &str) -> Result<Option<PathBuf>, String> {
+pub fn get_session_header_cwd(
+    session_dir: &Path,
+    session_id: &str,
+) -> Result<Option<PathBuf>, String> {
     let path = get_session_path(session_dir, session_id)?;
     let lines = read_jsonl(&path)?;
     let header = lines.first();
@@ -279,6 +285,56 @@ pub fn set_session_thinking_level(
 
 pub fn list_available_models() -> Result<Vec<SessionModel>, String> {
     list_available_models_with_executable(Path::new("pi"))
+}
+
+pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String> {
+    let mut searched = Vec::new();
+
+    if let Ok(value) = env::var("ORCHESTRA_PI_EXECUTABLE") {
+        let candidate = PathBuf::from(value);
+        if let Some(resolved) = resolve_pi_candidate(&candidate) {
+            return Ok(resolved);
+        }
+        searched.push(candidate.display().to_string());
+    }
+
+    if let Some(candidate) = preferred {
+        if let Some(resolved) = resolve_pi_candidate(candidate) {
+            return Ok(resolved);
+        }
+        searched.push(candidate.display().to_string());
+    }
+
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        for candidate in [
+            home.join(".npm-global/bin/pi"),
+            home.join(".local/bin/pi"),
+            home.join(".volta/bin/pi"),
+            home.join(".pi/agent/bin/pi"),
+        ] {
+            if let Some(resolved) = resolve_pi_candidate(&candidate) {
+                return Ok(resolved);
+            }
+            searched.push(candidate.display().to_string());
+        }
+    }
+
+    Err(format!(
+        "Unable to locate the pi executable. Checked: {}. Set ORCHESTRA_PI_EXECUTABLE to the full pi path if Orchestra cannot find it from the app environment.",
+        searched.join(", ")
+    ))
+}
+
+fn resolve_pi_candidate(candidate: &Path) -> Option<PathBuf> {
+    if candidate.components().count() > 1 || candidate.is_absolute() {
+        return candidate.exists().then(|| candidate.to_path_buf());
+    }
+
+    env::var_os("PATH").and_then(|path| {
+        env::split_paths(&path)
+            .map(|entry| entry.join(candidate))
+            .find(|entry| entry.exists())
+    })
 }
 
 fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
@@ -506,7 +562,9 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                             .unwrap_or("assistant-message")
                             .to_string();
 
-                        for tool_event in extract_tool_use_events(message, &message_id, &message_timestamp) {
+                        for tool_event in
+                            extract_tool_use_events(message, &message_id, &message_timestamp)
+                        {
                             events.push(tool_event);
                         }
 
@@ -907,19 +965,22 @@ fn set_session_thinking_level_with_executable(
 }
 
 fn list_available_models_with_executable(executable: &Path) -> Result<Vec<SessionModel>, String> {
+    let resolved_executable = resolve_pi_executable(Some(executable))?;
     let temp_root = std::env::temp_dir().join(format!("orchestra-models-{}", Uuid::new_v4()));
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("Unable to create temporary model query directory: {error}"))?;
     let project_root = temp_root.join("project");
     let session_dir = temp_root.join("sessions");
-    fs::create_dir_all(&project_root)
-        .map_err(|error| format!("Unable to create temporary model query project directory: {error}"))?;
-    fs::create_dir_all(&session_dir)
-        .map_err(|error| format!("Unable to create temporary model query session directory: {error}"))?;
+    fs::create_dir_all(&project_root).map_err(|error| {
+        format!("Unable to create temporary model query project directory: {error}")
+    })?;
+    fs::create_dir_all(&session_dir).map_err(|error| {
+        format!("Unable to create temporary model query session directory: {error}")
+    })?;
 
     let created = create_session_file(&project_root, &session_dir, Some("Model query"), false)?;
     let payloads = run_rpc_process(
-        executable,
+        &resolved_executable,
         &project_root,
         &session_dir,
         &created.path,
@@ -952,9 +1013,7 @@ fn run_rpc_process<F>(
 where
     F: FnMut(&Value),
 {
-    let pi_executable = std::env::var("ORCHESTRA_PI_EXECUTABLE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| executable.to_path_buf());
+    let pi_executable = resolve_pi_executable(Some(executable))?;
     let mut child = Command::new(&pi_executable)
         .arg("--offline")
         .arg("--mode")
@@ -1020,9 +1079,7 @@ where
         }
 
         let payload: Value = serde_json::from_str(trimmed).map_err(|error| {
-            format!(
-                "Unable to parse pi RPC output as JSON: {error}. Raw line: {trimmed}"
-            )
+            format!("Unable to parse pi RPC output as JSON: {error}. Raw line: {trimmed}")
         })?;
         on_payload(&payload);
         payloads.push(payload);
@@ -1157,7 +1214,10 @@ fn extract_tool_use_events(
         .flatten()
         .enumerate()
         .filter_map(|(index, block)| {
-            let block_type = block.get("type").and_then(Value::as_str).unwrap_or_default();
+            let block_type = block
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let normalized_type = block_type.replace(['_', '-'], "").to_ascii_lowercase();
             if normalized_type != "tooluse" {
                 return None;
@@ -1655,10 +1715,14 @@ process.stdin.on('end', () => {
         let parsed = parse_session_file(&session_path, true).expect("session should parse");
         assert_eq!(parsed.record.events.len(), 3);
         assert_eq!(parsed.record.events[0].kind, "system");
-        assert!(parsed.record.events[0].message.contains("Tool call: complete_lane_as_success"));
+        assert!(parsed.record.events[0]
+            .message
+            .contains("Tool call: complete_lane_as_success"));
         assert!(parsed.record.events[0].message.contains("task-1"));
         assert_eq!(parsed.record.events[1].kind, "system");
-        assert!(parsed.record.events[1].message.contains("complete_lane_as_success tool result"));
+        assert!(parsed.record.events[1]
+            .message
+            .contains("complete_lane_as_success tool result"));
         assert_eq!(parsed.record.events[2].kind, "assistant");
         assert_eq!(parsed.record.events[2].message, "Task completed.");
     }
@@ -1701,11 +1765,15 @@ process.stdin.on('end', () => {
         );
         fs::write(&session_path, content).expect("session file should be writable");
 
-        let parsed = parse_session_file(&session_path, true).expect("session should parse despite partial tail");
+        let parsed = parse_session_file(&session_path, true)
+            .expect("session should parse despite partial tail");
         assert_eq!(parsed.record.id, "session-partial");
         assert_eq!(parsed.record.title, "Partially written session");
         assert_eq!(parsed.record.events.len(), 1);
-        assert_eq!(parsed.record.events[0].message, "Visible before tail write finishes");
+        assert_eq!(
+            parsed.record.events[0].message,
+            "Visible before tail write finishes"
+        );
     }
 
     #[test]
