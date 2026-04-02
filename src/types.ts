@@ -21,6 +21,11 @@ export interface AppInfo {
   backendStatus: "connected" | "mock";
 }
 
+export interface PiExecutableDiagnostic {
+  resolvedPath?: string | null;
+  error?: string | null;
+}
+
 export interface BridgeClientDiagnostics {
   clientId: string;
   sessionId?: string | null;

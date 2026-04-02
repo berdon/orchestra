@@ -15,13 +15,14 @@ import {
 import { getPolicy, listPolicies } from "../lib/policies";
 import { getWorkerOverlay, updateWorkerOverlay } from "../lib/projectSettings";
 import { listRoles } from "../lib/roles";
-import { listPiModels } from "../lib/tauri";
+import { getPiExecutableDiagnostic, listPiModels } from "../lib/tauri";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationError,
+  PiExecutableDiagnostic,
   PolicyDefinition,
   ProjectWorkerOverlay,
   RoleSummary,
@@ -76,6 +77,7 @@ export function AgentsPanel() {
   const [loadedAgentArchived, setLoadedAgentArchived] = useState(false);
   const [loadedAgentProtected, setLoadedAgentProtected] = useState(false);
   const [availableModels, setAvailableModels] = useState<SessionModel[]>([]);
+  const [piExecutableDiagnostic, setPiExecutableDiagnostic] = useState<PiExecutableDiagnostic | null>(null);
   const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [agentMemoryInfo, setAgentMemoryInfo] = useState<AgentMemoryInfo | null>(null);
   const [projectOverlay, setProjectOverlay] = useState<ProjectWorkerOverlay | null>(null);
@@ -204,10 +206,11 @@ export function AgentsPanel() {
   useEffect(() => {
     let cancelled = false;
     setLoadingModelOptions(true);
-    void listPiModels()
-      .then((models) => {
+    void Promise.all([listPiModels(), getPiExecutableDiagnostic()])
+      .then(([models, diagnostic]) => {
         if (!cancelled) {
           setAvailableModels(models);
+          setPiExecutableDiagnostic(diagnostic);
         }
       })
       .catch((error) => {
@@ -547,6 +550,10 @@ export function AgentsPanel() {
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
                 </label>
+
+                <div className="workflow-form-grid__full muted-copy" data-role="agent-pi-executable-diagnostic">
+                  PI executable: {piExecutableDiagnostic?.resolvedPath ?? piExecutableDiagnostic?.error ?? "Loading…"}
+                </div>
 
                 <label className="field-group workflow-form-grid__full">
                   <span className="field-group__label">Description</span>

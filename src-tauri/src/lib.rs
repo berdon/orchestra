@@ -5,10 +5,9 @@ mod state;
 
 use commands::{
     agent_runtime::{
-        delete_agent_queue_entry, enqueue_agent_work, ensure_agent_session,
-        get_agent_operations, list_agent_operations, open_agent_session_terminal,
-        write_agent_terminal_input, resize_agent_terminal, get_agent_terminal_buffer,
-        shutdown_agent_terminal_session,
+        delete_agent_queue_entry, enqueue_agent_work, ensure_agent_session, get_agent_operations,
+        get_agent_terminal_buffer, list_agent_operations, open_agent_session_terminal,
+        resize_agent_terminal, shutdown_agent_terminal_session, write_agent_terminal_input,
     },
     agents::{
         archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent,
@@ -16,7 +15,7 @@ use commands::{
     },
     app::{
         cleanup_stale_bridge_instances, clear_logs, get_app_info, get_bridge_diagnostics, get_logs,
-        get_session_storage_info, list_pi_models, open_logs_window,
+        get_pi_executable_diagnostic, get_session_storage_info, list_pi_models, open_logs_window,
     },
     dispatcher::run_dispatcher_tick,
     messages::{
@@ -27,7 +26,10 @@ use commands::{
         get_agent_permissions, get_policy, get_role_instance_permissions, get_role_permissions,
         list_orchestra_tools, list_policies,
     },
-    project_settings::{get_session_prompt_settings, get_worker_overlay, update_session_prompt_settings, update_worker_overlay},
+    project_settings::{
+        get_session_prompt_settings, get_worker_overlay, update_session_prompt_settings,
+        update_worker_overlay,
+    },
     projects::{
         create_project, create_repository, delete_project, delete_repository, get_project,
         list_projects, list_repositories, set_project_default_repository, update_project,
@@ -42,13 +44,13 @@ use commands::{
         subscribe_session, unsubscribe_session,
     },
     tasks::{
-        add_task_attachment, add_task_dependency, add_task_file_reference,
-        approve_lane_completion, comment_on_task, complete_lane_as_failure,
-        complete_lane_as_success, create_subtask, create_task, delete_task, delete_task_comment,
-        dispatch_task_lane, get_task, get_task_context, get_task_file_content, list_task_comments,
-        list_task_file_references, list_task_repositories, list_tasks, manual_task_whip,
-        reset_task_runtime, remove_task_attachment, remove_task_dependency, remove_task_file_reference,
-        request_user_intervention, search_task_comment_file_mentions, send_lane_back_for_work,
+        add_task_attachment, add_task_dependency, add_task_file_reference, approve_lane_completion,
+        comment_on_task, complete_lane_as_failure, complete_lane_as_success, create_subtask,
+        create_task, delete_task, delete_task_comment, dispatch_task_lane, get_task,
+        get_task_context, get_task_file_content, list_task_comments, list_task_file_references,
+        list_task_repositories, list_tasks, manual_task_whip, remove_task_attachment,
+        remove_task_dependency, remove_task_file_reference, request_user_intervention,
+        reset_task_runtime, search_task_comment_file_mentions, send_lane_back_for_work,
         set_default_task_file_reference, update_task, update_task_comment,
     },
     workflows::{
@@ -135,6 +137,7 @@ pub fn run() {
             open_logs_window,
             run_dispatcher_tick,
             get_session_storage_info,
+            get_pi_executable_diagnostic,
             list_pi_models,
             list_agents,
             get_agent_operations,
