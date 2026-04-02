@@ -29,6 +29,7 @@ test("command palette can open an agent terminal window", async ({ page }) => {
   });
 
   await page.goto("/");
+  await expect(page.getByRole("button", { name: "Search · Ctrl+O" })).toBeVisible();
   await triggerShortcut(page, "o");
   await page.locator('[data-role="command-palette-input"]').fill("open data in terminal");
 
