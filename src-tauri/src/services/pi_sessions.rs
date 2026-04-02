@@ -330,41 +330,63 @@ pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String
     ))
 }
 
-fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
-    let mut shells = Vec::new();
-    if let Ok(shell) = env::var("SHELL") {
-        shells.push(PathBuf::from(shell));
-    }
-    shells.push(PathBuf::from("/bin/bash"));
-    shells.push(PathBuf::from("/bin/zsh"));
-    shells.push(PathBuf::from("/bin/sh"));
+pub fn user_shell() -> Result<PathBuf, String> {
+    user_shell_candidates().into_iter().next().ok_or_else(|| {
+        "Unable to locate a usable login shell for Orchestra subprocesses".to_string()
+    })
+}
 
-    let mut seen = HashSet::new();
-    for shell in shells {
-        let key = shell.display().to_string();
-        if !seen.insert(key.clone()) {
+pub fn resolve_user_shell_path() -> Option<String> {
+    for shell in user_shell_candidates() {
+        let Ok(output) = run_shell_command(&shell, "printf %s \"$PATH\"") else {
             continue;
-        }
-        if !shell.exists() {
-            searched.push(format!("{} (missing shell)", shell.display()));
-            continue;
-        }
-
-        searched.push(format!("{} -lc 'command -v pi'", shell.display()));
-        let output = if shell.file_name().and_then(|name| name.to_str()) == Some("fish") {
-            Command::new(&shell)
-                .arg("-l")
-                .arg("-c")
-                .arg("command -v pi")
-                .output()
-        } else {
-            Command::new(&shell)
-                .arg("-lc")
-                .arg("command -v pi")
-                .output()
         };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !stdout.is_empty() {
+            return Some(stdout);
+        }
+    }
 
-        let Ok(output) = output else {
+    None
+}
+
+pub fn wrap_command_for_user_shell(
+    executable: &Path,
+    args: &[String],
+    shell_exports: &[(String, String)],
+) -> Result<(PathBuf, Vec<String>), String> {
+    let shell = user_shell()?;
+    let mut script_parts = Vec::new();
+    for (key, value) in shell_exports {
+        script_parts.push(format!("export {}={}", key, shell_quote(value)));
+    }
+
+    let mut exec_parts = vec![
+        "exec".to_string(),
+        shell_quote(&executable.to_string_lossy()),
+    ];
+    for arg in args {
+        exec_parts.push(shell_quote(arg));
+    }
+    script_parts.push(exec_parts.join(" "));
+    let script = script_parts.join("; ");
+
+    let args = if shell.file_name().and_then(|name| name.to_str()) == Some("fish") {
+        vec!["-l".to_string(), "-c".to_string(), script]
+    } else {
+        vec!["-lc".to_string(), script]
+    };
+
+    Ok((shell, args))
+}
+
+fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
+    for shell in user_shell_candidates() {
+        searched.push(format!("{} -lc 'command -v pi'", shell.display()));
+        let Ok(output) = run_shell_command(&shell, "command -v pi") else {
             continue;
         };
         if !output.status.success() {
@@ -385,6 +407,41 @@ fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
     }
 
     None
+}
+
+fn user_shell_candidates() -> Vec<PathBuf> {
+    let mut shells = Vec::new();
+    if let Ok(shell) = env::var("SHELL") {
+        shells.push(PathBuf::from(shell));
+    }
+    shells.push(PathBuf::from("/bin/bash"));
+    shells.push(PathBuf::from("/bin/zsh"));
+    shells.push(PathBuf::from("/bin/sh"));
+
+    let mut seen = HashSet::new();
+    shells
+        .into_iter()
+        .filter(|shell| {
+            let key = shell.display().to_string();
+            seen.insert(key) && shell.exists()
+        })
+        .collect()
+}
+
+fn run_shell_command(shell: &Path, command: &str) -> Result<std::process::Output, std::io::Error> {
+    if shell.file_name().and_then(|name| name.to_str()) == Some("fish") {
+        Command::new(shell)
+            .arg("-l")
+            .arg("-c")
+            .arg(command)
+            .output()
+    } else {
+        Command::new(shell).arg("-lc").arg(command).output()
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
 fn resolve_pi_candidate(candidate: &Path) -> Option<PathBuf> {
@@ -1076,21 +1133,30 @@ where
     F: FnMut(&Value),
 {
     let pi_executable = resolve_pi_executable(Some(executable))?;
-    let mut child = Command::new(&pi_executable)
-        .arg("--offline")
-        .arg("--mode")
-        .arg("rpc")
-        .arg("--session")
-        .arg(session_path)
-        .arg("--session-dir")
-        .arg(session_dir)
-        .arg("--no-extensions")
+    let args = vec![
+        "--offline".to_string(),
+        "--mode".to_string(),
+        "rpc".to_string(),
+        "--session".to_string(),
+        session_path.display().to_string(),
+        "--session-dir".to_string(),
+        session_dir.display().to_string(),
+        "--no-extensions".to_string(),
+    ];
+    let (shell, shell_args) = wrap_command_for_user_shell(&pi_executable, &args, &[])?;
+    let mut child = Command::new(&shell)
+        .args(&shell_args)
         .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("Unable to start pi RPC process: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Unable to start pi RPC process via {}: {error}",
+                shell.display()
+            )
+        })?;
 
     let mut stdin = child
         .stdin

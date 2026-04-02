@@ -45,21 +45,34 @@ impl AgentTerminalSession {
         let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
         let temp_home_dir = prepare_terminal_home_dir(session_id, &pi_executable)?;
 
-        let mut command = CommandBuilder::new(&pi_executable);
-        command.cwd(runtime_cwd);
-        command.arg("--session");
-        command.arg(session_path.to_string_lossy().to_string());
-        command.arg("--session-dir");
-        command.arg(session_dir.to_string_lossy().to_string());
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        let mut shell_exports = Vec::new();
         if let Some(temp_home_dir) = temp_home_dir.as_ref() {
-            command.env("HOME", temp_home_dir);
+            shell_exports.push(("HOME".to_string(), temp_home_dir.display().to_string()));
             if let Some(prefix) = infer_npm_prefix(&pi_executable, temp_home_dir) {
-                command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
-                command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
+                let prefix = prefix.to_string_lossy().to_string();
+                shell_exports.push(("NPM_CONFIG_PREFIX".to_string(), prefix.clone()));
+                shell_exports.push(("npm_config_prefix".to_string(), prefix));
             }
         }
+        let args = vec![
+            "--session".to_string(),
+            session_path.to_string_lossy().to_string(),
+            "--session-dir".to_string(),
+            session_dir.to_string_lossy().to_string(),
+        ];
+        let (shell, shell_args) = crate::services::pi_sessions::wrap_command_for_user_shell(
+            &pi_executable,
+            &args,
+            &shell_exports,
+        )?;
+
+        let mut command = CommandBuilder::new(shell.to_string_lossy().to_string());
+        command.cwd(runtime_cwd);
+        for arg in shell_args {
+            command.arg(arg);
+        }
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
 
         let child = pair
             .slave
@@ -185,7 +198,10 @@ impl AgentTerminalSession {
     }
 }
 
-fn prepare_terminal_home_dir(session_id: &str, pi_executable: &Path) -> Result<Option<PathBuf>, String> {
+fn prepare_terminal_home_dir(
+    session_id: &str,
+    pi_executable: &Path,
+) -> Result<Option<PathBuf>, String> {
     let real_home = std::env::var("HOME").map(PathBuf::from).ok();
     let agent_dir = real_home
         .as_ref()
@@ -208,9 +224,18 @@ fn prepare_terminal_home_dir(session_id: &str, pi_executable: &Path) -> Result<O
         )
     })?;
 
-    copy_if_exists(&agent_dir.join("auth.json"), &temp_agent_dir.join("auth.json"))?;
-    copy_if_exists(&agent_dir.join("models.json"), &temp_agent_dir.join("models.json"))?;
-    copy_filtered_settings(&agent_dir.join("settings.json"), &temp_agent_dir.join("settings.json"))?;
+    copy_if_exists(
+        &agent_dir.join("auth.json"),
+        &temp_agent_dir.join("auth.json"),
+    )?;
+    copy_if_exists(
+        &agent_dir.join("models.json"),
+        &temp_agent_dir.join("models.json"),
+    )?;
+    copy_filtered_settings(
+        &agent_dir.join("settings.json"),
+        &temp_agent_dir.join("settings.json"),
+    )?;
 
     if let Some(prefix) = infer_npm_prefix(pi_executable, &temp_home_dir) {
         let npmrc_path = temp_home_dir.join(".npmrc");
@@ -236,9 +261,13 @@ fn copy_if_exists(source: &Path, destination: &Path) -> Result<(), String> {
     if !source.exists() {
         return Ok(());
     }
-    fs::copy(source, destination)
-        .map(|_| ())
-        .map_err(|error| format!("Unable to copy {} to {}: {error}", source.display(), destination.display()))
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        format!(
+            "Unable to copy {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
 }
 
 fn copy_filtered_settings(source: &Path, destination: &Path) -> Result<(), String> {
@@ -247,11 +276,15 @@ fn copy_filtered_settings(source: &Path, destination: &Path) -> Result<(), Strin
     }
 
     let mut settings: serde_json::Value = serde_json::from_slice(
-        &fs::read(source).map_err(|error| format!("Unable to read {}: {error}", source.display()))?,
+        &fs::read(source)
+            .map_err(|error| format!("Unable to read {}: {error}", source.display()))?,
     )
     .map_err(|error| format!("Unable to parse {}: {error}", source.display()))?;
 
-    if let Some(packages) = settings.get_mut("packages").and_then(serde_json::Value::as_array_mut) {
+    if let Some(packages) = settings
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_array_mut)
+    {
         packages.retain(|entry| entry.as_str() != Some("npm:pi-powerline-footer"));
     }
 
@@ -279,7 +312,10 @@ fn infer_npm_prefix(pi_executable: &Path, temp_home_dir: &Path) -> Option<PathBu
 
     let parent = pi_executable.parent()?;
     if parent.file_name()? == "bin" {
-        return parent.parent().map(Path::to_path_buf).filter(|path| path.exists());
+        return parent
+            .parent()
+            .map(Path::to_path_buf)
+            .filter(|path| path.exists());
     }
 
     let fallback = temp_home_dir.join(".npm-global");
