@@ -311,6 +311,7 @@ pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String
             home.join(".local/bin/pi"),
             home.join(".volta/bin/pi"),
             home.join(".pi/agent/bin/pi"),
+            PathBuf::from("/opt/homebrew/bin/pi"),
         ] {
             if let Some(resolved) = resolve_pi_candidate(&candidate) {
                 return Ok(resolved);
