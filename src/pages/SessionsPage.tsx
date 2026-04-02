@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
-import { TranscriptEventCard } from "../components/TranscriptEventCard";
+import { SessionChatPanel } from "../components/SessionChatPanel";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
@@ -30,11 +30,6 @@ function getActivityTone(activityState?: SessionActivityState) {
     default:
       return "neutral";
   }
-}
-
-function formatSessionStatusLabel(status: SessionStatus) {
-  const label = status.replace(/_/g, " ");
-  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 interface SessionsPageProps {
@@ -98,79 +93,12 @@ export function SessionsPage({
   onSendMessage,
   onStopSession,
 }: SessionsPageProps) {
-  const [wrapTranscript, setWrapTranscript] = useState(true);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
-  const [transcriptScrollMetrics, setTranscriptScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
   const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
-
-  const transcriptScrollIndicator = useMemo(() => {
-    const { scrollTop, scrollHeight, clientHeight } = transcriptScrollMetrics;
-    if (scrollHeight <= clientHeight) {
-      return { visible: false, heightPercent: 100, offsetPercent: 0 };
-    }
-
-    const heightPercent = Math.max((clientHeight / scrollHeight) * 100, 12);
-    const maxOffset = Math.max(100 - heightPercent, 0);
-    const scrollRange = Math.max(scrollHeight - clientHeight, 1);
-    const offsetPercent = Math.min((scrollTop / scrollRange) * maxOffset, maxOffset);
-
-    return { visible: true, heightPercent, offsetPercent };
-  }, [transcriptScrollMetrics]);
-
-  useEffect(() => {
-    const node = transcriptRef.current;
-    if (!node) {
-      return;
-    }
-
-    setTranscriptScrollMetrics({
-      scrollTop: node.scrollTop,
-      scrollHeight: node.scrollHeight,
-      clientHeight: node.clientHeight,
-    });
-  }, [displayedEvents, selectedSession?.id, transcriptRef, wrapTranscript]);
 
   useEffect(() => {
     setShowDebugInfo(false);
   }, [selectedSession?.id]);
-
-  function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onSendMessage();
-  }
-
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      onSendMessage();
-    }
-  }
-
-  function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    onDraftChange(event.target.value);
-  }
-
-  function handleTranscriptScroll(event: UIEvent<HTMLDivElement>) {
-    const node = event.currentTarget;
-    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
-    const shouldLockToBottom = distanceFromBottom <= 24;
-    const nextLockedState = shouldLockToBottom;
-
-    setTranscriptScrollMetrics({
-      scrollTop: node.scrollTop,
-      scrollHeight: node.scrollHeight,
-      clientHeight: node.clientHeight,
-    });
-
-    if (nextLockedState !== scrollState.lockedToBottom) {
-      node.dispatchEvent(
-        new CustomEvent("orchestra:session-scroll-lock-change", {
-          bubbles: true,
-          detail: { lockedToBottom: nextLockedState },
-        }),
-      );
-    }
-  }
 
   return (
     <section className="panel-stack panel-stack--sessions">
@@ -250,159 +178,28 @@ export function SessionsPage({
         </aside>
 
         <div className="session-detail-column">
-          <section
-            className={selectedSessionReadOnly ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
-            data-role="session-chat-panel"
-            data-terminal-attached={selectedSessionReadOnly ? "true" : "false"}
-          >
-            {selectedSession ? (
-              <>
-                <div className="panel__header panel__header--session-detail">
-                  <h3 data-role="selected-session-title">{selectedSession.title}</h3>
-
-                  <div className="action-cluster action-cluster--session-tools">
-                    <span className={`status-badge status-badge--${getStatusTone(selectedSessionDisplayStatus)}`}>
-                      {formatSessionStatusLabel(selectedSessionDisplayStatus)}
-                    </span>
-                    <span className={`status-badge status-badge--${getActivityTone(selectedSession.activityState)}`}>
-                      {formatActivityLabel(selectedSession.activityState, selectedSession.activeToolName)}
-                    </span>
-                    {selectedSessionReadOnly ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
-                  </div>
-                </div>
-
-                <div className="session-transcript-wrap">
-                  <button
-                    type="button"
-                    className="transcript-wrap-toggle transcript-wrap-toggle--floating"
-                    data-role="session-wrap-toggle"
-                    data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
-                    aria-pressed={wrapTranscript}
-                    aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-                    title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-                    onClick={() => setWrapTranscript((current) => !current)}
-                  >
-                    <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
-                    <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
-                  </button>
-                  <div
-                    className={wrapTranscript ? "session-transcript session-transcript--wrapped" : "session-transcript session-transcript--nowrap"}
-                    data-role="session-transcript"
-                    data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
-                    data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
-                    ref={transcriptRef}
-                    role="log"
-                    aria-live="polite"
-                    onScroll={handleTranscriptScroll}
-                  >
-                    {displayedEvents.map((event) => (
-                      <TranscriptEventCard
-                        key={event.id}
-                        event={event}
-                        formatTimestamp={formatTimestamp}
-                        tone={getEventTone(event.kind)}
-                      />
-                    ))}
-                  </div>
-                  {transcriptScrollIndicator.visible ? (
-                    <div
-                      className="session-transcript-scroll-indicator"
-                      aria-hidden="true"
-                      style={{
-                        height: `${transcriptScrollIndicator.heightPercent}%`,
-                        transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
-                      }}
-                    />
-                  ) : null}
-                </div>
-
-                {selectedSessionReadOnly ? (
-                  <div className="session-readonly-banner" data-role="session-terminal-readonly">
-                    This session is currently attached to an embedded terminal window. Close that window to resume chat here.
-                  </div>
-                ) : null}
-
-                <form className="composer" onSubmit={handleComposerSubmit}>
-                  <label className="field-group field-group--composer">
-                    <span className="field-group__label">Send</span>
-                    <textarea
-                      className="text-area"
-                      data-role="composer-input"
-                      rows={4}
-                      placeholder="Tell the session what to do next…"
-                      value={draftMessage}
-                      disabled={selectedSessionReadOnly}
-                      onChange={handleDraftChange}
-                      onKeyDown={handleComposerKeyDown}
-                    />
-                  </label>
-                  <div className="composer__footer">
-                    <div className="composer__meta">
-                      <p className="muted-copy">
-                        {selectedSessionReadOnly
-                          ? "This session is read-only while the embedded terminal window is attached."
-                          : selectedSessionPending
-                            ? "Response in progress…"
-                            : "Press Ctrl+Enter or ⌘+Enter to send."}
-                      </p>
-                      <div className="session-detail__meta session-detail__meta--footer">
-                        <span>Created {formatDateTime(selectedSession.createdAt)}</span>
-                        <span>Updated {formatDateTime(selectedSession.updatedAt)}</span>
-                      </div>
-                    </div>
-                    <div className="composer__actions">
-                      <div className="session-model-field session-model-field--composer">
-                        <select
-                          className="select-input"
-                          aria-label="Session model"
-                          value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
-                          disabled={
-                            selectedSessionReadOnly ||
-                            loadingModelSessionId === selectedSession.id ||
-                            changingModelSessionId === selectedSession.id ||
-                            selectedSessionPending
-                          }
-                          onChange={(event) => onModelChange(event.target.value)}
-                        >
-                          {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
-                            <option value="">{formatModelOptionLabel(selectedModelState)}</option>
-                          ) : null}
-                          {selectedModelState?.availableModels.map((model) => (
-                            <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-                              {model.name} · {model.provider}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <button
-                        className="secondary-button"
-                        data-role="stop-session-runtime"
-                        type="button"
-                        disabled={selectedSessionReadOnly || !selectedSessionPending}
-                        onClick={onStopSession}
-                      >
-                        Stop
-                      </button>
-                      <button
-                        className="primary-button"
-                        data-role="send-message"
-                        type="submit"
-                        disabled={selectedSessionReadOnly || draftMessage.trim().length === 0}
-                      >
-                        Send
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              </>
-            ) : (
-              <div className="empty-state">
-                <p className="eyebrow">No session selected</p>
-                <h3>Create or select a session</h3>
-                <p>Use the session list to select an existing session or create a new one to begin the interaction flow.</p>
-              </div>
-            )}
-          </section>
+          <SessionChatPanel
+            session={selectedSession}
+            displayedEvents={displayedEvents}
+            sessionPending={selectedSessionPending}
+            sessionDisplayStatus={selectedSessionDisplayStatus}
+            selectedModelState={selectedModelState}
+            sessionReadOnly={selectedSessionReadOnly}
+            loadingModelSessionId={loadingModelSessionId}
+            changingModelSessionId={changingModelSessionId}
+            draftMessage={draftMessage}
+            transcriptRef={transcriptRef}
+            scrollState={scrollState}
+            formatDateTime={formatDateTime}
+            formatTimestamp={formatTimestamp}
+            formatModelOptionLabel={formatModelOptionLabel}
+            getStatusTone={getStatusTone}
+            getEventTone={getEventTone}
+            onModelChange={onModelChange}
+            onDraftChange={onDraftChange}
+            onSendMessage={onSendMessage}
+            onStopSession={onStopSession}
+          />
 
           {canShowDebugInfo && !showDebugInfo ? (
             <button
