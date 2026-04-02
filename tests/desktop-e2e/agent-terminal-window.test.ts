@@ -124,6 +124,26 @@ describe("desktop embedded agent terminal window", () => {
       expect(terminalWindowState.hasError).toBe(false);
       expect(terminalWindowState.ready).toBe(true);
       expect(terminalWindowState.bufferLength).toBeGreaterThan(0);
+      const initialBuffer = await invokeCommand<string>(sessionId, 'get_agent_terminal_buffer', {
+        sessionId: terminalWindowState.terminalSessionId,
+      });
+      await invokeCommand(sessionId, 'write_agent_terminal_input', {
+        sessionId: terminalWindowState.terminalSessionId,
+        data: '\r',
+      });
+      let nextBufferLength = initialBuffer.length;
+      const interactionDeadline = Date.now() + 10_000;
+      while (Date.now() < interactionDeadline) {
+        const nextBuffer = await invokeCommand<string>(sessionId, 'get_agent_terminal_buffer', {
+          sessionId: terminalWindowState.terminalSessionId,
+        });
+        nextBufferLength = nextBuffer.length;
+        if (nextBufferLength > initialBuffer.length) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      expect(nextBufferLength).toBeGreaterThan(initialBuffer.length);
       expect(terminalWindowState.shellPadding).toBe('0px');
       expect(terminalWindowState.shellMargin).toBe('0px');
       expect(terminalWindowState.surfaceBorderRadius).toBe('0px');
