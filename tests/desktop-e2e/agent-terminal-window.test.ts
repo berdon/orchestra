@@ -44,6 +44,8 @@ describe("desktop embedded agent terminal window", () => {
         ready: false,
         terminalSessionId: "",
         bufferLength: 0,
+        hasCanvas: false,
+        visiblePixelCount: 0,
         href: "",
         title: "",
         windowKind: "",
@@ -53,6 +55,7 @@ describe("desktop embedded agent terminal window", () => {
         surfaceBorderRadius: "",
         fillsViewport: false,
       };
+
       const deadline = Date.now() + 20_000;
       while (Date.now() < deadline) {
         terminalWindowState = await executeScript<{
@@ -62,6 +65,8 @@ describe("desktop embedded agent terminal window", () => {
           ready: boolean;
           terminalSessionId: string;
           bufferLength: number;
+          hasCanvas: boolean;
+          visiblePixelCount: number;
           href: string;
           title: string;
           windowKind: string;
@@ -76,6 +81,27 @@ describe("desktop embedded agent terminal window", () => {
           const shellStyle = shell ? window.getComputedStyle(shell) : null;
           const surfaceRect = surface?.getBoundingClientRect();
           const shellRect = shell?.getBoundingClientRect();
+          const canvas = surface?.querySelector('canvas');
+          let visiblePixelCount = 0;
+          if (canvas instanceof HTMLCanvasElement) {
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+              const width = Math.min(canvas.width || 0, 320);
+              const height = Math.min(canvas.height || 0, 160);
+              if (width > 0 && height > 0) {
+                const data = ctx.getImageData(0, 0, width, height).data;
+                for (let i = 0; i < data.length; i += 4) {
+                  const r = data[i];
+                  const g = data[i + 1];
+                  const b = data[i + 2];
+                  const a = data[i + 3];
+                  if (a > 0 && (Math.abs(r - 17) > 4 || Math.abs(g - 19) > 4 || Math.abs(b - 24) > 4)) {
+                    visiblePixelCount += 1;
+                  }
+                }
+              }
+            }
+          }
           return {
             hasTerminalSurface: Boolean(surface),
             hasProjectSwitcher: Boolean(document.querySelector('[data-role="project-switcher"]')),
@@ -83,6 +109,8 @@ describe("desktop embedded agent terminal window", () => {
             ready: shell?.getAttribute('data-terminal-ready') === 'true',
             terminalSessionId: shell?.getAttribute('data-session-id') || window.__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__ || '',
             bufferLength: 0,
+            hasCanvas: canvas instanceof HTMLCanvasElement,
+            visiblePixelCount,
             href: window.location.href,
             title: document.title,
             windowKind: String(window.__ORCHESTRA_WINDOW_KIND__ || ''),
@@ -97,44 +125,52 @@ describe("desktop embedded agent terminal window", () => {
               && Math.abs(surfaceRect.height - window.innerHeight) < 2),
           };
         `);
+
         if (terminalWindowState.terminalSessionId) {
           try {
-            const buffer = await invokeCommand<string>(sessionId, 'get_agent_terminal_buffer', {
+            const buffer = await invokeCommand<string>(sessionId, "get_agent_terminal_buffer", {
               sessionId: terminalWindowState.terminalSessionId,
             });
-            terminalWindowState.bufferLength = typeof buffer === 'string' ? buffer.length : 0;
+            terminalWindowState.bufferLength = typeof buffer === "string" ? buffer.length : 0;
           } catch {
             terminalWindowState.bufferLength = 0;
           }
         }
+
         if (
-          terminalWindowState.hasTerminalSurface
-          && !terminalWindowState.hasProjectSwitcher
-          && !terminalWindowState.hasError
-          && terminalWindowState.ready
-          && terminalWindowState.bufferLength > 0
-          && terminalWindowState.fillsViewport
+          terminalWindowState.hasTerminalSurface &&
+          !terminalWindowState.hasProjectSwitcher &&
+          !terminalWindowState.hasError &&
+          terminalWindowState.ready &&
+          terminalWindowState.bufferLength > 0 &&
+          terminalWindowState.hasCanvas &&
+          terminalWindowState.visiblePixelCount > 100 &&
+          terminalWindowState.fillsViewport
         ) {
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
+
       expect(terminalWindowState.hasTerminalSurface).toBe(true);
       expect(terminalWindowState.hasProjectSwitcher).toBe(false);
       expect(terminalWindowState.hasError).toBe(false);
       expect(terminalWindowState.ready).toBe(true);
       expect(terminalWindowState.bufferLength).toBeGreaterThan(0);
-      const initialBuffer = await invokeCommand<string>(sessionId, 'get_agent_terminal_buffer', {
+      expect(terminalWindowState.hasCanvas).toBe(true);
+      expect(terminalWindowState.visiblePixelCount).toBeGreaterThan(100);
+
+      const initialBuffer = await invokeCommand<string>(sessionId, "get_agent_terminal_buffer", {
         sessionId: terminalWindowState.terminalSessionId,
       });
-      await invokeCommand(sessionId, 'write_agent_terminal_input', {
+      await invokeCommand(sessionId, "write_agent_terminal_input", {
         sessionId: terminalWindowState.terminalSessionId,
-        data: '\r',
+        data: "\r",
       });
       let nextBufferLength = initialBuffer.length;
       const interactionDeadline = Date.now() + 10_000;
       while (Date.now() < interactionDeadline) {
-        const nextBuffer = await invokeCommand<string>(sessionId, 'get_agent_terminal_buffer', {
+        const nextBuffer = await invokeCommand<string>(sessionId, "get_agent_terminal_buffer", {
           sessionId: terminalWindowState.terminalSessionId,
         });
         nextBufferLength = nextBuffer.length;
@@ -144,9 +180,9 @@ describe("desktop embedded agent terminal window", () => {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       expect(nextBufferLength).toBeGreaterThan(initialBuffer.length);
-      expect(terminalWindowState.shellPadding).toBe('0px');
-      expect(terminalWindowState.shellMargin).toBe('0px');
-      expect(terminalWindowState.surfaceBorderRadius).toBe('0px');
+      expect(terminalWindowState.shellPadding).toBe("0px");
+      expect(terminalWindowState.shellMargin).toBe("0px");
+      expect(terminalWindowState.surfaceBorderRadius).toBe("0px");
       expect(terminalWindowState.fillsViewport).toBe(true);
 
       await executeScript(sessionId, `
