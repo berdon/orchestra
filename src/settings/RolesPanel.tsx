@@ -150,7 +150,7 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
       })
       .catch((error) => {
         if (!cancelled) {
-          setRoleActionError(error instanceof Error ? error.message : "Unable to load PI models.");
+          setRoleActionError(error instanceof Error ? error.message : String(error || "Unable to load PI models."));
         }
       })
       .finally(() => {

@@ -66,8 +66,7 @@ impl SessionRuntime {
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
         let extension_path = resolve_orchestra_extension_path(&app)?;
 
-        let pi_executable =
-            std::env::var("ORCHESTRA_PI_EXECUTABLE").unwrap_or_else(|_| "pi".to_string());
+        let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
         let mut child = Command::new(&pi_executable)
             .arg("--offline")
             .arg("--mode")

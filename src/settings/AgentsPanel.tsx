@@ -212,7 +212,7 @@ export function AgentsPanel() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setAgentActionError(error instanceof Error ? error.message : "Unable to load PI models.");
+          setAgentActionError(error instanceof Error ? error.message : String(error || "Unable to load PI models."));
         }
       })
       .finally(() => {
