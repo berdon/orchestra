@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
     fs::{self, File},
     io::{BufRead, BufReader, Read, Write},
@@ -336,51 +336,34 @@ pub fn user_shell() -> Result<PathBuf, String> {
     })
 }
 
-pub fn resolve_user_shell_path() -> Option<String> {
+pub fn resolve_user_shell_environment() -> Option<HashMap<String, String>> {
     for shell in user_shell_candidates() {
-        let Ok(output) = run_shell_command(&shell, "printf %s \"$PATH\"") else {
+        let Ok(output) = run_shell_command(&shell, "env -0") else {
             continue;
         };
         if !output.status.success() {
             continue;
         }
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !stdout.is_empty() {
-            return Some(stdout);
+        let parsed = parse_shell_environment(&output.stdout);
+        if !parsed.is_empty() {
+            return Some(parsed);
         }
     }
 
     None
 }
 
-pub fn wrap_command_for_user_shell(
-    executable: &Path,
-    args: &[String],
-    shell_exports: &[(String, String)],
-) -> Result<(PathBuf, Vec<String>), String> {
-    let shell = user_shell()?;
-    let mut script_parts = Vec::new();
-    for (key, value) in shell_exports {
-        script_parts.push(format!("export {}={}", key, shell_quote(value)));
+pub fn resolve_user_shell_path() -> Option<String> {
+    resolve_user_shell_environment().and_then(|environment| environment.get("PATH").cloned())
+}
+
+pub fn apply_user_shell_environment(command: &mut Command) {
+    if let Some(environment) = resolve_user_shell_environment() {
+        command.env_clear();
+        for (key, value) in environment {
+            command.env(key, value);
+        }
     }
-
-    let mut exec_parts = vec![
-        "exec".to_string(),
-        shell_quote(&executable.to_string_lossy()),
-    ];
-    for arg in args {
-        exec_parts.push(shell_quote(arg));
-    }
-    script_parts.push(exec_parts.join(" "));
-    let script = script_parts.join("; ");
-
-    let args = if shell.file_name().and_then(|name| name.to_str()) == Some("fish") {
-        vec!["-l".to_string(), "-c".to_string(), script]
-    } else {
-        vec!["-lc".to_string(), script]
-    };
-
-    Ok((shell, args))
 }
 
 fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
@@ -394,13 +377,12 @@ fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let candidate = stdout
+        for candidate in stdout
             .lines()
             .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(PathBuf::from);
-        if let Some(candidate) = candidate {
-            if let Some(resolved) = resolve_pi_candidate(&candidate) {
+            .filter(|line| !line.is_empty())
+        {
+            if let Some(resolved) = resolve_pi_candidate(Path::new(candidate)) {
                 return Some(resolved);
             }
         }
@@ -440,8 +422,29 @@ fn run_shell_command(shell: &Path, command: &str) -> Result<std::process::Output
     }
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r#"'\''"#))
+fn parse_shell_environment(output: &[u8]) -> HashMap<String, String> {
+    let mut environment = HashMap::new();
+    for chunk in output.split(|byte| *byte == 0) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(chunk);
+        for line in text.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                if is_environment_key(key) {
+                    environment.insert(key.to_string(), value.to_string());
+                }
+            }
+        }
+    }
+    environment
+}
+
+fn is_environment_key(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn resolve_pi_candidate(candidate: &Path) -> Option<PathBuf> {
@@ -1143,20 +1146,16 @@ where
         session_dir.display().to_string(),
         "--no-extensions".to_string(),
     ];
-    let (shell, shell_args) = wrap_command_for_user_shell(&pi_executable, &args, &[])?;
-    let mut child = Command::new(&shell)
-        .args(&shell_args)
+    let mut command = Command::new(&pi_executable);
+    apply_user_shell_environment(&mut command);
+    let mut child = command
+        .args(&args)
         .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| {
-            format!(
-                "Unable to start pi RPC process via {}: {error}",
-                shell.display()
-            )
-        })?;
+        .map_err(|error| format!("Unable to start pi RPC process: {error}"))?;
 
     let mut stdin = child
         .stdin

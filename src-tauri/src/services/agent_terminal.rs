@@ -45,34 +45,26 @@ impl AgentTerminalSession {
         let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
         let temp_home_dir = prepare_terminal_home_dir(session_id, &pi_executable)?;
 
-        let mut shell_exports = Vec::new();
-        if let Some(temp_home_dir) = temp_home_dir.as_ref() {
-            shell_exports.push(("HOME".to_string(), temp_home_dir.display().to_string()));
-            if let Some(prefix) = infer_npm_prefix(&pi_executable, temp_home_dir) {
-                let prefix = prefix.to_string_lossy().to_string();
-                shell_exports.push(("NPM_CONFIG_PREFIX".to_string(), prefix.clone()));
-                shell_exports.push(("npm_config_prefix".to_string(), prefix));
-            }
-        }
-        let args = vec![
-            "--session".to_string(),
-            session_path.to_string_lossy().to_string(),
-            "--session-dir".to_string(),
-            session_dir.to_string_lossy().to_string(),
-        ];
-        let (shell, shell_args) = crate::services::pi_sessions::wrap_command_for_user_shell(
-            &pi_executable,
-            &args,
-            &shell_exports,
-        )?;
-
-        let mut command = CommandBuilder::new(shell.to_string_lossy().to_string());
+        let mut command = CommandBuilder::new(&pi_executable);
         command.cwd(runtime_cwd);
-        for arg in shell_args {
-            command.arg(arg);
-        }
+        command.arg("--session");
+        command.arg(session_path.to_string_lossy().to_string());
+        command.arg("--session-dir");
+        command.arg(session_dir.to_string_lossy().to_string());
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        if let Some(environment) = crate::services::pi_sessions::resolve_user_shell_environment() {
+            for (key, value) in environment {
+                command.env(key, value);
+            }
+        }
+        if let Some(temp_home_dir) = temp_home_dir.as_ref() {
+            command.env("HOME", temp_home_dir);
+            if let Some(prefix) = infer_npm_prefix(&pi_executable, temp_home_dir) {
+                command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
+                command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
+            }
+        }
 
         let child = pair
             .slave
