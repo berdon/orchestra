@@ -77,6 +77,84 @@ pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectD
     })
 }
 
+pub fn get_project_by_slug(
+    connection: &Connection,
+    project_slug: &str,
+) -> Result<Option<ProjectDetail>, String> {
+    ensure_default_project(connection)?;
+    let project = connection
+        .query_row(
+            r#"
+            SELECT id, slug, name, description, default_repository_id, created_at, updated_at
+            FROM projects
+            WHERE slug = ?1
+            "#,
+            [project_slug],
+            |row| {
+                Ok(ProjectDetail {
+                    id: row.get(0)?,
+                    slug: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    default_repository_id: row.get(4)?,
+                    repositories: Vec::new(),
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query project slug {project_slug}: {error}"))?;
+
+    let Some(project) = project else {
+        return Ok(None);
+    };
+
+    let repositories = list_repositories(connection, Some(&project.id))?;
+    Ok(Some(ProjectDetail {
+        repositories,
+        ..project
+    }))
+}
+
+fn existing_repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
+    repository
+        .repository_path
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+}
+
+pub fn resolve_project_runtime_root(
+    connection: &Connection,
+    project_slug: &str,
+) -> Result<PathBuf, String> {
+    let Some(project) = get_project_by_slug(connection, project_slug)? else {
+        return ensure_project_root_exists(project_slug);
+    };
+
+    if let Some(default_repository_id) = project.default_repository_id.as_deref() {
+        if let Some(path) = project
+            .repositories
+            .iter()
+            .find(|repository| repository.id == default_repository_id)
+            .and_then(existing_repository_runtime_root)
+        {
+            return Ok(path);
+        }
+    }
+
+    if let Some(path) = project
+        .repositories
+        .iter()
+        .find_map(existing_repository_runtime_root)
+    {
+        return Ok(path);
+    }
+
+    ensure_project_root_exists(&project.slug)
+}
+
 pub fn create_project(
     connection: &mut Connection,
     input: ProjectUpsertInput,
@@ -807,6 +885,20 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let suffix = format!(
+            "{}-{}-{}",
+            label,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_millis()
+        );
+        std::env::temp_dir().join(suffix)
+    }
 
     #[test]
     fn test_is_remote_repository_path_detects_https() {
@@ -877,5 +969,35 @@ mod tests {
     fn test_is_remote_repository_path_rejects_plain_strings_without_colon_or_path_separator() {
         assert!(!is_remote_repository_path("just-a-string"));
         assert!(!is_remote_repository_path("repo"));
+    }
+
+    #[test]
+    fn resolves_project_runtime_root_from_existing_default_repository_path() {
+        let database_path = unique_temp_path("projects-runtime-root").join("orchestra.db");
+        let database_parent = database_path.parent().expect("database path should have a parent");
+        fs::create_dir_all(database_parent).expect("database parent should exist");
+        crate::services::database::initialize_database_at(&database_path)
+            .expect("database schema should initialize");
+        let connection = Connection::open(&database_path).expect("database should open");
+
+        let repository_root = unique_temp_path("projects-runtime-root-repo");
+        fs::create_dir_all(&repository_root).expect("repository root should exist");
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?5)",
+                params!["project-1", "pss-frontend", "PSS Frontend", "repo-1", "2026-04-02T00:00:00Z"],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'main', ?6, ?6)",
+                params!["repo-1", "project-1", "pss-frontend", "PSS Frontend repo", repository_root.display().to_string(), "2026-04-02T00:00:00Z"],
+            )
+            .expect("repository should insert");
+
+        let resolved = resolve_project_runtime_root(&connection, "pss-frontend")
+            .expect("runtime root should resolve");
+        assert_eq!(resolved, repository_root);
     }
 }

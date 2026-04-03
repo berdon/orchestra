@@ -1782,7 +1782,7 @@ export function App() {
         return;
       case "create-session":
         setActivePage("sessions");
-        await runSessionAction(async () => createSession());
+        await runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null));
         return;
       case "open-logs":
         await handleOpenLogsWindow();
@@ -2060,7 +2060,7 @@ export function App() {
                 type="button"
                 disabled={isSubmitting}
                 onClick={() =>
-                  void runSessionAction(async () => createSession())
+                  void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null))
                 }
               >
                 Create session

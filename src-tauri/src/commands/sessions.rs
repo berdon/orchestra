@@ -244,15 +244,23 @@ fn resolve_session_runtime_root(
     session_dir: &std::path::Path,
 ) -> Result<PathBuf, String> {
     if let Some(debug_info) = load_session_debug_info(connection, session_id)? {
-        if let Some(session_cwd) = debug_info.session_cwd {
-            return Ok(PathBuf::from(session_cwd));
+        if let Some(session_cwd) = debug_info
+            .session_cwd
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+        {
+            return Ok(session_cwd);
         }
-        if let Some(project_root) = debug_info.project_root {
-            return Ok(PathBuf::from(project_root));
+        if let Some(project_root) = debug_info
+            .project_root
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+        {
+            return Ok(project_root);
         }
     }
 
-    if let Some(header_cwd) = get_session_header_cwd(session_dir, session_id)? {
+    if let Some(header_cwd) = get_session_header_cwd(session_dir, session_id)?.filter(|path| path.is_dir()) {
         return Ok(header_cwd);
     }
 
@@ -331,10 +339,12 @@ pub async fn create_session(
     app: AppHandle,
     state: State<'_, AppState>,
     title: Option<String>,
+    project_slug: Option<String>,
 ) -> Result<SessionRecord, String> {
     let title_for_task = title.clone();
+    let project_slug_for_task = project_slug.clone();
     let (project_root, session_dir, created) = spawn_blocking(move || {
-        let context = detect_session_context(None)?;
+        let context = detect_session_context(project_slug_for_task.as_deref())?;
         let created = create_session_file(
             &context.project_root,
             &context.session_dir,
