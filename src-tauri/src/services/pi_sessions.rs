@@ -41,22 +41,51 @@ pub struct StoredSession {
     pub record: SessionRecord,
 }
 
+fn configured_project_root() -> Option<PathBuf> {
+    env::var("ORCHESTRA_PROJECT_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+fn fallback_manifest_project_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn resolve_context_project_root(project_slug: &str) -> Result<PathBuf, String> {
+    if let Some(project_root) = configured_project_root() {
+        return Ok(project_root);
+    }
+
+    let connection = database::open_connection()?;
+    let resolved = projects::resolve_project_runtime_root(&connection, project_slug)?;
+    if resolved.is_dir() {
+        return Ok(resolved);
+    }
+
+    let manifest_root = fallback_manifest_project_root();
+    if manifest_root.is_dir() {
+        return Ok(manifest_root);
+    }
+
+    Ok(resolved)
+}
+
 pub fn detect_session_context(
     project_slug_override: Option<&str>,
 ) -> Result<SessionContext, String> {
-    let project_root = env::var("ORCHESTRA_PROJECT_ROOT")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        });
+    let project_slug = if let Some(project_slug) = project_slug_override {
+        sanitize_slug(project_slug)
+    } else if let Some(project_root) = configured_project_root() {
+        infer_project_slug(&project_root)
+    } else {
+        infer_project_slug(&fallback_manifest_project_root())
+    };
 
-    let project_slug = project_slug_override
-        .map(sanitize_slug)
-        .unwrap_or_else(|| infer_project_slug(&project_root));
+    let project_root = resolve_context_project_root(&project_slug)?;
     let orchestra_root = default_orchestra_root()?;
     let session_dir = project_session_dir(&orchestra_root, &project_slug);
 

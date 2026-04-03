@@ -17,8 +17,8 @@ import {
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 
-describe("desktop session missing cwd logging", () => {
-  it.skipIf(!isDesktopE2E)("logs the resolved spawn paths when session cwd is missing", async () => {
+describe("desktop session missing cwd recovery", () => {
+  it.skipIf(!isDesktopE2E)("reuses a valid project runtime root when a stored session cwd is missing", async () => {
     expect(testHome).toBeTruthy();
 
     const sessionId = await createReadyWebdriverSession();
@@ -48,15 +48,22 @@ describe("desktop session missing cwd logging", () => {
 
       await invokeCommand(sessionId, "stop_session_runtime", { sessionId: createdSession.id });
 
-      await expect(invokeCommand(sessionId, "get_session_model_state", { sessionId: createdSession.id })).rejects.toThrow();
-      await expect(invokeCommand(sessionId, "subscribe_session", { sessionId: createdSession.id })).rejects.toThrow();
+      const modelState = await invokeCommand<{ sessionId: string; availableModels: unknown[] }>(sessionId, "get_session_model_state", {
+        sessionId: createdSession.id,
+      });
+      expect(modelState.sessionId).toBe(createdSession.id);
+      expect(modelState.availableModels.length).toBeGreaterThan(0);
+
+      const subscribed = await invokeCommand<{ id: string; subscribed: boolean }>(sessionId, "subscribe_session", {
+        sessionId: createdSession.id,
+      });
+      expect(subscribed.id).toBe(createdSession.id);
+      expect(subscribed.subscribed).toBe(true);
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
       await waitForSelector(sessionId, '[data-role="runtime-log-list"]');
       await waitForText(sessionId, "sessions.runtime.spawn.request");
-      await waitForText(sessionId, "sessions.runtime.spawn.failed");
-      await waitForText(sessionId, missingCwd);
 
       const logText = await executeScript<string>(
         sessionId,
@@ -67,11 +74,11 @@ describe("desktop session missing cwd logging", () => {
       );
 
       expect(logText).toContain("(sessions.runtime.spawn.request):");
-      expect(logText).toContain("(sessions.runtime.spawn.failed):");
-      expect(logText).toContain(`cwd=${missingCwd}`);
       expect(logText).toContain(`session_dir=${expectedSessionDir}`);
       expect(logText).toContain("pi=");
       expect(logText).toContain("extension=");
+      expect(logText).not.toContain("(sessions.runtime.spawn.failed):");
+      expect(logText).not.toContain(`cwd=${missingCwd}`);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

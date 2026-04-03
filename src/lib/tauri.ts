@@ -1377,7 +1377,7 @@ export async function getSessionRecord(sessionId: string): Promise<SessionRecord
   return invoke<SessionRecord>("get_session_record", { sessionId });
 }
 
-export async function createSession(title?: string): Promise<SessionRecord> {
+export async function createSession(title?: string, projectSlug?: string | null): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const timestamp = nowIso();
     const session: SessionRecord = {
@@ -1401,7 +1401,7 @@ export async function createSession(title?: string): Promise<SessionRecord> {
     return session;
   }
 
-  return invoke<SessionRecord>("create_session", { title });
+  return invoke<SessionRecord>("create_session", { title, projectSlug });
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
