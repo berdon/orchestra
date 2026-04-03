@@ -36,6 +36,21 @@ fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> 
     }
 }
 
+fn format_path_diagnostic(path: &std::path::Path) -> String {
+    let parent = path.parent();
+    format!(
+        "{} [exists={} dir={} file={} parent={} parent_exists={}]",
+        path.display(),
+        path.exists(),
+        path.is_dir(),
+        path.is_file(),
+        parent
+            .map(|value| value.display().to_string())
+            .unwrap_or_else(|| "<none>".into()),
+        parent.map(|value| value.exists()).unwrap_or(false),
+    )
+}
+
 pub struct SessionRuntime {
     session_id: String,
     session_dir: PathBuf,
@@ -79,6 +94,29 @@ impl SessionRuntime {
             "--extension".to_string(),
             extension_path.display().to_string(),
         ];
+        let requested_project_root = project_root.clone();
+        let requested_project_root_diagnostic = format_path_diagnostic(&requested_project_root);
+        let session_dir_diagnostic = format_path_diagnostic(&session_dir);
+        let session_path_diagnostic = format_path_diagnostic(&session_path);
+        let pi_executable_diagnostic = format_path_diagnostic(&pi_executable);
+        let extension_path_diagnostic = format_path_diagnostic(&extension_path);
+        let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
+
+        app.state::<crate::state::AppState>().log(
+            "info",
+            "sessions.runtime.spawn.request",
+            &format!(
+                "Session {} spawn request: pi={} cwd={} session_dir={} session_path={} extension={} shell_path={}",
+                session_id,
+                pi_executable_diagnostic,
+                requested_project_root_diagnostic,
+                session_dir_diagnostic,
+                session_path_diagnostic,
+                extension_path_diagnostic,
+                shell_path.as_deref().unwrap_or("<unavailable>"),
+            ),
+        );
+
         let mut command = Command::new(&pi_executable);
         crate::services::pi_sessions::apply_user_shell_environment(&mut command);
         let mut child = command
@@ -99,12 +137,27 @@ impl SessionRuntime {
                     format!("Unable to serialize authorization context: {error}")
                 })?,
             )
-            .current_dir(project_root)
+            .current_dir(&requested_project_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("Unable to start pi RPC process: {error}"))?;
+            .map_err(|error| {
+                let diagnostic = format!(
+                    "Unable to start pi RPC process: {error} (pi={} cwd={} session_dir={} session_path={} extension={})",
+                    pi_executable_diagnostic,
+                    requested_project_root_diagnostic,
+                    session_dir_diagnostic,
+                    session_path_diagnostic,
+                    extension_path_diagnostic,
+                );
+                app.state::<crate::state::AppState>().log(
+                    "error",
+                    "sessions.runtime.spawn.failed",
+                    &format!("Session {} spawn failed: {}", session_id, diagnostic),
+                );
+                diagnostic
+            })?;
 
         let stdin = child
             .stdin
