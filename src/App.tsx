@@ -1498,9 +1498,9 @@ export function App() {
             applySessionUpdate(record);
           }
         })
-        .catch((error) => {
+        .catch(async (error) => {
           if (!cancelled) {
-            setSessionActionError(error instanceof Error ? error.message : "Unable to subscribe to session.");
+            setSessionActionError(await reportClientError("ui.sessions.subscribe", error, "Unable to subscribe to session."));
           }
         });
     }
@@ -1518,9 +1518,9 @@ export function App() {
           [state.sessionId]: state,
         }));
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (!cancelled) {
-          setSessionActionError(error instanceof Error ? error.message : "Unable to load session model.");
+          setSessionActionError(await reportClientError("ui.sessions.model_state.load", error, "Unable to load session model."));
         }
       })
       .finally(() => {
