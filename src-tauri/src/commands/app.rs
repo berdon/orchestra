@@ -13,10 +13,13 @@ use crate::{
 
 #[tauri::command]
 pub fn get_app_info() -> AppInfo {
+    let version = env!("CARGO_PKG_VERSION");
+    let hash = option_env!("ORCHESTRA_GIT_HASH").unwrap_or("dev");
     AppInfo {
         app_name: "Orchestra".into(),
         environment: "tauri".into(),
         backend_status: "connected".into(),
+        version_display: format!("{}-{}", version, hash),
     }
 }
 

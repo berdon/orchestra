@@ -7,6 +7,7 @@ pub struct AppInfo {
     pub app_name: String,
     pub environment: String,
     pub backend_status: String,
+    pub version_display: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

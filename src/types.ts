@@ -19,6 +19,7 @@ export interface AppInfo {
   appName: string;
   environment: "tauri" | "browser";
   backendStatus: "connected" | "mock";
+  versionDisplay: string;
 }
 
 export interface PiExecutableDiagnostic {
