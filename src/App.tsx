@@ -2049,7 +2049,10 @@ export function App() {
 
       <main className="content">
         <header className="page-header page-header--compact">
-          <div>
+          <div className="page-header__leading">
+            <p className="page-version-label muted-copy" data-role="app-version-label">
+              {appInfo?.versionDisplay ?? "loading-version"}
+            </p>
             {activePage === "sessions" ? (
               <button
                 className="primary-button"

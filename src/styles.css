@@ -184,6 +184,18 @@ strong {
   overflow: auto;
 }
 
+.page-header__leading {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.page-version-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
 .logs-window-shell {
   min-height: 100%;
   padding: 24px;
