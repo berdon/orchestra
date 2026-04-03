@@ -4,7 +4,7 @@ import { AccessEditor } from "../components/access/AccessEditor";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import { getPolicy, listPolicies } from "../lib/policies";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
-import { getPiExecutableDiagnostic, listPiModels } from "../lib/tauri";
+import { getPiExecutableDiagnostic, listPiModels, reportClientError } from "../lib/tauri";
 import type {
   PiExecutableDiagnostic,
   PolicyDefinition,
@@ -151,9 +151,9 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
           setPiExecutableDiagnostic(diagnostic);
         }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (!cancelled) {
-          setRoleActionError(error instanceof Error ? error.message : String(error || "Unable to load PI models."));
+          setRoleActionError(await reportClientError("ui.roles.pi_models.load", error, "Unable to load PI models."));
         }
       })
       .finally(() => {

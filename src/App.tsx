@@ -21,6 +21,7 @@ import {
   listenToSessionChanges,
   listenToSessionStream,
   openLogsWindow,
+  reportClientError,
   sendSessionMessage,
   setSessionModel,
   stopSessionRuntime,
@@ -842,7 +843,7 @@ export function App() {
       const updatedSession = await action();
       applySessionUpdate(updatedSession);
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Session action failed.");
+      setSessionActionError(await reportClientError("ui.sessions.action", error, "Session action failed."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1827,8 +1828,8 @@ export function App() {
           ],
         });
       })
-      .catch((error: unknown) => {
-        setSessionActionError(error instanceof Error ? error.message : "Unable to stop session runtime.");
+      .catch(async (error: unknown) => {
+        setSessionActionError(await reportClientError("ui.sessions.stop", error, "Unable to stop session runtime."));
       });
   }
 
@@ -1871,7 +1872,7 @@ export function App() {
       events: [...record.events.filter((event) => event.runId !== runId), pendingUserEvent],
     }));
 
-    void sendSessionMessage(sessionId, trimmedMessage, runId).catch((error) => {
+    void sendSessionMessage(sessionId, trimmedMessage, runId).catch(async (error) => {
       patchSessionRecord(sessionId, (record) => ({
         ...record,
         status: "failed",
@@ -1879,7 +1880,7 @@ export function App() {
       }));
       removePendingRun(sessionId, runId);
       updateDraftMessage(sessionId, trimmedMessage);
-      setSessionActionError(error instanceof Error ? error.message : "Unable to queue message.");
+      setSessionActionError(await reportClientError("ui.sessions.message.queue", error, "Unable to queue message."));
     });
   }
 
@@ -1907,6 +1908,22 @@ export function App() {
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
   }, [isDetachedWindow, sessions, draftMessages, pendingRuns]);
+
+  useEffect(() => {
+    const handleUnhandledError = (event: ErrorEvent) => {
+      void reportClientError("ui.unhandled_error", event.error ?? event.message, "Unhandled UI error.");
+    };
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      void reportClientError("ui.unhandled_rejection", event.reason, "Unhandled promise rejection.");
+    };
+
+    window.addEventListener("error", handleUnhandledError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", handleUnhandledError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, []);
 
   if (isLogsWindow) {
     return (
