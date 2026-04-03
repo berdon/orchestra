@@ -1228,6 +1228,32 @@ export async function listenToInboxChanges(
   };
 }
 
+function describeError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+  return fallback;
+}
+
+export async function reportClientError(target: string, error: unknown, fallback: string) {
+  const message = describeError(error, fallback);
+  console.error(`[${target}] ${message}`, error);
+  if (!isTauriAvailable()) {
+    appendMockLog("error", target, message);
+    return message;
+  }
+
+  try {
+    await invoke("report_client_error", { target, message });
+  } catch (loggingError) {
+    console.error(`[report_client_error.failed] ${target}`, loggingError);
+  }
+  return message;
+}
+
 export async function getAppInfo(): Promise<AppInfo> {
   if (!isTauriAvailable()) {
     return {

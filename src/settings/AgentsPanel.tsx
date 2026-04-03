@@ -15,7 +15,7 @@ import {
 import { getPolicy, listPolicies } from "../lib/policies";
 import { getWorkerOverlay, updateWorkerOverlay } from "../lib/projectSettings";
 import { listRoles } from "../lib/roles";
-import { getPiExecutableDiagnostic, listPiModels } from "../lib/tauri";
+import { getPiExecutableDiagnostic, listPiModels, reportClientError } from "../lib/tauri";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
@@ -213,9 +213,9 @@ export function AgentsPanel() {
           setPiExecutableDiagnostic(diagnostic);
         }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (!cancelled) {
-          setAgentActionError(error instanceof Error ? error.message : String(error || "Unable to load PI models."));
+          setAgentActionError(await reportClientError("ui.agents.pi_models.load", error, "Unable to load PI models."));
         }
       })
       .finally(() => {

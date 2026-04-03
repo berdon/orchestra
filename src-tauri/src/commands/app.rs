@@ -35,6 +35,15 @@ pub fn clear_logs(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+pub fn report_client_error(
+    state: State<'_, AppState>,
+    target: String,
+    message: String,
+) {
+    state.log("error", &target, &message);
+}
+
+#[tauri::command]
 pub fn get_bridge_diagnostics(state: State<'_, AppState>) -> BridgeDiagnostics {
     state.tool_bridge.diagnostics()
 }
