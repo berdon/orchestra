@@ -56,7 +56,15 @@ fn load_session_debug_info(
         })
         .map_err(|error| format!("Unable to load task session debug info {session_id}: {error}"))?;
 
-    if let Some((assignment_id, task_id, project_id, runtime_cwd, managed_repository_path, project_slug)) = task_assignment {
+    if let Some((
+        assignment_id,
+        task_id,
+        project_id,
+        runtime_cwd,
+        managed_repository_path,
+        project_slug,
+    )) = task_assignment
+    {
         let project_root = project_slug.and_then(|slug| {
             crate::services::orchestra_paths::default_orchestra_root()
                 .ok()
@@ -66,15 +74,27 @@ fn load_session_debug_info(
                         .to_string()
                 })
         });
-        let worktree_path = task_runtime::get_active_assignment_for_session(connection, session_id)?
-            .filter(|assignment| assignment.id == assignment_id)
-            .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, &assignment, &task_id, &project_id))
-            .transpose()?
-            .flatten()
-            .or(runtime_cwd.clone());
+        let worktree_path =
+            task_runtime::get_active_assignment_for_session(connection, session_id)?
+                .filter(|assignment| assignment.id == assignment_id)
+                .map(|assignment| {
+                    task_runtime::resolve_assignment_workspace_cwd(
+                        connection,
+                        &assignment,
+                        &task_id,
+                        &project_id,
+                    )
+                })
+                .transpose()?
+                .flatten()
+                .or(runtime_cwd.clone());
         let session_cwd = find_session_context_for_session(session_id)
             .ok()
-            .and_then(|context| get_session_header_cwd(&context.session_dir, session_id).ok().flatten())
+            .and_then(|context| {
+                get_session_header_cwd(&context.session_dir, session_id)
+                    .ok()
+                    .flatten()
+            })
             .map(|path| path.display().to_string())
             .or(runtime_cwd.clone());
         return Ok(Some(SessionDebugInfo {
@@ -95,16 +115,27 @@ fn load_session_debug_info(
             LIMIT 1
             "#,
             [session_id],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
         )
         .optional()
-        .map_err(|error| format!("Unable to load agent session debug info {session_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to load agent session debug info {session_id}: {error}")
+        })?;
 
     if let Some((runtime_cwd, project_slug)) = agent_runtime {
         let project_root = project_slug.and_then(|slug| {
             crate::services::orchestra_paths::default_orchestra_root()
                 .ok()
-                .map(|root| crate::services::orchestra_paths::project_root(&root, &slug).display().to_string())
+                .map(|root| {
+                    crate::services::orchestra_paths::project_root(&root, &slug)
+                        .display()
+                        .to_string()
+                })
         });
         return Ok(Some(SessionDebugInfo {
             project_root,
@@ -240,6 +271,20 @@ fn resolve_session_paths(session_id: &str) -> Result<(PathBuf, PathBuf), String>
     Ok((runtime_root, storage_context.session_dir))
 }
 
+fn log_session_command_failure(
+    state: &AppState,
+    target: &str,
+    session_id: &str,
+    action: &str,
+    error: &str,
+) {
+    state.log(
+        "error",
+        target,
+        &format!("Session {session_id} failed to {action}: {error}"),
+    );
+}
+
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
@@ -270,7 +315,12 @@ pub async fn get_session_record(
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
         let context = find_session_context_for_session(&session_id_for_task)?;
-        load_decorated_session_record(&context.session_dir, &session_id_for_task, subscribed, &terminal_attached_session_ids)
+        load_decorated_session_record(
+            &context.session_dir,
+            &session_id_for_task,
+            subscribed,
+            &terminal_attached_session_ids,
+        )
     })
     .await
     .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
@@ -317,7 +367,12 @@ pub async fn create_session(
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let decorated_record = spawn_blocking(move || {
-        load_decorated_session_record(&session_dir, &created.record.id, true, &terminal_attached_session_ids)
+        load_decorated_session_record(
+            &session_dir,
+            &created.record.id,
+            true,
+            &terminal_attached_session_ids,
+        )
     })
     .await
     .map_err(|error| format!("Unable to join create_session record task: {error}"))??;
@@ -358,9 +413,10 @@ pub async fn resume_session(
     session_id: String,
 ) -> Result<SessionRecord, String> {
     let session_id_for_task = session_id.clone();
-    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
-    .await
-    .map_err(|error| format!("Unable to join resume_session context task: {error}"))??;
+    let (project_root, session_dir) =
+        spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+            .await
+            .map_err(|error| format!("Unable to join resume_session context task: {error}"))??;
 
     state.set_session_subscription(&session_id, true)?;
     let _ = ensure_runtime(
@@ -374,7 +430,12 @@ pub async fn resume_session(
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
-        load_decorated_session_record(&session_dir, &session_id_for_task, true, &terminal_attached_session_ids)
+        load_decorated_session_record(
+            &session_dir,
+            &session_id_for_task,
+            true,
+            &terminal_attached_session_ids,
+        )
     })
     .await
     .map_err(|error| format!("Unable to join resume_session record task: {error}"))??;
@@ -392,34 +453,57 @@ pub async fn subscribe_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
-    let session_id_for_task = session_id.clone();
-    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
-    .await
-    .map_err(|error| format!("Unable to join subscribe_session context task: {error}"))??;
+    let result: Result<SessionRecord, String> = async {
+        let session_id_for_task = session_id.clone();
+        let (project_root, session_dir) =
+            spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+                .await
+                .map_err(|error| {
+                    format!("Unable to join subscribe_session context task: {error}")
+                })??;
 
-    state.set_session_subscription(&session_id, true)?;
-    let runtime = ensure_runtime(
-        &state.session_runtimes,
-        app,
-        project_root,
-        session_dir.clone(),
-        &session_id,
-    )?;
-    runtime.set_subscribed(true);
+        state.set_session_subscription(&session_id, true)?;
+        let runtime = ensure_runtime(
+            &state.session_runtimes,
+            app,
+            project_root,
+            session_dir.clone(),
+            &session_id,
+        )?;
+        runtime.set_subscribed(true);
 
-    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
-    let session_id_for_task = session_id.clone();
-    let record = spawn_blocking(move || {
-        load_decorated_session_record(&session_dir, &session_id_for_task, true, &terminal_attached_session_ids)
-    })
-    .await
-    .map_err(|error| format!("Unable to join subscribe_session record task: {error}"))??;
-    state.log(
-        "info",
-        "sessions.subscribe",
-        &format!("Subscribed to pi session {}", record.id),
-    );
-    Ok(record)
+        let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+        let session_id_for_task = session_id.clone();
+        let record = spawn_blocking(move || {
+            load_decorated_session_record(
+                &session_dir,
+                &session_id_for_task,
+                true,
+                &terminal_attached_session_ids,
+            )
+        })
+        .await
+        .map_err(|error| format!("Unable to join subscribe_session record task: {error}"))??;
+        state.log(
+            "info",
+            "sessions.subscribe",
+            &format!("Subscribed to pi session {}", record.id),
+        );
+        Ok(record)
+    }
+    .await;
+
+    if let Err(error) = &result {
+        log_session_command_failure(
+            &state,
+            "sessions.subscribe.failed",
+            &session_id,
+            "subscribe",
+            error,
+        );
+    }
+
+    result
 }
 
 #[tauri::command]
@@ -436,7 +520,12 @@ pub async fn unsubscribe_session(
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
         let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
-        load_decorated_session_record(&session_dir, &session_id_for_task, false, &terminal_attached_session_ids)
+        load_decorated_session_record(
+            &session_dir,
+            &session_id_for_task,
+            false,
+            &terminal_attached_session_ids,
+        )
     })
     .await
     .map_err(|error| format!("Unable to join unsubscribe_session task: {error}"))??;
@@ -454,26 +543,46 @@ pub async fn get_session_model_state(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionModelState, String> {
-    let session_id_for_task = session_id.clone();
-    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
-    .await
-    .map_err(|error| format!("Unable to join get_session_model_state context task: {error}"))??;
+    let result: Result<SessionModelState, String> = async {
+        let session_id_for_task = session_id.clone();
+        let (project_root, session_dir) =
+            spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+                .await
+                .map_err(|error| {
+                    format!("Unable to join get_session_model_state context task: {error}")
+                })??;
 
-    let runtime = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
-        runtime
-    } else {
-        ensure_runtime(
-            &state.session_runtimes,
-            app,
-            project_root,
-            session_dir,
+        let runtime = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+            runtime
+        } else {
+            ensure_runtime(
+                &state.session_runtimes,
+                app,
+                project_root,
+                session_dir,
+                &session_id,
+            )?
+        };
+
+        spawn_blocking(move || runtime.get_model_state())
+            .await
+            .map_err(|error| {
+                format!("Unable to join get_session_model_state runtime task: {error}")
+            })?
+    }
+    .await;
+
+    if let Err(error) = &result {
+        log_session_command_failure(
+            &state,
+            "sessions.model_state.failed",
             &session_id,
-        )?
-    };
+            "load model state",
+            error,
+        );
+    }
 
-    spawn_blocking(move || runtime.get_model_state())
-        .await
-        .map_err(|error| format!("Unable to join get_session_model_state runtime task: {error}"))?
+    result
 }
 
 #[tauri::command]
@@ -485,9 +594,10 @@ pub async fn set_session_model(
     model_id: String,
 ) -> Result<SessionModelState, String> {
     let session_id_for_task = session_id.clone();
-    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
-    .await
-    .map_err(|error| format!("Unable to join set_session_model context task: {error}"))??;
+    let (project_root, session_dir) =
+        spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+            .await
+            .map_err(|error| format!("Unable to join set_session_model context task: {error}"))??;
 
     let result = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
         let provider_for_task = provider.clone();
@@ -552,7 +662,12 @@ pub async fn stop_session_runtime(
     let session_id_for_task = session_id.clone();
     let mut record = spawn_blocking(move || {
         let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
-        load_decorated_session_record(&session_dir, &session_id_for_task, true, &terminal_attached_session_ids)
+        load_decorated_session_record(
+            &session_dir,
+            &session_id_for_task,
+            true,
+            &terminal_attached_session_ids,
+        )
     })
     .await
     .map_err(|error| format!("Unable to join stop_session_runtime task: {error}"))??;
@@ -584,9 +699,12 @@ pub async fn send_session_message(
     }
 
     let session_id_for_task = session_id.clone();
-    let (project_root, session_dir) = spawn_blocking(move || resolve_session_paths(&session_id_for_task))
-    .await
-    .map_err(|error| format!("Unable to join send_session_message context task: {error}"))??;
+    let (project_root, session_dir) =
+        spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+            .await
+            .map_err(|error| {
+                format!("Unable to join send_session_message context task: {error}")
+            })??;
 
     state.set_session_subscription(&session_id, true)?;
     let runtime = ensure_runtime(

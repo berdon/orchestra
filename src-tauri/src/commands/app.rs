@@ -35,11 +35,7 @@ pub fn clear_logs(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn report_client_error(
-    state: State<'_, AppState>,
-    target: String,
-    message: String,
-) {
+pub fn report_client_error(state: State<'_, AppState>, target: String, message: String) {
     state.log("error", &target, &message);
 }
 
@@ -92,22 +88,39 @@ pub fn get_session_storage_info(
 }
 
 #[tauri::command]
-pub fn get_pi_executable_diagnostic() -> PiExecutableDiagnostic {
+pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableDiagnostic {
     match resolve_pi_executable(None) {
         Ok(path) => PiExecutableDiagnostic {
             resolved_path: Some(path.display().to_string()),
             error: None,
         },
-        Err(error) => PiExecutableDiagnostic {
-            resolved_path: None,
-            error: Some(error),
-        },
+        Err(error) => {
+            state.log(
+                "error",
+                "pi.executable.resolve",
+                &format!("Unable to resolve pi executable: {error}"),
+            );
+            PiExecutableDiagnostic {
+                resolved_path: None,
+                error: Some(error),
+            }
+        }
     }
 }
 
 #[tauri::command]
-pub async fn list_pi_models() -> Result<Vec<SessionModel>, String> {
-    tauri::async_runtime::spawn_blocking(list_available_models)
+pub async fn list_pi_models(state: State<'_, AppState>) -> Result<Vec<SessionModel>, String> {
+    let result = tauri::async_runtime::spawn_blocking(list_available_models)
         .await
-        .map_err(|error| format!("Unable to join PI model discovery task: {error}"))?
+        .map_err(|error| format!("Unable to join PI model discovery task: {error}"))?;
+
+    if let Err(error) = &result {
+        state.log(
+            "error",
+            "pi.models.load",
+            &format!("Unable to load PI models: {error}"),
+        );
+    }
+
+    result
 }
