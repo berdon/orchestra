@@ -28,7 +28,8 @@ use commands::{
         list_orchestra_tools, list_policies,
     },
     project_settings::{
-        get_session_prompt_settings, get_worker_overlay, update_session_prompt_settings,
+        get_session_prompt_settings, get_task_automation_settings, get_worker_overlay,
+        update_session_prompt_settings, update_task_automation_settings,
         update_worker_overlay,
     },
     projects::{
@@ -185,6 +186,8 @@ pub fn run() {
             update_worker_overlay,
             get_session_prompt_settings,
             update_session_prompt_settings,
+            get_task_automation_settings,
+            update_task_automation_settings,
             list_sessions,
             get_session_record,
             create_session,

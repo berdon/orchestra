@@ -549,22 +549,26 @@ pub async fn approve_lane_completion(
         &task_id,
     )?;
 
-    if let Some(next_assignment) = task_runtime::maybe_auto_dispatch_task(
+    let auto_dispatches = task_runtime::collect_post_completion_auto_dispatches(
         &mut connection,
-        &context.project_root,
-        &context.session_dir,
         &task_id,
-    )? {
+    )?;
+    for outcome in &auto_dispatches {
         task_runtime::start_assignment_run(
             app.clone(),
             &state,
-            context.session_dir.clone(),
-            &next_assignment,
+            outcome.session_dir.clone(),
+            &outcome.assignment,
         )?;
-        if let Some(session_id) = next_assignment.session_id.clone() {
+        if let Some(session_id) = outcome.assignment.session_id.clone() {
             emit_session_change(&app, "task.transition.next_assignment", [session_id]);
         }
+    }
+    if !auto_dispatches.is_empty() {
         task = tasks::get_task_context(&connection, &task_id)?;
+        let mut changed_task_ids = vec![task.id.clone()];
+        changed_task_ids.extend(auto_dispatches.iter().map(|outcome| outcome.task_id.clone()));
+        emit_task_change(&app, "task.transition.auto_dispatch", changed_task_ids);
     }
 
     state.log(
@@ -696,38 +700,47 @@ async fn complete_lane_command(
             )?,
         };
 
-        if let Some(next_assignment) = task_runtime::maybe_auto_dispatch_task(
+        let auto_dispatches = task_runtime::collect_post_completion_auto_dispatches(
             &mut connection,
-            &context.project_root,
-            &context.session_dir,
             &task_id,
-        )? {
+        )?;
+        for outcome in &auto_dispatches {
             task_runtime::start_assignment_run(
                 app.clone(),
                 &state,
-                context.session_dir.clone(),
-                &next_assignment,
+                outcome.session_dir.clone(),
+                &outcome.assignment,
             )?;
-            if let Some(session_id) = next_assignment.session_id.clone() {
+            if let Some(session_id) = outcome.assignment.session_id.clone() {
                 emit_session_change(&app, "task.transition.next_assignment", [session_id]);
             }
+        }
+        if !auto_dispatches.is_empty() {
             task = tasks::get_task_context(&connection, &task_id)?;
         }
 
-        Ok::<TaskDetail, String>(task)
+        Ok::<(TaskDetail, Vec<String>), String>((
+            task,
+            auto_dispatches
+                .iter()
+                .map(|outcome| outcome.task_id.clone())
+                .collect(),
+        ))
     }.await;
 
     match result {
-        Ok(task) => {
+        Ok((task, auto_dispatched_task_ids)) => {
             state.log(
                 "info",
                 "task.transition",
                 &format!("Completed task lane {} with outcome {}", task_id, outcome),
             );
+            let mut changed_task_ids = vec![task.id.clone()];
+            changed_task_ids.extend(auto_dispatched_task_ids);
             emit_task_change(
                 &app,
                 &format!("task.transition.{outcome}"),
-                [task.id.clone()],
+                changed_task_ids,
             );
             Ok(task)
         }

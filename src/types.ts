@@ -329,6 +329,12 @@ export interface ProjectSessionPromptSettings {
   updatedAt?: string | null;
 }
 
+export interface ProjectTaskAutomationSettings {
+  projectSlug: string;
+  autoDispatchOnBlockerCompletion: boolean;
+  updatedAt?: string | null;
+}
+
 export interface PolicyDefinition {
   id: string;
   slug: string;

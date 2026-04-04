@@ -4,7 +4,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    models::{ProjectSessionPromptSettings, ProjectWorkerOverlay, SessionPromptToken},
+    models::{
+        ProjectSessionPromptSettings, ProjectTaskAutomationSettings, ProjectWorkerOverlay,
+        SessionPromptToken,
+    },
     services::orchestra_paths::{default_orchestra_root, project_settings_path, sanitize_slug},
 };
 
@@ -23,6 +26,8 @@ struct StoredProjectSettings {
 #[serde(rename_all = "camelCase")]
 struct StoredGeneralSettings {
     task_session_context_template: Option<String>,
+    #[serde(default)]
+    auto_dispatch_on_blocker_completion: bool,
     updated_at: Option<String>,
 }
 
@@ -107,6 +112,25 @@ pub fn get_worker_overlay(
     get_worker_overlay_in(&orchestra_root, project_slug, worker_type, worker_slug)
 }
 
+pub fn get_task_automation_settings(
+    project_slug: &str,
+) -> Result<ProjectTaskAutomationSettings, String> {
+    let orchestra_root = default_orchestra_root()?;
+    get_task_automation_settings_in(&orchestra_root, project_slug)
+}
+
+pub fn update_task_automation_settings(
+    project_slug: &str,
+    auto_dispatch_on_blocker_completion: bool,
+) -> Result<ProjectTaskAutomationSettings, String> {
+    let orchestra_root = default_orchestra_root()?;
+    update_task_automation_settings_in(
+        &orchestra_root,
+        project_slug,
+        auto_dispatch_on_blocker_completion,
+    )
+}
+
 pub fn update_worker_overlay(
     project_slug: &str,
     worker_type: &str,
@@ -178,6 +202,32 @@ pub fn update_session_prompt_settings_in(
     settings.general.updated_at = Some(Utc::now().to_rfc3339());
     save_project_settings(orchestra_root, &normalized_project_slug, &settings)?;
     get_session_prompt_settings_in(orchestra_root, &normalized_project_slug)
+}
+
+pub fn get_task_automation_settings_in(
+    orchestra_root: &Path,
+    project_slug: &str,
+) -> Result<ProjectTaskAutomationSettings, String> {
+    let normalized_project_slug = sanitize_slug(project_slug);
+    let settings = load_project_settings(orchestra_root, &normalized_project_slug)?;
+    Ok(ProjectTaskAutomationSettings {
+        project_slug: normalized_project_slug,
+        auto_dispatch_on_blocker_completion: settings.general.auto_dispatch_on_blocker_completion,
+        updated_at: settings.general.updated_at,
+    })
+}
+
+pub fn update_task_automation_settings_in(
+    orchestra_root: &Path,
+    project_slug: &str,
+    auto_dispatch_on_blocker_completion: bool,
+) -> Result<ProjectTaskAutomationSettings, String> {
+    let normalized_project_slug = sanitize_slug(project_slug);
+    let mut settings = load_project_settings(orchestra_root, &normalized_project_slug)?;
+    settings.general.auto_dispatch_on_blocker_completion = auto_dispatch_on_blocker_completion;
+    settings.general.updated_at = Some(Utc::now().to_rfc3339());
+    save_project_settings(orchestra_root, &normalized_project_slug, &settings)?;
+    get_task_automation_settings_in(orchestra_root, &normalized_project_slug)
 }
 
 pub fn update_worker_overlay_in(

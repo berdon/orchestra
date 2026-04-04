@@ -25,6 +25,12 @@ const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
 const DEFAULT_TASK_WHIP_MAX_ATTEMPTS: i64 = 10;
 const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID and optional notes).";
 
+fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
+    let connection = crate::services::database::open_connection()?;
+    let task = tasks::get_task_context(&connection, task_id)?;
+    pi_sessions::session_context_for_project_id(&task.project_id)
+}
+
 pub fn get_active_lane_assignment(
     connection: &Connection,
     task_id: &str,
@@ -411,6 +417,92 @@ pub fn maybe_auto_dispatch_task(
     }
 
     dispatch_task_lane(connection, project_root, session_dir, task_id).map(Some)
+}
+
+#[derive(Debug, Clone)]
+pub struct AutoDispatchOutcome {
+    pub task_id: String,
+    pub session_dir: PathBuf,
+    pub assignment: TaskLaneAssignment,
+}
+
+pub fn collect_post_completion_auto_dispatches(
+    connection: &mut Connection,
+    task_id: &str,
+) -> Result<Vec<AutoDispatchOutcome>, String> {
+    let mut outcomes = Vec::new();
+
+    let current_context = session_context_for_task_id(task_id)?;
+    if let Some(assignment) = maybe_auto_dispatch_task(
+        connection,
+        &current_context.project_root,
+        &current_context.session_dir,
+        task_id,
+    )? {
+        outcomes.push(AutoDispatchOutcome {
+            task_id: task_id.to_string(),
+            session_dir: current_context.session_dir,
+            assignment,
+        });
+    }
+
+    for dependent_task_id in auto_dispatchable_unblocked_dependents(connection, task_id)? {
+        let context = pi_sessions::session_context_for_project_id(
+            &tasks::get_task_context(connection, &dependent_task_id)?.project_id,
+        )?;
+        if let Some(assignment) = maybe_auto_dispatch_task(
+            connection,
+            &context.project_root,
+            &context.session_dir,
+            &dependent_task_id,
+        )? {
+            outcomes.push(AutoDispatchOutcome {
+                task_id: dependent_task_id,
+                session_dir: context.session_dir,
+                assignment,
+            });
+        }
+    }
+
+    Ok(outcomes)
+}
+
+fn auto_dispatchable_unblocked_dependents(
+    connection: &Connection,
+    blocker_task_id: &str,
+) -> Result<Vec<String>, String> {
+    let dependent_task_ids = connection
+        .prepare(
+            r#"
+            SELECT blocked_task_id
+            FROM task_dependencies
+            WHERE blocker_task_id = ?1
+            ORDER BY blocked_task_id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare dependent task query: {error}"))?
+        .query_map([blocker_task_id], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query dependent tasks for {blocker_task_id}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read dependent tasks for {blocker_task_id}: {error}"))?;
+
+    let mut ready = Vec::new();
+    for dependent_task_id in dependent_task_ids {
+        let task = tasks::get_task_context(connection, &dependent_task_id)?;
+        if task.archived || task.dependency_blocked || !task.ready_for_dispatch {
+            continue;
+        }
+
+        let project = projects::get_project(connection, &task.project_id)?;
+        let automation = project_settings::get_task_automation_settings(&project.slug)?;
+        if !automation.auto_dispatch_on_blocker_completion {
+            continue;
+        }
+
+        ready.push(dependent_task_id);
+    }
+
+    Ok(ready)
 }
 
 fn read_task_whip_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskWhipCandidate> {

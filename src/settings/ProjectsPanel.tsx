@@ -12,9 +12,14 @@ import {
   updateProject,
   updateRepository,
 } from "../lib/projects";
+import {
+  getTaskAutomationSettings,
+  updateTaskAutomationSettings,
+} from "../lib/projectSettings";
 import type {
   ProjectDetail,
   ProjectSummary,
+  ProjectTaskAutomationSettings,
   ProjectUpsertInput,
   RepositoryRemoteInput,
   RepositoryUpsertInput,
@@ -40,6 +45,8 @@ export function ProjectsPanel() {
   const [repositoryDraft, setRepositoryDraft] = useState<RepositoryUpsertInput>(createBlankRepositoryDraft);
   const [attachRemoteRepositoryId, setAttachRemoteRepositoryId] = useState<string | null>(null);
   const [remoteDraft, setRemoteDraft] = useState<RepositoryRemoteInput>(createBlankRemoteDraft);
+  const [taskAutomationSettings, setTaskAutomationSettings] = useState<ProjectTaskAutomationSettings | null>(null);
+  const [autoDispatchOnBlockerCompletion, setAutoDispatchOnBlockerCompletion] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -69,8 +76,11 @@ export function ProjectsPanel() {
     setError(null);
     try {
       const detail = await getProject(projectId);
+      const automationSettings = await getTaskAutomationSettings(detail.slug);
       setProjectDetail(detail);
       setProjectDraft({ name: detail.name, description: detail.description ?? "" });
+      setTaskAutomationSettings(automationSettings);
+      setAutoDispatchOnBlockerCompletion(automationSettings.autoDispatchOnBlockerCompletion);
       setIsCreatingProject(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to load project detail.");
@@ -186,6 +196,26 @@ export function ProjectsPanel() {
     }
   }
 
+  async function handleSaveTaskAutomationSettings() {
+    if (!selectedProject) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateTaskAutomationSettings(
+        autoDispatchOnBlockerCompletion,
+        selectedProject.slug,
+      );
+      setTaskAutomationSettings(updated);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to update automation settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDeleteProject() {
     if (!selectedProject?.id || selectedProject.id === "orchestra") {
       return;
@@ -228,6 +258,8 @@ export function ProjectsPanel() {
             setRepositoryDraft(createBlankRepositoryDraft());
             setAttachRemoteRepositoryId(null);
             setRemoteDraft(createBlankRemoteDraft());
+            setTaskAutomationSettings(null);
+            setAutoDispatchOnBlockerCompletion(false);
             setIsCreatingProject(true);
           }}>
             New project
@@ -284,6 +316,38 @@ export function ProjectsPanel() {
               <textarea className="text-area" data-role="project-description" rows={4} value={projectDraft.description ?? ""} onChange={(event) => setProjectDraft((current) => ({ ...current, description: event.target.value }))} />
             </label>
           </div>
+
+          {projectDetail ? (
+            <section className="task-section task-section--compact" data-role="project-automation-settings">
+              <div className="task-section__header">
+                <div>
+                  <p className="eyebrow">Automation</p>
+                  <h4>Task dispatch</h4>
+                  <p className="muted-copy">Automatically dispatch newly unblocked tasks when a blocker finishes and the task is otherwise ready to run.</p>
+                </div>
+                <button
+                  className="secondary-button"
+                  data-role="save-project-automation-settings"
+                  type="button"
+                  disabled={saving || !selectedProject}
+                  onClick={() => void handleSaveTaskAutomationSettings()}
+                >
+                  Save automation settings
+                </button>
+              </div>
+              <label className="field-group task-editor-grid__full">
+                <span className="field-group__label">Enable auto task dispatching on blocker completion</span>
+                <input
+                  className="checkbox-input"
+                  data-role="project-auto-dispatch-on-blocker-completion"
+                  type="checkbox"
+                  checked={autoDispatchOnBlockerCompletion}
+                  onChange={(event) => setAutoDispatchOnBlockerCompletion(event.target.checked)}
+                />
+              </label>
+              <p className="muted-copy">Last updated: {taskAutomationSettings?.updatedAt ? new Date(taskAutomationSettings.updatedAt).toLocaleString() : "—"}</p>
+            </section>
+          ) : null}
 
           {projectDetail ? (
             <section className="task-section">

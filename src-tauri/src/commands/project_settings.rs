@@ -1,4 +1,9 @@
-use crate::{models::{ProjectSessionPromptSettings, ProjectWorkerOverlay}, services::project_settings};
+use crate::{
+    models::{
+        ProjectSessionPromptSettings, ProjectTaskAutomationSettings, ProjectWorkerOverlay,
+    },
+    services::project_settings,
+};
 
 #[tauri::command]
 pub fn get_session_prompt_settings(
@@ -25,6 +30,24 @@ pub fn get_worker_overlay(
         project_slug.as_deref().unwrap_or("orchestra"),
         &worker_type,
         &worker_slug,
+    )
+}
+
+#[tauri::command]
+pub fn get_task_automation_settings(
+    project_slug: Option<String>,
+) -> Result<ProjectTaskAutomationSettings, String> {
+    project_settings::get_task_automation_settings(project_slug.as_deref().unwrap_or("orchestra"))
+}
+
+#[tauri::command]
+pub fn update_task_automation_settings(
+    project_slug: Option<String>,
+    auto_dispatch_on_blocker_completion: bool,
+) -> Result<ProjectTaskAutomationSettings, String> {
+    project_settings::update_task_automation_settings(
+        project_slug.as_deref().unwrap_or("orchestra"),
+        auto_dispatch_on_blocker_completion,
     )
 }
 
