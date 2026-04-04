@@ -52,7 +52,6 @@ interface TaskDetailPageProps {
   onSave: () => void;
   onPublish: () => void;
   onDelete: () => void;
-  onBack: () => void;
   onOpenTask: (taskId: string) => void;
   onDispatch: () => void;
   onRetry: () => void;
@@ -182,7 +181,6 @@ export function TaskDetailPage({
   onSave,
   onPublish,
   onDelete,
-  onBack,
   onOpenTask,
   onDispatch,
   onRetry,
@@ -1139,9 +1137,6 @@ export function TaskDetailPage({
           </div>
 
           <div className="action-cluster action-cluster--wrap">
-            <button className="secondary-button" type="button" onClick={onBack}>
-              Back to tasks
-            </button>
             <TaskActionMenu actions={buildHeaderActions()} pendingActionId={pendingActionId} />
           </div>
         </div>
@@ -1223,6 +1218,16 @@ export function TaskDetailPage({
                 ]}
                 pendingActionId={pendingActionId}
               />
+            </div>
+
+            <div className="task-history-card" data-role="task-overview-description">
+              <div className="workflow-section__header">
+                <div>
+                  <p className="eyebrow">Description</p>
+                  <h4>Task description</h4>
+                </div>
+              </div>
+              <p>{task.description?.trim() ? task.description : "No description provided."}</p>
             </div>
 
             <div className="task-detail-summary__file task-history-card">

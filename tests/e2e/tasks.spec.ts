@@ -18,11 +18,16 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
 
   await expect(page.getByRole("heading", { name: "Draft board task" })).toBeVisible();
   await expect(page.locator('[data-role="publish-task"]')).toBeVisible();
-  await page.getByRole("button", { name: "Back to tasks" }).click();
+  await expect(page.locator('[data-role="task-overview-description"]')).toContainText("No description provided.");
+  await expect(page.getByRole("button", { name: "Back to tasks" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Tasks" }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
 
   await page.locator('[data-role="task-card"]').filter({ hasText: "Draft board task" }).first().click();
   await expect(page.getByRole("heading", { name: "Draft board task" })).toBeVisible();
+  await expect(page.locator('[data-role="task-overview-description"]')).toContainText("No description provided.");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
 });
 
 test("tasks overview hides empty inbox, hides done lanes, and supports done filtering in card and table views", async ({ page }) => {

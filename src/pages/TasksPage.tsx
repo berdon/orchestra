@@ -129,6 +129,7 @@ interface TasksPageProps {
   createTaskProjectId?: string | null;
   openTaskRequest?: { taskId: string; token: number; projectId: string | null } | null;
   taskBoardViewMode?: TaskBoardViewMode;
+  tasksOverviewToken?: number;
   onTaskBoardViewModeChange?: (viewMode: TaskBoardViewMode) => void;
 }
 
@@ -178,6 +179,7 @@ export function TasksPage({
   createTaskProjectId = null,
   openTaskRequest = null,
   taskBoardViewMode = "cards",
+  tasksOverviewToken = 0,
   onTaskBoardViewModeChange,
 }: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
@@ -206,6 +208,7 @@ export function TasksPage({
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
+  const tasksOverviewTokenRef = useRef(0);
 
   const filteredTasks = useMemo(() => {
     switch (taskFilter) {
@@ -481,6 +484,23 @@ export function TasksPage({
     openTaskTokenRef.current = openTaskRequest.token;
     openTaskDetail(openTaskRequest.taskId);
   }, [openTaskRequest, projectId]);
+
+  useEffect(() => {
+    if (tasksOverviewToken === tasksOverviewTokenRef.current) {
+      return;
+    }
+
+    tasksOverviewTokenRef.current = tasksOverviewToken;
+    setRoute({ kind: "overview" });
+    setTaskDetail(null);
+    setTaskDraft(createBlankTaskDraft());
+    setCommentDraft(createBlankCommentDraft());
+    setTaskDraftDirty(false);
+    setSelectedBlockerTaskId("");
+    setTaskActionError(null);
+    setPublishingTask(false);
+    setDeletingTask(false);
+  }, [tasksOverviewToken]);
 
   useEffect(() => {
     setRoute({ kind: "overview" });
@@ -974,7 +994,6 @@ export function TasksPage({
           onAddDependency={() => void handleAddDependency()}
           onAddFileReference={() => void handleAddFileReference()}
           onApproveCompletion={() => void handleApproveLaneCompletion()}
-          onBack={() => setRoute({ kind: "overview" })}
           onCommentDraftChange={setCommentDraft}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
           onDelete={() => void handleDeleteDetailTask()}
