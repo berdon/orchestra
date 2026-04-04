@@ -702,7 +702,7 @@ export function TaskDetailPage({
               </div>
             </div>
 
-            {task.dependencyBlocked ? <p className="error-copy">This task is currently blocked by unresolved dependencies and is not dispatchable.</p> : null}
+            {task.dependencyBlocked ? <p className="error-copy">This task is currently blocked by unresolved dependencies or unfinished subtasks and is not dispatchable.</p> : null}
             <div className="task-dependency-grid">
               <div className="task-dependency-column">
                 <p className="eyebrow">Blocked by</p>

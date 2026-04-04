@@ -181,7 +181,10 @@ pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDe
     get_task(connection, task_id)
 }
 
-pub fn list_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<TaskComment>, String> {
+pub fn list_task_comments(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<TaskComment>, String> {
     if !task_exists(connection, task_id)? {
         return Err(format!("Task {task_id} was not found"));
     }
@@ -509,13 +512,19 @@ pub fn add_task_comment(
         author: author.to_string(),
         message: message.to_string(),
         interrupt_agent,
-        repository_id: anchor_input.as_ref().map(|anchor| anchor.repository_id.clone()),
-        relative_path: anchor_input.as_ref().map(|anchor| anchor.relative_path.clone()),
+        repository_id: anchor_input
+            .as_ref()
+            .map(|anchor| anchor.repository_id.clone()),
+        relative_path: anchor_input
+            .as_ref()
+            .map(|anchor| anchor.relative_path.clone()),
         line_start: anchor_input.as_ref().map(|anchor| anchor.line_start),
         line_end: anchor_input.as_ref().map(|anchor| anchor.line_end),
         column_start: anchor_input.as_ref().and_then(|anchor| anchor.column_start),
         column_end: anchor_input.as_ref().and_then(|anchor| anchor.column_end),
-        selected_text: anchor_input.as_ref().and_then(|anchor| anchor.selected_text.clone()),
+        selected_text: anchor_input
+            .as_ref()
+            .and_then(|anchor| anchor.selected_text.clone()),
         anchor_commit_hash: anchor_metadata.commit_hash,
         anchor_has_uncommitted_changes: anchor_metadata.has_uncommitted_changes,
         created_at: now.clone(),
@@ -585,7 +594,10 @@ pub fn update_task_comment(
     })
 }
 
-pub fn delete_task_comment(connection: &mut Connection, comment_id: &str) -> Result<TaskComment, String> {
+pub fn delete_task_comment(
+    connection: &mut Connection,
+    comment_id: &str,
+) -> Result<TaskComment, String> {
     let comment = load_task_comment(connection, comment_id)?;
     let deleted = connection
         .execute("DELETE FROM task_comments WHERE id = ?1", [comment_id])
@@ -635,10 +647,14 @@ fn resolve_comment_anchor(
         return Err("lineStart: File-anchored comments require a positive starting line.".into());
     }
     if line_end < line_start {
-        return Err("lineEnd: File-anchored comments must end on or after the starting line.".into());
+        return Err(
+            "lineEnd: File-anchored comments must end on or after the starting line.".into(),
+        );
     }
     if column_start.is_some() ^ column_end.is_some() {
-        return Err("columnStart/columnEnd: Column anchors must provide both start and end values.".into());
+        return Err(
+            "columnStart/columnEnd: Column anchors must provide both start and end values.".into(),
+        );
     }
     if let Some(column_start) = column_start {
         if column_start < 1 {
@@ -653,7 +669,9 @@ fn resolve_comment_anchor(
     if line_start == line_end {
         if let (Some(column_start), Some(column_end)) = (column_start, column_end) {
             if column_end < column_start {
-                return Err("columnEnd: Column end must be on or after the starting column.".into());
+                return Err(
+                    "columnEnd: Column end must be on or after the starting column.".into(),
+                );
             }
         }
     }
@@ -665,10 +683,21 @@ fn resolve_comment_anchor(
     let active_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
     let task_workspace_cwd = active_assignment
         .as_ref()
-        .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, assignment, task_id, &task.project_id))
+        .map(|assignment| {
+            task_runtime::resolve_assignment_workspace_cwd(
+                connection,
+                assignment,
+                task_id,
+                &task.project_id,
+            )
+        })
         .transpose()?
         .flatten();
-    let file_references = task_file_references::load_task_file_references(connection, task_id, task_workspace_cwd.as_deref())?;
+    let file_references = task_file_references::load_task_file_references(
+        connection,
+        task_id,
+        task_workspace_cwd.as_deref(),
+    )?;
     let resolved_file = file_references
         .into_iter()
         .find(|reference| {
@@ -708,13 +737,20 @@ fn resolve_comment_anchor_metadata(path: &str) -> Result<CommentAnchorMetadata, 
     };
 
     let repo_root_output = Command::new("git")
-        .args(["-C", file_path.to_string_lossy().as_ref(), "rev-parse", "--show-toplevel"])
+        .args([
+            "-C",
+            file_path.to_string_lossy().as_ref(),
+            "rev-parse",
+            "--show-toplevel",
+        ])
         .output()
         .map_err(|error| format!("Unable to inspect git root for {path}: {error}"))?;
     if !repo_root_output.status.success() {
         return Ok(CommentAnchorMetadata::default());
     }
-    let repo_root = String::from_utf8_lossy(&repo_root_output.stdout).trim().to_string();
+    let repo_root = String::from_utf8_lossy(&repo_root_output.stdout)
+        .trim()
+        .to_string();
     if repo_root.is_empty() {
         return Ok(CommentAnchorMetadata::default());
     }
@@ -732,8 +768,14 @@ fn resolve_comment_anchor_metadata(path: &str) -> Result<CommentAnchorMetadata, 
         .output()
         .map_err(|error| format!("Unable to read git head for {path}: {error}"))?;
     let commit_hash = if head_output.status.success() {
-        let value = String::from_utf8_lossy(&head_output.stdout).trim().to_string();
-        if value.is_empty() { None } else { Some(value) }
+        let value = String::from_utf8_lossy(&head_output.stdout)
+            .trim()
+            .to_string();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
     } else {
         None
     };
@@ -750,7 +792,11 @@ fn resolve_comment_anchor_metadata(path: &str) -> Result<CommentAnchorMetadata, 
         .output()
         .map_err(|error| format!("Unable to read git status for {path}: {error}"))?;
     let has_uncommitted_changes = if status_output.status.success() {
-        Some(!String::from_utf8_lossy(&status_output.stdout).trim().is_empty())
+        Some(
+            !String::from_utf8_lossy(&status_output.stdout)
+                .trim()
+                .is_empty(),
+        )
     } else {
         None
     };
@@ -810,7 +856,9 @@ pub fn list_unread_task_comments(
                 column_end: row.get(11)?,
                 selected_text: row.get(12)?,
                 anchor_commit_hash: row.get(13)?,
-                anchor_has_uncommitted_changes: row.get::<_, Option<i64>>(14)?.map(|value| value != 0),
+                anchor_has_uncommitted_changes: row
+                    .get::<_, Option<i64>>(14)?
+                    .map(|value| value != 0),
                 created_at: row.get(15)?,
                 updated_at: row.get(16)?,
             })
@@ -982,7 +1030,8 @@ fn validate_task_input(
         } else {
             let parent_project_id = task_project_id(connection, parent_task_id)?;
             if parent_project_id != project_id {
-                errors.push("parentTaskId: Parent task must belong to the same project.".to_string());
+                errors
+                    .push("parentTaskId: Parent task must belong to the same project.".to_string());
             } else if let Some(task_id) = task_id {
                 if would_create_parent_cycle(connection, task_id, parent_task_id)? {
                     errors.push("parentTaskId: Parent would create a hierarchy cycle.".to_string());
@@ -1004,7 +1053,8 @@ fn validate_task_input(
     }
 
     for repository_id in &input.repository_ids {
-        match projects::ensure_repository_belongs_to_project(connection, project_id, repository_id) {
+        match projects::ensure_repository_belongs_to_project(connection, project_id, repository_id)
+        {
             Ok(_) => {}
             Err(error) => errors.push(format!("repositoryId: {error}")),
         }
@@ -1202,7 +1252,9 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
                 column_end: row.get(11)?,
                 selected_text: row.get(12)?,
                 anchor_commit_hash: row.get(13)?,
-                anchor_has_uncommitted_changes: row.get::<_, Option<i64>>(14)?.map(|value| value != 0),
+                anchor_has_uncommitted_changes: row
+                    .get::<_, Option<i64>>(14)?
+                    .map(|value| value != 0),
                 created_at: row.get(15)?,
                 updated_at: row.get(16)?,
             })
@@ -1764,22 +1816,29 @@ fn task_summary_columns(alias: &str) -> String {
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id), 0) AS child_count,
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'completed'), 0) AS completed_child_count,
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'in_progress'), 0) AS in_progress_child_count,
-        COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'blocked'), 0) AS blocked_child_count,
+        COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.archived = 0 AND child.status NOT IN ('completed', 'canceled')), 0) AS blocked_child_count,
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocked_task_id = {alias}.id), 0) AS blocked_by_count,
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocker_task_id = {alias}.id), 0) AS blocking_count,
         COALESCE((SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = {alias}.id), 0) AS attachment_count,
-        CASE WHEN {unresolved_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
-        CASE WHEN {alias}.archived = 0 AND {alias}.workflow_id IS NOT NULL AND {alias}.current_lane_id IS NOT NULL AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 AND NOT EXISTS (SELECT 1 FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active')) THEN 1 ELSE 0 END AS ready_for_dispatch,
+        CASE WHEN {unresolved_blockers} > 0 OR {unfinished_child_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
+        CASE WHEN {alias}.archived = 0 AND {alias}.workflow_id IS NOT NULL AND {alias}.current_lane_id IS NOT NULL AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 AND {unfinished_child_blockers} = 0 AND NOT EXISTS (SELECT 1 FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active')) THEN 1 ELSE 0 END AS ready_for_dispatch,
         {alias}.created_at,
         {alias}.updated_at
         "#,
         unresolved_blockers = unresolved_blocker_sql(alias),
+        unfinished_child_blockers = unfinished_child_blocker_sql(alias),
     )
 }
 
 fn unresolved_blocker_sql(alias: &str) -> String {
     format!(
         "COALESCE((SELECT COUNT(*) FROM task_dependencies d JOIN tasks blocker ON blocker.id = d.blocker_task_id WHERE d.blocked_task_id = {alias}.id AND blocker.status NOT IN ('completed', 'canceled')), 0)"
+    )
+}
+
+fn unfinished_child_blocker_sql(alias: &str) -> String {
+    format!(
+        "COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.archived = 0 AND child.status NOT IN ('completed', 'canceled')), 0)"
     )
 }
 
@@ -1992,6 +2051,15 @@ mod tests {
     fn lists_tasks_scoped_to_project() {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
+        let now = now_iso();
+        connection.execute(
+            "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project A should insert");
+        connection.execute(
+            "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project B should insert");
 
         let task_a = create_task(
             &mut connection,
@@ -2304,12 +2372,15 @@ mod tests {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
 
-        let task = create_named_task(&mut connection, "Anchored comment target", "in_progress", None);
+        let task = create_named_task(
+            &mut connection,
+            "Anchored comment target",
+            "in_progress",
+            None,
+        );
         let now = now_iso();
-        let root = std::env::temp_dir().join(format!(
-            "task-comment-anchor-{}",
-            Uuid::new_v4().simple()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("task-comment-anchor-{}", Uuid::new_v4().simple()));
         let repo_root = root.join("repository");
         std::fs::create_dir_all(repo_root.join("docs")).expect("repo docs dir should create");
         std::fs::write(
@@ -2361,7 +2432,7 @@ mod tests {
 
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', NULL, ?2, ?2)",
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', NULL, ?2, ?2)",
                 params![DEFAULT_PROJECT_ID, now.as_str()],
             )
             .expect("project should insert");
@@ -2408,7 +2479,13 @@ mod tests {
                 parent_comment_id: None,
                 repository_id: Some("repo-anchor".into()),
                 relative_path: Some("docs/design.md".into()),
-                absolute_path: Some(repo_root.join("docs").join("design.md").display().to_string()),
+                absolute_path: Some(
+                    repo_root
+                        .join("docs")
+                        .join("design.md")
+                        .display()
+                        .to_string(),
+                ),
                 line_start: Some(2),
                 line_end: Some(2),
                 column_start: Some(1),
@@ -2424,7 +2501,10 @@ mod tests {
         assert_eq!(comment.column_start, Some(1));
         assert_eq!(comment.column_end, Some(18));
         assert_eq!(comment.selected_text.as_deref(), Some("Beta selected text"));
-        assert_eq!(comment.anchor_commit_hash.as_deref(), Some(commit_hash.as_str()));
+        assert_eq!(
+            comment.anchor_commit_hash.as_deref(),
+            Some(commit_hash.as_str())
+        );
         assert_eq!(comment.anchor_has_uncommitted_changes, Some(false));
     }
 
@@ -2473,10 +2553,14 @@ mod tests {
         )
         .expect("reply should add");
 
-        let comments = list_task_comments(&connection, &task.id).expect("task comments should load");
+        let comments =
+            list_task_comments(&connection, &task.id).expect("task comments should load");
         assert_eq!(comments.len(), 2);
         assert_eq!(comments[1].id, reply.id);
-        assert_eq!(comments[1].parent_comment_id.as_deref(), Some(parent.id.as_str()));
+        assert_eq!(
+            comments[1].parent_comment_id.as_deref(),
+            Some(parent.id.as_str())
+        );
     }
 
     #[test]
@@ -2706,6 +2790,49 @@ mod tests {
         let unblocked = get_task(&connection, &blocked.id).expect("reload blocked task");
         assert!(!unblocked.dependency_blocked);
         assert!(unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn parent_tasks_are_blocked_while_child_tasks_are_unfinished() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let parent = create_named_task(&mut connection, "Parent", "in_progress", None);
+        let child = create_named_task(&mut connection, "Child", "ready", Some(parent.id.clone()));
+
+        let loaded_parent = get_task(&connection, &parent.id).expect("load parent task");
+        assert_eq!(loaded_parent.child_count, 1);
+        assert_eq!(loaded_parent.blocked_child_count, 1);
+        assert!(loaded_parent.dependency_blocked);
+        assert!(!loaded_parent.ready_for_dispatch);
+
+        let completed_child = update_task(
+            &mut connection,
+            &child.id,
+            TaskUpsertInput {
+                title: child.title.clone(),
+                description: child.description.clone(),
+                task_type: child.task_type.clone(),
+                status: "completed".into(),
+                priority: child.priority.clone(),
+                workflow_id: child.workflow_id.clone(),
+                current_lane_id: child.current_lane_id.clone(),
+                assignee_type: child.assignee_type.clone(),
+                assignee_id: child.assignee_id.clone(),
+                repository_id: child.repository_id.clone(),
+                repository_ids: child.repository_ids.clone(),
+                parent_task_id: child.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("complete child task");
+
+        assert_eq!(completed_child.status, "completed");
+        let unblocked_parent = get_task(&connection, &parent.id).expect("reload parent task");
+        assert_eq!(unblocked_parent.blocked_child_count, 0);
+        assert!(!unblocked_parent.dependency_blocked);
+        assert!(unblocked_parent.ready_for_dispatch);
     }
 
     #[test]

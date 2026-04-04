@@ -105,6 +105,7 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
         }
     }
 
+    let auto_dispatched_tasks = auto_dispatch_work_ready_tasks(app.clone(), state)?;
     let whip_results = process_task_whips(app.clone(), state)?;
     let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
 
@@ -112,11 +113,64 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} whip actions, {} reminder actions",
-            agent_dispatches, activated_roles, whip_results, reminder_results
+            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} auto-dispatched tasks, {} whip actions, {} reminder actions",
+            agent_dispatches, activated_roles, auto_dispatched_tasks, whip_results, reminder_results
         ),
     );
     Ok(())
+}
+
+fn auto_dispatch_work_ready_tasks(app: AppHandle, state: &AppState) -> Result<usize, String> {
+    let connection = database::open_connection()?;
+    let projects = crate::services::projects::list_projects(&connection)?;
+    drop(connection);
+
+    let mut dispatched = 0;
+    for project in projects {
+        let automation =
+            crate::services::project_settings::get_task_automation_settings(&project.slug)?;
+        if !automation.auto_dispatch_on_blocker_completion {
+            continue;
+        }
+
+        let mut connection = database::open_connection()?;
+        let tasks = crate::services::tasks::list_tasks(&connection, &project.id, false)?;
+        let context = pi_sessions::session_context_for_project_id(&project.id)?;
+        for task in tasks {
+            if !task.ready_for_dispatch {
+                continue;
+            }
+
+            if let Some(assignment) = task_runtime::maybe_auto_dispatch_task(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &task.id,
+            )? {
+                task_runtime::start_assignment_run(
+                    app.clone(),
+                    state,
+                    context.session_dir.clone(),
+                    &assignment,
+                )?;
+                if let Some(session_id) = assignment.session_id.clone() {
+                    let _ = app_events::emit_session_change(
+                        &app,
+                        "task.runtime.auto_dispatch",
+                        [session_id],
+                    );
+                }
+                let _ = app_events::emit_task_change(
+                    &app,
+                    "task.runtime.auto_dispatch",
+                    [assignment.task_id.clone()],
+                );
+                dispatched += 1;
+            }
+        }
+    }
+
+    Ok(dispatched)
 }
 
 fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String> {

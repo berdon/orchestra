@@ -349,7 +349,7 @@ pub fn dispatch_task_lane(
 
     if task.dependency_blocked {
         return Err(format!(
-            "Task {task_id} is blocked by unresolved dependencies"
+            "Task {task_id} is blocked by unresolved dependencies or unfinished subtasks"
         ));
     }
 
@@ -464,6 +464,24 @@ pub fn collect_post_completion_auto_dispatches(
         }
     }
 
+    for parent_task_id in auto_dispatchable_unblocked_parents(connection, task_id)? {
+        let context = pi_sessions::session_context_for_project_id(
+            &tasks::get_task_context(connection, &parent_task_id)?.project_id,
+        )?;
+        if let Some(assignment) = maybe_auto_dispatch_task(
+            connection,
+            &context.project_root,
+            &context.session_dir,
+            &parent_task_id,
+        )? {
+            outcomes.push(AutoDispatchOutcome {
+                task_id: parent_task_id,
+                session_dir: context.session_dir,
+                assignment,
+            });
+        }
+    }
+
     Ok(outcomes)
 }
 
@@ -502,6 +520,33 @@ fn auto_dispatchable_unblocked_dependents(
         }
 
         ready.push(dependent_task_id);
+    }
+
+    Ok(ready)
+}
+
+fn auto_dispatchable_unblocked_parents(
+    connection: &Connection,
+    child_task_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut ready = Vec::new();
+    let mut current_parent_id = tasks::get_task_context(connection, child_task_id)?.parent_task_id;
+
+    while let Some(parent_task_id) = current_parent_id {
+        let task = tasks::get_task_context(connection, &parent_task_id)?;
+        current_parent_id = task.parent_task_id.clone();
+
+        if task.archived || task.dependency_blocked || !task.ready_for_dispatch {
+            continue;
+        }
+
+        let project = projects::get_project(connection, &task.project_id)?;
+        let automation = project_settings::get_task_automation_settings(&project.slug)?;
+        if !automation.auto_dispatch_on_blocker_completion {
+            continue;
+        }
+
+        ready.push(parent_task_id);
     }
 
     Ok(ready)
@@ -1576,6 +1621,12 @@ fn complete_lane(
         }
     } else if !(task.assignee_type == "user" && task.status == "in_review") {
         return Err(format!("Task {task_id} has no active lane assignment"));
+    }
+
+    if task.dependency_blocked {
+        return Err(format!(
+            "Task {task_id} is blocked by unresolved dependencies or unfinished subtasks and cannot progress until those blockers are resolved."
+        ));
     }
 
     let now = now_iso();
@@ -4309,6 +4360,247 @@ mod tests {
                 .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
+    }
+
+    #[test]
+    fn parent_tasks_with_unfinished_subtasks_cannot_dispatch() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Parent Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-parent".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the parent task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = init_test_repo("task-runtime-parent-subtask-block");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-parent', 'orchestra', 'parent-repo', 'Parent Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+
+        let parent = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Parent task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-parent".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-parent".into()),
+                repository_ids: vec!["repo-parent".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("parent should create");
+        let _child = tasks::create_subtask(
+            &mut connection,
+            &parent.id,
+            TaskUpsertInput {
+                title: "Child task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("child should create");
+
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let error = dispatch_task_lane(&mut connection, &root, &session_dir, &parent.id)
+            .expect_err("parent dispatch should be blocked by unfinished subtasks");
+        assert!(error.contains("unfinished subtasks"));
+    }
+
+    #[test]
+    fn child_completion_can_auto_dispatch_an_unblocked_parent() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Parent Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-parent".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the parent task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = init_test_repo("task-runtime-child-unblocks-parent");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-parent-auto', 'orchestra', 'parent-auto-repo', 'Parent Auto Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+
+        let parent = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Parent task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-parent".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-parent-auto".into()),
+                repository_ids: vec!["repo-parent-auto".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("parent should create");
+        let child = tasks::create_subtask(
+            &mut connection,
+            &parent.id,
+            TaskUpsertInput {
+                title: "Child task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("child should create");
+
+        let _completed_child = tasks::update_task(
+            &mut connection,
+            &child.id,
+            TaskUpsertInput {
+                title: child.title.clone(),
+                description: child.description.clone(),
+                task_type: child.task_type.clone(),
+                status: "completed".into(),
+                priority: child.priority.clone(),
+                workflow_id: child.workflow_id.clone(),
+                current_lane_id: child.current_lane_id.clone(),
+                assignee_type: child.assignee_type.clone(),
+                assignee_id: child.assignee_id.clone(),
+                repository_id: child.repository_id.clone(),
+                repository_ids: child.repository_ids.clone(),
+                parent_task_id: child.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("child should complete");
+
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let parents = auto_dispatchable_unblocked_parents(&connection, &child.id)
+            .expect("parent auto-dispatch candidates should load");
+        assert_eq!(parents, vec![parent.id.clone()]);
+
+        let assignment = maybe_auto_dispatch_task(&mut connection, &root, &session_dir, &parent.id)
+            .expect("parent auto-dispatch should succeed")
+            .expect("parent should become dispatchable");
+        assert_eq!(assignment.task_id, parent.id);
     }
 
     #[test]

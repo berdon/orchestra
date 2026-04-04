@@ -323,7 +323,7 @@ export function ProjectsPanel() {
                 <div>
                   <p className="eyebrow">Automation</p>
                   <h4>Task dispatch</h4>
-                  <p className="muted-copy">Automatically dispatch newly unblocked tasks when a blocker finishes and the task is otherwise ready to run.</p>
+                  <p className="muted-copy">Automatically dispatch tasks when they become work-ready through creation or unblocking, including dependency and subtask blockers.</p>
                 </div>
                 <button
                   className="secondary-button"
@@ -336,7 +336,7 @@ export function ProjectsPanel() {
                 </button>
               </div>
               <label className="field-group task-editor-grid__full">
-                <span className="field-group__label">Enable auto task dispatching on blocker completion</span>
+                <span className="field-group__label">Enable auto task dispatching for newly work-ready tasks</span>
                 <input
                   className="checkbox-input"
                   data-role="project-auto-dispatch-on-blocker-completion"

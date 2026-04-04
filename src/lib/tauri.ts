@@ -749,8 +749,14 @@ function saveMockTasks(tasks: TaskDetail[]) {
   setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks, ensureMockTaskDependencies()));
 }
 
+function hasUnfinishedChildBlockers(children: Array<{ status: string; archived?: boolean | null }>) {
+  return children.some((child) => !child.archived && !["completed", "canceled"].includes(child.status));
+}
+
 function summarizeTask(task: TaskDetail): TaskSummary {
-  const dependencyBlocked = task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status));
+  const dependencyBlocked =
+    task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status))
+    || hasUnfinishedChildBlockers(task.children);
   return {
     id: task.id,
     projectId: task.projectId,
@@ -771,7 +777,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     childCount: task.children.length,
     completedChildCount: task.children.filter((child) => child.status === "completed").length,
     inProgressChildCount: task.children.filter((child) => child.status === "in_progress").length,
-    blockedChildCount: task.children.filter((child) => child.status === "blocked").length,
+    blockedChildCount: task.children.filter((child) => !child.archived && !["completed", "canceled"].includes(child.status)).length,
     blockedByCount: task.blockedBy.length,
     blockingCount: task.blocking.length,
     attachmentCount: task.attachments.length,
@@ -844,7 +850,9 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
           blocked: summarizeTask(bareById.get(dependency.blockedTaskId) ?? task),
         }));
 
-      const dependencyBlocked = blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status));
+      const dependencyBlocked =
+        blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status))
+        || hasUnfinishedChildBlockers(children);
 
       return {
         ...task,
@@ -858,7 +866,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         childCount: children.length,
         completedChildCount: children.filter((child) => child.status === "completed").length,
         inProgressChildCount: children.filter((child) => child.status === "in_progress").length,
-        blockedChildCount: children.filter((child) => child.status === "blocked").length,
+        blockedChildCount: children.filter((child) => !child.archived && !["completed", "canceled"].includes(child.status)).length,
         blockedByCount: blockedBy.length,
         blockingCount: blocking.length,
         attachmentCount: task.attachments.length,
@@ -2083,7 +2091,7 @@ function isMockAutoDispatchOnBlockerCompletionEnabled(projectId: string) {
   const projects = getStoredMockProjectsForSettings();
   const projectSlug = projects.find((project) => project.id === projectId)?.slug ?? CURRENT_PROJECT_ID;
   const settings = getStoredMockProjectSettings();
-  return Boolean(settings.general?.autoDispatchOnBlockerCompletion && projectSlug);
+  return Boolean((settings.general?.autoDispatchOnBlockerCompletion ?? true) && projectSlug);
 }
 
 async function autoDispatchMockDependentTasks(blockerTaskId: string) {

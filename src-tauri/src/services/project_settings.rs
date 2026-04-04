@@ -22,13 +22,27 @@ struct StoredProjectSettings {
     general: StoredGeneralSettings,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredGeneralSettings {
     task_session_context_template: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_auto_dispatch_on_blocker_completion")]
     auto_dispatch_on_blocker_completion: bool,
     updated_at: Option<String>,
+}
+
+impl Default for StoredGeneralSettings {
+    fn default() -> Self {
+        Self {
+            task_session_context_template: None,
+            auto_dispatch_on_blocker_completion: default_auto_dispatch_on_blocker_completion(),
+            updated_at: None,
+        }
+    }
+}
+
+fn default_auto_dispatch_on_blocker_completion() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -69,36 +83,105 @@ pub fn default_task_session_context_template() -> String {
 
 pub fn available_session_prompt_tokens() -> Vec<SessionPromptToken> {
     vec![
-        SessionPromptToken { token: "{TASK.ID}".into(), description: "Canonical Orchestra task id.".into() },
-        SessionPromptToken { token: "{TASK.NUMBER}".into(), description: "Human-readable task number such as ORC-42.".into() },
-        SessionPromptToken { token: "{TASK.SLUG}".into(), description: "Slugified task title for prompt customization.".into() },
-        SessionPromptToken { token: "{TASK.NAME}".into(), description: "Task title/name.".into() },
-        SessionPromptToken { token: "{TASK.STATUS}".into(), description: "Current task status.".into() },
-        SessionPromptToken { token: "{TASK.ASSIGNEE}".into(), description: "Current assignee label.".into() },
-        SessionPromptToken { token: "{TASK.DESCRIPTION}".into(), description: "Task description block when present.".into() },
-        SessionPromptToken { token: "{TASK.COMMENTS}".into(), description: "Recent task comments block.".into() },
-        SessionPromptToken { token: "{TASK.BLOCKED_BY}".into(), description: "Blocking tasks block.".into() },
-        SessionPromptToken { token: "{TASK.REPOSITORIES}".into(), description: "Task repositories block.".into() },
-        SessionPromptToken { token: "{TASK.FILE_REFERENCES}".into(), description: "Tracked project file references block.".into() },
-        SessionPromptToken { token: "{TASK.ATTACHMENTS}".into(), description: "Task attachments block.".into() },
-        SessionPromptToken { token: "{WORKFLOW.NAME}".into(), description: "Workflow name.".into() },
-        SessionPromptToken { token: "{LANE.NAME}".into(), description: "Current lane name.".into() },
-        SessionPromptToken { token: "{LANE.OWNER}".into(), description: "Current lane owner type.".into() },
-        SessionPromptToken { token: "{LANE.INSTRUCTION}".into(), description: "Lane entry instruction block.".into() },
-        SessionPromptToken { token: "{WORKER.CONTEXT}".into(), description: "Worker-specific prompt context block including base and overlay prompts.".into() },
-        SessionPromptToken { token: "{RUNTIME.CWD}".into(), description: "Resolved task workspace cwd for the current lane.".into() },
-        SessionPromptToken { token: "{ORCHESTRA.WORKING_RULES}".into(), description: "Standard Orchestra working rules block.".into() },
-        SessionPromptToken { token: "{ORCHESTRA.TOOL_HELP}".into(), description: "Standard Orchestra task tool help block.".into() },
-        SessionPromptToken { token: "{ORCHESTRA.COMPLETION_RULES}".into(), description: "Standard Orchestra completion rules block.".into() },
+        SessionPromptToken {
+            token: "{TASK.ID}".into(),
+            description: "Canonical Orchestra task id.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.NUMBER}".into(),
+            description: "Human-readable task number such as ORC-42.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.SLUG}".into(),
+            description: "Slugified task title for prompt customization.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.NAME}".into(),
+            description: "Task title/name.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.STATUS}".into(),
+            description: "Current task status.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.ASSIGNEE}".into(),
+            description: "Current assignee label.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.DESCRIPTION}".into(),
+            description: "Task description block when present.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.COMMENTS}".into(),
+            description: "Recent task comments block.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.BLOCKED_BY}".into(),
+            description: "Blocking tasks block.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.REPOSITORIES}".into(),
+            description: "Task repositories block.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.FILE_REFERENCES}".into(),
+            description: "Tracked project file references block.".into(),
+        },
+        SessionPromptToken {
+            token: "{TASK.ATTACHMENTS}".into(),
+            description: "Task attachments block.".into(),
+        },
+        SessionPromptToken {
+            token: "{WORKFLOW.NAME}".into(),
+            description: "Workflow name.".into(),
+        },
+        SessionPromptToken {
+            token: "{LANE.NAME}".into(),
+            description: "Current lane name.".into(),
+        },
+        SessionPromptToken {
+            token: "{LANE.OWNER}".into(),
+            description: "Current lane owner type.".into(),
+        },
+        SessionPromptToken {
+            token: "{LANE.INSTRUCTION}".into(),
+            description: "Lane entry instruction block.".into(),
+        },
+        SessionPromptToken {
+            token: "{WORKER.CONTEXT}".into(),
+            description: "Worker-specific prompt context block including base and overlay prompts."
+                .into(),
+        },
+        SessionPromptToken {
+            token: "{RUNTIME.CWD}".into(),
+            description: "Resolved task workspace cwd for the current lane.".into(),
+        },
+        SessionPromptToken {
+            token: "{ORCHESTRA.WORKING_RULES}".into(),
+            description: "Standard Orchestra working rules block.".into(),
+        },
+        SessionPromptToken {
+            token: "{ORCHESTRA.TOOL_HELP}".into(),
+            description: "Standard Orchestra task tool help block.".into(),
+        },
+        SessionPromptToken {
+            token: "{ORCHESTRA.COMPLETION_RULES}".into(),
+            description: "Standard Orchestra completion rules block.".into(),
+        },
     ]
 }
 
-pub fn get_session_prompt_settings(project_slug: &str) -> Result<ProjectSessionPromptSettings, String> {
+pub fn get_session_prompt_settings(
+    project_slug: &str,
+) -> Result<ProjectSessionPromptSettings, String> {
     let orchestra_root = default_orchestra_root()?;
     get_session_prompt_settings_in(&orchestra_root, project_slug)
 }
 
-pub fn update_session_prompt_settings(project_slug: &str, template: Option<String>) -> Result<ProjectSessionPromptSettings, String> {
+pub fn update_session_prompt_settings(
+    project_slug: &str,
+    template: Option<String>,
+) -> Result<ProjectSessionPromptSettings, String> {
     let orchestra_root = default_orchestra_root()?;
     update_session_prompt_settings_in(&orchestra_root, project_slug, template)
 }
@@ -383,7 +466,10 @@ mod tests {
         .expect("session prompt settings should save");
         assert_eq!(saved.project_slug, "orchestra");
         assert_eq!(saved.template, "Task {TASK.ID} {TASK.NAME}");
-        assert!(saved.available_tokens.iter().any(|token| token.token == "{TASK.ID}"));
+        assert!(saved
+            .available_tokens
+            .iter()
+            .any(|token| token.token == "{TASK.ID}"));
 
         let loaded = get_session_prompt_settings_in(&root, "Orchestra")
             .expect("session prompt settings should load");
