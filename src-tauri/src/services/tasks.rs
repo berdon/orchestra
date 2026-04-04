@@ -16,7 +16,7 @@ use crate::{
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
-        task_attachments, task_file_references, task_repositories, task_runtime,
+        projects, task_attachments, task_file_references, task_repositories, task_runtime,
     },
 };
 
@@ -57,6 +57,7 @@ pub fn list_tasks(
     project_id: &str,
     include_archived: bool,
 ) -> Result<Vec<TaskSummary>, String> {
+    projects::ensure_project_exists(connection, project_id)?;
     let mut statement = connection
         .prepare(&format!(
             r#"
@@ -193,12 +194,13 @@ pub fn create_task(
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let project_id = project_id.unwrap_or(DEFAULT_PROJECT_ID).to_string();
+    projects::ensure_project_exists(connection, &project_id)?;
     let normalized = apply_default_task_repositories(
         connection,
         &project_id,
         apply_default_lane_if_needed(connection, normalize_input(input))?,
     )?;
-    validate_task_input(connection, &normalized, None)?;
+    validate_task_input(connection, &project_id, &normalized, None)?;
     let sequence_number = next_task_sequence_number(connection, &project_id)?;
     let number = format!("ORC-{sequence_number}");
     let task_id = task_id();
@@ -286,7 +288,7 @@ pub fn update_task(
 ) -> Result<TaskDetail, String> {
     let normalized = apply_default_lane_if_needed(connection, normalize_input(input))?;
     let existing = get_task(connection, task_id)?;
-    validate_task_input(connection, &normalized, Some(task_id))?;
+    validate_task_input(connection, &existing.project_id, &normalized, Some(task_id))?;
     let now = now_iso();
 
     let tx = connection
@@ -920,9 +922,11 @@ fn validate_task_comment_parent(
 
 fn validate_task_input(
     connection: &Connection,
+    project_id: &str,
     input: &TaskUpsertInput,
     task_id: Option<&str>,
 ) -> Result<(), String> {
+    projects::ensure_project_exists(connection, project_id)?;
     let mut errors = Vec::new();
 
     if input.title.is_empty() {
@@ -975,9 +979,14 @@ fn validate_task_input(
             errors.push("parentTaskId: A task cannot be its own parent.".to_string());
         } else if !task_exists(connection, parent_task_id)? {
             errors.push("parentTaskId: Parent task was not found.".to_string());
-        } else if let Some(task_id) = task_id {
-            if would_create_parent_cycle(connection, task_id, parent_task_id)? {
-                errors.push("parentTaskId: Parent would create a hierarchy cycle.".to_string());
+        } else {
+            let parent_project_id = task_project_id(connection, parent_task_id)?;
+            if parent_project_id != project_id {
+                errors.push("parentTaskId: Parent task must belong to the same project.".to_string());
+            } else if let Some(task_id) = task_id {
+                if would_create_parent_cycle(connection, task_id, parent_task_id)? {
+                    errors.push("parentTaskId: Parent would create a hierarchy cycle.".to_string());
+                }
             }
         }
     }
@@ -991,6 +1000,13 @@ fn validate_task_input(
                     "currentLaneId: Lane does not belong to the selected workflow.".to_string(),
                 );
             }
+        }
+    }
+
+    for repository_id in &input.repository_ids {
+        match projects::ensure_repository_belongs_to_project(connection, project_id, repository_id) {
+            Ok(_) => {}
+            Err(error) => errors.push(format!("repositoryId: {error}")),
         }
     }
 
@@ -2094,6 +2110,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_project_ids() {
+        let mut connection = in_memory_connection();
+        let error = create_task(
+            &mut connection,
+            Some("project-missing"),
+            TaskUpsertInput {
+                title: "Broken".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "draft".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect_err("reject missing project id");
+
+        assert!(error.contains("Project project-missing was not found"));
+    }
+
+    #[test]
     fn rejects_lane_without_matching_workflow() {
         let mut connection = in_memory_connection();
         let error = create_task(
@@ -2119,6 +2163,73 @@ mod tests {
         .expect_err("reject missing workflow for lane");
 
         assert!(error.contains("currentLaneId"));
+    }
+
+    #[test]
+    fn rejects_parent_tasks_from_other_projects() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, NULL, ?1, ?1)",
+                [now_iso()],
+            )
+            .expect("project A should insert");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, NULL, ?1, ?1)",
+                [now_iso()],
+            )
+            .expect("project B should insert");
+
+        let parent = create_task(
+            &mut connection,
+            Some("project-b"),
+            TaskUpsertInput {
+                title: "Other project parent".into(),
+                description: None,
+                task_type: "epic".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("parent should create");
+
+        let error = create_task(
+            &mut connection,
+            Some("project-a"),
+            TaskUpsertInput {
+                title: "Broken child".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: Some(parent.id),
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect_err("cross-project parent should be rejected");
+
+        assert!(
+            error.contains("Parent task must belong to the same project"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
