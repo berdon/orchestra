@@ -250,4 +250,56 @@ describe("orchestra tools extension", () => {
     expect(payload.message).toContain("Available Orchestra commands");
     expect(requests).toHaveLength(0);
   });
+
+  test("slash help can describe a specific tool without hitting the backend", { timeout: 30000 }, async () => {
+    const requests: unknown[] = [];
+    const started = await startJsonServer((body, _req, res) => {
+      requests.push(body);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ success: true, data: {} }));
+    });
+    server = started.server;
+
+    proc = spawn(
+      "pi",
+      [
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--no-extensions",
+        "--extension",
+        resolve("extensions/orchestra-tools.ts"),
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          ORCHESTRA_BRIDGE_URL: started.url,
+          ORCHESTRA_BRIDGE_TOKEN: "test-token",
+          ORCHESTRA_ALLOWED_COMMANDS_JSON: JSON.stringify([
+            { name: "create_task", description: "Create a task in a project", requiredPermission: "tasks.create" },
+          ]),
+          ORCHESTRA_AUTH_CONTEXT_JSON: JSON.stringify({ actorType: "user", actorId: "tester" }),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    proc.stdin.write(`${JSON.stringify({ type: "prompt", message: "/orchestra-run help create_task" })}\n`);
+
+    const line = await waitForLine(proc, (entry) => {
+      try {
+        const parsed = JSON.parse(entry);
+        return parsed.type === "extension_ui_request" && parsed.method === "notify";
+      } catch {
+        return false;
+      }
+    });
+
+    const payload = JSON.parse(line);
+    expect(payload.message).toContain('"command": "create_task"');
+    expect(payload.message).toContain('"projectId"');
+    expect(payload.message).toContain('"title"');
+    expect(requests).toHaveLength(0);
+  });
 });

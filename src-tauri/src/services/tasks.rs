@@ -2053,6 +2053,7 @@ mod tests {
             &project,
             crate::models::RepositoryUpsertInput {
                 name: "Default Repo".into(),
+                mode: Some("existing".into()),
                 repository_path: Some(std::env::temp_dir().display().to_string()),
                 default_branch: Some("main".into()),
             },
