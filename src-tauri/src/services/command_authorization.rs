@@ -160,6 +160,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "tasks.comment",
     ),
     (
+        "remind_me",
+        "Schedule a self-reminder message for the current worker session",
+        "tasks.read",
+    ),
+    (
         "list_task_repositories",
         "List task repositories and their workspace paths",
         "tasks.read",
