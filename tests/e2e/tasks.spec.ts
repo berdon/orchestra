@@ -179,6 +179,118 @@ test("tasks overview hides empty inbox, hides done lanes, and supports done filt
   await secondPage.close();
 });
 
+test("workflow lanes stay within a max height and scroll long task lists", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-scroll",
+          slug: "scroll",
+          name: "Scrollable Flow",
+          description: "Single lane with many tasks.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Handle task.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify(
+        Array.from({ length: 18 }, (_, index) => ({
+          id: `task-scroll-${index + 1}`,
+          projectId: "orchestra",
+          number: `ORC-${index + 1}`,
+          title: `Scrollable lane task ${index + 1}`,
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: index % 2 === 0 ? "P1" : "P2",
+          workflowId: "workflow-scroll",
+          currentLaneId: "lane-implement",
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })),
+      ),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Scrollable Flow");
+
+  const laneList = page.locator('[data-role="workflow-lane-task-list"]').first();
+  await expect(laneList).toBeVisible();
+  await expect(laneList.locator('[data-role="task-card"]')).toHaveCount(18);
+
+  const metrics = await laneList.evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    overflowY: getComputedStyle(node).overflowY,
+    sectionHeight: node.closest('[data-role="workflow-task-section"]') instanceof HTMLElement
+      ? node.closest('[data-role="workflow-task-section"]').getBoundingClientRect().height
+      : 0,
+  }));
+
+  expect(metrics.overflowY).toBe("auto");
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  expect(metrics.sectionHeight).toBeLessThan(page.viewportSize()?.height ?? 720);
+
+  const scrolled = await laneList.evaluate((node) => {
+    node.scrollTop = 180;
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    return node.scrollTop;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+});
+
 test("task detail manages dependencies and blocked state", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -66,7 +66,7 @@ export function WorkflowTaskBoardSection({
   }
 
   return (
-    <section className="task-board-section" data-role="workflow-task-section">
+    <section className="task-board-section task-board-section--workflow" data-role="workflow-task-section">
       <div className="task-board-section__header">
         <div>
           <p className="eyebrow">Workflow</p>
@@ -140,12 +140,12 @@ export function WorkflowTaskBoardSection({
         <div className="task-board-scroll">
           <div className="task-lane-board">
             {section.lanes.map((lane) => (
-              <section className="task-lane-column" key={lane.laneId}>
+              <section className="task-lane-column" data-lane-id={lane.laneId} key={lane.laneId}>
                 <div className="task-lane-column__header">
                   <strong>{lane.laneName}</strong>
                   <span>{lane.tasks.length}</span>
                 </div>
-                <div className="task-lane-column__list">
+                <div className="task-lane-column__list" data-role="workflow-lane-task-list" data-lane-id={lane.laneId}>
                   {lane.tasks.map((task) => (
                     <TaskCompactCard
                       assigneeLabel={resolveTaskAssigneeLabel(task, agents, roles)}
