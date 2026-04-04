@@ -11,6 +11,7 @@ import {
   validateTelegramBot,
 } from "../lib/channels";
 import { listProjects } from "../lib/projects";
+import { reportClientError } from "../lib/tauri";
 import type {
   ChannelActivityEntry,
   ChannelDetail,
@@ -66,14 +67,18 @@ export function ChannelsPanel() {
       const [nextProjects, nextChannels] = await Promise.all([listProjects(), listChannels()]);
       setProjects(nextProjects);
       setChannels(nextChannels as ChannelDetail[]);
-      setSelectedChannelId((current) => current && nextChannels.some((channel) => channel.id === current)
-        ? current
-        : nextChannels[0]?.id ?? null);
+      setSelectedChannelId((current) =>
+        current && nextChannels.some((channel) => channel.id === current)
+          ? current
+          : nextChannels[0]?.id ?? null,
+      );
       if (!creating) {
-        setDraft((current) => current.defaultProjectId ? current : createDraft(nextProjects[0]?.id ?? null));
+        setDraft((current) =>
+          current.defaultProjectId ? current : createDraft(nextProjects[0]?.id ?? null),
+        );
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load channels.");
+      setError(await reportClientError("ui.channels.catalog.load", nextError, "Unable to load channels."));
     } finally {
       setLoading(false);
     }
@@ -104,17 +109,21 @@ export function ChannelsPanel() {
           commandsEnabled: detail.telegram?.commandsEnabled ?? true,
         },
       });
-      setBotValidation(detail.telegram?.botUsername
-        ? {
-            botId: detail.id,
-            username: detail.telegram.botUsername,
-            displayName: detail.telegram.botUsername,
-          }
-        : null);
+      setBotValidation(
+        detail.telegram?.botUsername
+          ? {
+              botId: detail.id,
+              username: detail.telegram.botUsername,
+              displayName: detail.telegram.botUsername,
+            }
+          : null,
+      );
       setCreating(false);
       setChatCandidates([]);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load channel detail.");
+      setError(
+        await reportClientError("ui.channels.detail.load", nextError, "Unable to load channel detail."),
+      );
     } finally {
       setLoading(false);
     }
@@ -162,7 +171,13 @@ export function ChannelsPanel() {
         name: current.name?.trim() ? current.name : `Telegram · ${validation.displayName}`,
       }));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to validate Telegram bot.");
+      setError(
+        await reportClientError(
+          "ui.channels.telegram.validate_bot",
+          nextError,
+          "Unable to validate Telegram bot.",
+        ),
+      );
     } finally {
       setValidating(false);
     }
@@ -180,7 +195,13 @@ export function ChannelsPanel() {
     try {
       setChatCandidates(await listTelegramChatCandidates(botToken, draft.telegram?.apiBaseUrl ?? null));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to detect Telegram chats.");
+      setError(
+        await reportClientError(
+          "ui.channels.telegram.detect_chats",
+          nextError,
+          "Unable to detect Telegram chats.",
+        ),
+      );
     } finally {
       setDetectingChats(false);
     }
@@ -221,7 +242,7 @@ export function ChannelsPanel() {
       setCreating(true);
       await loadCatalog();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to delete channel.");
+      setError(await reportClientError("ui.channels.delete", nextError, "Unable to delete channel."));
     } finally {
       setSaving(false);
     }
@@ -280,7 +301,10 @@ export function ChannelsPanel() {
             <div>
               <p className="eyebrow">Channel detail</p>
               <h3>{creating ? "New channel" : channelDetail?.name ?? "Select a channel"}</h3>
-              <p className="muted-copy">Configure an external transport that asynchronously talks to the single supervisor session. Plain text messages go to the supervisor; Telegram commands control project/model/session behavior.</p>
+              <p className="muted-copy">
+                Configure an external transport that asynchronously talks to the single supervisor session.
+                Plain text messages go to the supervisor; Telegram commands control project/model/session behavior.
+              </p>
             </div>
             <div className="row-actions">
               {selectedChannel?.id && !creating ? (
@@ -424,14 +448,6 @@ export function ChannelsPanel() {
           ) : null}
         </div>
       </section>
-    </section>
-  );
-}
-}
-ection>
-  );
-}
-on>
     </section>
   );
 }
