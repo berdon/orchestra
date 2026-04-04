@@ -1455,7 +1455,7 @@ fn complete_lane(
                 unread_mail.len()
             ));
         }
-    } else if lane.assigned_entity_type != "user" {
+    } else if !(task.assignee_type == "user" && task.status == "in_review") {
         return Err(format!("Task {task_id} has no active lane assignment"));
     }
 
@@ -4084,6 +4084,115 @@ mod tests {
             complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
                 .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
+        assert!(updated.active_lane_assignment.is_none());
+    }
+
+    #[test]
+    fn user_review_can_fail_without_an_active_assignment() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                thinking_level: Some("low".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Agent Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-agent".into()),
+                    key: "agent".into(),
+                    name: "Agent".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some("Do the work.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = init_test_repo("task-runtime-user-review-failure");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-agent-review', 'orchestra', 'runtime-agent-review', 'Runtime Agent Review Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Agent review task".into(),
+                description: Some("Escalate to user review then mark needs work.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-agent".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-agent-review".into()),
+                repository_ids: vec!["repo-agent-review".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = root.join("sessions");
+        std::fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let _assignment = dispatch_task_lane(&mut connection, &root, &session_dir, &task.id)
+            .expect("agent lane should dispatch");
+        let awaiting_review = request_user_intervention(
+            &mut connection,
+            &root,
+            &session_dir,
+            &task.id,
+            Some("Need human review".into()),
+            None,
+        )
+        .expect("task should move to user review");
+        assert_eq!(awaiting_review.status, "in_review");
+        assert_eq!(awaiting_review.assignee_type, "user");
+        assert!(awaiting_review.active_lane_assignment.is_none());
+
+        let updated = complete_lane_as_failure(
+            &mut connection,
+            &root,
+            &session_dir,
+            &task.id,
+            Some("Needs more work".into()),
+            None,
+        )
+        .expect("user review should be able to send the lane back as failure without an active assignment");
+        assert_eq!(updated.status, "blocked");
+        assert_eq!(updated.assignee_type, "user");
         assert!(updated.active_lane_assignment.is_none());
     }
 
