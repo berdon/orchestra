@@ -138,6 +138,14 @@ export async function createTelegramHarness(botToken = "test-token"): Promise<Te
       const json = await response.json() as { result?: HarnessSentMessage[] };
       return json.result ?? [];
     },
+    async listChatActions() {
+      const response = await fetch(`http://127.0.0.1:${address.port}/__test/chat-actions`);
+      if (!response.ok) {
+        throw new Error(`Unable to read Telegram chat actions: ${response.status}`);
+      }
+      const json = await response.json() as { result?: HarnessChatAction[] };
+      return json.result ?? [];
+    },
     async close() {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
