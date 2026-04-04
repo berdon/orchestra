@@ -33,7 +33,7 @@ use commands::{
     },
     projects::{
         attach_repository_remote, create_project, create_repository, delete_project,
-        delete_repository, get_project, list_projects, list_repositories,
+        delete_repository, get_project, get_repository, list_projects, list_repositories,
         set_project_default_repository, update_project, update_repository,
     },
     role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
@@ -175,6 +175,7 @@ pub fn run() {
             mark_mailbox_messages_read,
             archive_mailbox_messages,
             list_repositories,
+            get_repository,
             create_repository,
             update_repository,
             delete_repository,

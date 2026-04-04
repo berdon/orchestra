@@ -49,6 +49,26 @@ describe("orchestra tools extension bridge tool setup", () => {
         description: "Update a worker overlay",
         requiredPermission: "projects.update",
       },
+      {
+        name: "list_projects",
+        description: "List Orchestra projects",
+        requiredPermission: "projects.read",
+      },
+      {
+        name: "get_project",
+        description: "Get an Orchestra project",
+        requiredPermission: "projects.read",
+      },
+      {
+        name: "list_repositories",
+        description: "List Orchestra repositories",
+        requiredPermission: "projects.read",
+      },
+      {
+        name: "get_repository",
+        description: "Get an Orchestra repository",
+        requiredPermission: "projects.read",
+      },
     ]);
     process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({ actorType: "user", actorId: "tester" });
   });
@@ -96,6 +116,10 @@ describe("orchestra tools extension bridge tool setup", () => {
         "create_task",
         "get_worker_overlay",
         "update_worker_overlay",
+        "list_projects",
+        "get_project",
+        "list_repositories",
+        "get_repository",
       ]),
     );
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
@@ -131,7 +155,29 @@ describe("orchestra tools extension bridge tool setup", () => {
       interruptAgent: false,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const listProjectsTool = registeredTools.find((tool) => tool.name === "list_projects");
+    expect(listProjectsTool.parameters.properties.inputJson).toBeUndefined();
+    const listProjectsResult = await listProjectsTool.execute("tool-call-5", {});
+
+    const getProjectTool = registeredTools.find((tool) => tool.name === "get_project");
+    expect(getProjectTool.parameters.properties.projectId).toBeTruthy();
+    const getProjectResult = await getProjectTool.execute("tool-call-6", {
+      projectId: "project-1",
+    });
+
+    const listRepositoriesTool = registeredTools.find((tool) => tool.name === "list_repositories");
+    expect(listRepositoriesTool.parameters.properties.projectId).toBeTruthy();
+    const listRepositoriesResult = await listRepositoriesTool.execute("tool-call-7", {
+      projectId: "project-1",
+    });
+
+    const getRepositoryTool = registeredTools.find((tool) => tool.name === "get_repository");
+    expect(getRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
+    const getRepositoryResult = await getRepositoryTool.execute("tool-call-8", {
+      repositoryId: "repo-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(8);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
     expect(request.payload).toEqual({ taskId: "task-1", notes: "Ship it" });
@@ -158,6 +204,18 @@ describe("orchestra tools extension bridge tool setup", () => {
         parentCommentId: null,
       },
     });
+    const listProjectsRequest = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    expect(listProjectsRequest.command).toBe("list_projects");
+    expect(listProjectsRequest.payload).toEqual({});
+    const getProjectRequest = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
+    expect(getProjectRequest.command).toBe("get_project");
+    expect(getProjectRequest.payload).toEqual({ projectId: "project-1" });
+    const listRepositoriesRequest = JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body));
+    expect(listRepositoriesRequest.command).toBe("list_repositories");
+    expect(listRepositoriesRequest.payload).toEqual({ projectId: "project-1" });
+    const getRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body));
+    expect(getRepositoryRequest.command).toBe("get_repository");
+    expect(getRepositoryRequest.payload).toEqual({ repositoryId: "repo-1" });
     expect(result.details.command).toBe("complete_lane_as_success");
     expect(result.content[0]?.text).toContain("complete_lane_as_success");
     expect(taskContextResult.details.command).toBe("get_task_context");
@@ -166,6 +224,14 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(repoFileResult.content[0]?.text).toContain("add_task_file_reference");
     expect(commentResult.details.command).toBe("comment_on_task");
     expect(commentResult.content[0]?.text).toContain("comment_on_task");
+    expect(listProjectsResult.details.command).toBe("list_projects");
+    expect(listProjectsResult.content[0]?.text).toContain("list_projects");
+    expect(getProjectResult.details.command).toBe("get_project");
+    expect(getProjectResult.content[0]?.text).toContain("get_project");
+    expect(listRepositoriesResult.details.command).toBe("list_repositories");
+    expect(listRepositoriesResult.content[0]?.text).toContain("list_repositories");
+    expect(getRepositoryResult.details.command).toBe("get_repository");
+    expect(getRepositoryResult.content[0]?.text).toContain("get_repository");
   });
 
   test("exposes project-scoped tool parameters and detailed help", async () => {

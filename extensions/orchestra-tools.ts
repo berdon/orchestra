@@ -188,6 +188,80 @@ function buildTaskInput(params: TaskInputParams) {
 }
 
 export function createBridgeTool(tool: OrchestraToolDefinition) {
+  if (tool.name === "list_projects") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. No input is required.`,
+      parameters: Type.Object({}),
+      async execute() {
+        const payload = {};
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_project") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Orchestra project id to load." }),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string }) {
+        const payload = { projectId: params.projectId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "list_repositories") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId to scope repositories to one project.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the repository list." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId?: string }) {
+        const payload = params.projectId ? { projectId: params.projectId } : {};
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_repository") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide repositoryId.`,
+      parameters: Type.Object({
+        repositoryId: Type.String({ description: "Orchestra repository id to load." }),
+      }),
+      async execute(_toolCallId: string, params: { repositoryId: string }) {
+        const payload = { repositoryId: params.repositoryId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
   if (tool.name === "list_tasks") {
     return {
       name: tool.name,
