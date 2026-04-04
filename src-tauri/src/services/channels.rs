@@ -1525,6 +1525,8 @@ fn telegram_api_post(
         return Err("Telegram bot token is required.".into());
     }
     let base_url = api_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or("https://api.telegram.org")
         .trim_end_matches('/');
     let url = format!("{}/bot{}/{}", base_url, token, method);
