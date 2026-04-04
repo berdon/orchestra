@@ -197,7 +197,7 @@ export function ChannelsPanel() {
       setSelectedChannelId(saved.id);
       setCreating(false);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to save channel.");
+      setError(await reportClientError("ui.channels.save", nextError, "Unable to save channel."));
     } finally {
       setSaving(false);
     }
@@ -424,6 +424,14 @@ export function ChannelsPanel() {
           ) : null}
         </div>
       </section>
+    </section>
+  );
+}
+}
+ection>
+  );
+}
+on>
     </section>
   );
 }
