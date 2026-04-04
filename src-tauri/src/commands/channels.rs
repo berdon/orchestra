@@ -69,16 +69,30 @@ pub fn delete_channel(
 
 #[tauri::command]
 pub fn validate_telegram_bot(
+    state: State<'_, AppState>,
     bot_token: String,
     api_base_url: Option<String>,
 ) -> Result<TelegramBotValidation, String> {
-    channels::validate_telegram_bot(&bot_token, api_base_url.as_deref())
+    match channels::validate_telegram_bot(&bot_token, api_base_url.as_deref()) {
+        Ok(validation) => Ok(validation),
+        Err(error) => {
+            state.log("error", "channels.telegram.validate_bot.failed", &error);
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
 pub fn list_telegram_chat_candidates(
+    state: State<'_, AppState>,
     bot_token: String,
     api_base_url: Option<String>,
 ) -> Result<Vec<TelegramChatCandidate>, String> {
-    channels::list_telegram_chat_candidates(&bot_token, api_base_url.as_deref())
+    match channels::list_telegram_chat_candidates(&bot_token, api_base_url.as_deref()) {
+        Ok(candidates) => Ok(candidates),
+        Err(error) => {
+            state.log("error", "channels.telegram.list_chat_candidates.failed", &error);
+            Err(error)
+        }
+    }
 }
