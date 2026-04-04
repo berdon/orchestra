@@ -1295,13 +1295,11 @@ fn invoke_bridge_command(
                 notes,
                 authorization,
             )?;
-            if let Some(next_assignment) = crate::services::task_runtime::maybe_auto_dispatch_task(
+            for outcome in crate::services::task_runtime::collect_post_completion_auto_dispatches(
                 &mut writable,
-                &context.project_root,
-                &context.session_dir,
                 &task_id,
             )? {
-                config.start_assignment_async(context.session_dir.clone(), &next_assignment)?;
+                config.start_assignment_async(outcome.session_dir, &outcome.assignment)?;
             }
             serde_json::to_value(task)
                 .map_err(|error| format!("Unable to serialize completed task lane: {error}"))
@@ -1327,13 +1325,11 @@ fn invoke_bridge_command(
                 notes,
                 authorization,
             )?;
-            if let Some(next_assignment) = crate::services::task_runtime::maybe_auto_dispatch_task(
+            for outcome in crate::services::task_runtime::collect_post_completion_auto_dispatches(
                 &mut writable,
-                &context.project_root,
-                &context.session_dir,
                 &task_id,
             )? {
-                config.start_assignment_async(context.session_dir.clone(), &next_assignment)?;
+                config.start_assignment_async(outcome.session_dir, &outcome.assignment)?;
             }
             serde_json::to_value(task)
                 .map_err(|error| format!("Unable to serialize failed task lane: {error}"))

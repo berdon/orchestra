@@ -291,6 +291,199 @@ test("workflow lanes stay within a max height and scroll long task lists", async
   expect(scrolled).toBeGreaterThan(0);
 });
 
+test("project setting auto-dispatches newly unblocked tasks when a blocker completes", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-user-review",
+          slug: "user-review",
+          name: "User Review",
+          description: "User-owned blocker lane.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-user-review",
+              key: "review",
+              name: "Review",
+              description: null,
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Review the blocker.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+        {
+          id: "workflow-role-implement",
+          slug: "role-implement",
+          name: "Role Implement",
+          description: "Role-owned dependent lane.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-role-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Implement the dependent task.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-blocker",
+          projectId: "orchestra",
+          number: "ORC-1",
+          title: "Blocker task",
+          description: null,
+          type: "task",
+          status: "in_review",
+          priority: "P1",
+          workflowId: "workflow-user-review",
+          currentLaneId: "lane-user-review",
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 1,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        {
+          id: "task-dependent",
+          projectId: "orchestra",
+          number: "ORC-2",
+          title: "Dependent task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: "workflow-role-implement",
+          currentLaneId: "lane-role-implement",
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 1,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: true,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.task-dependencies",
+      JSON.stringify([
+        {
+          id: "dependency-1",
+          blockerTaskId: "task-blocker",
+          blockedTaskId: "task-dependent",
+          createdAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.project-settings",
+      JSON.stringify({
+        general: {
+          autoDispatchOnBlockerCompletion: false,
+          updatedAt: timestamp,
+        },
+      }),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: "Projects" }).click();
+  await page.locator('[data-role="project-auto-dispatch-on-blocker-completion"]').check();
+  await page.locator('[data-role="save-project-automation-settings"]').click();
+  await expect(page.locator('[data-role="project-auto-dispatch-on-blocker-completion"]')).toBeChecked();
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Blocker task" }).first().click();
+  await page.locator('[data-role="complete-task-success"]').click();
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+      return tasks.find((task: { id: string }) => task.id === "task-dependent") ?? null;
+    });
+  }).toMatchObject({
+    status: "in_progress",
+    assigneeType: "role",
+  });
+
+});
+
 test("task detail manages dependencies and blocked state", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

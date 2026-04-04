@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { isTauriAvailable } from "./tauri";
-import type { ProjectSessionPromptSettings, ProjectWorkerOverlay } from "../types";
+import type {
+  ProjectSessionPromptSettings,
+  ProjectTaskAutomationSettings,
+  ProjectWorkerOverlay,
+} from "../types";
 
 const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
 const DEFAULT_PROJECT_SLUG = "orchestra";
@@ -11,6 +15,7 @@ type MockProjectSettings = {
   roleOverlays?: Record<string, { prompt?: string | null; updatedAt?: string | null }>;
   general?: {
     taskSessionContextTemplate?: string | null;
+    autoDispatchOnBlockerCompletion?: boolean;
     updatedAt?: string | null;
   };
 };
@@ -111,6 +116,7 @@ export async function updateSessionPromptSettings(template: string | null, proje
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     settings.general = {
+      ...(settings.general ?? {}),
       taskSessionContextTemplate: template?.trim() || null,
       updatedAt: nowIso(),
     };
@@ -119,6 +125,40 @@ export async function updateSessionPromptSettings(template: string | null, proje
   }
 
   return invoke<ProjectSessionPromptSettings>("update_session_prompt_settings", { projectSlug, template });
+}
+
+export async function getTaskAutomationSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectTaskAutomationSettings> {
+  if (!isTauriAvailable()) {
+    const settings = getStoredProjectSettings();
+    return {
+      projectSlug,
+      autoDispatchOnBlockerCompletion: settings.general?.autoDispatchOnBlockerCompletion ?? false,
+      updatedAt: settings.general?.updatedAt ?? null,
+    };
+  }
+
+  return invoke<ProjectTaskAutomationSettings>("get_task_automation_settings", { projectSlug });
+}
+
+export async function updateTaskAutomationSettings(
+  autoDispatchOnBlockerCompletion: boolean,
+  projectSlug = DEFAULT_PROJECT_SLUG,
+): Promise<ProjectTaskAutomationSettings> {
+  if (!isTauriAvailable()) {
+    const settings = getStoredProjectSettings();
+    settings.general = {
+      ...(settings.general ?? {}),
+      autoDispatchOnBlockerCompletion,
+      updatedAt: nowIso(),
+    };
+    saveStoredProjectSettings(settings);
+    return getTaskAutomationSettings(projectSlug);
+  }
+
+  return invoke<ProjectTaskAutomationSettings>("update_task_automation_settings", {
+    projectSlug,
+    autoDispatchOnBlockerCompletion,
+  });
 }
 
 export async function getWorkerOverlay(workerType: string, workerSlug: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {

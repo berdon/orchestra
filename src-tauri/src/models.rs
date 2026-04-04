@@ -432,6 +432,14 @@ pub struct ProjectSessionPromptSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectTaskAutomationSettings {
+    pub project_slug: String,
+    pub auto_dispatch_on_blocker_completion: bool,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleDefinition {
     pub id: String,
     pub slug: String,

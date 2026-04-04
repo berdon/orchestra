@@ -58,6 +58,7 @@ const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
+const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
 const CURRENT_PROJECT_ID = "orchestra";
 
 type OrchestraWindowGlobals = Window & {
@@ -68,6 +69,18 @@ type OrchestraWindowGlobals = Window & {
 function getInjectedWindowKind() {
   const windowKind = (window as OrchestraWindowGlobals).__ORCHESTRA_WINDOW_KIND__;
   return typeof windowKind === "string" ? windowKind : null;
+}
+
+function getStoredMockProjectSettings() {
+  const value = window.localStorage.getItem(PROJECT_SETTINGS_STORAGE_KEY);
+  return value ? (JSON.parse(value) as { general?: { autoDispatchOnBlockerCompletion?: boolean } }) : {};
+}
+
+function getStoredMockProjectsForSettings() {
+  const value = window.localStorage.getItem("orchestra.mock.projects");
+  return value
+    ? (JSON.parse(value) as Array<{ id: string; slug: string }>)
+    : [{ id: CURRENT_PROJECT_ID, slug: CURRENT_PROJECT_ID }];
 }
 
 export function getInitialLogsWindowFlag() {
@@ -1968,7 +1981,7 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     status: "active",
     sessionId: createId("session"),
     runtimeCwd: lane.assignedEntityType === "agent"
-      ? getProjectRuntimeCwd(CURRENT_PROJECT_ID)
+      ? getProjectRuntimeCwd(task.projectId)
       : `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
     roleQueueEntryId: lane.assignedEntityType === "role" ? createId("queue") : null,
     roleInstanceId: lane.assignedEntityType === "role" ? createId("instance") : null,
@@ -2046,7 +2059,7 @@ function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     ...getStoredMockAgentQueue(),
     {
       id: autoAssignment.id,
-      projectId: CURRENT_PROJECT_ID,
+      projectId: task.projectId,
       agentId: autoAssignment.workerId,
       status: "dispatched",
       sourceType: "workflow_lane",
@@ -2064,6 +2077,76 @@ function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
       updatedAt: autoAssignment.updatedAt,
     },
   ]);
+}
+
+function isMockAutoDispatchOnBlockerCompletionEnabled(projectId: string) {
+  const projects = getStoredMockProjectsForSettings();
+  const projectSlug = projects.find((project) => project.id === projectId)?.slug ?? CURRENT_PROJECT_ID;
+  const settings = getStoredMockProjectSettings();
+  return Boolean(settings.general?.autoDispatchOnBlockerCompletion && projectSlug);
+}
+
+async function autoDispatchMockDependentTasks(blockerTaskId: string) {
+  const dependencies = ensureMockTaskDependencies().filter((dependency) => dependency.blockerTaskId === blockerTaskId);
+  if (dependencies.length === 0) {
+    return [] as string[];
+  }
+
+  const tasks = ensureMockTasks();
+  const workflowMap = new Map(ensureMockWorkflows().map((workflow) => [workflow.id, workflow]));
+  const updatedAt = nowIso();
+  const autoDispatchedTaskIds: string[] = [];
+  const nextTasks = [...tasks];
+
+  for (const dependency of dependencies) {
+    const index = nextTasks.findIndex((entry) => entry.id === dependency.blockedTaskId);
+    if (index < 0) {
+      continue;
+    }
+    const task = await getTask(dependency.blockedTaskId);
+    if (!isMockAutoDispatchOnBlockerCompletionEnabled(task.projectId) || !task.readyForDispatch || task.activeLaneAssignment) {
+      continue;
+    }
+    const workflow = task.workflowId ? workflowMap.get(task.workflowId) ?? null : null;
+    const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId) ?? null;
+    if (!workflow || !lane || lane.assignedEntityType === "user") {
+      continue;
+    }
+
+    const autoAssignment = buildMockAutoAssignment(task, workflow, lane, updatedAt);
+    if (!autoAssignment?.sessionId) {
+      continue;
+    }
+    nextTasks[index] = {
+      ...nextTasks[index],
+      status: "in_progress",
+      assigneeType: lane.assignedEntityType,
+      assigneeId: lane.assignedEntityId ?? null,
+      activeLaneAssignment: autoAssignment,
+      laneRuns: [
+        ...task.laneRuns,
+        {
+          id: createId("lane-run"),
+          taskId: task.id,
+          laneId: lane.id,
+          sessionId: autoAssignment.sessionId,
+          result: "needs_user",
+          notes: null,
+          startedAt: updatedAt,
+          completedAt: null,
+        },
+      ],
+      updatedAt,
+    };
+    queueMockAutoAssignment(task, workflow, autoAssignment);
+    autoDispatchedTaskIds.push(task.id);
+  }
+
+  if (autoDispatchedTaskIds.length > 0) {
+    saveMockTasks(nextTasks.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+  }
+
+  return autoDispatchedTaskIds;
 }
 
 async function completeMockTaskLane(taskId: string, outcome: "success" | "failure" | "needs_user", notes?: string): Promise<TaskDetail> {
@@ -2206,9 +2289,12 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   );
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
+  const autoDispatchedDependentTaskIds = ["completed", "canceled"].includes(nextStatus)
+    ? await autoDispatchMockDependentTasks(taskId)
+    : [];
 
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
-  emitMockTaskChange({ taskIds: [taskId], reason: `task.transition.${outcome}` });
+  emitMockTaskChange({ taskIds: [taskId, ...autoDispatchedDependentTaskIds], reason: `task.transition.${outcome}` });
   return getTask(taskId);
 }
 
@@ -2294,9 +2380,12 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
   finalizeMockAgentState(task, "success", updatedAt, autoAssignment);
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
+  const autoDispatchedDependentTaskIds = ["completed", "canceled"].includes(nextStatus)
+    ? await autoDispatchMockDependentTasks(taskId)
+    : [];
 
   appendMockLog("info", "task.transition", `Approved pending lane completion for task ${taskId}`);
-  emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.approved_success" });
+  emitMockTaskChange({ taskIds: [taskId, ...autoDispatchedDependentTaskIds], reason: "task.transition.approved_success" });
   return getTask(taskId);
 }
 
