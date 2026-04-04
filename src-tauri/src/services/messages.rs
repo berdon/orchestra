@@ -6,7 +6,7 @@ use tauri::AppHandle;
 
 use crate::{
     models::{AuthorizationContext, MailboxMessage, SendMailboxMessageInput, TaskLaneAssignment},
-    services::{agent_runtime, agents, pi_sessions, roles, task_runtime},
+    services::{agent_runtime, agents, pi_sessions, projects, roles, task_runtime},
     state::{generate_id, now_iso, AppState},
 };
 
@@ -39,6 +39,10 @@ pub fn list_user_messages(
     project_id: Option<&str>,
     include_archived: bool,
 ) -> Result<Vec<MailboxMessage>, String> {
+    if let Some(project_id) = project_id {
+        projects::ensure_project_exists(connection, project_id)?;
+    }
+
     let archived_clause = if include_archived {
         ""
     } else {
@@ -512,6 +516,7 @@ fn resolve_project_id_for_send(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
     {
+        projects::ensure_project_exists(connection, project_id)?;
         return Ok(project_id.to_string());
     }
 
@@ -1131,6 +1136,39 @@ mod tests {
                 params![delivery_id, message_id, recipient_type, recipient_id, recipient_label, assignment_id, now],
             )
             .expect("delivery should seed");
+    }
+
+    #[test]
+    fn rejects_unknown_project_ids_for_user_mail_queries() {
+        let connection = open_test_connection("messages-project-validation");
+        let error = list_user_messages(&connection, Some("project-missing"), false)
+            .expect_err("unknown projects should be rejected");
+        assert!(error.contains("Project project-missing was not found"));
+    }
+
+    #[test]
+    fn rejects_unknown_project_ids_for_mail_sends() {
+        let connection = open_test_connection("messages-send-validation");
+        let sender = ResolvedSender {
+            sender_type: "user".into(),
+            sender_id: Some("desktop-user".into()),
+            sender_label: "User".into(),
+        };
+        let error = resolve_project_id_for_send(
+            &connection,
+            &sender,
+            &SendMailboxMessageInput {
+                project_id: Some("project-missing".into()),
+                task_id: None,
+                recipient_type: "user".into(),
+                recipient_id: None,
+                sender_label: None,
+                body: "hello".into(),
+                priority: None,
+            },
+        )
+        .expect_err("unknown projects should be rejected");
+        assert!(error.contains("Project project-missing was not found"));
     }
 
     #[test]

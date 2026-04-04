@@ -77,6 +77,38 @@ pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectD
     })
 }
 
+pub fn ensure_project_exists(connection: &Connection, project_id: &str) -> Result<(), String> {
+    ensure_default_project(connection)?;
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM projects WHERE id = ?1 LIMIT 1",
+            [project_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query project {project_id}: {error}"))?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err(format!("Project {project_id} was not found"))
+    }
+}
+
+pub fn ensure_repository_belongs_to_project(
+    connection: &Connection,
+    project_id: &str,
+    repository_id: &str,
+) -> Result<RepositoryRecord, String> {
+    let repository = get_repository(connection, repository_id)?;
+    if repository.project_id != project_id {
+        return Err(format!(
+            "Repository {repository_id} does not belong to project {project_id}"
+        ));
+    }
+    Ok(repository)
+}
+
 pub fn get_project_by_slug(
     connection: &Connection,
     project_slug: &str,
@@ -208,6 +240,9 @@ pub fn list_repositories(
     project_id: Option<&str>,
 ) -> Result<Vec<RepositoryRecord>, String> {
     ensure_default_project(connection)?;
+    if let Some(project_id) = project_id {
+        ensure_project_exists(connection, project_id)?;
+    }
     let sql = if project_id.is_some() {
         r#"
         SELECT id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at
@@ -418,6 +453,10 @@ pub fn set_project_default_repository(
     project_id: &str,
     repository_id: Option<&str>,
 ) -> Result<ProjectDetail, String> {
+    ensure_project_exists(connection, project_id)?;
+    if let Some(repository_id) = repository_id {
+        ensure_repository_belongs_to_project(connection, project_id, repository_id)?;
+    }
     connection
         .execute(
             "UPDATE projects SET default_repository_id = ?2, updated_at = ?3 WHERE id = ?1",
@@ -887,6 +926,12 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn in_memory_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("open in-memory db");
+        crate::services::database::apply_migrations(&connection).expect("apply migrations");
+        connection
+    }
+
     fn unique_temp_path(label: &str) -> PathBuf {
         let suffix = format!(
             "{}-{}-{}",
@@ -969,6 +1014,42 @@ mod tests {
     fn test_is_remote_repository_path_rejects_plain_strings_without_colon_or_path_separator() {
         assert!(!is_remote_repository_path("just-a-string"));
         assert!(!is_remote_repository_path("repo"));
+    }
+
+    #[test]
+    fn list_repositories_rejects_unknown_projects() {
+        let connection = in_memory_connection();
+        let error = list_repositories(&connection, Some("project-missing"))
+            .expect_err("unknown projects should be rejected");
+        assert!(error.contains("Project project-missing was not found"));
+    }
+
+    #[test]
+    fn set_project_default_repository_rejects_cross_project_repositories() {
+        let connection = in_memory_connection();
+        let now = "2026-04-03T00:00:00Z";
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, NULL, ?1, ?1)",
+                [now],
+            )
+            .expect("project A should insert");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, NULL, ?1, ?1)",
+                [now],
+            )
+            .expect("project B should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES ('repo-b', 'project-b', 'repo-b', 'Repo B', '/tmp/repo-b', NULL, 'existing', 'main', ?1, ?1)",
+                [now],
+            )
+            .expect("repository B should insert");
+
+        let error = set_project_default_repository(&connection, "project-a", Some("repo-b"))
+            .expect_err("cross-project repositories should be rejected");
+        assert!(error.contains("does not belong to project project-a"));
     }
 
     #[test]
