@@ -181,11 +181,15 @@ export interface SessionScrollState {
   lockedToBottom: boolean;
 }
 
+export type AgentScope = "global" | "project";
+
 export interface AgentSummary {
   id: string;
   slug: string;
   name: string;
   roleId?: string | null;
+  scope: AgentScope;
+  projectId?: string | null;
   thinkingLevel: string;
   policyIds?: string[];
   directPermissions?: string[];
@@ -205,6 +209,8 @@ export interface AgentDefinition {
   provider?: string | null;
   model?: string | null;
   roleId?: string | null;
+  scope: AgentScope;
+  projectId?: string | null;
   thinkingLevel: string;
   policyIds?: string[];
   directPermissions?: string[];
@@ -222,6 +228,8 @@ export interface AgentUpsertInput {
   provider?: string | null;
   model?: string | null;
   roleId?: string | null;
+  scope?: AgentScope | null;
+  projectId?: string | null;
   thinkingLevel?: string | null;
   policyIds?: string[];
   directPermissions?: string[];

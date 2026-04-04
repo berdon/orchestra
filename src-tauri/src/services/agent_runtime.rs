@@ -33,7 +33,7 @@ pub fn list_agent_operations_for_project(
     project_id: &str,
     include_archived: bool,
 ) -> Result<Vec<AgentOperationsSnapshot>, String> {
-    let agents = agents::list_agents(connection, include_archived)?;
+    let agents = agents::list_agents_for_project(connection, include_archived, Some(project_id))?;
     agents
         .into_iter()
         .map(|agent| build_agent_operations_snapshot(connection, project_id, &agent.id))
@@ -52,7 +52,7 @@ pub fn get_agent_operations_for_project(
     project_id: &str,
     agent_id: &str,
 ) -> Result<AgentOperationsDetail, String> {
-    let agent = agents::get_agent(connection, agent_id)?;
+    let agent = agents::require_agent_in_project(connection, project_id, agent_id)?;
     let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
     let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
@@ -75,12 +75,17 @@ pub fn ensure_agent_runtime_state_for_project(
     project_id: &str,
     agent_id: &str,
 ) -> Result<AgentRuntimeState, String> {
+    let agent = agents::require_agent_in_project(connection, project_id, agent_id)?;
     if let Some(existing) = get_agent_runtime_state_for_project(connection, project_id, agent_id)? {
         return Ok(existing);
     }
 
     let now = now_iso();
-    let global_main_session_id = find_global_main_session_id(connection, agent_id)?;
+    let global_main_session_id = if agent.scope == "global" {
+        find_global_main_session_id(connection, agent_id)?
+    } else {
+        None
+    };
     connection
         .execute(
             r#"
@@ -229,7 +234,7 @@ pub fn enqueue_agent_work_for_project(
     input: AgentQueueEntryInput,
 ) -> Result<AgentQueueEntry, String> {
     let normalized = normalize_agent_queue_entry_input(input)?;
-    let agent = agents::get_agent(connection, &normalized.agent_id)?;
+    let agent = agents::require_agent_in_project(connection, project_id, &normalized.agent_id)?;
     if agent.archived {
         return Err(format!("Agent {} is archived and cannot accept runtime work", agent.name));
     }
@@ -653,6 +658,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),

@@ -106,6 +106,8 @@ function summarizeAgent(agent: AgentDefinition): AgentSummary {
     slug: agent.slug,
     name: agent.name,
     roleId: agent.roleId,
+    scope: agent.scope,
+    projectId: agent.projectId ?? null,
     thinkingLevel: agent.thinkingLevel,
     policyIds: agent.policyIds ?? [],
     directPermissions: agent.directPermissions ?? [],
@@ -134,6 +136,10 @@ function buildMockAgentValidation(input: AgentUpsertInput): AgentValidationResul
 
   if (!provider && model) {
     errors.push({ code: "required", path: "provider", message: "Select a provider when a model is configured." });
+  }
+
+  if (input.scope === "project" && !(input.projectId?.trim() || activeProjectId())) {
+    errors.push({ code: "required", path: "projectId", message: "Choose a project for project-scoped agents." });
   }
 
   if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel)) {
@@ -179,6 +185,9 @@ function normalizeMockAgentInput(input: AgentUpsertInput, existing?: AgentDefini
     suffix += 1;
   }
 
+  const protectedAgent = Boolean(existing?.system || existing?.immutable || existing?.slug === "supervisor");
+  const scope = input.scope === "project" && !protectedAgent ? "project" : "global";
+
   return {
     id: existing?.id ?? createId("agent"),
     slug,
@@ -188,6 +197,8 @@ function normalizeMockAgentInput(input: AgentUpsertInput, existing?: AgentDefini
     provider,
     model,
     roleId: input.roleId ?? existing?.roleId ?? null,
+    scope,
+    projectId: scope === "project" ? input.projectId ?? existing?.projectId ?? activeProjectId() : null,
     thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
     policyIds: Array.from(new Set(input.policyIds ?? existing?.policyIds ?? [])).sort(),
     directPermissions: Array.from(new Set(input.directPermissions ?? existing?.directPermissions ?? [])).sort(),
@@ -211,6 +222,8 @@ function seedMockAgents(): AgentDefinition[] {
       provider: "anthropic",
       model: "claude-sonnet-4-20250514",
       roleId: null,
+      scope: "global",
+      projectId: null,
       thinkingLevel: "medium",
       policyIds: ["policy-supervisor"],
       directPermissions: [],
@@ -229,6 +242,8 @@ function seedMockAgents(): AgentDefinition[] {
       provider: "anthropic",
       model: "claude-sonnet-4-20250514",
       roleId: null,
+      scope: "global",
+      projectId: null,
       thinkingLevel: "medium",
       policyIds: [],
       directPermissions: [],
@@ -248,6 +263,8 @@ function ensureMockAgents() {
       ...agent,
       slug: agent.slug || slugifyAgentName(agent.name),
       roleId: agent.roleId ?? null,
+      scope: agent.system || agent.immutable || agent.slug === "supervisor" ? "global" : agent.scope ?? "global",
+      projectId: agent.scope === "project" && !(agent.system || agent.immutable || agent.slug === "supervisor") ? agent.projectId ?? null : null,
       policyIds: agent.policyIds ?? [],
       directPermissions: agent.directPermissions ?? [],
       system: agent.system ?? false,
@@ -298,6 +315,10 @@ function openMockAgentTerminalWindow(sessionId: string) {
     window.clearInterval(intervalId);
     detach();
   }, 250);
+}
+
+function isAgentVisibleInProject(agent: Pick<AgentDefinition, "scope" | "projectId">, projectId?: string | null) {
+  return agent.scope === "global" || (Boolean(projectId) && agent.projectId === projectId);
 }
 
 function ensureMockAgentRuntime(agentId: string) {
@@ -369,19 +390,24 @@ function summarizeAgentOperations(agent: AgentDefinition): AgentOperationsSnapsh
   };
 }
 
-export async function listAgents(includeArchived = false): Promise<AgentSummary[]> {
+export async function listAgents(includeArchived = false, projectId?: string | null): Promise<AgentSummary[]> {
   if (!isTauriAvailable()) {
-    return ensureMockAgents().filter((agent) => includeArchived || !agent.archived).map(summarizeAgent);
+    return ensureMockAgents()
+      .filter((agent) => (includeArchived || !agent.archived) && isAgentVisibleInProject(agent, projectId ?? activeProjectId()))
+      .map(summarizeAgent);
   }
 
-  return invoke<AgentSummary[]>("list_agents", { includeArchived });
+  return invoke<AgentSummary[]>("list_agents", { includeArchived, projectId: projectId ?? null });
 }
 
-export async function getAgent(agentId: string): Promise<AgentDefinition> {
+export async function getAgent(agentId: string, projectId?: string | null): Promise<AgentDefinition> {
   if (!isTauriAvailable()) {
     const agent = ensureMockAgents().find((entry) => entry.id === agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} was not found`);
+    }
+    if (!isAgentVisibleInProject(agent, projectId ?? activeProjectId())) {
+      throw new Error(`Agent ${agentId} is not available in this project`);
     }
     return agent;
   }
@@ -392,7 +418,7 @@ export async function getAgent(agentId: string): Promise<AgentDefinition> {
 export async function listAgentOperations(includeArchived = false, projectId?: string | null): Promise<AgentOperationsSnapshot[]> {
   if (!isTauriAvailable()) {
     return ensureMockAgents()
-      .filter((agent) => includeArchived || !agent.archived)
+      .filter((agent) => (includeArchived || !agent.archived) && isAgentVisibleInProject(agent, projectId ?? activeProjectId()))
       .map((agent) => summarizeAgentOperations(agent));
   }
 
@@ -401,7 +427,7 @@ export async function listAgentOperations(includeArchived = false, projectId?: s
 
 export async function getAgentOperations(agentId: string, projectId?: string | null): Promise<AgentOperationsDetail> {
   if (!isTauriAvailable()) {
-    const agent = await getAgent(agentId);
+    const agent = await getAgent(agentId, projectId);
     const snapshot = summarizeAgentOperations(agent);
     const queueEntries = getStoredAgentQueue().filter((entry) => entry.agentId === agentId);
     return {
