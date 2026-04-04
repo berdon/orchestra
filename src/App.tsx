@@ -504,6 +504,7 @@ export function App() {
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
   const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
   const [taskBoardViewMode, setTaskBoardViewMode] = useState<TaskBoardViewMode>(() => loadStoredTaskBoardViewMode());
+  const [tasksOverviewToken, setTasksOverviewToken] = useState(0);
   const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(null);
   const [agentsSelectionRequest, setAgentsSelectionRequest] = useState<{ type: "role" | "agent"; id: string; token: number } | null>(null);
   const [rolesSelectionRequest, setRolesSelectionRequest] = useState<{ roleId: string; token: number } | null>(null);
@@ -1660,6 +1661,11 @@ export function App() {
     setTasksOpenRequest((current) => ({ taskId, token: (current?.token ?? 0) + 1, projectId: activeProjectId }));
   }
 
+  function navigateToTasksOverview() {
+    setActivePage("tasks");
+    setTasksOverviewToken((current) => current + 1);
+  }
+
   function navigateToAgent(agentId: string) {
     setActivePage("agents");
     setAgentsSelectionRequest((current) => ({ type: "agent", id: agentId, token: (current?.token ?? 0) + 1 }));
@@ -2008,7 +2014,13 @@ export function App() {
                   key={item.id}
                   className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
                   type="button"
-                  onClick={() => setActivePage(item.id)}
+                  onClick={() => {
+                    if (item.id === "tasks") {
+                      navigateToTasksOverview();
+                      return;
+                    }
+                    setActivePage(item.id);
+                  }}
                 >
                   {item.label}
                 </button>
@@ -2236,6 +2248,7 @@ export function App() {
             openTaskRequest={tasksOpenRequest}
             projectId={activeProject?.id ?? null}
             taskBoardViewMode={taskBoardViewMode}
+            tasksOverviewToken={tasksOverviewToken}
             onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
           />
         )}
