@@ -1142,9 +1142,15 @@ fn invoke_bridge_command(
         }
         "create_task" => {
             command_authorization::require_permission(connection, authorization, "tasks.create")?;
-            let input: TaskUpsertInput =
-                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
-                    .map_err(|error| format!("Unable to parse task input: {error}"))?;
+            let input_payload = payload.get("input").cloned().unwrap_or_else(|| {
+                let mut legacy = payload.clone();
+                if let Some(object) = legacy.as_object_mut() {
+                    object.remove("projectId");
+                }
+                legacy
+            });
+            let input: TaskUpsertInput = serde_json::from_value(input_payload)
+                .map_err(|error| format!("Unable to parse task input: {error}"))?;
             let project_id = payload
                 .get("projectId")
                 .and_then(Value::as_str)
@@ -1713,6 +1719,80 @@ mod tests {
             listed.pointer("/0/relativePath").and_then(Value::as_str),
             Some("docs/design.md")
         );
+    }
+
+    #[test]
+    fn create_task_bridge_respects_explicit_project_id_and_flat_payloads() {
+        with_temp_home("tool-bridge-project-scope", || {
+            let connection = crate::services::database::open_connection()
+                .expect("database should open in the temp Orchestra home");
+            let now = "2026-03-22T00:00:00Z";
+            connection
+                .execute(
+                    "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-2', 'project-2', 'Project 2', NULL, NULL, ?1, ?1)",
+                    [now],
+                )
+                .expect("project should seed");
+
+            let config = dummy_bridge_config("project-scope");
+            let created = invoke_bridge_command(
+                &config,
+                &connection,
+                "create_task",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({
+                    "projectId": "project-2",
+                    "title": "Scoped bridge task",
+                    "description": "Should not fall back to orchestra",
+                    "type": "task",
+                    "status": "ready",
+                    "priority": "P2",
+                    "assigneeType": "unassigned"
+                }),
+            )
+            .expect("create_task should honor the provided project id");
+
+            assert_eq!(created.get("projectId").and_then(Value::as_str), Some("project-2"));
+
+            let scoped_tasks = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_tasks",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({ "projectId": "project-2", "includeArchived": false }),
+            )
+            .expect("list_tasks should respect the provided project id")
+            .as_array()
+            .cloned()
+            .expect("task list should serialize as an array");
+            assert_eq!(scoped_tasks.len(), 1);
+            assert_eq!(scoped_tasks[0].get("projectId").and_then(Value::as_str), Some("project-2"));
+
+            let orchestra_tasks = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_tasks",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({ "projectId": "orchestra", "includeArchived": false }),
+            )
+            .expect("orchestra task list should still load")
+            .as_array()
+            .cloned()
+            .expect("task list should serialize as an array");
+            assert!(orchestra_tasks.is_empty());
+        });
     }
 
     #[test]

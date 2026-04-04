@@ -4,6 +4,23 @@ import { Type } from "@sinclair/typebox";
 type AuthorizationContext = { actorType: string; actorId: string } | null;
 type OrchestraToolDefinition = { name: string; description: string; requiredPermission: string };
 
+type TaskInputParams = {
+  title: string;
+  description?: string;
+  type?: string;
+  status?: string;
+  priority?: string;
+  workflowId?: string;
+  currentLaneId?: string;
+  assigneeType?: string;
+  assigneeId?: string;
+  repositoryId?: string;
+  repositoryIds?: string[];
+  parentTaskId?: string;
+  whipMaxAttempts?: number;
+  archived?: boolean;
+};
+
 type BridgeConfig = {
   bridgeUrl: string;
   token: string;
@@ -94,16 +111,53 @@ async function invokeBridge(command: string, payload: Record<string, unknown>) {
   throw new Error(`Orchestra bridge request failed for ${command}: ${message}`);
 }
 
+function summarizeParameterType(schema: { type?: string; items?: { type?: string } }) {
+  if (schema.type === "array") {
+    return `array<${schema.items?.type ?? "unknown"}>`;
+  }
+  return schema.type ?? "unknown";
+}
+
+function summarizeToolParameters(tool?: { parameters?: { properties?: Record<string, { type?: string; description?: string; items?: { type?: string } }>; required?: string[] } }) {
+  const properties = tool?.parameters?.properties ?? {};
+  const required = new Set(tool?.parameters?.required ?? []);
+  return Object.entries(properties).map(([name, schema]) => ({
+    name,
+    type: summarizeParameterType(schema),
+    required: required.has(name),
+    description: schema.description ?? null,
+  }));
+}
+
 function buildAllowedCommandHelp(allowedCommands: OrchestraToolDefinition[]) {
   return allowedCommands
     .map((tool) => `- ${tool.name} (${tool.requiredPermission}) — ${tool.description}`)
     .join("\n");
 }
 
-function resolveHelpResult(allowedCommands: OrchestraToolDefinition[]) {
+function resolveHelpResult(
+  allowedCommands: OrchestraToolDefinition[],
+  registeredBridgeTools: Array<{ name: string; description: string; parameters?: { properties?: Record<string, { type?: string; description?: string; items?: { type?: string } }>; required?: string[] } }>,
+  command?: string,
+) {
+  if (!command) {
+    return {
+      commands: allowedCommands,
+      helpText: `${buildAllowedCommandHelp(allowedCommands)}\n\nUse orchestra_help with {\"command\":\"<tool>\"} or /orchestra-run help <tool> for parameter details.`,
+    };
+  }
+
+  const allowed = allowedCommands.find((tool) => tool.name === command);
+  if (!allowed) {
+    throw new Error(`Command ${command} is not available in this session.`);
+  }
+
+  const bridgeTool = registeredBridgeTools.find((tool) => tool.name === command);
   return {
-    commands: allowedCommands,
-    helpText: buildAllowedCommandHelp(allowedCommands),
+    command: allowed.name,
+    description: allowed.description,
+    requiredPermission: allowed.requiredPermission,
+    parameters: summarizeToolParameters(bridgeTool),
   };
 }
 
@@ -114,7 +168,137 @@ export function parseInputJson(inputJson: unknown) {
   return JSON.parse(inputJson) as Record<string, unknown>;
 }
 
+function buildTaskInput(params: TaskInputParams) {
+  return {
+    title: params.title,
+    ...(params.description !== undefined ? { description: params.description } : {}),
+    type: params.type ?? "task",
+    status: params.status ?? "ready",
+    priority: params.priority ?? "P2",
+    ...(params.workflowId !== undefined ? { workflowId: params.workflowId } : {}),
+    ...(params.currentLaneId !== undefined ? { currentLaneId: params.currentLaneId } : {}),
+    assigneeType: params.assigneeType ?? "unassigned",
+    ...(params.assigneeId !== undefined ? { assigneeId: params.assigneeId } : {}),
+    ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
+    ...(params.repositoryIds !== undefined ? { repositoryIds: params.repositoryIds } : {}),
+    ...(params.parentTaskId !== undefined ? { parentTaskId: params.parentTaskId } : {}),
+    ...(params.whipMaxAttempts !== undefined ? { whipMaxAttempts: params.whipMaxAttempts } : {}),
+    ...(params.archived !== undefined ? { archived: params.archived } : {}),
+  };
+}
+
 export function createBridgeTool(tool: OrchestraToolDefinition) {
+  if (tool.name === "list_tasks") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId and includeArchived to scope the task list.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the task list." })),
+        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived tasks should be included." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId?: string; includeArchived?: boolean }) {
+        const payload = {
+          ...(params.projectId ? { projectId: params.projectId } : {}),
+          ...(params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "create_task") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide title and optionally projectId plus task metadata.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id that should own the created task." })),
+        title: Type.String({ description: "Task title." }),
+        description: Type.Optional(Type.String({ description: "Optional task description." })),
+        type: Type.Optional(Type.String({ description: "Optional task type such as task, bug, feature, chore, or epic." })),
+        status: Type.Optional(Type.String({ description: "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled." })),
+        priority: Type.Optional(Type.String({ description: "Optional priority such as P0 through P4." })),
+        workflowId: Type.Optional(Type.String({ description: "Optional workflow id to attach to the task." })),
+        currentLaneId: Type.Optional(Type.String({ description: "Optional current workflow lane id." })),
+        assigneeType: Type.Optional(Type.String({ description: "Optional assignee type such as unassigned, user, agent, or role." })),
+        assigneeId: Type.Optional(Type.String({ description: "Optional assignee id when the task is assigned." })),
+        repositoryId: Type.Optional(Type.String({ description: "Optional primary repository id for the task." })),
+        repositoryIds: Type.Optional(Type.Array(Type.String({ description: "Repository id linked to the task." }))),
+        parentTaskId: Type.Optional(Type.String({ description: "Optional parent task id for hierarchy." })),
+        whipMaxAttempts: Type.Optional(Type.Number({ description: "Optional maximum whip count for the task lane." })),
+        archived: Type.Optional(Type.Boolean({ description: "Whether the task should be created archived." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId?: string } & TaskInputParams) {
+        const payload = {
+          ...(params.projectId ? { projectId: params.projectId } : {}),
+          input: buildTaskInput(params),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_worker_overlay") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide workerType, workerSlug, and optionally projectSlug.`,
+      parameters: Type.Object({
+        workerType: Type.String({ description: "Worker type, usually agent or role." }),
+        workerSlug: Type.String({ description: "Worker slug to inspect." }),
+        projectSlug: Type.Optional(Type.String({ description: "Optional Orchestra project slug to read from." })),
+      }),
+      async execute(_toolCallId: string, params: { workerType: string; workerSlug: string; projectSlug?: string }) {
+        const payload = {
+          workerType: params.workerType,
+          workerSlug: params.workerSlug,
+          ...(params.projectSlug ? { projectSlug: params.projectSlug } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_worker_overlay") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide workerType, workerSlug, prompt, and optionally projectSlug.`,
+      parameters: Type.Object({
+        workerType: Type.String({ description: "Worker type, usually agent or role." }),
+        workerSlug: Type.String({ description: "Worker slug to update." }),
+        prompt: Type.Optional(Type.String({ description: "Optional overlay prompt. Omit or pass an empty string to clear it." })),
+        projectSlug: Type.Optional(Type.String({ description: "Optional Orchestra project slug to update." })),
+      }),
+      async execute(_toolCallId: string, params: { workerType: string; workerSlug: string; prompt?: string; projectSlug?: string }) {
+        const payload = {
+          workerType: params.workerType,
+          workerSlug: params.workerSlug,
+          ...(params.projectSlug ? { projectSlug: params.projectSlug } : {}),
+          ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
   if (tool.name === "comment_on_task") {
     return {
       name: tool.name,
@@ -338,6 +522,7 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
     return;
   }
 
+  const bridgeTools = config.allowedCommands.map((tool) => createBridgeTool(tool));
   const allowedCommandHelp = buildAllowedCommandHelp(config.allowedCommands);
 
   pi.registerCommand("orchestra-tools", {
@@ -356,7 +541,13 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
         return;
       }
       if (command === "help") {
-        ctx.ui.notify(`Available Orchestra commands:\n${allowedCommandHelp}`, "info");
+        try {
+          const requestedCommand = jsonParts.join(" ").trim() || undefined;
+          const result = resolveHelpResult(config.allowedCommands, bridgeTools, requestedCommand);
+          ctx.ui.notify(JSON.stringify(result, null, 2), "info");
+        } catch (error) {
+          ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+        }
         return;
       }
       if (!config.allowedCommands.some((tool) => tool.name === command)) {
@@ -373,20 +564,21 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
   const helpTool = {
     name: "orchestra_help",
     label: "Orchestra Help",
-    description: "List Orchestra backend commands available to this session.",
-    parameters: Type.Object({}),
-    async execute() {
-      const result = resolveHelpResult(config.allowedCommands);
+    description: "List Orchestra backend commands available to this session or inspect a specific command's parameters.",
+    parameters: Type.Object({
+      command: Type.Optional(Type.String({ description: "Optional Orchestra command name to inspect in detail." })),
+    }),
+    async execute(_toolCallId: string, params: { command?: string }) {
+      const result = resolveHelpResult(config.allowedCommands, bridgeTools, params.command);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-        details: { command: "help", result },
+        details: { command: "help", requestedCommand: params.command ?? null, result },
       };
     },
   };
   pi.registerTool(helpTool);
 
-  for (const tool of config.allowedCommands) {
-    const bridgeTool = createBridgeTool(tool);
+  for (const bridgeTool of bridgeTools) {
     pi.registerTool(bridgeTool);
   }
 }
