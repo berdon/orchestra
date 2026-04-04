@@ -42,6 +42,7 @@ const MESSAGE_KIND_MESSAGE: &str = "message";
 const MESSAGE_KIND_COMMAND: &str = "command";
 const MESSAGE_KIND_RESPONSE: &str = "response";
 const MESSAGE_KIND_STATUS: &str = "status";
+const TELEGRAM_CHAT_ACTION_TYPING: &str = "typing";
 const ACTIVITY_STATUS_QUEUED: &str = "queued";
 const ACTIVITY_STATUS_DISPATCHED: &str = "dispatched";
 const ACTIVITY_STATUS_COMPLETED: &str = "completed";
@@ -921,15 +922,7 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
                 &activity.id,
                 channel.default_project_id.as_deref(),
             )?;
-            let _ = send_telegram_channel_message(
-                &connection,
-                &channel,
-                MESSAGE_KIND_STATUS,
-                "Sent to supervisor session.",
-                ACTIVITY_STATUS_COMPLETED,
-                Some(&run_id),
-                None,
-            );
+            let _ = send_telegram_chat_action(&connection, &channel, TELEGRAM_CHAT_ACTION_TYPING);
             Ok(())
         }
         Err(error) => {
@@ -1168,6 +1161,35 @@ fn send_telegram_channel_message(
         body,
         status,
         error,
+    )?;
+    Ok(())
+}
+
+fn send_telegram_chat_action(
+    connection: &Connection,
+    channel: &StoredChannelRecord,
+    action: &str,
+) -> Result<(), String> {
+    let secrets = load_channel_secrets(connection, &channel.id)?;
+    let telegram = channel
+        .config
+        .telegram
+        .clone()
+        .ok_or_else(|| format!("Channel {} is missing Telegram config", channel.id))?;
+    let token = secrets
+        .telegram
+        .and_then(|entry| entry.bot_token)
+        .ok_or_else(|| format!("Channel {} is missing a Telegram bot token", channel.id))?;
+    let chat_id = telegram
+        .chat_id
+        .clone()
+        .ok_or_else(|| format!("Channel {} is missing a Telegram chat id", channel.id))?;
+
+    telegram_api_post(
+        &token,
+        telegram.api_base_url.as_deref(),
+        "sendChatAction",
+        &json!({ "chat_id": chat_id, "action": action }),
     )?;
     Ok(())
 }

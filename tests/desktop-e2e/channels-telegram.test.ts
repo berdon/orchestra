@@ -111,7 +111,8 @@ describe("desktop channels telegram flow", () => {
         title: `Operator ${suffix}`,
         text: `Reply with exactly ${secondReplyToken}.`,
       });
-      await waitForSentMessage(harness, (text) => text.includes("Queued for supervisor.") || text.includes("Sent to supervisor session.") || text.includes(secondReplyToken) || text.startsWith("Supervisor run failed:"));
+      await waitForChatAction(harness, (entry) => entry.chat_id === `chat-${suffix}` && entry.action === 'typing');
+      await waitForSentMessage(harness, (text) => text.includes(secondReplyToken) || text.startsWith("Supervisor run failed:"));
 
       await harness.pushUpdate({
         chatId: `chat-${suffix}`,
@@ -119,6 +120,21 @@ describe("desktop channels telegram flow", () => {
         text: "/stop",
       });
       await waitForSentMessage(harness, (text) => text.includes("Stopped supervisor activity."));
+
+      const sessions = await invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions");
+      expect(sessions.filter((entry) => entry.title.includes("Supervisor main session"))).toHaveLength(1);
+
+      await clickSelector(sessionId, '[data-role="channel-list"] .task-list-link');
+      await waitForSelector(sessionId, '[data-role="channel-activity-list"]');
+      await waitForText(sessionId, "/status");
+      await waitForText(sessionId, "/project");
+    } finally {
+      await deleteWebdriverSession(sessionId);
+      await harness.close();
+    }
+  }, 240_000);
+});
+ss, (text) => text.includes("Stopped supervisor activity."));
 
       const sessions = await invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions");
       expect(sessions.filter((entry) => entry.title.includes("Supervisor main session"))).toHaveLength(1);
