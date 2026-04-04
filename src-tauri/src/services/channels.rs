@@ -18,14 +18,14 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        ChannelActivityEntry, ChannelDetail, ChannelSummary, ChannelUpsertInput,
-        TelegramBotValidation, TelegramChannelConfig, TelegramChannelConfigInput,
-        TelegramChatCandidate,
+        ChannelActivityEntry, ChannelDetail, ChannelSummary, ChannelUpsertInput, MailboxMessage,
+        SendMailboxMessageInput, TelegramBotValidation, TelegramChannelConfig,
+        TelegramChannelConfigInput, TelegramChatCandidate,
     },
     services::{
         agent_dispatch, database,
         live_sessions::{ensure_runtime, maybe_runtime},
-        pi_sessions, projects, tasks,
+        messages, pi_sessions, projects, task_runtime, tasks,
     },
     state::{generate_id, AppState},
 };
@@ -936,6 +936,19 @@ fn execute_telegram_command(
         }
         "/tasks" => telegram_tasks_text(channel, args.trim()).map(TelegramCommandResponse::text),
         "/task" => telegram_task_text(channel, args.trim()).map(TelegramCommandResponse::text),
+        "/approve" => telegram_approve_task(app, state, channel, args.trim())
+            .map(TelegramCommandResponse::text),
+        "/needs-work" => telegram_send_task_back_for_work(app, state, channel, args.trim())
+            .map(TelegramCommandResponse::text),
+        "/mail" => telegram_mail_list_text(channel).map(TelegramCommandResponse::text),
+        "/mail-read" => {
+            telegram_mail_read_text(app, channel, args.trim()).map(TelegramCommandResponse::text)
+        }
+        "/mail-archive" => {
+            telegram_mail_archive_text(app, channel, args.trim()).map(TelegramCommandResponse::text)
+        }
+        "/mail-task" => telegram_mail_task_text(app, state, channel, args.trim())
+            .map(TelegramCommandResponse::text),
         "/model" => {
             telegram_model_text(app, state, channel, args.trim()).map(TelegramCommandResponse::text)
         }
@@ -968,7 +981,7 @@ fn execute_telegram_callback(
 
 fn telegram_help_text(channel: &StoredChannelRecord) -> String {
     format!(
-        "{}\n\nPlain text messages are delivered to the supervisor.\n\nCommands:\n/help\n/status\n/projects\n/project\n/project <slug>\n/tasks\n/tasks <query>\n/task <task-number>\n/model\n/model <provider>/<model>\n/stop\n/resume",
+        "{}\n\nPlain text messages are delivered to the supervisor.\n\nCommands:\n/help\n/status\n/projects\n/project\n/project <slug>\n/tasks\n/tasks <query>\n/task <task-number>\n/approve <task-number>\n/needs-work <task-number>\n/mail\n/mail-read <delivery-id>\n/mail-archive <delivery-id>\n/mail-task <task-number> <message>\n/model\n/model <provider>/<model>\n/stop\n/resume",
         channel.name
     )
 }
@@ -1203,6 +1216,322 @@ fn resolve_task_by_reference(
         ));
     };
     tasks::get_task_context(connection, &task_summary.id)
+}
+
+fn telegram_approve_task(
+    app: &AppHandle,
+    state: &AppState,
+    channel: &StoredChannelRecord,
+    args: &str,
+) -> Result<String, String> {
+    let task_reference = args.trim();
+    if task_reference.is_empty() {
+        return Err("Expected /approve <task-number>.".into());
+    }
+
+    let task_id = {
+        let connection = database::open_connection()?;
+        let project_id = channel
+            .default_project_id
+            .as_deref()
+            .unwrap_or(DEFAULT_PROJECT_ID);
+        let project = projects::get_project(&connection, project_id)?;
+        resolve_task_by_reference(&connection, &project.id, task_reference)?.id
+    };
+
+    let context = session_context_for_task_id(&task_id)?;
+    let mut connection = database::open_connection()?;
+    let mut task = task_runtime::approve_pending_lane_completion(
+        &mut connection,
+        &context.project_root,
+        &context.session_dir,
+        &task_id,
+    )?;
+
+    let auto_dispatches =
+        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?;
+    for outcome in &auto_dispatches {
+        task_runtime::start_assignment_run(
+            app.clone(),
+            state,
+            outcome.session_dir.clone(),
+            &outcome.assignment,
+        )?;
+        if let Some(session_id) = outcome.assignment.session_id.clone() {
+            let _ = crate::services::app_events::emit_session_change(
+                app,
+                "task.transition.next_assignment",
+                [session_id],
+            );
+        }
+    }
+    if !auto_dispatches.is_empty() {
+        task = tasks::get_task_context(&connection, &task_id)?;
+        let mut changed_task_ids = vec![task.id.clone()];
+        changed_task_ids.extend(
+            auto_dispatches
+                .iter()
+                .map(|outcome| outcome.task_id.clone()),
+        );
+        let _ = crate::services::app_events::emit_task_change(
+            app,
+            "task.transition.auto_dispatch",
+            changed_task_ids,
+        );
+    }
+    let _ = crate::services::app_events::emit_task_change(
+        app,
+        "task.transition.approved_success",
+        [task.id.clone()],
+    );
+    Ok(format!(
+        "Approved {} — {}. New status: {}.",
+        task.number, task.title, task.status
+    ))
+}
+
+fn telegram_send_task_back_for_work(
+    app: &AppHandle,
+    state: &AppState,
+    channel: &StoredChannelRecord,
+    args: &str,
+) -> Result<String, String> {
+    let task_reference = args.trim();
+    if task_reference.is_empty() {
+        return Err("Expected /needs-work <task-number>.".into());
+    }
+
+    let task_id = {
+        let connection = database::open_connection()?;
+        let project_id = channel
+            .default_project_id
+            .as_deref()
+            .unwrap_or(DEFAULT_PROJECT_ID);
+        let project = projects::get_project(&connection, project_id)?;
+        resolve_task_by_reference(&connection, &project.id, task_reference)?.id
+    };
+
+    let context = session_context_for_task_id(&task_id)?;
+    let connection = database::open_connection()?;
+    let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
+    let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+    task_runtime::start_assignment_follow_up(
+        app.clone(),
+        state,
+        context.session_dir.clone(),
+        &assignment,
+        &follow_up_prompt,
+    )?;
+    if let Some(session_id) = assignment.session_id.clone() {
+        let _ = crate::services::app_events::emit_session_change(
+            app,
+            "task.transition.rework",
+            [session_id],
+        );
+    }
+    let task = tasks::get_task_context(&connection, &task_id)?;
+    let _ = crate::services::app_events::emit_task_change(
+        app,
+        "task.transition.needs_work",
+        [task.id.clone()],
+    );
+    Ok(format!(
+        "Sent {} — {} back for more work.",
+        task.number, task.title
+    ))
+}
+
+fn telegram_mail_list_text(channel: &StoredChannelRecord) -> Result<String, String> {
+    let connection = database::open_connection()?;
+    let project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
+    let project = projects::get_project(&connection, project_id)?;
+    let messages = messages::list_user_messages(&connection, Some(&project.id), false)?;
+    if messages.is_empty() {
+        return Ok(format!("No inbox messages for {}.", project.name));
+    }
+
+    let mut lines = vec![format!("Inbox for {}:", project.name)];
+    for message in messages.into_iter().take(10) {
+        let state = if message.read_at.is_some() {
+            "read"
+        } else {
+            "unread"
+        };
+        let task_ref = message.task_number.as_deref().unwrap_or("no-task");
+        lines.push(format!(
+            "- {} [{} · {} · {}] {}",
+            short_delivery_id(&message),
+            task_ref,
+            message.priority,
+            state,
+            first_line(&message.body),
+        ));
+    }
+    lines.push("Use /mail-read <delivery-id>, /mail-archive <delivery-id>, or /mail-task <task-number> <message>.".into());
+    Ok(lines.join("\n"))
+}
+
+fn telegram_mail_read_text(
+    app: &AppHandle,
+    channel: &StoredChannelRecord,
+    args: &str,
+) -> Result<String, String> {
+    let delivery_reference = args.trim();
+    if delivery_reference.is_empty() {
+        return Err("Expected /mail-read <delivery-id>.".into());
+    }
+
+    let connection = database::open_connection()?;
+    let message = resolve_mailbox_message_by_reference(&connection, channel, delivery_reference)?;
+    let updated =
+        messages::mark_user_messages_read(&connection, Some(&[message.delivery_id.clone()]))?;
+    let loaded = updated.into_iter().next().unwrap_or(message);
+    let _ = crate::services::app_events::emit_inbox_change(
+        app,
+        "mailbox.read",
+        [loaded.delivery_id.clone()],
+    );
+    Ok(format_mailbox_message("Marked mail as read.", &loaded))
+}
+
+fn telegram_mail_archive_text(
+    app: &AppHandle,
+    channel: &StoredChannelRecord,
+    args: &str,
+) -> Result<String, String> {
+    let delivery_reference = args.trim();
+    if delivery_reference.is_empty() {
+        return Err("Expected /mail-archive <delivery-id>.".into());
+    }
+
+    let connection = database::open_connection()?;
+    let message = resolve_mailbox_message_by_reference(&connection, channel, delivery_reference)?;
+    let updated =
+        messages::archive_user_messages(&connection, Some(&[message.delivery_id.clone()]))?;
+    let loaded = updated.into_iter().next().unwrap_or(message);
+    let _ = crate::services::app_events::emit_inbox_change(
+        app,
+        "mailbox.archived",
+        [loaded.delivery_id.clone()],
+    );
+    Ok(format!(
+        "Archived {} from {}.",
+        short_delivery_id(&loaded),
+        loaded.sender_label,
+    ))
+}
+
+fn telegram_mail_task_text(
+    app: &AppHandle,
+    state: &AppState,
+    channel: &StoredChannelRecord,
+    args: &str,
+) -> Result<String, String> {
+    let trimmed = args.trim();
+    let Some((task_reference, body)) = trimmed.split_once(' ') else {
+        return Err("Expected /mail-task <task-number> <message>.".into());
+    };
+    if body.trim().is_empty() {
+        return Err("Mail body cannot be empty.".into());
+    }
+
+    let connection = database::open_connection()?;
+    let project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
+    let project = projects::get_project(&connection, project_id)?;
+    let task = resolve_task_by_reference(&connection, &project.id, task_reference)?;
+    let sent = messages::send_mailbox_message_from_user(
+        app.clone(),
+        state,
+        &connection,
+        SendMailboxMessageInput {
+            project_id: Some(project.id.clone()),
+            task_id: Some(task.id.clone()),
+            recipient_type: "active_assignment".into(),
+            recipient_id: None,
+            sender_label: Some("Telegram".into()),
+            body: body.trim().into(),
+            priority: Some("normal".into()),
+        },
+    )?;
+    let _ = crate::services::app_events::emit_inbox_change(
+        app,
+        "mailbox.sent",
+        [sent.delivery_id.clone()],
+    );
+    if let Some(task_id) = sent.task_id.clone() {
+        let _ = crate::services::app_events::emit_task_change(app, "mailbox.sent", [task_id]);
+    }
+    Ok(format!(
+        "Sent mail about {} to {}.",
+        task.number, sent.recipient_label,
+    ))
+}
+
+fn resolve_mailbox_message_by_reference(
+    connection: &Connection,
+    channel: &StoredChannelRecord,
+    delivery_reference: &str,
+) -> Result<MailboxMessage, String> {
+    let project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
+    let messages = messages::list_user_messages(connection, Some(project_id), true)?;
+    let matches = messages
+        .into_iter()
+        .filter(|message| {
+            message.delivery_id.eq_ignore_ascii_case(delivery_reference)
+                || message.delivery_id.starts_with(delivery_reference)
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [message] => Ok(message.clone()),
+        [] => Err(format!(
+            "Mail '{}' was not found in the current project inbox.",
+            delivery_reference
+        )),
+        _ => Err(format!(
+            "Mail reference '{}' matched multiple inbox messages. Use a longer id.",
+            delivery_reference
+        )),
+    }
+}
+
+fn short_delivery_id(message: &MailboxMessage) -> String {
+    message.delivery_id.chars().take(12).collect()
+}
+
+fn first_line(body: &str) -> String {
+    let line = body.lines().next().unwrap_or("").trim();
+    if line.len() > 72 {
+        format!("{}…", &line[..72])
+    } else {
+        line.to_string()
+    }
+}
+
+fn format_mailbox_message(prefix: &str, message: &MailboxMessage) -> String {
+    let task_ref = message.task_number.as_deref().unwrap_or("no-task");
+    format!(
+        "{prefix}\nId: {}\nTask: {}\nFrom: {}\nPriority: {}\n\n{}",
+        short_delivery_id(message),
+        task_ref,
+        message.sender_label,
+        message.priority,
+        message.body.trim(),
+    )
+}
+
+fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
+    let connection = database::open_connection()?;
+    let task = tasks::get_task_context(&connection, task_id)?;
+    pi_sessions::session_context_for_project_id(&task.project_id)
 }
 
 fn telegram_model_text(

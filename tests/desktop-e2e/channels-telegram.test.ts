@@ -113,6 +113,55 @@ describe("desktop channels telegram flow", () => {
         },
       });
 
+      const approvalRole = await invokeCommand<{ slug: string }>(sessionId, "create_role", {
+        input: {
+          name: `Approval Worker ${suffix}`,
+          description: "Telegram approval worker.",
+          systemPrompt: "Implement the assigned task.",
+          capacity: 1,
+        },
+      });
+      const approvalWorkflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: `Telegram Approval Flow ${suffix}`,
+          description: "Approval flow for Telegram command coverage.",
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: approvalRole.slug,
+              entryPromptTemplate: "Implement the task and stop for review.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: true,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+      const approvalTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: secondProject.id,
+        input: {
+          title: `Telegram approval task ${suffix}`,
+          description: "Task created to exercise /approve, /needs-work, and /mail-task.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: approvalWorkflow.id,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+        },
+      });
+
       const models = await invokeCommand<Array<{ id: string; provider: string }>>(sessionId, "list_pi_models");
       const model = models[0];
       expect(model).toBeTruthy();
@@ -169,6 +218,103 @@ describe("desktop channels telegram flow", () => {
       await waitForSentMessage(
         harness,
         (message) => message.text.includes("ORC-1") && message.text.includes(taskTitle) && message.text.includes(`Project: ${secondProjectName}`),
+      );
+
+      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: approvalTask.id });
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
+        (task) => Boolean(task.activeLaneAssignment?.sessionId),
+      );
+      await invokeCommand(sessionId, "complete_lane_as_success", { taskId: approvalTask.id, notes: null });
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
+        (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
+      );
+
+      await harness.pushUpdate({ chatId, title: chatTitle, text: `/needs-work ${approvalTask.number}` });
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes(`Sent ${approvalTask.number}`) && message.text.includes("back for more work"),
+      );
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
+        (task) => task.status === "in_progress" && task.activeLaneAssignment?.status === "active",
+      );
+
+      const inboxDelivery = await invokeCommand<any>(sessionId, "send_mailbox_message", {
+        input: {
+          projectId: secondProject.id,
+          taskId: approvalTask.id,
+          recipientType: "user",
+          recipientId: null,
+          senderLabel: "Telegram test",
+          body: `Inbox note ${suffix}`,
+          priority: "normal",
+        },
+      });
+      const inboxIdPrefix = String(inboxDelivery.deliveryId).slice(0, 12);
+
+      await harness.pushUpdate({ chatId, title: chatTitle, text: "/mail" });
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes(`Inbox for ${secondProjectName}:`) && message.text.includes(inboxIdPrefix),
+      );
+
+      await harness.pushUpdate({ chatId, title: chatTitle, text: `/mail-read ${inboxIdPrefix}` });
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes("Marked mail as read.") && message.text.includes(`Inbox note ${suffix}`),
+      );
+
+      await harness.pushUpdate({ chatId, title: chatTitle, text: `/mail-archive ${inboxIdPrefix}` });
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes("Archived") && message.text.includes(inboxIdPrefix),
+      );
+
+      await invokeCommand(sessionId, "complete_lane_as_success", { taskId: approvalTask.id, notes: null });
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
+        (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
+      );
+
+      await harness.pushUpdate({ chatId, title: chatTitle, text: `/approve ${approvalTask.number}` });
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes(`Approved ${approvalTask.number}`) && message.text.includes("completed"),
+      );
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
+        (task) => task.status === "completed" && task.activeLaneAssignment == null,
+      );
+
+      const mailTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: secondProject.id,
+        input: {
+          title: `Telegram mail task ${suffix}`,
+          description: "Task created to exercise /mail-task.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: approvalWorkflow.id,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+        },
+      });
+      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: mailTask.id });
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: mailTask.id }),
+        (task) => task.status === "in_progress" && task.activeLaneAssignment?.status === "active",
+      );
+
+      await harness.pushUpdate({ chatId, title: chatTitle, text: `/mail-task ${mailTask.number} Please revise based on operator feedback.` });
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes(`Sent mail about ${mailTask.number}`),
       );
 
       const sessions = await invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions");

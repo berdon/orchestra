@@ -416,7 +416,7 @@ export function ChannelsPanel() {
             <div className="task-editor-grid">
               <label className="checkbox-field task-editor-grid__full">
                 <input data-role="telegram-commands-enabled" type="checkbox" checked={draft.telegram?.commandsEnabled ?? true} onChange={(event) => updateTelegramDraft({ commandsEnabled: event.target.checked })} />
-                <span>Enable Telegram commands (/help, /status, /project, /model, /stop, /resume)</span>
+                <span>Enable Telegram supervisor commands (/help, /status, /projects, /tasks, /task, /approve, /needs-work, /mail, /model, /stop, /resume)</span>
               </label>
               <label className="checkbox-field task-editor-grid__full">
                 <input data-role="channel-enabled" type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} />
