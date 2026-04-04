@@ -687,8 +687,8 @@ pub fn ensure_runtime(
     session_dir: PathBuf,
     session_id: &str,
 ) -> Result<Arc<SessionRuntime>, String> {
-    if let Ok(mut runtimes) = runtimes.lock() {
-        if let Some(existing) = runtimes.get(session_id) {
+    let existing_runtime = if let Ok(mut runtimes_guard) = runtimes.lock() {
+        if let Some(existing) = runtimes_guard.get(session_id).cloned() {
             if !existing.is_closed() {
                 let same_project_root = existing
                     .project_root
@@ -701,7 +701,7 @@ pub fn ensure_runtime(
                         "sessions.runtime.reuse",
                         &format!("Reusing live pi RPC runtime for session {}", session_id),
                     );
-                    return Ok(Arc::clone(existing));
+                    return Ok(existing);
                 }
 
                 app.state::<crate::state::AppState>().log(
@@ -713,24 +713,37 @@ pub fn ensure_runtime(
                         project_root.display()
                     ),
                 );
-                existing.shutdown();
             }
-            runtimes.remove(session_id);
+            runtimes_guard.remove(session_id);
+            Some(existing)
+        } else {
+            None
         }
+    } else {
+        return Err("Unable to access live session runtime state".into());
+    };
 
-        let session_path = get_session_path(&session_dir, session_id)?;
-        let runtime = SessionRuntime::spawn(
-            app,
-            project_root,
-            session_dir,
-            session_id.to_string(),
-            session_path,
-        )?;
-        runtimes.insert(session_id.to_string(), Arc::clone(&runtime));
-        return Ok(runtime);
+    if let Some(existing) = existing_runtime {
+        if !existing.is_closed() {
+            existing.shutdown();
+        }
     }
 
-    Err("Unable to access live session runtime state".into())
+    let session_path = get_session_path(&session_dir, session_id)?;
+    let runtime = SessionRuntime::spawn(
+        app,
+        project_root,
+        session_dir,
+        session_id.to_string(),
+        session_path,
+    )?;
+
+    if let Ok(mut runtimes_guard) = runtimes.lock() {
+        runtimes_guard.insert(session_id.to_string(), Arc::clone(&runtime));
+        Ok(runtime)
+    } else {
+        Err("Unable to access live session runtime state".into())
+    }
 }
 
 pub fn maybe_runtime(
