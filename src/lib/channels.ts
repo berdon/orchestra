@@ -13,6 +13,11 @@ import type {
 const CHANNEL_STORAGE_KEY = "orchestra.mock.channels";
 const CHANNEL_ACTIVITY_STORAGE_KEY = "orchestra.mock.channel-activity";
 
+export function normalizeOptionalString(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -79,7 +84,7 @@ export async function createChannel(input: ChannelUpsertInput): Promise<ChannelD
       secretConfigured: Boolean(input.telegram?.botToken),
       telegram: {
         botUsername: null,
-        apiBaseUrl: input.telegram?.apiBaseUrl ?? null,
+        apiBaseUrl: normalizeOptionalString(input.telegram?.apiBaseUrl),
         chatId: input.telegram?.chatId ?? null,
         chatTitle: input.telegram?.chatTitle ?? null,
         chatType: input.telegram?.chatType ?? null,
@@ -118,7 +123,7 @@ export async function updateChannel(channelId: string, input: ChannelUpsertInput
           chatType: null,
           commandsEnabled: true,
         }),
-        apiBaseUrl: input.telegram?.apiBaseUrl ?? existing.telegram?.apiBaseUrl ?? null,
+        apiBaseUrl: normalizeOptionalString(input.telegram?.apiBaseUrl) ?? existing.telegram?.apiBaseUrl ?? null,
         chatId: input.telegram?.chatId ?? existing.telegram?.chatId ?? null,
         chatTitle: input.telegram?.chatTitle ?? existing.telegram?.chatTitle ?? null,
         chatType: input.telegram?.chatType ?? existing.telegram?.chatType ?? null,
@@ -152,7 +157,10 @@ export async function validateTelegramBot(botToken: string, apiBaseUrl?: string 
       displayName: "Mock Orchestra Bot",
     };
   }
-  return invoke<TelegramBotValidation>("validate_telegram_bot", { botToken, apiBaseUrl: apiBaseUrl ?? null });
+  return invoke<TelegramBotValidation>("validate_telegram_bot", {
+    botToken,
+    apiBaseUrl: normalizeOptionalString(apiBaseUrl),
+  });
 }
 
 export async function listTelegramChatCandidates(botToken: string, apiBaseUrl?: string | null): Promise<TelegramChatCandidate[]> {
@@ -168,5 +176,8 @@ export async function listTelegramChatCandidates(botToken: string, apiBaseUrl?: 
       },
     ];
   }
-  return invoke<TelegramChatCandidate[]>("list_telegram_chat_candidates", { botToken, apiBaseUrl: apiBaseUrl ?? null });
+  return invoke<TelegramChatCandidate[]>("list_telegram_chat_candidates", {
+    botToken,
+    apiBaseUrl: normalizeOptionalString(apiBaseUrl),
+  });
 }
