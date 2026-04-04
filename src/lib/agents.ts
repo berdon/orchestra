@@ -308,11 +308,12 @@ function ensureMockAgentRuntime(agentId: string) {
     return existing;
   }
 
+  const globalMainSessionId = runtimes.find((runtime) => runtime.agentId === agentId && runtime.mainSessionId)?.mainSessionId ?? null;
   const created: AgentRuntimeState = {
     projectId,
     agentId,
     status: "idle",
-    mainSessionId: null,
+    mainSessionId: globalMainSessionId,
     runtimeCwd: getProjectRuntimeCwd(projectId),
     currentQueueEntryId: null,
     lastDispatchAt: null,
@@ -448,11 +449,11 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
 
     saveStoredAgentRuntimes(
       getStoredAgentRuntimes().map((entry) =>
-        entry.agentId === agentId && entry.projectId === activeProjectId()
+        entry.agentId === agentId
           ? {
               ...entry,
               mainSessionId: session.id,
-              runtimeCwd: entry.runtimeCwd ?? getProjectRuntimeCwd(activeProjectId()),
+              runtimeCwd: entry.runtimeCwd ?? getProjectRuntimeCwd(entry.projectId),
               status: entry.currentQueueEntryId ? "running" : "idle",
               terminalAttached: entry.terminalAttached ?? false,
               updatedAt: nowIso(),
@@ -481,7 +482,7 @@ export async function openAgentSessionInTerminal(agentId: string, projectId?: st
     upsertMockSession(nextSession);
     saveStoredAgentRuntimes(
       getStoredAgentRuntimes().map((entry) =>
-        entry.agentId === agentId && entry.projectId === activeProjectId()
+        entry.agentId === agentId
           ? { ...entry, mainSessionId: session.id, terminalAttached: true, updatedAt: timestamp }
           : entry,
       ),

@@ -5,7 +5,12 @@ use std::{
 
 use crate::{
     models::{AuthorizationContext, LogEntry},
-    services::{agent_terminal::AgentTerminalSession, live_sessions::SessionRuntime, tool_bridge::ToolBridgeConfig},
+    services::{
+        agent_terminal::AgentTerminalSession,
+        channels::ChannelRuntimeHandle,
+        live_sessions::SessionRuntime,
+        tool_bridge::ToolBridgeConfig,
+    },
 };
 
 pub struct AppState {
@@ -13,6 +18,7 @@ pub struct AppState {
     subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
     pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    pub channel_runtimes: Mutex<HashMap<String, ChannelRuntimeHandle>>,
     terminal_windows: Mutex<HashMap<String, String>>,
     terminal_sessions: Mutex<HashMap<String, Arc<AgentTerminalSession>>>,
     pub dispatcher_tick_active: Mutex<bool>,
@@ -51,6 +57,7 @@ impl AppState {
             subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
             session_runtimes: Mutex::new(HashMap::new()),
+            channel_runtimes: Mutex::new(HashMap::new()),
             terminal_windows: Mutex::new(HashMap::new()),
             terminal_sessions: Mutex::new(HashMap::new()),
             dispatcher_tick_active: Mutex::new(false),

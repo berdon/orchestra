@@ -370,6 +370,70 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_mailbox_message_deliveries_message
                 ON mailbox_message_deliveries(message_id);
 
+            CREATE TABLE IF NOT EXISTS channels (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                target_agent_id TEXT NOT NULL,
+                default_project_id TEXT,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                state_json TEXT NOT NULL DEFAULT '{}',
+                last_error TEXT,
+                last_activity_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(default_project_id) REFERENCES projects(id) ON DELETE SET NULL,
+                FOREIGN KEY(target_agent_id) REFERENCES agents(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_secrets (
+                channel_id TEXT PRIMARY KEY,
+                secret_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_activity (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                message_kind TEXT NOT NULL,
+                external_message_id TEXT,
+                chat_id TEXT,
+                session_id TEXT,
+                run_id TEXT,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_channel_activity_channel_id
+                ON channel_activity(channel_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_channel_activity_status
+                ON channel_activity(channel_id, status, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS session_run_origins (
+                run_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                channel_id TEXT,
+                channel_activity_id TEXT,
+                project_id TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+                FOREIGN KEY(channel_activity_id) REFERENCES channel_activity(id) ON DELETE SET NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_run_origins_session_id
+                ON session_run_origins(session_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS task_lane_runs (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,

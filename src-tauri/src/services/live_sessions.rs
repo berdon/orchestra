@@ -53,6 +53,7 @@ fn format_path_diagnostic(path: &std::path::Path) -> String {
 
 pub struct SessionRuntime {
     session_id: String,
+    project_root: Mutex<PathBuf>,
     session_dir: PathBuf,
     session_path: PathBuf,
     stdin: Mutex<Option<ChildStdin>>,
@@ -184,6 +185,7 @@ impl SessionRuntime {
 
         let runtime = Arc::new(Self {
             session_id,
+            project_root: Mutex::new(requested_project_root),
             session_dir,
             session_path,
             stdin: Mutex::new(Some(stdin)),
@@ -303,6 +305,31 @@ impl SessionRuntime {
         );
         self.emit_stream_event(payload.clone());
 
+        if event_type == "turn_end" {
+            if let Some(run_id) = self.current_run_id() {
+                let response_text = payload
+                    .get("message")
+                    .map(extract_message_text)
+                    .unwrap_or_default();
+                let _ = crate::services::channels::deliver_channel_response_for_run(
+                    self.app.clone(),
+                    self.app.state::<crate::state::AppState>().inner(),
+                    &self.session_id,
+                    &run_id,
+                    &response_text,
+                );
+            }
+        }
+
+        if event_type == "error" {
+            if let Some(run_id) = self.current_run_id() {
+                let _ = crate::services::channels::fail_channel_response_for_run(
+                    &run_id,
+                    &extract_rpc_error(&payload),
+                );
+            }
+        }
+
         if event_type == "agent_end" {
             if let Some(run_id) = self.take_current_run_id() {
                 let _ = self
@@ -338,6 +365,7 @@ impl SessionRuntime {
                 &error_message,
             );
             let _ = crate::services::role_dispatch::fail_role_run(&self.session_id, &error_message);
+            let _ = crate::services::channels::fail_channel_response_for_run(&run_id, &error_message);
             self.emit_stream_event(json!({
                 "type": "error",
                 "message": error_message,
@@ -662,12 +690,30 @@ pub fn ensure_runtime(
     if let Ok(mut runtimes) = runtimes.lock() {
         if let Some(existing) = runtimes.get(session_id) {
             if !existing.is_closed() {
+                let same_project_root = existing
+                    .project_root
+                    .lock()
+                    .map(|current| *current == project_root)
+                    .unwrap_or(false);
+                if same_project_root || existing.has_active_prompt() {
+                    app.state::<crate::state::AppState>().log(
+                        "info",
+                        "sessions.runtime.reuse",
+                        &format!("Reusing live pi RPC runtime for session {}", session_id),
+                    );
+                    return Ok(Arc::clone(existing));
+                }
+
                 app.state::<crate::state::AppState>().log(
                     "info",
-                    "sessions.runtime.reuse",
-                    &format!("Reusing live pi RPC runtime for session {}", session_id),
+                    "sessions.runtime.respawn",
+                    &format!(
+                        "Respawning live pi RPC runtime for session {} to switch cwd to {}",
+                        session_id,
+                        project_root.display()
+                    ),
                 );
-                return Ok(Arc::clone(existing));
+                existing.shutdown();
             }
             runtimes.remove(session_id);
         }

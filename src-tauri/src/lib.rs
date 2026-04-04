@@ -18,6 +18,10 @@ use commands::{
         get_logs, get_pi_executable_diagnostic, get_session_storage_info, list_pi_models,
         open_logs_window, report_client_error,
     },
+    channels::{
+        create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
+        list_telegram_chat_candidates, update_channel, validate_telegram_bot,
+    },
     dispatcher::run_dispatcher_tick,
     messages::{
         archive_mailbox_messages, list_inbox_messages, list_task_messages,
@@ -127,6 +131,7 @@ pub fn run() {
                     ),
                 );
             }
+            services::channels::sync_channel_runtimes(app.handle().clone(), &state)?;
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
             Ok(())
         })
@@ -138,6 +143,14 @@ pub fn run() {
             get_bridge_diagnostics,
             cleanup_stale_bridge_instances,
             open_logs_window,
+            list_channels,
+            get_channel,
+            list_channel_activity,
+            create_channel,
+            update_channel,
+            delete_channel,
+            validate_telegram_bot,
+            list_telegram_chat_candidates,
             run_dispatcher_tick,
             get_session_storage_info,
             get_pi_executable_diagnostic,
@@ -267,6 +280,15 @@ pub fn run() {
                             "Shut down {} live pi runtimes during app exit",
                             shutdown_count
                         ),
+                    );
+                }
+            }
+            if let Ok(channel_shutdown_count) = services::channels::shutdown_all_channel_runtimes(&state) {
+                if channel_shutdown_count > 0 {
+                    state.log(
+                        "info",
+                        "channels.runtime.shutdown",
+                        &format!("Shut down {} channel runtimes during app exit", channel_shutdown_count),
                     );
                 }
             }

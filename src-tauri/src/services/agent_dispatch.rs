@@ -216,11 +216,12 @@ fn deliver_prompt_entry(
         None,
     )?;
 
+    let actual_session_dir = pi_sessions::find_session_context_for_session(session_id)?.session_dir;
     let runtime = live_sessions::ensure_runtime(
         &state.session_runtimes,
         app,
         PathBuf::from(runtime_cwd),
-        session_dir.to_path_buf(),
+        actual_session_dir,
         session_id,
     )?;
     state.begin_session_run(session_id, &run_id)?;
@@ -274,11 +275,12 @@ fn deliver_nonblocking_entry(
     if claimed.is_none() {
         return Ok(());
     }
+    let actual_session_dir = pi_sessions::find_session_context_for_session(session_id)?.session_dir;
     let runtime = live_sessions::ensure_runtime(
         &state.session_runtimes,
         app,
         PathBuf::from(runtime_cwd),
-        session_dir.to_path_buf(),
+        actual_session_dir,
         session_id,
     )?;
     match runtime.start_delivery(&run_id, &entry.delivery_mode, &entry.message) {
@@ -317,8 +319,23 @@ pub fn ensure_main_session(
     let runtime_state =
         agent_runtime::ensure_agent_runtime_state_for_project(&connection, project_id, agent_id)?;
     if let Some(session_id) = runtime_state.main_session_id.as_deref() {
-        if pi_sessions::get_session(session_dir, session_id, false).is_ok() {
+        if crate::services::pi_sessions::find_session_context_for_session(session_id).is_ok() {
             return Ok(runtime_state);
+        }
+    }
+
+    if let Some(global_session_id) = agent_runtime::find_global_main_session_id(&connection, agent_id)? {
+        if crate::services::pi_sessions::find_session_context_for_session(&global_session_id).is_ok() {
+            return agent_runtime::update_agent_runtime_dispatch_state_for_project(
+                &connection,
+                project_id,
+                agent_id,
+                Some(&global_session_id),
+                Some(&project_root.display().to_string()),
+                runtime_state.current_queue_entry_id.as_deref(),
+                &runtime_state.status,
+                runtime_state.last_error.as_deref(),
+            );
         }
     }
 
