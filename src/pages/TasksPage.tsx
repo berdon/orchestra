@@ -26,6 +26,7 @@ import {
   removeTaskDependency,
   removeTaskFileReference,
   requestUserIntervention,
+  reportClientError,
   resetTaskRuntime,
   sendLaneBackForWork,
   sendSessionMessage,
@@ -238,7 +239,7 @@ export function TasksPage({
     try {
       await operation();
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : fallbackMessage);
+      setTaskActionError(await reportClientError(`ui.tasks.detail_action.${actionId}`, error, fallbackMessage));
     } finally {
       setDetailActionPending(null);
     }

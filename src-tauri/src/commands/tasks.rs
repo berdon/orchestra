@@ -32,6 +32,10 @@ fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionCont
     pi_sessions::session_context_for_project_id(&task.project_id)
 }
 
+fn log_task_command_failure(state: &AppState, target: &str, task_id: &str, error: &str) {
+    state.log("error", target, &format!("Task {} failed: {}", task_id, error));
+}
+
 #[tauri::command]
 pub fn list_tasks(
     project_id: Option<String>,
@@ -578,31 +582,42 @@ pub async fn send_lane_back_for_work(
     state: State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDetail, String> {
-    let task_id_for_context = task_id.clone();
-    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
-        .await
-        .map_err(|error| format!("Unable to join lane rework context task: {error}"))??;
-    let connection = database::open_connection()?;
-    let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
-    let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
-    task_runtime::start_assignment_follow_up(
-        app.clone(),
-        &state,
-        context.session_dir.clone(),
-        &assignment,
-        &follow_up_prompt,
-    )?;
-    if let Some(session_id) = assignment.session_id.clone() {
-        emit_session_change(&app, "task.transition.rework", [session_id]);
+    let result = async {
+        let task_id_for_context = task_id.clone();
+        let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
+            .await
+            .map_err(|error| format!("Unable to join lane rework context task: {error}"))??;
+        let connection = database::open_connection()?;
+        let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
+        let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+        task_runtime::start_assignment_follow_up(
+            app.clone(),
+            &state,
+            context.session_dir.clone(),
+            &assignment,
+            &follow_up_prompt,
+        )?;
+        if let Some(session_id) = assignment.session_id.clone() {
+            emit_session_change(&app, "task.transition.rework", [session_id]);
+        }
+        tasks::get_task_context(&connection, &task_id)
+    }.await;
+
+    match result {
+        Ok(task) => {
+            state.log(
+                "info",
+                "task.transition",
+                &format!("Sent task {} back to the current lane session for more work", task_id),
+            );
+            emit_task_change(&app, "task.transition.needs_work", [task.id.clone()]);
+            Ok(task)
+        }
+        Err(error) => {
+            log_task_command_failure(&state, "task.transition.needs_work.failed", &task_id, &error);
+            Err(error)
+        }
     }
-    let task = tasks::get_task_context(&connection, &task_id)?;
-    state.log(
-        "info",
-        "task.transition",
-        &format!("Sent task {} back to the current lane session for more work", task_id),
-    );
-    emit_task_change(&app, "task.transition.needs_work", [task.id.clone()]);
-    Ok(task)
 }
 
 #[tauri::command]
@@ -646,67 +661,84 @@ async fn complete_lane_command(
     notes: Option<String>,
     outcome: &str,
 ) -> Result<TaskDetail, String> {
-    let task_id_for_context = task_id.clone();
-    let context = tauri::async_runtime::spawn_blocking(move || {
-        session_context_for_task_id(&task_id_for_context)
-    })
-    .await
-    .map_err(|error| format!("Unable to join lane completion context task: {error}"))??;
-    let mut connection = database::open_connection()?;
-    let mut task = match outcome {
-        "success" => task_runtime::complete_lane_as_success(
-            &mut connection,
-            &context.project_root,
-            &context.session_dir,
-            &task_id,
-            notes,
-            None,
-        )?,
-        "failure" => task_runtime::complete_lane_as_failure(
-            &mut connection,
-            &context.project_root,
-            &context.session_dir,
-            &task_id,
-            notes,
-            None,
-        )?,
-        _ => task_runtime::request_user_intervention(
-            &mut connection,
-            &context.project_root,
-            &context.session_dir,
-            &task_id,
-            notes,
-            None,
-        )?,
-    };
+    let result = async {
+        let task_id_for_context = task_id.clone();
+        let context = tauri::async_runtime::spawn_blocking(move || {
+            session_context_for_task_id(&task_id_for_context)
+        })
+        .await
+        .map_err(|error| format!("Unable to join lane completion context task: {error}"))??;
+        let mut connection = database::open_connection()?;
+        let mut task = match outcome {
+            "success" => task_runtime::complete_lane_as_success(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                notes,
+                None,
+            )?,
+            "failure" => task_runtime::complete_lane_as_failure(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                notes,
+                None,
+            )?,
+            _ => task_runtime::request_user_intervention(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                notes,
+                None,
+            )?,
+        };
 
-    if let Some(next_assignment) = task_runtime::maybe_auto_dispatch_task(
-        &mut connection,
-        &context.project_root,
-        &context.session_dir,
-        &task_id,
-    )? {
-        task_runtime::start_assignment_run(
-            app.clone(),
-            &state,
-            context.session_dir.clone(),
-            &next_assignment,
-        )?;
-        if let Some(session_id) = next_assignment.session_id.clone() {
-            emit_session_change(&app, "task.transition.next_assignment", [session_id]);
+        if let Some(next_assignment) = task_runtime::maybe_auto_dispatch_task(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &task_id,
+        )? {
+            task_runtime::start_assignment_run(
+                app.clone(),
+                &state,
+                context.session_dir.clone(),
+                &next_assignment,
+            )?;
+            if let Some(session_id) = next_assignment.session_id.clone() {
+                emit_session_change(&app, "task.transition.next_assignment", [session_id]);
+            }
+            task = tasks::get_task_context(&connection, &task_id)?;
         }
-        task = tasks::get_task_context(&connection, &task_id)?;
-    }
 
-    state.log(
-        "info",
-        "task.transition",
-        &format!("Completed task lane {} with outcome {}", task_id, outcome),
-    );
-    emit_task_change(
-        &app,
-        &format!("task.transition.{outcome}"),
-        [task.id.clone()],
-    );
-    Ok(task)
+        Ok::<TaskDetail, String>(task)
+    }.await;
+
+    match result {
+        Ok(task) => {
+            state.log(
+                "info",
+                "task.transition",
+                &format!("Completed task lane {} with outcome {}", task_id, outcome),
+            );
+            emit_task_change(
+                &app,
+                &format!("task.transition.{outcome}"),
+                [task.id.clone()],
+            );
+            Ok(task)
+        }
+        Err(error) => {
+            log_task_command_failure(
+                &state,
+                &format!("task.transition.{outcome}.failed"),
+                &task_id,
+                &error,
+            );
+            Err(error)
+        }
+    }
 }

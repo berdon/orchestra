@@ -864,21 +864,20 @@ pub fn start_assignment_follow_up(
         ));
     }
 
-    start_assignment_prompt(app, state, session_dir, assignment, prompt)
+    start_assignment_delivery(app, state, session_dir, assignment, "follow_up", prompt)
 }
 
-fn start_assignment_prompt(
+fn ensure_assignment_runtime(
     app: AppHandle,
     state: &AppState,
     session_dir: PathBuf,
     assignment: &TaskLaneAssignment,
-    prompt: &str,
-) -> Result<(), String> {
+) -> Result<Option<(String, std::sync::Arc<live_sessions::SessionRuntime>)>, String> {
     let Some(session_id) = assignment.session_id.as_deref() else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(runtime_cwd) = assignment.runtime_cwd.as_deref() else {
-        return Ok(());
+        return Ok(None);
     };
 
     let runtime = live_sessions::ensure_runtime(
@@ -889,15 +888,45 @@ fn start_assignment_prompt(
         session_id,
     )?;
 
+    Ok(Some((session_id.to_string(), runtime)))
+}
+
+fn start_assignment_prompt(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    prompt: &str,
+) -> Result<(), String> {
+    let Some((session_id, runtime)) = ensure_assignment_runtime(app, state, session_dir, assignment)? else {
+        return Ok(());
+    };
+
     let run_id = generate_id("task-run");
-    state.begin_session_run(session_id, &run_id)?;
+    state.begin_session_run(&session_id, &run_id)?;
     match runtime.start_run(&run_id, prompt) {
         Ok(()) => Ok(()),
         Err(error) => {
-            let _ = state.end_session_run(session_id, &run_id);
+            let _ = state.end_session_run(&session_id, &run_id);
             Err(error)
         }
     }
+}
+
+fn start_assignment_delivery(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    delivery_type: &str,
+    message: &str,
+) -> Result<(), String> {
+    let Some((_session_id, runtime)) = ensure_assignment_runtime(app, state, session_dir, assignment)? else {
+        return Ok(());
+    };
+
+    let run_id = generate_id("task-delivery");
+    runtime.start_delivery(&run_id, delivery_type, message)
 }
 
 fn build_unread_comment_delivery_message(task_id: &str, comment: &TaskComment) -> String {
