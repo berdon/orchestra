@@ -12,11 +12,12 @@ use crate::{
 #[tauri::command]
 pub fn list_agents(
     include_archived: Option<bool>,
+    project_id: Option<String>,
     authorization: Option<AuthorizationContext>,
 ) -> Result<Vec<AgentSummary>, String> {
     let connection = database::open_connection()?;
     command_authorization::require_permission(&connection, authorization.as_ref(), "agents.read")?;
-    agents::list_agents(&connection, include_archived.unwrap_or(false))
+    agents::list_agents_for_project(&connection, include_archived.unwrap_or(false), project_id.as_deref())
 }
 
 #[tauri::command]

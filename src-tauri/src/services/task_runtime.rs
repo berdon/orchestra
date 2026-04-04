@@ -1363,7 +1363,7 @@ fn dispatch_agent_lane(
         .assigned_entity_id
         .as_deref()
         .ok_or_else(|| format!("Lane {} is missing an agent reference", lane.name))?;
-    let agent = get_agent_by_slug(connection, agent_slug)?;
+    let agent = get_agent_by_slug(connection, &task.project_id, agent_slug)?;
     let worker_prompt = WorkerPromptContext {
         worker_type_label: "agent",
         worker_name: agent.name.clone(),
@@ -2234,7 +2234,11 @@ fn get_role_by_slug(connection: &Connection, role_slug: &str) -> Result<RoleDefi
     crate::services::roles::get_role(connection, &role_id)
 }
 
-fn get_agent_by_slug(connection: &Connection, agent_slug: &str) -> Result<AgentDefinition, String> {
+fn get_agent_by_slug(
+    connection: &Connection,
+    project_id: &str,
+    agent_slug: &str,
+) -> Result<AgentDefinition, String> {
     let agent_id = connection
         .query_row(
             "SELECT id FROM agents WHERE slug = ?1 LIMIT 1",
@@ -2244,7 +2248,12 @@ fn get_agent_by_slug(connection: &Connection, agent_slug: &str) -> Result<AgentD
         .optional()
         .map_err(|error| format!("Unable to query agent slug {agent_slug}: {error}"))?
         .ok_or_else(|| format!("Agent {agent_slug} was not found"))?;
-    agents::get_agent(connection, &agent_id)
+    let agent = agents::get_agent(connection, &agent_id)?;
+    if agents::agent_visible_in_project(&agent, project_id) {
+        Ok(agent)
+    } else {
+        Err(format!("Agent {agent_slug} is not available in project {project_id}"))
+    }
 }
 
 pub fn preferred_lane_session_id(
@@ -2906,6 +2915,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -3295,6 +3306,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -3522,6 +3535,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -3613,6 +3628,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -3721,6 +3738,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -3812,6 +3831,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -3997,6 +4018,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -4098,6 +4121,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("low".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -4200,6 +4225,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("low".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
@@ -4309,6 +4336,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),

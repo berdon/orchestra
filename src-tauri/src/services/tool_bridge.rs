@@ -863,8 +863,9 @@ fn invoke_bridge_command(
                 .get("includeArchived")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let project_id = payload.get("projectId").and_then(Value::as_str);
             command_authorization::require_permission(connection, authorization, "agents.read")?;
-            serde_json::to_value(agents::list_agents(connection, include_archived)?)
+            serde_json::to_value(agents::list_agents_for_project(connection, include_archived, project_id)?)
                 .map_err(|error| format!("Unable to serialize agents: {error}"))
         }
         "get_agent" => {
@@ -1988,6 +1989,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
                 policy_ids: Vec::new(),
                 direct_permissions: vec!["tasks.read".into(), "tasks.comment".into()],

@@ -86,6 +86,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 provider TEXT,
                 model TEXT,
                 role_id TEXT,
+                scope TEXT NOT NULL DEFAULT 'global',
+                project_id TEXT,
                 thinking_level TEXT NOT NULL DEFAULT 'off',
                 direct_permissions TEXT NOT NULL DEFAULT '[]',
                 system INTEGER NOT NULL DEFAULT 0,
@@ -667,6 +669,21 @@ fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
             .map_err(|error| format!("Unable to add role_id column to agents table: {error}"))?;
     }
 
+    if !columns.contains("scope") {
+        connection
+            .execute(
+                "ALTER TABLE agents ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'",
+                [],
+            )
+            .map_err(|error| format!("Unable to add scope column to agents table: {error}"))?;
+    }
+
+    if !columns.contains("project_id") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN project_id TEXT", [])
+            .map_err(|error| format!("Unable to add project_id column to agents table: {error}"))?;
+    }
+
     if !columns.contains("thinking_level") {
         connection
             .execute(
@@ -713,6 +730,27 @@ fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to backfill direct_permissions for agents: {error}"))?;
+
+    connection
+        .execute(
+            "UPDATE agents SET scope = 'global' WHERE scope IS NULL OR trim(scope) = '' OR scope NOT IN ('global', 'project')",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill agent scope values: {error}"))?;
+
+    connection
+        .execute(
+            "UPDATE agents SET project_id = NULL WHERE scope != 'project'",
+            [],
+        )
+        .map_err(|error| format!("Unable to clear project ids for global agents: {error}"))?;
+
+    connection
+        .execute(
+            "UPDATE agents SET scope = 'global', project_id = NULL WHERE system != 0 OR immutable != 0 OR slug = 'supervisor'",
+            [],
+        )
+        .map_err(|error| format!("Unable to enforce global supervisor agent scope: {error}"))?;
 
     Ok(())
 }

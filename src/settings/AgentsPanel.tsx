@@ -29,7 +29,7 @@ import type {
   SessionModel,
 } from "../types";
 
-function createBlankAgentDraft(): AgentUpsertInput {
+function createBlankAgentDraft(activeProjectId?: string | null): AgentUpsertInput {
   return {
     name: "",
     description: "",
@@ -38,6 +38,8 @@ function createBlankAgentDraft(): AgentUpsertInput {
     model: "",
     thinkingLevel: "off",
     roleId: null,
+    scope: "global",
+    projectId: activeProjectId ?? null,
     policyIds: [],
     directPermissions: [],
   };
@@ -51,6 +53,8 @@ function agentToDraft(agent: AgentDefinition): AgentUpsertInput {
     provider: agent.provider ?? "",
     model: agent.model ?? "",
     roleId: agent.roleId ?? null,
+    scope: agent.scope,
+    projectId: agent.projectId ?? null,
     thinkingLevel: agent.thinkingLevel,
     policyIds: agent.policyIds ?? [],
     directPermissions: agent.directPermissions ?? [],
@@ -61,11 +65,11 @@ function getAgentValidationForPath(errors: AgentValidationError[], path: string)
   return errors.filter((error) => error.path === path);
 }
 
-export function AgentsPanel() {
+export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: string | null }) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agentDraft, setAgentDraft] = useState<AgentUpsertInput>(createBlankAgentDraft);
+  const [agentDraft, setAgentDraft] = useState<AgentUpsertInput>(() => createBlankAgentDraft(activeProjectId));
   const [agentValidation, setAgentValidation] = useState<AgentValidationError[]>([]);
   const [agentActionError, setAgentActionError] = useState<string | null>(null);
   const [loadingAgents, setLoadingAgents] = useState(false);
@@ -148,7 +152,7 @@ export function AgentsPanel() {
     setAgentActionError(null);
 
     try {
-      const nextAgents = await listAgents(includeArchivedAgents);
+      const nextAgents = await listAgents(includeArchivedAgents, activeProjectId);
       setAgents(nextAgents);
       setSelectedAgentId((current) => {
         if (isCreatingAgent) {
@@ -173,7 +177,7 @@ export function AgentsPanel() {
     setAgentActionError(null);
 
     try {
-      const agent = await getAgent(agentId);
+      const agent = await getAgent(agentId, activeProjectId);
       setAgentDraft(agentToDraft(agent));
       setAgentValidation([]);
       setLoadedAgentId(agent.id);
@@ -201,7 +205,7 @@ export function AgentsPanel() {
 
   useEffect(() => {
     void loadAgents();
-  }, [includeArchivedAgents]);
+  }, [includeArchivedAgents, activeProjectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,6 +254,12 @@ export function AgentsPanel() {
   }, []);
 
   useEffect(() => {
+    if (isCreatingAgent) {
+      setAgentDraft((current) => (current.scope === "project" ? { ...current, projectId: activeProjectId ?? null } : current));
+    }
+  }, [activeProjectId, isCreatingAgent]);
+
+  useEffect(() => {
     let cancelled = false;
     void listRoles(true)
       .then((nextRoles) => {
@@ -279,11 +289,14 @@ export function AgentsPanel() {
     }
 
     void loadAgentDetail(agentId);
-  }, [selectedAgentSummary?.id, isCreatingAgent, loadedAgentId]);
+  }, [selectedAgentSummary?.id, isCreatingAgent, loadedAgentId, activeProjectId]);
 
   async function refreshAgentValidation(nextDraft: AgentUpsertInput) {
     try {
-      const validation = await validateAgent(nextDraft);
+      const validation = await validateAgent({
+        ...nextDraft,
+        projectId: nextDraft.scope === "project" ? activeProjectId ?? nextDraft.projectId ?? null : null,
+      });
       setAgentValidation(validation.errors);
       return validation.errors;
     } catch (error) {
@@ -302,7 +315,7 @@ export function AgentsPanel() {
 
   function beginCreateAgent() {
     setSelectedAgentId(null);
-    setAgentDraft(createBlankAgentDraft());
+    setAgentDraft(createBlankAgentDraft(activeProjectId));
     setAgentValidation([]);
     setAgentActionError(null);
     setAgentMemoryInfo(null);
@@ -319,14 +332,15 @@ export function AgentsPanel() {
     setAgentActionError(null);
 
     try {
-      const validation = await validateAgent(agentDraft);
+      const validation = await validateAgent({ ...agentDraft, projectId: agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? null : null });
       setAgentValidation(validation.errors);
       if (!validation.valid) {
         setAgentActionError("Fix the agent validation errors before saving.");
         return;
       }
 
-      const saved = loadedAgentId && !isCreatingAgent ? await updateAgent(loadedAgentId, agentDraft) : await createAgent(agentDraft);
+      const saveInput = { ...agentDraft, projectId: agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? null : null };
+      const saved = loadedAgentId && !isCreatingAgent ? await updateAgent(loadedAgentId, saveInput) : await createAgent(saveInput);
 
       await loadAgents();
       setSelectedAgentId(saved.id);
@@ -427,8 +441,10 @@ export function AgentsPanel() {
                 setSelectedAgentId(agent.id);
               }}
             >
-              {agent.name}
-              <span className="role-list-link__meta">{agent.system ? "System agent" : agent.slug}</span>
+              <span data-role={`agent-list-name-${agent.slug}`} style={agent.scope === "global" ? { fontWeight: 700, fontStyle: "italic" } : undefined}>
+                {agent.name}
+              </span>
+              <span className="role-list-link__meta">{agent.system ? "System global agent" : agent.scope === "global" ? "Global agent" : "Project agent"}</span>
             </a>
           ))}
         </nav>
@@ -445,6 +461,7 @@ export function AgentsPanel() {
               <div className="action-cluster">
                 {agentMemoryInfo ? <span className="status-badge status-badge--accent">{agentMemoryInfo.slug}</span> : null}
                 {loadedAgentProtected ? <span className="status-badge status-badge--warning" data-role="agent-protected-badge">Protected</span> : null}
+                <span className="status-badge status-badge--neutral" data-role="agent-scope-badge">{loadedAgentProtected && !isCreatingAgent ? "Global" : agentDraft.scope === "project" ? "Project specific" : "Global"}</span>
                 {loadedAgentArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
                 {!isCreatingAgent && loadedAgentId && !loadedAgentProtected ? (
                   <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveAgent()} disabled={savingAgent || loadedAgentArchived}>
@@ -466,6 +483,43 @@ export function AgentsPanel() {
               </div>
 
               <div className="workflow-form-grid">
+                <label className="field-group">
+                  <span className="field-group__label">Scope</span>
+                  <select
+                    className="select-input"
+                    data-role="agent-scope"
+                    value={loadedAgentProtected && !isCreatingAgent ? "global" : agentDraft.scope ?? "global"}
+                    disabled={loadedAgentProtected && !isCreatingAgent}
+                    onChange={(event) =>
+                      updateAgentDraft((draft) => ({
+                        ...draft,
+                        scope: event.target.value === "project" ? "project" : "global",
+                        projectId: event.target.value === "project" ? activeProjectId ?? draft.projectId ?? null : null,
+                      }))
+                    }
+                  >
+                    <option value="global">Global</option>
+                    <option value="project" disabled={!activeProjectId}>Project specific</option>
+                  </select>
+                  {getAgentValidationForPath(agentValidation, "scope").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Owning project</span>
+                  <input
+                    className="text-input"
+                    data-role="agent-project-scope"
+                    type="text"
+                    value={agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? "" : "All projects"}
+                    disabled
+                  />
+                  {getAgentValidationForPath(agentValidation, "projectId").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
                 <label className="field-group">
                   <span className="field-group__label">Agent name</span>
                   <input
@@ -654,7 +708,7 @@ export function AgentsPanel() {
           <div className="empty-state">
             <p className="eyebrow">No agent selected</p>
             <h3>Create or select an agent</h3>
-            <p>Use the agent list to inspect an existing definition or create a persistent global worker.</p>
+            <p>Use the agent list to inspect an existing definition or create a persistent global or project-specific worker.</p>
           </div>
         )}
       </section>

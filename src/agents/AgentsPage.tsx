@@ -46,6 +46,9 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
     [selectedWorker, agentSnapshots],
   );
 
+  const globalAgentSnapshots = useMemo(() => agentSnapshots.filter((snapshot) => snapshot.agent.scope === "global"), [agentSnapshots]);
+  const projectAgentSnapshots = useMemo(() => agentSnapshots.filter((snapshot) => snapshot.agent.scope === "project"), [agentSnapshots]);
+
   async function loadRoleDetail(roleId: string) {
     setLoading(true);
     setError(null);
@@ -200,8 +203,27 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
           </div>
 
           {agentSnapshots.length === 0 ? <p className="muted-copy">No agents yet.</p> : null}
+          {globalAgentSnapshots.length > 0 ? <p className="eyebrow">Global agents</p> : null}
           <nav className="workforce-agent-nav" aria-label="Named agents">
-            {agentSnapshots.map((agentSnapshot) => (
+            {globalAgentSnapshots.map((agentSnapshot) => (
+              <a
+                className={agentSnapshot.agent.id === selectedAgentSnapshot?.agent.id ? "workforce-agent-link workforce-agent-link--active" : "workforce-agent-link"}
+                href="#"
+                key={agentSnapshot.agent.id}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setSelectedWorker({ type: "agent", id: agentSnapshot.agent.id });
+                }}
+              >
+                <strong style={{ fontStyle: "italic" }}>{agentSnapshot.agent.name}</strong>
+                <span className="task-list-link__meta">
+                  <span>{agentSnapshot.runtimeState.status}</span>
+                  <span>{agentSnapshot.queuedCount} queued</span>
+                </span>
+              </a>
+            ))}
+            {projectAgentSnapshots.length > 0 ? <p className="eyebrow">This project</p> : null}
+            {projectAgentSnapshots.map((agentSnapshot) => (
               <a
                 className={agentSnapshot.agent.id === selectedAgentSnapshot?.agent.id ? "workforce-agent-link workforce-agent-link--active" : "workforce-agent-link"}
                 href="#"

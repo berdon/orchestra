@@ -18,10 +18,14 @@ export async function createProjectViaSettings(sessionId: string, name: string, 
   await clickByText(sessionId, "button", "Settings");
   await waitForText(sessionId, "Project catalog");
   await clickByText(sessionId, "button", "New project");
-  await waitForText(sessionId, "Create project");
+  await waitForSelector(sessionId, '[data-role="project-name"]');
   await setInputValue(sessionId, '[data-role="project-name"]', name);
   await setInputValue(sessionId, '[data-role="project-description"]', description);
-  await clickByText(sessionId, 'button', 'Create project');
+  try {
+    await clickByText(sessionId, 'button', 'Create project');
+  } catch {
+    await clickByText(sessionId, 'button', 'Save project');
+  }
   await waitForText(sessionId, name);
 }
 
@@ -81,6 +85,7 @@ export async function createAgentViaSettings(
     provider?: string;
     model?: string;
     supervisor?: boolean;
+    scope?: 'global' | 'project';
   },
 ) {
   await clickByText(sessionId, '[role="tab"]', 'Agents');
@@ -88,6 +93,9 @@ export async function createAgentViaSettings(
   await waitForText(sessionId, 'Create agent');
   await waitForSelector(sessionId, '[data-role="agent-name"]');
   await setInputValue(sessionId, '[data-role="agent-name"]', options.name);
+  if (options.scope) {
+    await selectValue(sessionId, '[data-role="agent-scope"]', options.scope);
+  }
   if (options.provider) {
     await selectValue(sessionId, '[data-role="agent-provider"]', options.provider);
     if (options.model) {

@@ -9,26 +9,42 @@ use crate::{
         AgentDefinition, AgentMemoryInfo, AgentSummary, AgentUpsertInput, AgentValidationError,
         AgentValidationResult,
     },
-    services::{agent_files, orchestra_paths::sanitize_slug, policies},
+    services::{agent_files, orchestra_paths::sanitize_slug, policies, projects},
 };
+
+const AGENT_SCOPE_GLOBAL: &str = "global";
+const AGENT_SCOPE_PROJECT: &str = "project";
 
 pub fn list_agents(
     connection: &Connection,
     include_archived: bool,
 ) -> Result<Vec<AgentSummary>, String> {
+    list_agents_for_project(connection, include_archived, None)
+}
+
+pub fn list_agents_for_project(
+    connection: &Connection,
+    include_archived: bool,
+    project_id: Option<&str>,
+) -> Result<Vec<AgentSummary>, String> {
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, slug, name, role_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at
+            SELECT id, slug, name, role_id, scope, project_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at
             FROM agents
             WHERE (?1 = 1 OR archived = 0)
-            ORDER BY system DESC, archived ASC, updated_at DESC, name ASC
+              AND (?2 IS NULL OR scope = 'global' OR (scope = 'project' AND project_id = ?2))
+            ORDER BY system DESC,
+                     CASE scope WHEN 'global' THEN 0 ELSE 1 END ASC,
+                     archived ASC,
+                     updated_at DESC,
+                     name ASC
             "#,
         )
         .map_err(|error| format!("Unable to prepare agent list query: {error}"))?;
 
     let rows = statement
-        .query_map([if include_archived { 1 } else { 0 }], |row| {
+        .query_map(params![if include_archived { 1 } else { 0 }, project_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -36,11 +52,13 @@ pub fn list_agents(
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
-                row.get::<_, i64>(6)?,
-                row.get::<_, i64>(7)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
                 row.get::<_, i64>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, String>(10)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })
         .map_err(|error| format!("Unable to query agents: {error}"))?;
@@ -54,14 +72,16 @@ pub fn list_agents(
                 slug: row.1,
                 name: row.2,
                 role_id: row.3,
-                thinking_level: row.4,
+                scope: row.4,
+                project_id: row.5,
+                thinking_level: row.6,
                 policy_ids: policies::load_agent_policy_ids(connection, &row.0)?,
-                direct_permissions: policies::decode_string_list(row.5)?,
-                system: row.6 != 0,
-                immutable: row.7 != 0,
-                archived: row.8 != 0,
-                created_at: row.9,
-                updated_at: row.10,
+                direct_permissions: policies::decode_string_list(row.7)?,
+                system: row.8 != 0,
+                immutable: row.9 != 0,
+                archived: row.10 != 0,
+                created_at: row.11,
+                updated_at: row.12,
             })
         })
         .collect()
@@ -71,7 +91,7 @@ pub fn get_agent(connection: &Connection, agent_id: &str) -> Result<AgentDefinit
     let row = connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, system_prompt, provider, model, role_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at
+            SELECT id, slug, name, description, system_prompt, provider, model, role_id, scope, project_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at
             FROM agents
             WHERE id = ?1
             "#,
@@ -88,11 +108,13 @@ pub fn get_agent(connection: &Connection, agent_id: &str) -> Result<AgentDefinit
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, String>(8)?,
                     row.get::<_, Option<String>>(9)?,
-                    row.get::<_, i64>(10)?,
-                    row.get::<_, i64>(11)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, Option<String>>(11)?,
                     row.get::<_, i64>(12)?,
-                    row.get::<_, String>(13)?,
-                    row.get::<_, String>(14)?,
+                    row.get::<_, i64>(13)?,
+                    row.get::<_, i64>(14)?,
+                    row.get::<_, String>(15)?,
+                    row.get::<_, String>(16)?,
                 ))
             },
         )
@@ -109,14 +131,16 @@ pub fn get_agent(connection: &Connection, agent_id: &str) -> Result<AgentDefinit
         provider: row.5,
         model: row.6,
         role_id: row.7,
-        thinking_level: row.8,
+        scope: row.8,
+        project_id: row.9,
+        thinking_level: row.10,
         policy_ids: policies::load_agent_policy_ids(connection, &row.0)?,
-        direct_permissions: policies::decode_string_list(row.9)?,
-        system: row.10 != 0,
-        immutable: row.11 != 0,
-        archived: row.12 != 0,
-        created_at: row.13,
-        updated_at: row.14,
+        direct_permissions: policies::decode_string_list(row.11)?,
+        system: row.12 != 0,
+        immutable: row.13 != 0,
+        archived: row.14 != 0,
+        created_at: row.15,
+        updated_at: row.16,
     })
 }
 
@@ -164,6 +188,51 @@ pub fn validate_agent(
                 "invalid_reference",
                 "roleId",
                 "Assigned role id does not reference an existing role.",
+            ));
+        }
+    }
+
+    match normalized.scope.as_deref().unwrap_or(AGENT_SCOPE_GLOBAL) {
+        AGENT_SCOPE_GLOBAL => {
+            if normalized.project_id.is_some() {
+                errors.push(validation_error(
+                    "invalid",
+                    "projectId",
+                    "Global agents cannot be pinned to a project.",
+                ));
+            }
+        }
+        AGENT_SCOPE_PROJECT => {
+            let Some(project_id) = normalized.project_id.as_deref() else {
+                errors.push(validation_error(
+                    "required",
+                    "projectId",
+                    "Choose a project for project-scoped agents.",
+                ));
+                return Ok(AgentValidationResult { valid: false, errors });
+            };
+
+            if projects::get_project(connection, project_id).is_err() {
+                errors.push(validation_error(
+                    "invalid_reference",
+                    "projectId",
+                    "Project-scoped agents must reference an existing project.",
+                ));
+            }
+        }
+        _ => errors.push(validation_error(
+            "invalid",
+            "scope",
+            "Agent scope must be either global or project.",
+        )),
+    }
+
+    if normalized.system_prompt.as_deref().is_some() && normalized.name.eq_ignore_ascii_case("supervisor") {
+        if normalized.scope.as_deref() == Some(AGENT_SCOPE_PROJECT) {
+            errors.push(validation_error(
+                "invalid",
+                "scope",
+                "Supervisor is always global.",
             ));
         }
     }
@@ -238,6 +307,8 @@ fn create_agent_in(
             provider,
             model,
             role_id,
+            scope,
+            project_id,
             thinking_level,
             direct_permissions,
             system,
@@ -246,7 +317,7 @@ fn create_agent_in(
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 0, 0, ?13, ?13)
         "#,
         params![
             agent_id,
@@ -257,6 +328,8 @@ fn create_agent_in(
             normalized.provider,
             normalized.model,
             normalized.role_id,
+            normalized.scope.clone().unwrap_or_else(|| AGENT_SCOPE_GLOBAL.into()),
+            normalized.project_id,
             normalized
                 .thinking_level
                 .clone()
@@ -367,9 +440,11 @@ fn update_agent_in(
                 provider = ?5,
                 model = ?6,
                 role_id = ?7,
-                thinking_level = ?8,
-                direct_permissions = ?9,
-                updated_at = ?10
+                scope = ?8,
+                project_id = ?9,
+                thinking_level = ?10,
+                direct_permissions = ?11,
+                updated_at = ?12
             WHERE id = ?1
             "#,
             params![
@@ -380,6 +455,8 @@ fn update_agent_in(
                 normalized.provider,
                 normalized.model,
                 normalized.role_id,
+                normalized.scope.clone().unwrap_or_else(|| AGENT_SCOPE_GLOBAL.into()),
+                normalized.project_id,
                 normalized
                     .thinking_level
                     .clone()
@@ -429,6 +506,28 @@ pub fn get_agent_memory_info(
 ) -> Result<AgentMemoryInfo, String> {
     let agent = get_agent(connection, agent_id)?;
     bootstrap_agent_files(&agent, None)
+}
+
+pub fn agent_visible_in_project(agent: &AgentDefinition, project_id: &str) -> bool {
+    agent.scope == AGENT_SCOPE_GLOBAL || agent.project_id.as_deref() == Some(project_id)
+}
+
+pub fn require_agent_in_project(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<AgentDefinition, String> {
+    let agent = get_agent(connection, agent_id)?;
+    if agent_visible_in_project(&agent, project_id) {
+        Ok(agent)
+    } else {
+        Err(format!(
+            "Agent {} is scoped to project {} and cannot operate in project {}",
+            agent.name,
+            agent.project_id.as_deref().unwrap_or("<unknown>"),
+            project_id
+        ))
+    }
 }
 
 fn bootstrap_agent_files(
@@ -486,6 +585,14 @@ fn agent_slug(name: &str) -> String {
 }
 
 fn normalize_input(input: AgentUpsertInput) -> AgentUpsertInput {
+    let scope = normalized_optional_string(input.scope).map(|value| value.to_lowercase());
+    let project_id = normalized_optional_string(input.project_id);
+    let resolved_scope = match scope.as_deref() {
+        Some(AGENT_SCOPE_PROJECT) => Some(AGENT_SCOPE_PROJECT.to_string()),
+        Some(_) => Some(AGENT_SCOPE_GLOBAL.to_string()),
+        None => Some(AGENT_SCOPE_GLOBAL.to_string()),
+    };
+
     AgentUpsertInput {
         name: input.name.trim().to_string(),
         description: normalized_optional_string(input.description),
@@ -493,6 +600,12 @@ fn normalize_input(input: AgentUpsertInput) -> AgentUpsertInput {
         provider: normalized_optional_string(input.provider),
         model: normalized_optional_string(input.model),
         role_id: normalized_optional_string(input.role_id),
+        scope: resolved_scope.clone(),
+        project_id: if resolved_scope.as_deref() == Some(AGENT_SCOPE_PROJECT) {
+            project_id
+        } else {
+            None
+        },
         thinking_level: normalized_optional_string(input.thinking_level)
             .map(|value| value.to_lowercase()),
         policy_ids: policies::normalize_string_list(input.policy_ids),
@@ -594,6 +707,8 @@ mod tests {
             provider: Some("anthropic".into()),
             model: Some("claude-sonnet-4-20250514".into()),
             role_id: None,
+            scope: Some("global".into()),
+            project_id: None,
             thinking_level: Some("medium".into()),
             policy_ids: Vec::new(),
             direct_permissions: vec!["tasks.read".into()],
@@ -622,6 +737,8 @@ mod tests {
                 provider: Some("anthropic".into()),
                 model: None,
                 role_id: Some("missing-role".into()),
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("turbo".into()),
                 policy_ids: vec![policy.id, "missing-policy".into()],
                 direct_permissions: Vec::new(),
@@ -688,6 +805,8 @@ mod tests {
                 provider: created.provider.clone(),
                 model: created.model.clone(),
                 role_id: Some("role-reviewer".into()),
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("high".into()),
                 policy_ids: vec![policy.id.clone(), policy.id.clone()],
                 direct_permissions: vec!["tasks.comment".into(), "tasks.comment".into()],
@@ -751,6 +870,8 @@ mod tests {
                 provider: Some("anthropic".into()),
                 model: Some("claude-sonnet-4-20250514".into()),
                 role_id: Some("role-reviewer".into()),
+                scope: Some("project".into()),
+                project_id: Some("orchestra".into()),
                 thinking_level: Some("high".into()),
                 policy_ids: vec!["policy-supervisor".into()],
                 direct_permissions: vec!["tasks.read".into()],

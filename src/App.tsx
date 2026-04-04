@@ -2110,11 +2110,11 @@ export function App() {
           settingsTab === "projects" ? (
             <ProjectsPanel />
           ) : settingsTab === "agents" ? (
-            <AgentsPanel />
+            <AgentsPanel activeProjectId={activeProject?.id ?? null} />
           ) : settingsTab === "roles" ? (
             <RolesPanel selectionRequest={rolesSelectionRequest} />
           ) : settingsTab === "workflows" ? (
-            <WorkflowsPanel selectionRequest={workflowsSelectionRequest} />
+            <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
           ) : settingsTab === "channels" ? (
             <ChannelsPanel />
           ) : (

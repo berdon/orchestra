@@ -141,10 +141,11 @@ function describeOwner(
 }
 
 interface WorkflowsPanelProps {
+  activeProjectId?: string | null;
   selectionRequest?: { workflowId: string; token: number } | null;
 }
 
-export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps) {
+export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null }: WorkflowsPanelProps) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [selectedLaneId, setSelectedLaneId] = useState<string | null>(null);
@@ -230,7 +231,7 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
 
   async function loadAssignableWorkers() {
     try {
-      const [nextAgents, nextRoles] = await Promise.all([listAgents(), listRoles()]);
+      const [nextAgents, nextRoles] = await Promise.all([listAgents(false, activeProjectId), listRoles()]);
       setAgents(nextAgents);
       setRoles(nextRoles);
     } catch (error) {
@@ -241,7 +242,7 @@ export function WorkflowsPanel({ selectionRequest = null }: WorkflowsPanelProps)
   useEffect(() => {
     void loadWorkflows();
     void loadAssignableWorkers();
-  }, [includeArchivedWorkflows]);
+  }, [includeArchivedWorkflows, activeProjectId]);
 
   useEffect(() => {
     if (isCreatingWorkflow) {
