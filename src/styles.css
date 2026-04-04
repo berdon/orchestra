@@ -1499,6 +1499,12 @@ strong {
   overflow: hidden;
 }
 
+.task-board-section--workflow {
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: min(72vh, 720px);
+  min-height: 0;
+}
+
 .task-draft-grid {
   grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 280px));
   justify-content: start;
@@ -1506,6 +1512,7 @@ strong {
 
 .task-board-scroll {
   width: 100%;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
   padding-bottom: 4px;
@@ -1592,18 +1599,21 @@ strong {
 .task-lane-board {
   width: max-content;
   min-width: 100%;
+  min-height: 0;
   grid-auto-flow: column;
   grid-auto-columns: minmax(240px, 320px);
-  align-items: start;
+  align-items: stretch;
 }
 
 .task-lane-column {
   min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: rgba(251, 246, 242, 0.75);
-  max-height: min(52vh, 540px);
+  overflow: hidden;
 }
 
 .task-lane-column__header {
@@ -1614,8 +1624,10 @@ strong {
 }
 
 .task-lane-column__list {
+  min-height: 0;
   align-content: start;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
 .task-nav-filters {
