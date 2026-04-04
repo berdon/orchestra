@@ -80,6 +80,7 @@ pub fn ensure_agent_runtime_state_for_project(
     }
 
     let now = now_iso();
+    let global_main_session_id = find_global_main_session_id(connection, agent_id)?;
     connection
         .execute(
             r#"
@@ -95,9 +96,9 @@ pub fn ensure_agent_runtime_state_for_project(
                 created_at,
                 updated_at
             )
-            VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, ?4, ?4)
+            VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, NULL, ?5, ?5)
             "#,
-            params![project_id, agent_id, RUNTIME_STATUS_IDLE, now],
+            params![project_id, agent_id, RUNTIME_STATUS_IDLE, global_main_session_id, now],
         )
         .map_err(|error| format!("Unable to create agent runtime state for {agent_id} in project {project_id}: {error}"))?;
 
@@ -129,6 +130,26 @@ pub fn get_agent_runtime_state_for_project(
         )
         .optional()
         .map_err(|error| format!("Unable to query agent runtime state for {agent_id} in project {project_id}: {error}"))
+}
+
+pub fn find_global_main_session_id(
+    connection: &Connection,
+    agent_id: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT main_session_id
+            FROM agent_runtime_states
+            WHERE agent_id = ?1 AND main_session_id IS NOT NULL AND trim(main_session_id) != ''
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            "#,
+            [agent_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query global main session for {agent_id}: {error}"))
 }
 
 pub fn list_agent_queue_entries(
@@ -442,6 +463,20 @@ pub fn update_agent_runtime_dispatch_state_for_project(
     last_error: Option<&str>,
 ) -> Result<AgentRuntimeState, String> {
     let now = now_iso();
+    if let Some(session_id) = session_id {
+        connection
+            .execute(
+                r#"
+                UPDATE agent_runtime_states
+                SET main_session_id = ?2,
+                    updated_at = CASE WHEN project_id = ?3 THEN ?4 ELSE updated_at END
+                WHERE agent_id = ?1
+                "#,
+                params![agent_id, session_id, project_id, now],
+            )
+            .map_err(|error| format!("Unable to synchronize main session for {agent_id}: {error}"))?;
+    }
+
     connection
         .execute(
             r#"

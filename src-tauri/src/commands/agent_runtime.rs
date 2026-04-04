@@ -10,7 +10,7 @@ use crate::{
     services::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
-        pi_sessions::{detect_session_context, get_session, get_session_path},
+        pi_sessions::{detect_session_context, find_session_context_for_session, get_session, get_session_path},
     },
     state::AppState,
 };
@@ -121,8 +121,10 @@ pub async fn ensure_agent_session(
         .main_session_id
         .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
 
+    let session_context = find_session_context_for_session(&session_id)?;
+
     if state.get_terminal_window_label(&session_id)?.is_some() {
-        let mut record = get_session(&context.session_dir, &session_id, false)?;
+        let mut record = get_session(&session_context.session_dir, &session_id, false)?;
         record.terminal_attached = true;
         let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
         return Ok(record);
@@ -133,12 +135,12 @@ pub async fn ensure_agent_session(
         &state.session_runtimes,
         app.clone(),
         context.project_root,
-        context.session_dir.clone(),
+        session_context.session_dir.clone(),
         &session_id,
     )?;
     runtime.set_subscribed(true);
 
-    let record = get_session(&context.session_dir, &session_id, true)?;
+    let record = get_session(&session_context.session_dir, &session_id, true)?;
     let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
     Ok(record)
 }
@@ -190,6 +192,8 @@ pub async fn open_agent_session_terminal(
     }
 
     let window_label = format!("agent-terminal-{session_id}");
+    let session_context = find_session_context_for_session(&session_id)?;
+
     if let Some(existing) = app.get_webview_window(&window_label) {
         existing
             .show()
@@ -197,7 +201,7 @@ pub async fn open_agent_session_terminal(
         existing
             .set_focus()
             .map_err(|error| format!("Unable to focus agent terminal window: {error}"))?;
-        let mut record = get_session(&context.session_dir, &session_id, false)?;
+        let mut record = get_session(&session_context.session_dir, &session_id, false)?;
         record.terminal_attached = true;
         return Ok(record);
     }
@@ -235,7 +239,7 @@ pub async fn open_agent_session_terminal(
         }
     });
 
-    let session_path = get_session_path(&context.session_dir, &session_id)?;
+    let session_path = get_session_path(&session_context.session_dir, &session_id)?;
     let runtime_cwd = runtime_state
         .runtime_cwd
         .clone()
@@ -244,14 +248,14 @@ pub async fn open_agent_session_terminal(
         app.clone(),
         &session_id,
         &session_path,
-        &context.session_dir,
+        &session_context.session_dir,
         std::path::Path::new(&runtime_cwd),
         &window_label,
     )?;
     state.insert_terminal_session(&session_id, terminal_session)?;
     let _ = app_events::emit_session_change(&app, "sessions.terminal.attach", [session_id.clone()]);
 
-    let mut record = get_session(&context.session_dir, &session_id, false)?;
+    let mut record = get_session(&session_context.session_dir, &session_id, false)?;
     record.terminal_attached = true;
     Ok(record)
 }

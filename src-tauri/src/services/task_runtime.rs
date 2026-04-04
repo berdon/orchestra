@@ -1384,7 +1384,7 @@ fn dispatch_agent_lane(
     let task_workspace_cwd = resolve_lane_workspace_cwd(connection, project_root, task, lane, Some(runtime_cwd.as_str()))?;
     ensure_task_repository_workspaces(task, &task_workspace_cwd)?;
     let session_id = if let Some(existing_session_id) = runtime_state.main_session_id.clone() {
-        if pi_sessions::get_session(session_dir, &existing_session_id, false).is_ok() {
+        if pi_sessions::find_session_context_for_session(&existing_session_id).is_ok() {
             existing_session_id
         } else {
             let created = pi_sessions::create_session_file(
@@ -2280,12 +2280,21 @@ fn apply_agent_session_defaults(
     session_id: &str,
     agent: &AgentDefinition,
 ) -> Result<(), String> {
+    let context = pi_sessions::find_session_context_for_session(session_id).ok();
+    let session_project_root = context
+        .as_ref()
+        .map(|entry| entry.project_root.as_path())
+        .unwrap_or(project_root);
+    let session_dir = context
+        .as_ref()
+        .map(|entry| entry.session_dir.as_path())
+        .unwrap_or(session_dir);
+
     if let (Some(provider), Some(model)) = (agent.provider.as_deref(), agent.model.as_deref()) {
-        let _ =
-            pi_sessions::set_session_model(project_root, session_dir, session_id, provider, model)?;
+        let _ = pi_sessions::set_session_model(session_project_root, session_dir, session_id, provider, model)?;
     }
     let _ = pi_sessions::set_session_thinking_level(
-        project_root,
+        session_project_root,
         session_dir,
         session_id,
         &agent.thinking_level,

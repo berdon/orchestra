@@ -5,6 +5,7 @@ pub mod agent_terminal;
 pub mod agents;
 pub mod app_events;
 pub mod auth_bootstrap;
+pub mod channels;
 pub mod authorization;
 pub mod command_authorization;
 pub mod database;

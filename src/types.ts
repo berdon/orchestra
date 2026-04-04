@@ -1,5 +1,5 @@
 export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
-export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "general";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -333,6 +333,84 @@ export interface ProjectTaskAutomationSettings {
   projectSlug: string;
   autoDispatchOnBlockerCompletion: boolean;
   updatedAt?: string | null;
+}
+
+export interface TelegramChannelConfig {
+  botUsername?: string | null;
+  apiBaseUrl?: string | null;
+  chatId?: string | null;
+  chatTitle?: string | null;
+  chatType?: string | null;
+  commandsEnabled: boolean;
+}
+
+export interface TelegramChannelConfigInput {
+  botToken?: string | null;
+  apiBaseUrl?: string | null;
+  chatId?: string | null;
+  chatTitle?: string | null;
+  chatType?: string | null;
+  commandsEnabled: boolean;
+}
+
+export interface ChannelUpsertInput {
+  kind?: string | null;
+  name?: string | null;
+  enabled?: boolean | null;
+  targetAgentId?: string | null;
+  defaultProjectId?: string | null;
+  telegram?: TelegramChannelConfigInput | null;
+}
+
+export interface ChannelSummary {
+  id: string;
+  kind: string;
+  name: string;
+  enabled: boolean;
+  status: string;
+  targetAgentId: string;
+  defaultProjectId?: string | null;
+  defaultProjectName?: string | null;
+  lastError?: string | null;
+  lastActivityAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelDetail extends ChannelSummary {
+  secretConfigured: boolean;
+  telegram?: TelegramChannelConfig | null;
+}
+
+export interface ChannelActivityEntry {
+  id: string;
+  channelId: string;
+  direction: string;
+  messageKind: string;
+  externalMessageId?: string | null;
+  chatId?: string | null;
+  sessionId?: string | null;
+  runId?: string | null;
+  body: string;
+  status: string;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TelegramBotValidation {
+  botId: string;
+  username: string;
+  displayName: string;
+}
+
+export interface TelegramChatCandidate {
+  chatId: string;
+  title: string;
+  chatType: string;
+  username?: string | null;
+  lastMessageText?: string | null;
+  lastMessageAt?: string | null;
 }
 
 export interface PolicyDefinition {

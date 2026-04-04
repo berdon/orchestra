@@ -440,6 +440,124 @@ pub struct ProjectTaskAutomationSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TelegramChannelConfig {
+    pub bot_username: Option<String>,
+    pub api_base_url: Option<String>,
+    pub chat_id: Option<String>,
+    pub chat_title: Option<String>,
+    pub chat_type: Option<String>,
+    pub commands_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramChannelConfigInput {
+    #[serde(default)]
+    pub bot_token: Option<String>,
+    #[serde(default)]
+    pub api_base_url: Option<String>,
+    #[serde(default)]
+    pub chat_id: Option<String>,
+    #[serde(default)]
+    pub chat_title: Option<String>,
+    #[serde(default)]
+    pub chat_type: Option<String>,
+    #[serde(default)]
+    pub commands_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelUpsertInput {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub target_agent_id: Option<String>,
+    #[serde(default)]
+    pub default_project_id: Option<String>,
+    #[serde(default)]
+    pub telegram: Option<TelegramChannelConfigInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelSummary {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub enabled: bool,
+    pub status: String,
+    pub target_agent_id: String,
+    pub default_project_id: Option<String>,
+    pub default_project_name: Option<String>,
+    pub last_error: Option<String>,
+    pub last_activity_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelActivityEntry {
+    pub id: String,
+    pub channel_id: String,
+    pub direction: String,
+    pub message_kind: String,
+    pub external_message_id: Option<String>,
+    pub chat_id: Option<String>,
+    pub session_id: Option<String>,
+    pub run_id: Option<String>,
+    pub body: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelDetail {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub enabled: bool,
+    pub status: String,
+    pub target_agent_id: String,
+    pub default_project_id: Option<String>,
+    pub default_project_name: Option<String>,
+    pub secret_configured: bool,
+    pub telegram: Option<TelegramChannelConfig>,
+    pub last_error: Option<String>,
+    pub last_activity_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramBotValidation {
+    pub bot_id: String,
+    pub username: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramChatCandidate {
+    pub chat_id: String,
+    pub title: String,
+    pub chat_type: String,
+    pub username: Option<String>,
+    pub last_message_text: Option<String>,
+    pub last_message_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleDefinition {
     pub id: String,
     pub slug: String,

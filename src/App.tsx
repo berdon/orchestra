@@ -44,6 +44,7 @@ import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import type { TaskBoardViewMode } from "./pages/tasks/TasksOverviewPage";
 import { AgentsPanel } from "./settings/AgentsPanel";
+import { ChannelsPanel } from "./settings/ChannelsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
@@ -81,6 +82,7 @@ const SETTINGS_TABS = [
   { id: "agents", label: "Agents" },
   { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
+  { id: "channels", label: "Channels" },
   { id: "general", label: "General" },
 ] as const;
 
@@ -2113,6 +2115,8 @@ export function App() {
             <RolesPanel selectionRequest={rolesSelectionRequest} />
           ) : settingsTab === "workflows" ? (
             <WorkflowsPanel selectionRequest={workflowsSelectionRequest} />
+          ) : settingsTab === "channels" ? (
+            <ChannelsPanel />
           ) : (
             <GeneralPanel
               bridgeDiagnostics={bridgeDiagnostics}

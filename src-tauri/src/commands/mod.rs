@@ -1,6 +1,7 @@
 pub mod agent_runtime;
 pub mod agents;
 pub mod app;
+pub mod channels;
 pub mod dispatcher;
 pub mod messages;
 pub mod policies;
