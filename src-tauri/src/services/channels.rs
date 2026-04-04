@@ -894,19 +894,35 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
         return Ok(());
     };
     let resolved = ensure_channel_target_session(&channel)?;
-    if state.is_session_running(&resolved.session_id)? {
-        return Ok(());
+    let existing_runtime = maybe_runtime(&state.session_runtimes, &resolved.session_id);
+    let runtime_has_active_prompt = existing_runtime
+        .as_ref()
+        .map(|runtime| runtime.has_active_prompt())
+        .unwrap_or(false);
+
+    match resolve_channel_dispatch_plan(state.is_session_running(&resolved.session_id)?, runtime_has_active_prompt) {
+        ChannelDispatchPlan::WaitForActiveRun => return Ok(()),
+        ChannelDispatchPlan::RecoverStaleRunState => {
+            state.clear_active_session_run(&resolved.session_id)?;
+        }
+        ChannelDispatchPlan::DispatchNow => {}
     }
 
     let session_context = pi_sessions::find_session_context_for_session(&resolved.session_id)?;
-    let runtime = ensure_runtime(
-        &state.session_runtimes,
-        app.clone(),
-        resolved.project_root.clone(),
-        session_context.session_dir.clone(),
-        &resolved.session_id,
-    )?;
-    runtime.set_subscribed(false);
+    let runtime = if let Some(runtime) = existing_runtime {
+        runtime
+    } else {
+        ensure_runtime(
+            &state.session_runtimes,
+            app.clone(),
+            resolved.project_root.clone(),
+            session_context.session_dir.clone(),
+            &resolved.session_id,
+        )?
+    };
+    if state.subscribed_session_ids()?.contains(&resolved.session_id) {
+        runtime.set_subscribed(true);
+    }
 
     let run_id = generate_id("channel-run");
     let wrapped = wrap_channel_prompt(&channel, &resolved.name, &activity.body);
@@ -920,7 +936,7 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
                 &resolved.session_id,
                 &channel.id,
                 &activity.id,
-                channel.default_project_id.as_deref(),
+                Some(&resolved.project_id),
             )?;
             let _ = send_telegram_chat_action(&connection, &channel, TELEGRAM_CHAT_ACTION_TYPING);
             Ok(())
@@ -930,6 +946,23 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
             mark_channel_activity_status(&connection, &activity.id, ACTIVITY_STATUS_FAILED, Some(&error))?;
             Err(error)
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelDispatchPlan {
+    DispatchNow,
+    WaitForActiveRun,
+    RecoverStaleRunState,
+}
+
+fn resolve_channel_dispatch_plan(session_marked_running: bool, runtime_has_active_prompt: bool) -> ChannelDispatchPlan {
+    if runtime_has_active_prompt {
+        ChannelDispatchPlan::WaitForActiveRun
+    } else if session_marked_running {
+        ChannelDispatchPlan::RecoverStaleRunState
+    } else {
+        ChannelDispatchPlan::DispatchNow
     }
 }
 
@@ -1627,4 +1660,25 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_channel_dispatch_plan, ChannelDispatchPlan};
+
+    #[test]
+    fn dispatches_immediately_when_session_is_idle() {
+        assert_eq!(resolve_channel_dispatch_plan(false, false), ChannelDispatchPlan::DispatchNow);
+    }
+
+    #[test]
+    fn waits_when_supervisor_runtime_is_still_processing() {
+        assert_eq!(resolve_channel_dispatch_plan(true, true), ChannelDispatchPlan::WaitForActiveRun);
+        assert_eq!(resolve_channel_dispatch_plan(false, true), ChannelDispatchPlan::WaitForActiveRun);
+    }
+
+    #[test]
+    fn clears_stale_running_state_before_reusing_idle_session() {
+        assert_eq!(resolve_channel_dispatch_plan(true, false), ChannelDispatchPlan::RecoverStaleRunState);
+    }
 }
