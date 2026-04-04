@@ -27,8 +27,8 @@ use crate::{
         TaskUpsertInput,
     },
     services::{
-        agents, authorization, command_authorization, database, messages, pi_sessions,
-        policies, project_settings, projects, role_runtime, roles, task_attachments,
+        agents, authorization, command_authorization, database, messages, pi_sessions, policies,
+        project_settings, projects, reminders, role_runtime, roles, task_attachments,
         task_file_references, task_runtime, tasks, workflows,
     },
 };
@@ -117,6 +117,7 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "get_unread_mail",
     "mark_mail_read",
     "send_mail",
+    "remind_me",
     "list_task_repositories",
     "list_task_file_references",
     "add_task_file_reference",
@@ -865,8 +866,12 @@ fn invoke_bridge_command(
                 .unwrap_or(false);
             let project_id = payload.get("projectId").and_then(Value::as_str);
             command_authorization::require_permission(connection, authorization, "agents.read")?;
-            serde_json::to_value(agents::list_agents_for_project(connection, include_archived, project_id)?)
-                .map_err(|error| format!("Unable to serialize agents: {error}"))
+            serde_json::to_value(agents::list_agents_for_project(
+                connection,
+                include_archived,
+                project_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize agents: {error}"))
         }
         "get_agent" => {
             let agent_id = require_string(&payload, "agentId")?;
@@ -1100,9 +1105,13 @@ fn invoke_bridge_command(
         }
         "send_mail" => {
             command_authorization::require_permission(connection, authorization, "tasks.comment")?;
-            let input: SendMailboxMessageInput =
-                serde_json::from_value(payload.get("input").cloned().unwrap_or_else(|| payload.clone()))
-                    .map_err(|error| format!("Unable to parse mailbox send input: {error}"))?;
+            let input: SendMailboxMessageInput = serde_json::from_value(
+                payload
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| payload.clone()),
+            )
+            .map_err(|error| format!("Unable to parse mailbox send input: {error}"))?;
             let app = config
                 .clone_app_handle()
                 .ok_or_else(|| "Orchestra app handle unavailable for mailbox send".to_string())?;
@@ -1115,12 +1124,34 @@ fn invoke_bridge_command(
                 session_id,
                 input,
             )?;
-            let _ = crate::services::app_events::emit_inbox_change(&app, "mailbox.sent", [message.delivery_id.clone()]);
+            let _ = crate::services::app_events::emit_inbox_change(
+                &app,
+                "mailbox.sent",
+                [message.delivery_id.clone()],
+            );
             if let Some(task_id) = message.task_id.clone() {
-                let _ = crate::services::app_events::emit_task_change(&app, "mailbox.sent", [task_id]);
+                let _ =
+                    crate::services::app_events::emit_task_change(&app, "mailbox.sent", [task_id]);
             }
             serde_json::to_value(message)
                 .map_err(|error| format!("Unable to serialize mailbox message: {error}"))
+        }
+        "remind_me" => {
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let input: reminders::RemindMeInput = serde_json::from_value(
+                payload
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| payload.clone()),
+            )
+            .map_err(|error| format!("Unable to parse remind_me input: {error}"))?;
+            serde_json::to_value(reminders::schedule_reminder_for_authorization(
+                connection,
+                authorization,
+                session_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize reminder: {error}"))
         }
         "list_task_repositories" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -1133,9 +1164,17 @@ fn invoke_bridge_command(
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let task = tasks::get_task_context(connection, &task_id)?;
-            let task_workspace_cwd = task.active_lane_assignment
+            let task_workspace_cwd = task
+                .active_lane_assignment
                 .as_ref()
-                .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, assignment, &task_id, &task.project_id))
+                .map(|assignment| {
+                    task_runtime::resolve_assignment_workspace_cwd(
+                        connection,
+                        assignment,
+                        &task_id,
+                        &task.project_id,
+                    )
+                })
                 .transpose()?
                 .flatten();
             serde_json::to_value(task_file_references::load_task_file_references(
@@ -1783,7 +1822,10 @@ mod tests {
             )
             .expect("create_task should honor the provided project id");
 
-            assert_eq!(created.get("projectId").and_then(Value::as_str), Some("project-2"));
+            assert_eq!(
+                created.get("projectId").and_then(Value::as_str),
+                Some("project-2")
+            );
 
             let scoped_tasks = invoke_bridge_command(
                 &config,
@@ -1801,7 +1843,10 @@ mod tests {
             .cloned()
             .expect("task list should serialize as an array");
             assert_eq!(scoped_tasks.len(), 1);
-            assert_eq!(scoped_tasks[0].get("projectId").and_then(Value::as_str), Some("project-2"));
+            assert_eq!(
+                scoped_tasks[0].get("projectId").and_then(Value::as_str),
+                Some("project-2")
+            );
 
             let orchestra_tasks = invoke_bridge_command(
                 &config,
@@ -1876,7 +1921,10 @@ mod tests {
             json!({ "projectId": project.id }),
         )
         .expect("get_project should succeed");
-        assert_eq!(project_detail.get("id").and_then(Value::as_str), Some(project.id.as_str()));
+        assert_eq!(
+            project_detail.get("id").and_then(Value::as_str),
+            Some(project.id.as_str())
+        );
         assert!(project_detail
             .get("repositories")
             .and_then(Value::as_array)
@@ -1914,8 +1962,14 @@ mod tests {
             json!({ "repositoryId": repository.id }),
         )
         .expect("get_repository should succeed");
-        assert_eq!(repository_detail.get("id").and_then(Value::as_str), Some(repository.id.as_str()));
-        assert_eq!(repository_detail.get("projectId").and_then(Value::as_str), Some(project.id.as_str()));
+        assert_eq!(
+            repository_detail.get("id").and_then(Value::as_str),
+            Some(repository.id.as_str())
+        );
+        assert_eq!(
+            repository_detail.get("projectId").and_then(Value::as_str),
+            Some(project.id.as_str())
+        );
     }
 
     #[test]
@@ -1975,6 +2029,70 @@ mod tests {
         )
         .expect_err("bridge call should be denied");
         assert!(error.contains("roles.read"));
+    }
+
+    #[test]
+    fn remind_me_schedules_a_worker_reminder_through_bridge() {
+        let mut connection = open_test_connection("bridge-remind-me");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reminder Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.read".into()],
+            },
+        )
+        .expect("agent should create");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', ?1, 'idle', 'session-remind', '/tmp/remind', NULL, NULL, NULL, ?2, ?2)",
+                params![agent.id.as_str(), now.as_str()],
+            )
+            .expect("runtime state should insert");
+
+        let config = dummy_bridge_config("bridge-remind-me");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+
+        let reminder = invoke_bridge_command(
+            &config,
+            &connection,
+            "remind_me",
+            Some(&authorization),
+            Some("session-remind"),
+            json!({ "message": "check status", "delaySeconds": 5 }),
+        )
+        .expect("reminder should schedule through bridge");
+
+        assert_eq!(
+            reminder.get("actorType").and_then(Value::as_str),
+            Some("agent")
+        );
+        assert_eq!(
+            reminder.get("sessionId").and_then(Value::as_str),
+            Some("session-remind")
+        );
+        assert_eq!(
+            reminder.get("message").and_then(Value::as_str),
+            Some("check status")
+        );
+        let stored_count = connection
+            .query_row("SELECT COUNT(*) FROM worker_reminders", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("reminder count should query");
+        assert_eq!(stored_count, 1);
     }
 
     #[test]

@@ -2,7 +2,13 @@ use std::{thread, time::Duration};
 
 use tauri::{AppHandle, Manager};
 
-use crate::{services::{agent_dispatch, app_events, database, pi_sessions, role_dispatch, role_runtime, task_runtime}, state::AppState};
+use crate::{
+    services::{
+        agent_dispatch, app_events, database, pi_sessions, reminders, role_dispatch, role_runtime,
+        task_runtime,
+    },
+    state::AppState,
+};
 
 const DISPATCHER_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -36,7 +42,11 @@ pub fn run_dispatcher_tick(app: AppHandle) -> Result<(), String> {
 }
 
 fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), String> {
-    state.log("info", "dispatcher.tick.started", "Starting dispatcher tick");
+    state.log(
+        "info",
+        "dispatcher.tick.started",
+        "Starting dispatcher tick",
+    );
     let context = pi_sessions::detect_session_context(None)?;
 
     let agent_dispatches = agent_dispatch::dispatch_all_agent_queues(
@@ -65,7 +75,8 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
         )?;
         let activated = task_runtime::activate_queued_role_assignments(&connection)?;
         for assignment in activated {
-            let assignment_session_dir = if let Some(session_id) = assignment.session_id.as_deref() {
+            let assignment_session_dir = if let Some(session_id) = assignment.session_id.as_deref()
+            {
                 pi_sessions::find_session_context_for_session(session_id)
                     .map(|resolved| resolved.session_dir)
                     .unwrap_or_else(|_| context.session_dir.clone())
@@ -95,13 +106,14 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
     }
 
     let whip_results = process_task_whips(app.clone(), state)?;
+    let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
 
     state.log(
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} whip actions",
-            agent_dispatches, activated_roles, whip_results
+            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} whip actions, {} reminder actions",
+            agent_dispatches, activated_roles, whip_results, reminder_results
         ),
     );
     Ok(())
@@ -116,7 +128,9 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
     for candidate in candidates {
         let context = pi_sessions::session_context_for_project_id(&candidate.project_id)?;
         let mut connection = database::open_connection()?;
-        let Some(candidate) = task_runtime::refresh_task_whip_candidate(&connection, &candidate.assignment_id)? else {
+        let Some(candidate) =
+            task_runtime::refresh_task_whip_candidate(&connection, &candidate.assignment_id)?
+        else {
             state.log(
                 "info",
                 "task.whip.skipped",
@@ -164,14 +178,18 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
                 &candidate.worker_id,
             )?;
         } else {
-            let role_instance_id = candidate
-                .role_instance_id
-                .as_deref()
-                .ok_or_else(|| format!("Role whip candidate {} is missing a role instance", candidate.assignment_id))?;
-            let runtime_cwd = candidate
-                .runtime_cwd
-                .as_deref()
-                .ok_or_else(|| format!("Role whip candidate {} is missing a runtime cwd", candidate.assignment_id))?;
+            let role_instance_id = candidate.role_instance_id.as_deref().ok_or_else(|| {
+                format!(
+                    "Role whip candidate {} is missing a role instance",
+                    candidate.assignment_id
+                )
+            })?;
+            let runtime_cwd = candidate.runtime_cwd.as_deref().ok_or_else(|| {
+                format!(
+                    "Role whip candidate {} is missing a runtime cwd",
+                    candidate.assignment_id
+                )
+            })?;
             role_dispatch::mark_role_instance_running(&connection, role_instance_id)?;
             let runtime = crate::services::live_sessions::ensure_runtime(
                 &state.session_runtimes,
@@ -183,9 +201,16 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             runtime.set_subscribed(true);
             let run_id = crate::state::generate_id("task-whip-run");
             state.begin_session_run(&candidate.session_id, &run_id)?;
-            match runtime.start_run(&run_id, &task_runtime::build_task_whip_message(&candidate.task_id)) {
+            match runtime.start_run(
+                &run_id,
+                &task_runtime::build_task_whip_message(&candidate.task_id),
+            ) {
                 Ok(()) => {
-                    task_runtime::record_task_whip_sent(&connection, &candidate.assignment_id, candidate.whip_count)?;
+                    task_runtime::record_task_whip_sent(
+                        &connection,
+                        &candidate.assignment_id,
+                        candidate.whip_count,
+                    )?;
                 }
                 Err(error) => {
                     let _ = state.end_session_run(&candidate.session_id, &run_id);
@@ -205,7 +230,8 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             ),
         );
         let _ = app_events::emit_task_change(&app, "task.whip.sent", [candidate.task_id.clone()]);
-        let _ = app_events::emit_session_change(&app, "task.whip.sent", [candidate.session_id.clone()]);
+        let _ =
+            app_events::emit_session_change(&app, "task.whip.sent", [candidate.session_id.clone()]);
         actions += 1;
     }
 

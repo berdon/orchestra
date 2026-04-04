@@ -10,8 +10,8 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_runtime, agents, live_sessions, messages, pi_sessions, project_settings,
-        projects, role_dispatch, role_runtime, task_repositories, tasks, workflows,
+        agent_runtime, agents, live_sessions, messages, pi_sessions, project_settings, projects,
+        role_dispatch, role_runtime, task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -484,7 +484,9 @@ fn auto_dispatchable_unblocked_dependents(
         .query_map([blocker_task_id], |row| row.get::<_, String>(0))
         .map_err(|error| format!("Unable to query dependent tasks for {blocker_task_id}: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read dependent tasks for {blocker_task_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to read dependent tasks for {blocker_task_id}: {error}")
+        })?;
 
     let mut ready = Vec::new();
     for dependent_task_id in dependent_task_ids {
@@ -798,7 +800,10 @@ fn resolve_lane_workspace_cwd(
                 lane.name
             )
         })?;
-        return Ok(task_repositories::task_workspace_root(runtime_cwd, &task.id));
+        return Ok(task_repositories::task_workspace_root(
+            runtime_cwd,
+            &task.id,
+        ));
     }
 
     let shared_root = pi_sessions::session_context_for_project_id(&task.project_id)
@@ -837,7 +842,10 @@ pub fn resolve_assignment_workspace_cwd(
         })?;
 
     if lane_uses_separate_worktree(&lane) {
-        return Ok(Some(task_repositories::task_workspace_root(runtime_cwd, task_id)));
+        return Ok(Some(task_repositories::task_workspace_root(
+            runtime_cwd,
+            task_id,
+        )));
     }
 
     let shared_workspace_root = pi_sessions::session_context_for_project_id(project_id)
@@ -849,7 +857,10 @@ pub fn resolve_assignment_workspace_cwd(
     )))
 }
 
-pub fn ensure_task_repository_workspaces(task: &TaskDetail, task_workspace_root: &str) -> Result<(), String> {
+pub fn ensure_task_repository_workspaces(
+    task: &TaskDetail,
+    task_workspace_root: &str,
+) -> Result<(), String> {
     if task.task_repositories.is_empty() {
         return Ok(());
     }
@@ -990,7 +1001,9 @@ fn start_assignment_prompt(
     assignment: &TaskLaneAssignment,
     prompt: &str,
 ) -> Result<(), String> {
-    let Some((session_id, runtime)) = ensure_assignment_runtime(app, state, session_dir, assignment)? else {
+    let Some((session_id, runtime)) =
+        ensure_assignment_runtime(app, state, session_dir, assignment)?
+    else {
         return Ok(());
     };
 
@@ -1013,7 +1026,9 @@ fn start_assignment_delivery(
     delivery_type: &str,
     message: &str,
 ) -> Result<(), String> {
-    let Some((_session_id, runtime)) = ensure_assignment_runtime(app, state, session_dir, assignment)? else {
+    let Some((_session_id, runtime)) =
+        ensure_assignment_runtime(app, state, session_dir, assignment)?
+    else {
         return Ok(());
     };
 
@@ -1260,7 +1275,13 @@ fn dispatch_role_lane(
     let queued_workspace_cwd = if lane_uses_separate_worktree(lane) {
         None
     } else {
-        Some(resolve_lane_workspace_cwd(connection, project_root, task, lane, None)?)
+        Some(resolve_lane_workspace_cwd(
+            connection,
+            project_root,
+            task,
+            lane,
+            None,
+        )?)
     };
     let prompt = build_lane_prompt(
         connection,
@@ -1381,7 +1402,13 @@ fn dispatch_agent_lane(
         .runtime_cwd
         .clone()
         .unwrap_or_else(|| project_root.display().to_string());
-    let task_workspace_cwd = resolve_lane_workspace_cwd(connection, project_root, task, lane, Some(runtime_cwd.as_str()))?;
+    let task_workspace_cwd = resolve_lane_workspace_cwd(
+        connection,
+        project_root,
+        task,
+        lane,
+        Some(runtime_cwd.as_str()),
+    )?;
     ensure_task_repository_workspaces(task, &task_workspace_cwd)?;
     let session_id = if let Some(existing_session_id) = runtime_state.main_session_id.clone() {
         if pi_sessions::find_session_context_for_session(&existing_session_id).is_ok() {
@@ -1664,7 +1691,12 @@ pub fn send_lane_back_for_work(
             "#,
             params![assignment.id, ASSIGNMENT_STATUS_ACTIVE, now],
         )
-        .map_err(|error| format!("Unable to reactivate lane assignment {}: {error}", assignment.id))?;
+        .map_err(|error| {
+            format!(
+                "Unable to reactivate lane assignment {}: {error}",
+                assignment.id
+            )
+        })?;
 
     connection
         .execute(
@@ -1707,7 +1739,12 @@ fn mark_assignment_awaiting_user_approval(
                 updated_at = ?4
             WHERE id = ?1
             "#,
-            params![assignment_id, ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL, notes, now],
+            params![
+                assignment_id,
+                ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL,
+                notes,
+                now
+            ],
         )
         .map_err(|error| {
             format!(
@@ -1763,18 +1800,29 @@ fn finalize_worker_assignment(
             session_dir,
             instance_id,
             release_outcome,
-            if outcome == "failure" { notes.clone() } else { None },
+            if outcome == "failure" {
+                notes.clone()
+            } else {
+                None
+            },
         )?;
     }
 
     if assignment.worker_type == "agent" {
         if let Some(agent_id) = assignment.worker_id.as_deref() {
-            if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(connection, &task.project_id, agent_id)? {
+            if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(
+                connection,
+                &task.project_id,
+                agent_id,
+            )? {
                 if let Some(queue_entry_id) = runtime_state.current_queue_entry_id.as_deref() {
                     if outcome == "failure" {
                         agent_runtime::mark_agent_queue_entry_failed(connection, queue_entry_id)?;
                     } else {
-                        agent_runtime::mark_agent_queue_entry_completed(connection, queue_entry_id)?;
+                        agent_runtime::mark_agent_queue_entry_completed(
+                            connection,
+                            queue_entry_id,
+                        )?;
                     }
                 }
                 let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
@@ -1784,8 +1832,16 @@ fn finalize_worker_assignment(
                     assignment.session_id.as_deref(),
                     assignment.runtime_cwd.as_deref(),
                     None,
-                    if outcome == "failure" { "needs_attention" } else { "idle" },
-                    if outcome == "failure" { notes.as_deref() } else { None },
+                    if outcome == "failure" {
+                        "needs_attention"
+                    } else {
+                        "idle"
+                    },
+                    if outcome == "failure" {
+                        notes.as_deref()
+                    } else {
+                        None
+                    },
                 )?;
             }
         }
@@ -2252,7 +2308,9 @@ fn get_agent_by_slug(
     if agents::agent_visible_in_project(&agent, project_id) {
         Ok(agent)
     } else {
-        Err(format!("Agent {agent_slug} is not available in project {project_id}"))
+        Err(format!(
+            "Agent {agent_slug} is not available in project {project_id}"
+        ))
     }
 }
 
@@ -2300,7 +2358,13 @@ fn apply_agent_session_defaults(
         .unwrap_or(session_dir);
 
     if let (Some(provider), Some(model)) = (agent.provider.as_deref(), agent.model.as_deref()) {
-        let _ = pi_sessions::set_session_model(session_project_root, session_dir, session_id, provider, model)?;
+        let _ = pi_sessions::set_session_model(
+            session_project_root,
+            session_dir,
+            session_id,
+            provider,
+            model,
+        )?;
     }
     let _ = pi_sessions::set_session_thinking_level(
         session_project_root,
@@ -2336,8 +2400,9 @@ fn orchestra_working_rules_block() -> String {
         "11. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
         "12. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
         "13. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
-        "14. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-        "15. When the lane is finished, explicitly transition it with the correct completion tool.",
+        "14. If you need to come back to something after a short wait, external delay, or timed checkpoint, call remind_me with a concrete message and a delay in seconds or minutes so Orchestra can re-prompt you later.",
+        "15. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+        "16. When the lane is finished, explicitly transition it with the correct completion tool.",
     ]
     .join("\n")
 }
@@ -2358,6 +2423,7 @@ fn orchestra_tool_help_block() -> String {
         "- get_unread_mail(taskId?): Call this tool whenever you resume work, when Orchestra tells you to check mail, and again immediately before any completion tool. With a taskId it includes both the active assignment mailbox and any direct unread agent mail for the current worker; without taskId it returns direct unread mail for the current worker session.",
         "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail, call this tool to acknowledge it. If deliveryIds is omitted, it marks all currently visible unread mail for the worker session as read.",
         "- send_mail(projectId?, taskId?, recipientType, recipientId?, body, priority?): Call this tool to send mailbox messages to the user, another agent, or the active assignment mailbox for a task. Use recipientType user, agent, or active_assignment. Set priority to interrupt when the recipient should be steered immediately.",
+        "- remind_me(message, delaySeconds? | delayMinutes?): Call this tool to schedule a message back to yourself after a short delay. Use it when you need Orchestra to nudge you after waiting, polling, or giving another process time to finish.",
         "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
         "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
         "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
@@ -2424,7 +2490,10 @@ fn render_recent_task_comments(comments: &[TaskComment], limit: usize) -> String
         .collect::<std::collections::HashSet<_>>();
     let mut rendered = Vec::new();
 
-    for comment in comments.iter().filter(|comment| recent_ids.contains(comment.id.as_str())) {
+    for comment in comments
+        .iter()
+        .filter(|comment| recent_ids.contains(comment.id.as_str()))
+    {
         if comment.parent_comment_id.is_some() {
             continue;
         }
@@ -2441,7 +2510,10 @@ fn render_recent_task_comments(comments: &[TaskComment], limit: usize) -> String
                 }
             })
             .unwrap_or_default();
-        rendered.push(format!("- {}{}: {}", comment.author, anchor_label, comment.message));
+        rendered.push(format!(
+            "- {}{}: {}",
+            comment.author, anchor_label, comment.message
+        ));
         if let Some(selected_text) = comment.selected_text.as_deref() {
             rendered.push(format!("  ↳ selected text: {}", selected_text));
         }
@@ -2462,7 +2534,10 @@ fn render_recent_task_comments(comments: &[TaskComment], limit: usize) -> String
                     }
                 })
                 .unwrap_or_default();
-            rendered.push(format!("  ↳ {}{}: {}", reply.author, reply_anchor_label, reply.message));
+            rendered.push(format!(
+                "  ↳ {}{}: {}",
+                reply.author, reply_anchor_label, reply.message
+            ));
             if let Some(selected_text) = reply.selected_text.as_deref() {
                 rendered.push(format!("    ↳ selected text: {}", selected_text));
             }
@@ -2556,8 +2631,12 @@ fn build_lane_prompt(
         task.task_repositories
             .iter()
             .map(|repository| {
-                let workspace_path = task_workspace_cwd
-                    .map(|workspace_root| task_repositories::task_repository_worktree_path(workspace_root, &repository.repository_slug));
+                let workspace_path = task_workspace_cwd.map(|workspace_root| {
+                    task_repositories::task_repository_worktree_path(
+                        workspace_root,
+                        &repository.repository_slug,
+                    )
+                });
                 match workspace_path.as_deref() {
                     Some(path) => format!(
                         "- {} ({}) available in this session at {}",
@@ -2675,7 +2754,10 @@ fn build_lane_prompt(
             "{WORKER.CONTEXT}",
             build_worker_context_block(worker_prompt),
         ),
-        ("{RUNTIME.CWD}", task_workspace_cwd.unwrap_or("").to_string()),
+        (
+            "{RUNTIME.CWD}",
+            task_workspace_cwd.unwrap_or("").to_string(),
+        ),
         ("{ORCHESTRA.WORKING_RULES}", orchestra_working_rules_block()),
         ("{ORCHESTRA.TOOL_HELP}", orchestra_tool_help_block()),
         (
@@ -2688,7 +2770,9 @@ fn build_lane_prompt(
         rendered = rendered.replace(token, &value);
     }
 
-    if lane.require_user_approval_on_success && matches!(lane.assigned_entity_type.as_str(), "agent" | "role") {
+    if lane.require_user_approval_on_success
+        && matches!(lane.assigned_entity_type.as_str(), "agent" | "role")
+    {
         rendered.push_str("\n\nThis lane requires user approval after you report success. When you call complete_lane_as_success, Orchestra will pause the task for human review on this same lane until the user either approves it or sends it back for more work.");
     }
 
@@ -3024,8 +3108,12 @@ mod tests {
             "- get_unread_task_comments(taskId): Call this tool whenever you resume work"
         ));
         assert!(prompt.contains("- mark_task_comments_read(taskId, commentIds?): After you read and incorporate unread task comments"));
-        assert!(prompt.contains("- get_unread_mail(taskId?): Call this tool whenever you resume work"));
-        assert!(prompt.contains("- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail"));
+        assert!(
+            prompt.contains("- get_unread_mail(taskId?): Call this tool whenever you resume work")
+        );
+        assert!(prompt.contains(
+            "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail"
+        ));
         assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
         assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
@@ -3033,8 +3121,7 @@ mod tests {
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
         assert!(prompt
             .contains("Immediately before any completion tool, call get_unread_task_comments"));
-        assert!(prompt
-            .contains("Immediately before any completion tool, call get_unread_mail"));
+        assert!(prompt.contains("Immediately before any completion tool, call get_unread_mail"));
         assert!(prompt.contains(
             "If any completion or transition step fails, add a task comment describing the failure"
         ));
@@ -3360,9 +3447,7 @@ mod tests {
         let role_repo_workspace = assignment
             .runtime_cwd
             .as_deref()
-            .map(|cwd| {
-                task_repositories::task_repository_worktree_path(cwd, "runtime-role")
-            })
+            .map(|cwd| task_repositories::task_repository_worktree_path(cwd, "runtime-role"))
             .expect("role runtime cwd should exist");
         assert!(Path::new(&role_repo_workspace).exists());
 
@@ -3462,7 +3547,10 @@ mod tests {
         let session_dir = project_root.parent().unwrap().join("sessions");
         let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
             .expect("role lane should dispatch");
-        let session_id = assignment.session_id.clone().expect("session id should exist");
+        let session_id = assignment
+            .session_id
+            .clone()
+            .expect("session id should exist");
 
         let awaiting_review = complete_lane_as_success(
             &mut connection,
@@ -3475,13 +3563,22 @@ mod tests {
         .expect("lane should pause for approval");
         assert_eq!(awaiting_review.status, "in_review");
         assert_eq!(awaiting_review.assignee_type, "user");
-        assert_eq!(awaiting_review.current_lane_id.as_deref(), Some("lane-implement"));
         assert_eq!(
-            awaiting_review.active_lane_assignment.as_ref().map(|entry| entry.status.as_str()),
+            awaiting_review.current_lane_id.as_deref(),
+            Some("lane-implement")
+        );
+        assert_eq!(
+            awaiting_review
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
             Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
         );
         assert_eq!(
-            awaiting_review.active_lane_assignment.as_ref().and_then(|entry| entry.session_id.as_deref()),
+            awaiting_review
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.session_id.as_deref()),
             Some(session_id.as_str())
         );
         assert_eq!(awaiting_review.lane_runs.len(), 1);
@@ -3490,8 +3587,12 @@ mod tests {
         let reactivated_assignment = send_lane_back_for_work(&connection, &task.id)
             .expect("lane should reactivate for rework");
         assert_eq!(reactivated_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
-        assert_eq!(reactivated_assignment.session_id.as_deref(), Some(session_id.as_str()));
-        let reactivated_task = tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(
+            reactivated_assignment.session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+        let reactivated_task =
+            tasks::get_task_context(&connection, &task.id).expect("task should reload");
         assert_eq!(reactivated_task.status, "in_progress");
         assert_eq!(reactivated_task.assignee_type, "role");
 
@@ -3505,17 +3606,16 @@ mod tests {
         )
         .expect("lane should pause for approval again");
         assert_eq!(
-            awaiting_review_again.active_lane_assignment.as_ref().map(|entry| entry.status.as_str()),
+            awaiting_review_again
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
             Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
         );
 
-        let approved = approve_pending_lane_completion(
-            &mut connection,
-            &project_root,
-            &session_dir,
-            &task.id,
-        )
-        .expect("approval should finish the lane");
+        let approved =
+            approve_pending_lane_completion(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("approval should finish the lane");
         assert_eq!(approved.status, "completed");
         assert!(approved.active_lane_assignment.is_none());
         assert_eq!(approved.lane_runs.len(), 1);
@@ -4200,10 +4300,8 @@ mod tests {
             &task_repositories::shared_task_workspaces_root(&root),
             &task.id,
         );
-        let agent_repo_workspace = task_repositories::task_repository_worktree_path(
-            &agent_workspace_cwd,
-            "runtime-agent",
-        );
+        let agent_repo_workspace =
+            task_repositories::task_repository_worktree_path(&agent_workspace_cwd, "runtime-agent");
         assert!(Path::new(&agent_repo_workspace).exists());
 
         let updated =
@@ -4519,4 +4617,3 @@ mod tests {
         assert!(agent_session.is_none());
     }
 }
-

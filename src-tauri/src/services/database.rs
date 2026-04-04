@@ -241,6 +241,25 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_agent_queue_session
                 ON agent_queue_entries(session_id);
 
+            CREATE TABLE IF NOT EXISTS worker_reminders (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                actor_type TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                task_id TEXT,
+                message TEXT NOT NULL,
+                due_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_reminders_due_at
+                ON worker_reminders(due_at ASC, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_worker_reminders_actor
+                ON worker_reminders(actor_type, actor_id, due_at ASC);
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
