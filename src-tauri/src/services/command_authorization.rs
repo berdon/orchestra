@@ -110,6 +110,18 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Change a session model",
         "sessions.model",
     ),
+    ("list_projects", "List Orchestra projects", "projects.read"),
+    ("get_project", "Get an Orchestra project", "projects.read"),
+    (
+        "list_repositories",
+        "List Orchestra repositories",
+        "projects.read",
+    ),
+    (
+        "get_repository",
+        "Get an Orchestra repository",
+        "projects.read",
+    ),
     ("list_tasks", "List tasks", "tasks.read"),
     ("get_task", "Get a task", "tasks.read"),
     (

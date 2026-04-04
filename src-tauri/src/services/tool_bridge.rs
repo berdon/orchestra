@@ -28,7 +28,7 @@ use crate::{
     },
     services::{
         agents, authorization, command_authorization, database, messages, pi_sessions,
-        policies, project_settings, role_runtime, roles, task_attachments,
+        policies, project_settings, projects, role_runtime, roles, task_attachments,
         task_file_references, task_runtime, tasks, workflows,
     },
 };
@@ -104,6 +104,10 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_role_operations",
     "get_role_operations",
     "enqueue_role_work",
+    "list_projects",
+    "get_project",
+    "list_repositories",
+    "get_repository",
     "list_tasks",
     "get_task",
     "get_task_context",
@@ -969,6 +973,32 @@ fn invoke_bridge_command(
             serde_json::to_value(role_runtime::enqueue_role_work(&mut writable, input)?)
                 .map_err(|error| format!("Unable to serialize role queue entry: {error}"))
         }
+        "list_projects" => {
+            command_authorization::require_permission(connection, authorization, "projects.read")?;
+            serde_json::to_value(projects::list_projects(connection)?)
+                .map_err(|error| format!("Unable to serialize projects: {error}"))
+        }
+        "get_project" => {
+            let project_id = require_string(&payload, "projectId")?;
+            command_authorization::require_permission(connection, authorization, "projects.read")?;
+            serde_json::to_value(projects::get_project(connection, &project_id)?)
+                .map_err(|error| format!("Unable to serialize project: {error}"))
+        }
+        "list_repositories" => {
+            let project_id = payload
+                .get("projectId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty());
+            command_authorization::require_permission(connection, authorization, "projects.read")?;
+            serde_json::to_value(projects::list_repositories(connection, project_id)?)
+                .map_err(|error| format!("Unable to serialize repositories: {error}"))
+        }
+        "get_repository" => {
+            let repository_id = require_string(&payload, "repositoryId")?;
+            command_authorization::require_permission(connection, authorization, "projects.read")?;
+            serde_json::to_value(projects::get_repository(connection, &repository_id)?)
+                .map_err(|error| format!("Unable to serialize repository: {error}"))
+        }
         "list_tasks" => {
             let include_archived = payload
                 .get("includeArchived")
@@ -1793,6 +1823,102 @@ mod tests {
             .expect("task list should serialize as an array");
             assert!(orchestra_tasks.is_empty());
         });
+    }
+
+    #[test]
+    fn project_and_repository_commands_round_trip_through_bridge() {
+        let mut connection = open_test_connection("tool-bridge-projects");
+        let project = projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: "Bridge Project".into(),
+                description: Some("Project bridge test".into()),
+            },
+        )
+        .expect("project should create");
+        let repository = projects::create_repository(
+            &connection,
+            &project.id,
+            crate::models::RepositoryUpsertInput {
+                name: "Bridge Repo".into(),
+                mode: Some("existing".into()),
+                repository_path: Some("/tmp/bridge-repo".into()),
+                default_branch: Some("main".into()),
+            },
+        )
+        .expect("repository should create");
+
+        let config = dummy_bridge_config("projects");
+        let projects_result = invoke_bridge_command(
+            &config,
+            &connection,
+            "list_projects",
+            Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            }),
+            None,
+            json!({}),
+        )
+        .expect("list_projects should succeed");
+        assert!(projects_result
+            .as_array()
+            .expect("projects should serialize as an array")
+            .iter()
+            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(project.id.as_str())));
+
+        let project_detail = invoke_bridge_command(
+            &config,
+            &connection,
+            "get_project",
+            Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            }),
+            None,
+            json!({ "projectId": project.id }),
+        )
+        .expect("get_project should succeed");
+        assert_eq!(project_detail.get("id").and_then(Value::as_str), Some(project.id.as_str()));
+        assert!(project_detail
+            .get("repositories")
+            .and_then(Value::as_array)
+            .expect("project repositories should serialize as an array")
+            .iter()
+            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(repository.id.as_str())));
+
+        let repositories = invoke_bridge_command(
+            &config,
+            &connection,
+            "list_repositories",
+            Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            }),
+            None,
+            json!({ "projectId": project.id }),
+        )
+        .expect("list_repositories should succeed");
+        assert!(repositories
+            .as_array()
+            .expect("repositories should serialize as an array")
+            .iter()
+            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(repository.id.as_str())));
+
+        let repository_detail = invoke_bridge_command(
+            &config,
+            &connection,
+            "get_repository",
+            Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            }),
+            None,
+            json!({ "repositoryId": repository.id }),
+        )
+        .expect("get_repository should succeed");
+        assert_eq!(repository_detail.get("id").and_then(Value::as_str), Some(repository.id.as_str()));
+        assert_eq!(repository_detail.get("projectId").and_then(Value::as_str), Some(project.id.as_str()));
     }
 
     #[test]

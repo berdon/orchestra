@@ -87,6 +87,12 @@ pub fn list_repositories(project_id: Option<String>) -> Result<Vec<RepositoryRec
 }
 
 #[tauri::command]
+pub fn get_repository(repository_id: String) -> Result<RepositoryRecord, String> {
+    let connection = database::open_connection()?;
+    projects::get_repository(&connection, &repository_id)
+}
+
+#[tauri::command]
 pub fn create_repository(
     state: State<'_, AppState>,
     project_id: String,
