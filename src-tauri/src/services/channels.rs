@@ -25,7 +25,7 @@ use crate::{
     services::{
         agent_dispatch, database,
         live_sessions::{ensure_runtime, maybe_runtime},
-        pi_sessions, projects,
+        pi_sessions, projects, tasks,
     },
     state::{generate_id, AppState},
 };
@@ -43,6 +43,7 @@ const MESSAGE_KIND_COMMAND: &str = "command";
 const MESSAGE_KIND_RESPONSE: &str = "response";
 const MESSAGE_KIND_STATUS: &str = "status";
 const TELEGRAM_CHAT_ACTION_TYPING: &str = "typing";
+const TELEGRAM_CALLBACK_PROJECT_PREFIX: &str = "project:";
 const ACTIVITY_STATUS_QUEUED: &str = "queued";
 const ACTIVITY_STATUS_DISPATCHED: &str = "dispatched";
 const ACTIVITY_STATUS_COMPLETED: &str = "completed";
@@ -151,9 +152,7 @@ pub fn list_channels(connection: &Connection) -> Result<Vec<ChannelSummary>, Str
         .map_err(|error| format!("Unable to prepare channel list query: {error}"))?;
 
     let rows = statement
-        .query_map([], |row| {
-            Ok(read_channel_record(row, 0, Some(7))?)
-        })
+        .query_map([], |row| Ok(read_channel_record(row, 0, Some(7))?))
         .map_err(|error| format!("Unable to query channels: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -201,7 +200,10 @@ pub fn list_channel_activity(
         .map_err(|error| format!("Unable to read channel activity: {error}"))
 }
 
-pub fn create_channel(connection: &Connection, input: ChannelUpsertInput) -> Result<ChannelDetail, String> {
+pub fn create_channel(
+    connection: &Connection,
+    input: ChannelUpsertInput,
+) -> Result<ChannelDetail, String> {
     let normalized = normalize_channel_input(connection, input, None)?;
     let now = now_iso();
     let id = format!("channel-{}", Uuid::new_v4().simple());
@@ -355,10 +357,23 @@ pub fn list_telegram_chat_candidates(
         let candidate = TelegramChatCandidate {
             chat_id: chat_id.clone(),
             title,
-            chat_type: chat.get("type").and_then(Value::as_str).unwrap_or("private").to_string(),
-            username: chat.get("username").and_then(Value::as_str).map(ToOwned::to_owned),
-            last_message_text: message.get("text").and_then(Value::as_str).map(ToOwned::to_owned),
-            last_message_at: message.get("date").and_then(Value::as_i64).map(unix_timestamp_iso),
+            chat_type: chat
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("private")
+                .to_string(),
+            username: chat
+                .get("username")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            last_message_text: message
+                .get("text")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            last_message_at: message
+                .get("date")
+                .and_then(Value::as_i64)
+                .map(unix_timestamp_iso),
         };
         by_chat_id.insert(chat_id, candidate);
     }
@@ -422,7 +437,12 @@ pub fn deliver_channel_response_for_run(
         .ok_or_else(|| format!("Channel {} is missing a Telegram chat id", channel.id))?;
     let trimmed = response_text.trim();
     if trimmed.is_empty() {
-        mark_channel_activity_status(&connection, &origin.channel_activity_id, ACTIVITY_STATUS_COMPLETED, None)?;
+        mark_channel_activity_status(
+            &connection,
+            &origin.channel_activity_id,
+            ACTIVITY_STATUS_COMPLETED,
+            None,
+        )?;
         return Ok(());
     }
 
@@ -446,20 +466,25 @@ pub fn deliver_channel_response_for_run(
         ACTIVITY_STATUS_COMPLETED,
         None,
     )?;
-    mark_channel_activity_status(&connection, &origin.channel_activity_id, ACTIVITY_STATUS_COMPLETED, None)?;
+    mark_channel_activity_status(
+        &connection,
+        &origin.channel_activity_id,
+        ACTIVITY_STATUS_COMPLETED,
+        None,
+    )?;
     state.log(
         "info",
         "channels.telegram.reply",
-        &format!("Delivered channel response for run {} via {}", run_id, channel.name),
+        &format!(
+            "Delivered channel response for run {} via {}",
+            run_id, channel.name
+        ),
     );
     let _ = app;
     Ok(())
 }
 
-pub fn fail_channel_response_for_run(
-    run_id: &str,
-    error_message: &str,
-) -> Result<(), String> {
+pub fn fail_channel_response_for_run(run_id: &str, error_message: &str) -> Result<(), String> {
     let connection = database::open_connection()?;
     let Some(origin) = load_channel_run_origin(&connection, run_id)? else {
         return Ok(());
@@ -471,19 +496,39 @@ pub fn fail_channel_response_for_run(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| format!("Unable to query channel activity status for failed run {run_id}: {error}"))?;
-    if matches!(current_status.as_deref(), Some(ACTIVITY_STATUS_FAILED) | Some(ACTIVITY_STATUS_COMPLETED)) {
+        .map_err(|error| {
+            format!("Unable to query channel activity status for failed run {run_id}: {error}")
+        })?;
+    if matches!(
+        current_status.as_deref(),
+        Some(ACTIVITY_STATUS_FAILED) | Some(ACTIVITY_STATUS_COMPLETED)
+    ) {
         return Ok(());
     }
     let (channel, secrets) = load_channel(&connection, &origin.channel_id)?;
     let Some(telegram) = channel.config.telegram.clone() else {
-        return mark_channel_activity_status(&connection, &origin.channel_activity_id, ACTIVITY_STATUS_FAILED, Some(error_message));
+        return mark_channel_activity_status(
+            &connection,
+            &origin.channel_activity_id,
+            ACTIVITY_STATUS_FAILED,
+            Some(error_message),
+        );
     };
     let Some(token) = secrets.telegram.and_then(|entry| entry.bot_token) else {
-        return mark_channel_activity_status(&connection, &origin.channel_activity_id, ACTIVITY_STATUS_FAILED, Some(error_message));
+        return mark_channel_activity_status(
+            &connection,
+            &origin.channel_activity_id,
+            ACTIVITY_STATUS_FAILED,
+            Some(error_message),
+        );
     };
     let Some(chat_id) = telegram.chat_id.clone() else {
-        return mark_channel_activity_status(&connection, &origin.channel_activity_id, ACTIVITY_STATUS_FAILED, Some(error_message));
+        return mark_channel_activity_status(
+            &connection,
+            &origin.channel_activity_id,
+            ACTIVITY_STATUS_FAILED,
+            Some(error_message),
+        );
     };
 
     let body = format!("Supervisor run failed: {}", error_message);
@@ -506,7 +551,12 @@ pub fn fail_channel_response_for_run(
         ACTIVITY_STATUS_FAILED,
         Some(error_message),
     );
-    mark_channel_activity_status(&connection, &origin.channel_activity_id, ACTIVITY_STATUS_FAILED, Some(error_message))
+    mark_channel_activity_status(
+        &connection,
+        &origin.channel_activity_id,
+        ACTIVITY_STATUS_FAILED,
+        Some(error_message),
+    )
 }
 
 pub fn sync_channel_runtimes(app: AppHandle, state: &AppState) -> Result<(), String> {
@@ -517,7 +567,10 @@ pub fn sync_channel_runtimes(app: AppHandle, state: &AppState) -> Result<(), Str
         .collect::<Vec<_>>();
     drop(connection);
 
-    let desired_set = desired.iter().cloned().collect::<std::collections::HashSet<_>>();
+    let desired_set = desired
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let mut runtimes = state
         .channel_runtimes
         .lock()
@@ -572,7 +625,10 @@ fn run_channel_loop(app: AppHandle, channel_id: String, stop: Arc<AtomicBool>) {
         let result = (|| -> Result<(), String> {
             let connection = database::open_connection()?;
             let (channel, secrets) = load_channel(&connection, &channel_id)?;
-            if !channel.enabled || channel.status != CHANNEL_STATUS_READY || channel.kind != CHANNEL_KIND_TELEGRAM {
+            if !channel.enabled
+                || channel.status != CHANNEL_STATUS_READY
+                || channel.kind != CHANNEL_KIND_TELEGRAM
+            {
                 return Ok(());
             }
             let token = secrets
@@ -635,7 +691,12 @@ fn process_telegram_updates(
     } else {
         json!({ "timeout": 1, "limit": 20 })
     };
-    let response = telegram_api_post(token, telegram.api_base_url.as_deref(), "getUpdates", &payload)?;
+    let response = telegram_api_post(
+        token,
+        telegram.api_base_url.as_deref(),
+        "getUpdates",
+        &payload,
+    )?;
     let updates = response
         .get("result")
         .and_then(Value::as_array)
@@ -651,8 +712,24 @@ fn process_telegram_updates(
     for update in updates {
         newest_update_id = Some(std::cmp::max(
             newest_update_id.unwrap_or(i64::MIN),
-            update.get("update_id").and_then(Value::as_i64).unwrap_or(i64::MIN),
+            update
+                .get("update_id")
+                .and_then(Value::as_i64)
+                .unwrap_or(i64::MIN),
         ));
+
+        if let Some(callback_query) = update.get("callback_query") {
+            handle_telegram_callback_query(
+                app,
+                state,
+                &channel,
+                telegram,
+                expected_chat_id,
+                callback_query,
+            )?;
+            continue;
+        }
+
         let Some(message) = update.get("message") else {
             continue;
         };
@@ -664,12 +741,24 @@ fn process_telegram_updates(
             continue;
         }
         let external_message_id = message.get("message_id").map(value_to_string);
-        let body = message.get("text").and_then(Value::as_str).unwrap_or("").trim();
+        let body = message
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if body.is_empty() {
             continue;
         }
         if body.starts_with('/') {
-            handle_telegram_command(app, state, &channel, token, telegram, body, external_message_id.as_deref())?;
+            handle_telegram_command(
+                app,
+                state,
+                &channel,
+                token,
+                telegram,
+                body,
+                external_message_id.as_deref(),
+            )?;
         } else {
             queue_inbound_channel_message(
                 &connection,
@@ -721,36 +810,111 @@ fn handle_telegram_command(
         None,
     )?;
     let response = execute_telegram_command(app, state, channel, body)?;
-    let secrets = load_channel_secrets(&connection, &channel.id)?;
     let chat_id = telegram
         .chat_id
         .clone()
         .ok_or_else(|| format!("Channel {} is missing a Telegram chat id", channel.id))?;
-    let token = secrets
-        .telegram
-        .and_then(|entry| entry.bot_token)
-        .ok_or_else(|| format!("Channel {} is missing a Telegram bot token", channel.id))?;
-    telegram_api_post(
-        &token,
-        telegram.api_base_url.as_deref(),
-        "sendMessage",
-        &json!({ "chat_id": chat_id, "text": response }),
+    send_telegram_message_with_markup(
+        &connection,
+        channel,
+        MESSAGE_KIND_COMMAND,
+        &chat_id,
+        &response.text,
+        ACTIVITY_STATUS_COMPLETED,
+        None,
+        None,
+        response.reply_markup,
     )?;
+    let _ = token;
+    let _ = inbound;
+    Ok(())
+}
+
+fn handle_telegram_callback_query(
+    app: &AppHandle,
+    state: &AppState,
+    channel: &StoredChannelRecord,
+    telegram: &StoredTelegramConfig,
+    expected_chat_id: &str,
+    callback_query: &Value,
+) -> Result<(), String> {
+    let Some(callback_id) = callback_query
+        .get("id")
+        .map(value_to_string)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(message) = callback_query.get("message") else {
+        return Ok(());
+    };
+    let Some(chat) = message.get("chat") else {
+        return Ok(());
+    };
+    let chat_id = chat.get("id").map(value_to_string).unwrap_or_default();
+    if chat_id != expected_chat_id {
+        return Ok(());
+    }
+    let data = callback_query
+        .get("data")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    let connection = database::open_connection()?;
     insert_channel_activity(
         &connection,
         &channel.id,
-        DIRECTION_OUTBOUND,
+        DIRECTION_INBOUND,
         MESSAGE_KIND_COMMAND,
+        Some(&callback_id),
+        Some(&chat_id),
         None,
-        telegram.chat_id.as_deref(),
         None,
-        None,
-        &response,
+        data,
         ACTIVITY_STATUS_COMPLETED,
         None,
     )?;
-    let _ = inbound;
+    let response = execute_telegram_callback(app, state, channel, data)?;
+    answer_telegram_callback_query(&connection, channel, &callback_id, &response.text)?;
+    send_telegram_message_with_markup(
+        &connection,
+        channel,
+        MESSAGE_KIND_COMMAND,
+        &chat_id,
+        &response.text,
+        ACTIVITY_STATUS_COMPLETED,
+        None,
+        None,
+        response.reply_markup,
+    )?;
+    let _ = telegram;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct TelegramCommandResponse {
+    text: String,
+    reply_markup: Option<Value>,
+}
+
+impl TelegramCommandResponse {
+    fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            reply_markup: None,
+        }
+    }
+
+    fn with_reply_markup(text: impl Into<String>, reply_markup: Value) -> Self {
+        Self {
+            text: text.into(),
+            reply_markup: Some(reply_markup),
+        }
+    }
 }
 
 fn execute_telegram_command(
@@ -758,42 +922,77 @@ fn execute_telegram_command(
     state: &AppState,
     channel: &StoredChannelRecord,
     body: &str,
-) -> Result<String, String> {
+) -> Result<TelegramCommandResponse, String> {
     let trimmed = body.trim();
     let mut parts = trimmed.split_whitespace();
     let command = parts.next().unwrap_or("");
     let args = parts.collect::<Vec<_>>().join(" ");
     match command {
-        "/start" | "/help" => Ok(telegram_help_text(channel)),
-        "/status" => telegram_status_text(app, state, channel),
-        "/project" => telegram_project_text(channel, args.trim()),
-        "/model" => telegram_model_text(app, state, channel, args.trim()),
-        "/stop" => telegram_stop_text(state, channel),
+        "/start" | "/help" => Ok(TelegramCommandResponse::text(telegram_help_text(channel))),
+        "/status" => telegram_status_text(app, state, channel).map(TelegramCommandResponse::text),
+        "/projects" => telegram_projects_response(channel),
+        "/project" => {
+            telegram_project_text(channel, args.trim()).map(TelegramCommandResponse::text)
+        }
+        "/tasks" => telegram_tasks_text(channel, args.trim()).map(TelegramCommandResponse::text),
+        "/task" => telegram_task_text(channel, args.trim()).map(TelegramCommandResponse::text),
+        "/model" => {
+            telegram_model_text(app, state, channel, args.trim()).map(TelegramCommandResponse::text)
+        }
+        "/stop" => telegram_stop_text(state, channel).map(TelegramCommandResponse::text),
         "/resume" => {
             let resolved = ensure_channel_target_session(channel)?;
-            Ok(format!("Supervisor session ready: {}", resolved.session_id))
+            Ok(TelegramCommandResponse::text(format!(
+                "Supervisor session ready: {}",
+                resolved.session_id
+            )))
         }
-        _ => Ok("Unknown command. Use /help for available commands.".into()),
+        _ => Ok(TelegramCommandResponse::text(
+            "Unknown command. Use /help for available commands.",
+        )),
     }
+}
+
+fn execute_telegram_callback(
+    _app: &AppHandle,
+    _state: &AppState,
+    channel: &StoredChannelRecord,
+    data: &str,
+) -> Result<TelegramCommandResponse, String> {
+    if let Some(project_id) = data.strip_prefix(TELEGRAM_CALLBACK_PROJECT_PREFIX) {
+        return telegram_project_text(channel, project_id).map(TelegramCommandResponse::text);
+    }
+
+    Ok(TelegramCommandResponse::text("Unknown Telegram action."))
 }
 
 fn telegram_help_text(channel: &StoredChannelRecord) -> String {
     format!(
-        "{}\n\nPlain text messages are delivered to the supervisor.\n\nCommands:\n/help\n/status\n/project\n/project <slug>\n/model\n/model <provider>/<model>\n/stop\n/resume",
+        "{}\n\nPlain text messages are delivered to the supervisor.\n\nCommands:\n/help\n/status\n/projects\n/project\n/project <slug>\n/tasks\n/tasks <query>\n/task <task-number>\n/model\n/model <provider>/<model>\n/stop\n/resume",
         channel.name
     )
 }
 
-fn telegram_status_text(app: &AppHandle, state: &AppState, channel: &StoredChannelRecord) -> Result<String, String> {
+fn telegram_status_text(
+    app: &AppHandle,
+    state: &AppState,
+    channel: &StoredChannelRecord,
+) -> Result<String, String> {
     let resolved = ensure_channel_target_session(channel)?;
     let session_context = pi_sessions::find_session_context_for_session(&resolved.session_id)?;
     let connection = database::open_connection()?;
-    let session = pi_sessions::get_session(&session_context.session_dir, &resolved.session_id, false)?;
-    let model_state = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &resolved.session_id) {
-        runtime.get_model_state()?
-    } else {
-        pi_sessions::get_session_model_state(&resolved.project_root, &session_context.session_dir, &resolved.session_id)?
-    };
+    let session =
+        pi_sessions::get_session(&session_context.session_dir, &resolved.session_id, false)?;
+    let model_state =
+        if let Some(runtime) = maybe_runtime(&state.session_runtimes, &resolved.session_id) {
+            runtime.get_model_state()?
+        } else {
+            pi_sessions::get_session_model_state(
+                &resolved.project_root,
+                &session_context.session_dir,
+                &resolved.session_id,
+            )?
+        };
     let current_model = model_state
         .current_model
         .map(|model| format!("{}/{}", model.provider, model.id))
@@ -802,11 +1001,7 @@ fn telegram_status_text(app: &AppHandle, state: &AppState, channel: &StoredChann
     let project_name = projects::get_project(&connection, &resolved.project_id)?.name;
     Ok(format!(
         "Supervisor session: {}\nStatus: {}\nDefault project: {}\nModel: {}\nUpdated: {}",
-        session.title,
-        session.status,
-        project_name,
-        current_model,
-        session.updated_at,
+        session.title, session.status, project_name, current_model, session.updated_at,
     ))
 }
 
@@ -816,17 +1011,18 @@ fn telegram_project_text(channel: &StoredChannelRecord, args: &str) -> Result<St
         let project_name = channel
             .default_project_id
             .as_deref()
-            .map(|project_id| projects::get_project(&connection, project_id).map(|project| project.name))
+            .map(|project_id| {
+                projects::get_project(&connection, project_id).map(|project| project.name)
+            })
             .transpose()?
             .unwrap_or_else(|| "Orchestra".into());
         return Ok(format!("Current default project: {}", project_name));
     }
 
     let projects_list = projects::list_projects(&connection)?;
-    let Some(project) = projects_list
-        .into_iter()
-        .find(|project| project.slug == args || project.id == args || project.name.eq_ignore_ascii_case(args))
-    else {
+    let Some(project) = projects_list.into_iter().find(|project| {
+        project.slug == args || project.id == args || project.name.eq_ignore_ascii_case(args)
+    }) else {
         return Err(format!("Project '{}' was not found", args));
     };
 
@@ -845,6 +1041,170 @@ fn telegram_project_text(channel: &StoredChannelRecord, args: &str) -> Result<St
     Ok(format!("Default project set to {}.", project.name))
 }
 
+fn telegram_projects_response(
+    channel: &StoredChannelRecord,
+) -> Result<TelegramCommandResponse, String> {
+    let connection = database::open_connection()?;
+    let projects_list = projects::list_projects(&connection)?;
+    if projects_list.is_empty() {
+        return Ok(TelegramCommandResponse::text(
+            "No projects are configured yet.",
+        ));
+    }
+
+    let current_project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
+    let mut lines = vec!["Choose the default project for this Telegram channel:".to_string()];
+    let inline_keyboard = projects_list
+        .iter()
+        .map(|project| {
+            let is_current = project.id == current_project_id;
+            lines.push(format!(
+                "{} {} ({})",
+                if is_current { "•" } else { "◦" },
+                project.name,
+                project.slug,
+            ));
+            json!([{
+                "text": if is_current {
+                    format!("✓ {}", project.name)
+                } else {
+                    project.name.clone()
+                },
+                "callback_data": format!("{}{}", TELEGRAM_CALLBACK_PROJECT_PREFIX, project.id),
+            }])
+        })
+        .collect::<Vec<_>>();
+
+    Ok(TelegramCommandResponse::with_reply_markup(
+        lines.join("\n"),
+        json!({ "inline_keyboard": inline_keyboard }),
+    ))
+}
+
+fn telegram_tasks_text(channel: &StoredChannelRecord, args: &str) -> Result<String, String> {
+    let connection = database::open_connection()?;
+    let project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
+    let project = projects::get_project(&connection, project_id)?;
+    let mut tasks_list = tasks::list_tasks(&connection, &project.id, false)?;
+    if !args.trim().is_empty() {
+        let query = args.trim().to_lowercase();
+        tasks_list.retain(|task| {
+            task.number.to_lowercase().contains(&query)
+                || task.title.to_lowercase().contains(&query)
+                || task.status.to_lowercase().contains(&query)
+                || task
+                    .current_lane_id
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&query)
+        });
+    }
+
+    if tasks_list.is_empty() {
+        if args.trim().is_empty() {
+            return Ok(format!("No tasks found in {}.", project.name));
+        }
+        return Ok(format!(
+            "No tasks in {} matched '{}'.",
+            project.name,
+            args.trim()
+        ));
+    }
+
+    let mut lines = vec![format!("Tasks for {}:", project.name)];
+    for task in tasks_list.into_iter().take(10) {
+        let lane = task.current_lane_id.unwrap_or_else(|| "no-lane".into());
+        lines.push(format!(
+            "- {} — {} [{} · {}]",
+            task.number, task.title, task.status, lane,
+        ));
+    }
+    lines.push("Use /task <task-number> for details.".into());
+    Ok(lines.join("\n"))
+}
+
+fn telegram_task_text(channel: &StoredChannelRecord, args: &str) -> Result<String, String> {
+    let task_reference = args.trim();
+    if task_reference.is_empty() {
+        return Err("Expected /task <task-number>.".into());
+    }
+
+    let connection = database::open_connection()?;
+    let project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
+    let project = projects::get_project(&connection, project_id)?;
+    let task = resolve_task_by_reference(&connection, &project.id, task_reference)?;
+    let lane = task
+        .current_lane_id
+        .clone()
+        .unwrap_or_else(|| "no-lane".into());
+    let assignee = task
+        .assignee_id
+        .clone()
+        .map(|id| format!("{} ({})", task.assignee_type, id))
+        .unwrap_or_else(|| task.assignee_type.clone());
+    let mut lines = vec![format!("{} — {}", task.number, task.title)];
+    lines.push(format!("Project: {}", project.name));
+    lines.push(format!("Status: {}", task.status));
+    lines.push(format!("Priority: {}", task.priority));
+    lines.push(format!("Lane: {}", lane));
+    lines.push(format!("Assignee: {}", assignee));
+    if let Some(assignment) = task.active_lane_assignment.as_ref() {
+        let pending = assignment.pending_outcome.as_deref().unwrap_or("none");
+        lines.push(format!(
+            "Active assignment: {} [{}]",
+            assignment.status, pending
+        ));
+    }
+    if let Some(description) = task
+        .description
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        lines.push(String::new());
+        lines.push(description.trim().to_string());
+    }
+    Ok(lines.join("\n"))
+}
+
+fn resolve_task_by_reference(
+    connection: &Connection,
+    project_id: &str,
+    reference: &str,
+) -> Result<crate::models::TaskDetail, String> {
+    let normalized = reference.trim();
+    let tasks_list = tasks::list_tasks(connection, project_id, false)?;
+    let normalized_lower = normalized.to_lowercase();
+    let numeric_suffix = normalized_lower.parse::<i64>().ok();
+    let Some(task_summary) = tasks_list.into_iter().find(|task| {
+        task.id == normalized
+            || task.number.eq_ignore_ascii_case(normalized)
+            || task.title.eq_ignore_ascii_case(normalized)
+            || numeric_suffix
+                .map(|number| {
+                    task.number
+                        .to_lowercase()
+                        .ends_with(&format!("-{}", number))
+                })
+                .unwrap_or(false)
+    }) else {
+        return Err(format!(
+            "Task '{}' was not found in the current project.",
+            normalized
+        ));
+    };
+    tasks::get_task_context(connection, &task_summary.id)
+}
+
 fn telegram_model_text(
     app: &AppHandle,
     state: &AppState,
@@ -854,11 +1214,16 @@ fn telegram_model_text(
     let resolved = ensure_channel_target_session(channel)?;
     let session_context = pi_sessions::find_session_context_for_session(&resolved.session_id)?;
     if args.is_empty() {
-        let model_state = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &resolved.session_id) {
-            runtime.get_model_state()?
-        } else {
-            pi_sessions::get_session_model_state(&resolved.project_root, &session_context.session_dir, &resolved.session_id)?
-        };
+        let model_state =
+            if let Some(runtime) = maybe_runtime(&state.session_runtimes, &resolved.session_id) {
+                runtime.get_model_state()?
+            } else {
+                pi_sessions::get_session_model_state(
+                    &resolved.project_root,
+                    &session_context.session_dir,
+                    &resolved.session_id,
+                )?
+            };
         let current_model = model_state
             .current_model
             .map(|model| format!("{}/{}", model.provider, model.id))
@@ -872,7 +1237,13 @@ fn telegram_model_text(
     if let Some(runtime) = maybe_runtime(&state.session_runtimes, &resolved.session_id) {
         runtime.set_model(provider, model_id)?;
     } else {
-        pi_sessions::set_session_model(&resolved.project_root, &session_context.session_dir, &resolved.session_id, provider, model_id)?;
+        pi_sessions::set_session_model(
+            &resolved.project_root,
+            &session_context.session_dir,
+            &resolved.session_id,
+            provider,
+            model_id,
+        )?;
     }
     let _ = app;
     Ok(format!("Model changed to {}/{}.", provider, model_id))
@@ -887,7 +1258,11 @@ fn telegram_stop_text(state: &AppState, channel: &StoredChannelRecord) -> Result
     Ok("Stopped supervisor activity.".into())
 }
 
-fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: &str) -> Result<(), String> {
+fn dispatch_next_channel_message(
+    app: &AppHandle,
+    state: &AppState,
+    channel_id: &str,
+) -> Result<(), String> {
     let connection = database::open_connection()?;
     let (channel, _) = load_channel(&connection, channel_id)?;
     let Some(activity) = next_queued_inbound_message(&connection, channel_id)? else {
@@ -900,7 +1275,10 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
         .map(|runtime| runtime.has_active_prompt())
         .unwrap_or(false);
 
-    match resolve_channel_dispatch_plan(state.is_session_running(&resolved.session_id)?, runtime_has_active_prompt) {
+    match resolve_channel_dispatch_plan(
+        state.is_session_running(&resolved.session_id)?,
+        runtime_has_active_prompt,
+    ) {
         ChannelDispatchPlan::WaitForActiveRun => return Ok(()),
         ChannelDispatchPlan::RecoverStaleRunState => {
             state.clear_active_session_run(&resolved.session_id)?;
@@ -920,7 +1298,10 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
             &resolved.session_id,
         )?
     };
-    if state.subscribed_session_ids()?.contains(&resolved.session_id) {
+    if state
+        .subscribed_session_ids()?
+        .contains(&resolved.session_id)
+    {
         runtime.set_subscribed(true);
     }
 
@@ -929,7 +1310,12 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
     state.begin_session_run(&resolved.session_id, &run_id)?;
     match runtime.start_delivery(&run_id, "prompt", &wrapped) {
         Ok(()) => {
-            mark_channel_activity_dispatched(&connection, &activity.id, &resolved.session_id, &run_id)?;
+            mark_channel_activity_dispatched(
+                &connection,
+                &activity.id,
+                &resolved.session_id,
+                &run_id,
+            )?;
             record_session_run_origin(
                 &connection,
                 &run_id,
@@ -943,7 +1329,12 @@ fn dispatch_next_channel_message(app: &AppHandle, state: &AppState, channel_id: 
         }
         Err(error) => {
             let _ = state.end_session_run(&resolved.session_id, &run_id);
-            mark_channel_activity_status(&connection, &activity.id, ACTIVITY_STATUS_FAILED, Some(&error))?;
+            mark_channel_activity_status(
+                &connection,
+                &activity.id,
+                ACTIVITY_STATUS_FAILED,
+                Some(&error),
+            )?;
             Err(error)
         }
     }
@@ -956,7 +1347,10 @@ enum ChannelDispatchPlan {
     RecoverStaleRunState,
 }
 
-fn resolve_channel_dispatch_plan(session_marked_running: bool, runtime_has_active_prompt: bool) -> ChannelDispatchPlan {
+fn resolve_channel_dispatch_plan(
+    session_marked_running: bool,
+    runtime_has_active_prompt: bool,
+) -> ChannelDispatchPlan {
     if runtime_has_active_prompt {
         ChannelDispatchPlan::WaitForActiveRun
     } else if session_marked_running {
@@ -966,9 +1360,14 @@ fn resolve_channel_dispatch_plan(session_marked_running: bool, runtime_has_activ
     }
 }
 
-fn ensure_channel_target_session(channel: &StoredChannelRecord) -> Result<ResolvedProjectContext, String> {
+fn ensure_channel_target_session(
+    channel: &StoredChannelRecord,
+) -> Result<ResolvedProjectContext, String> {
     let connection = database::open_connection()?;
-    let project_id = channel.default_project_id.as_deref().unwrap_or(DEFAULT_PROJECT_ID);
+    let project_id = channel
+        .default_project_id
+        .as_deref()
+        .unwrap_or(DEFAULT_PROJECT_ID);
     let project = projects::get_project(&connection, project_id)?;
     let context = pi_sessions::session_context_for_project_id(project_id)?;
     let runtime_state = agent_dispatch::ensure_main_session(
@@ -977,9 +1376,12 @@ fn ensure_channel_target_session(channel: &StoredChannelRecord) -> Result<Resolv
         project_id,
         &channel.target_agent_id,
     )?;
-    let session_id = runtime_state
-        .main_session_id
-        .ok_or_else(|| format!("Agent {} does not have a main session", channel.target_agent_id))?;
+    let session_id = runtime_state.main_session_id.ok_or_else(|| {
+        format!(
+            "Agent {} does not have a main session",
+            channel.target_agent_id
+        )
+    })?;
     Ok(ResolvedProjectContext {
         project_id: project.id,
         name: project.name,
@@ -1119,7 +1521,20 @@ fn insert_channel_activity(
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
             "#,
-            params![id, channel_id, direction, message_kind, external_message_id, chat_id, session_id, run_id, body, status, error, now],
+            params![
+                id,
+                channel_id,
+                direction,
+                message_kind,
+                external_message_id,
+                chat_id,
+                session_id,
+                run_id,
+                body,
+                status,
+                error,
+                now
+            ],
         )
         .map_err(|error| format!("Unable to insert channel activity: {error}"))?;
     update_channel_activity_timestamps(connection, channel_id, error)?;
@@ -1161,6 +1576,36 @@ fn send_telegram_channel_message(
     run_id: Option<&str>,
     error: Option<&str>,
 ) -> Result<(), String> {
+    let chat_id = channel
+        .config
+        .telegram
+        .as_ref()
+        .and_then(|telegram| telegram.chat_id.clone())
+        .ok_or_else(|| format!("Channel {} is missing a Telegram chat id", channel.id))?;
+    send_telegram_message_with_markup(
+        connection,
+        channel,
+        message_kind,
+        &chat_id,
+        body,
+        status,
+        run_id,
+        error,
+        None,
+    )
+}
+
+fn send_telegram_message_with_markup(
+    connection: &Connection,
+    channel: &StoredChannelRecord,
+    message_kind: &str,
+    chat_id: &str,
+    body: &str,
+    status: &str,
+    run_id: Option<&str>,
+    error: Option<&str>,
+    reply_markup: Option<Value>,
+) -> Result<(), String> {
     let secrets = load_channel_secrets(connection, &channel.id)?;
     let telegram = channel
         .config
@@ -1171,16 +1616,18 @@ fn send_telegram_channel_message(
         .telegram
         .and_then(|entry| entry.bot_token)
         .ok_or_else(|| format!("Channel {} is missing a Telegram bot token", channel.id))?;
-    let chat_id = telegram
-        .chat_id
-        .clone()
-        .ok_or_else(|| format!("Channel {} is missing a Telegram chat id", channel.id))?;
 
+    let mut payload = json!({ "chat_id": chat_id, "text": body });
+    if let Some(reply_markup) = reply_markup {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("reply_markup".into(), reply_markup);
+        }
+    }
     telegram_api_post(
         &token,
         telegram.api_base_url.as_deref(),
         "sendMessage",
-        &json!({ "chat_id": chat_id, "text": body }),
+        &payload,
     )?;
     let _ = insert_channel_activity(
         connection,
@@ -1188,12 +1635,37 @@ fn send_telegram_channel_message(
         DIRECTION_OUTBOUND,
         message_kind,
         None,
-        telegram.chat_id.as_deref(),
+        Some(chat_id),
         None,
         run_id,
         body,
         status,
         error,
+    )?;
+    Ok(())
+}
+
+fn answer_telegram_callback_query(
+    connection: &Connection,
+    channel: &StoredChannelRecord,
+    callback_query_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let secrets = load_channel_secrets(connection, &channel.id)?;
+    let telegram = channel
+        .config
+        .telegram
+        .clone()
+        .ok_or_else(|| format!("Channel {} is missing Telegram config", channel.id))?;
+    let token = secrets
+        .telegram
+        .and_then(|entry| entry.bot_token)
+        .ok_or_else(|| format!("Channel {} is missing a Telegram bot token", channel.id))?;
+    telegram_api_post(
+        &token,
+        telegram.api_base_url.as_deref(),
+        "answerCallbackQuery",
+        &json!({ "callback_query_id": callback_query_id, "text": text }),
     )?;
     Ok(())
 }
@@ -1297,7 +1769,10 @@ fn load_channel(
     Ok((record, secrets))
 }
 
-fn load_channel_secrets(connection: &Connection, channel_id: &str) -> Result<StoredChannelSecrets, String> {
+fn load_channel_secrets(
+    connection: &Connection,
+    channel_id: &str,
+) -> Result<StoredChannelSecrets, String> {
     let secret_json = connection
         .query_row(
             "SELECT secret_json FROM channel_secrets WHERE channel_id = ?1 LIMIT 1",
@@ -1326,7 +1801,9 @@ fn load_runnable_channels(connection: &Connection) -> Result<Vec<StoredChannelRe
         )
         .map_err(|error| format!("Unable to prepare runnable channel query: {error}"))?;
     let rows = statement
-        .query_map([CHANNEL_STATUS_READY], |row| read_channel_record(row, 0, Some(7)))
+        .query_map([CHANNEL_STATUS_READY], |row| {
+            read_channel_record(row, 0, Some(7))
+        })
         .map_err(|error| format!("Unable to query runnable channels: {error}"))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to read runnable channels: {error}"))
@@ -1371,7 +1848,11 @@ fn normalize_channel_input(
         .or_else(|| Some(DEFAULT_PROJECT_ID.into()))
         .and_then(|value| {
             let trimmed = value.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         });
     if let Some(project_id) = default_project_id.as_deref() {
         projects::ensure_project_exists(connection, project_id)?;
@@ -1382,17 +1863,28 @@ fn normalize_channel_input(
         .as_ref()
         .and_then(|telegram| telegram.bot_token.as_ref())
         .is_some();
-    let telegram_input = input.telegram.clone().unwrap_or_else(|| TelegramChannelConfigInput {
-        bot_token: None,
-        api_base_url: None,
-        chat_id: None,
-        chat_title: None,
-        chat_type: None,
-        commands_enabled: existing
-            .and_then(|value| value.config.telegram.as_ref().map(|telegram| telegram.commands_enabled))
-            .unwrap_or(true),
-    });
-    let existing_config = existing.and_then(|value| value.config.telegram.clone()).unwrap_or_default();
+    let telegram_input = input
+        .telegram
+        .clone()
+        .unwrap_or_else(|| TelegramChannelConfigInput {
+            bot_token: None,
+            api_base_url: None,
+            chat_id: None,
+            chat_title: None,
+            chat_type: None,
+            commands_enabled: existing
+                .and_then(|value| {
+                    value
+                        .config
+                        .telegram
+                        .as_ref()
+                        .map(|telegram| telegram.commands_enabled)
+                })
+                .unwrap_or(true),
+        });
+    let existing_config = existing
+        .and_then(|value| value.config.telegram.clone())
+        .unwrap_or_default();
     let existing_secrets = existing
         .and_then(|value| load_channel_secrets(connection, &value.id).ok())
         .and_then(|secrets| secrets.telegram)
@@ -1404,10 +1896,36 @@ fn normalize_channel_input(
             .as_ref()
             .and_then(|_| None)
             .or(existing_config.bot_username),
-        api_base_url: normalize_optional(telegram_input.api_base_url).or(existing.and_then(|value| value.config.telegram.as_ref().and_then(|telegram| telegram.api_base_url.clone()))),
-        chat_id: normalize_optional(telegram_input.chat_id).or(existing.and_then(|value| value.config.telegram.as_ref().and_then(|telegram| telegram.chat_id.clone()))),
-        chat_title: normalize_optional(telegram_input.chat_title).or(existing.and_then(|value| value.config.telegram.as_ref().and_then(|telegram| telegram.chat_title.clone()))),
-        chat_type: normalize_optional(telegram_input.chat_type).or(existing.and_then(|value| value.config.telegram.as_ref().and_then(|telegram| telegram.chat_type.clone()))),
+        api_base_url: normalize_optional(telegram_input.api_base_url).or(existing.and_then(
+            |value| {
+                value
+                    .config
+                    .telegram
+                    .as_ref()
+                    .and_then(|telegram| telegram.api_base_url.clone())
+            },
+        )),
+        chat_id: normalize_optional(telegram_input.chat_id).or(existing.and_then(|value| {
+            value
+                .config
+                .telegram
+                .as_ref()
+                .and_then(|telegram| telegram.chat_id.clone())
+        })),
+        chat_title: normalize_optional(telegram_input.chat_title).or(existing.and_then(|value| {
+            value
+                .config
+                .telegram
+                .as_ref()
+                .and_then(|telegram| telegram.chat_title.clone())
+        })),
+        chat_type: normalize_optional(telegram_input.chat_type).or(existing.and_then(|value| {
+            value
+                .config
+                .telegram
+                .as_ref()
+                .and_then(|telegram| telegram.chat_type.clone())
+        })),
         commands_enabled: telegram_input.commands_enabled || existing_config.commands_enabled,
     };
 
@@ -1419,7 +1937,9 @@ fn normalize_channel_input(
         CHANNEL_STATUS_NEEDS_SETUP.to_string()
     };
 
-    let enabled = input.enabled.unwrap_or_else(|| existing.map(|value| value.enabled).unwrap_or(false));
+    let enabled = input
+        .enabled
+        .unwrap_or_else(|| existing.map(|value| value.enabled).unwrap_or(false));
 
     Ok(NormalizedChannelInput {
         kind,
@@ -1457,7 +1977,9 @@ fn read_channel_record(
 ) -> rusqlite::Result<StoredChannelRecord> {
     let config_json = row.get::<_, String>(base_index + 12)?;
     let state_json = row.get::<_, String>(base_index + 13)?;
-    let _project_name = project_name_index.map(|index| row.get::<_, Option<String>>(index)).transpose()?;
+    let _project_name = project_name_index
+        .map(|index| row.get::<_, Option<String>>(index))
+        .transpose()?;
     Ok(StoredChannelRecord {
         id: row.get(base_index + 0)?,
         kind: row.get(base_index + 1)?,
@@ -1507,14 +2029,17 @@ fn detail_channel(
         default_project_id: record.default_project_id,
         default_project_name,
         secret_configured,
-        telegram: record.config.telegram.map(|telegram| TelegramChannelConfig {
-            bot_username: telegram.bot_username,
-            api_base_url: telegram.api_base_url,
-            chat_id: telegram.chat_id,
-            chat_title: telegram.chat_title,
-            chat_type: telegram.chat_type,
-            commands_enabled: telegram.commands_enabled,
-        }),
+        telegram: record
+            .config
+            .telegram
+            .map(|telegram| TelegramChannelConfig {
+                bot_username: telegram.bot_username,
+                api_base_url: telegram.api_base_url,
+                chat_id: telegram.chat_id,
+                chat_title: telegram.chat_title,
+                chat_type: telegram.chat_type,
+                commands_enabled: telegram.commands_enabled,
+            }),
         last_error: record.last_error,
         last_activity_at: record.last_activity_at,
         created_at: record.created_at,
@@ -1522,7 +2047,10 @@ fn detail_channel(
     }
 }
 
-fn project_name_for_id(connection: &Connection, channel_id: &str) -> Result<Option<String>, String> {
+fn project_name_for_id(
+    connection: &Connection,
+    channel_id: &str,
+) -> Result<Option<String>, String> {
     connection
         .query_row(
             r#"
@@ -1565,7 +2093,9 @@ fn record_channel_runtime_error(channel_id: &str, error: &str) -> Result<(), Str
             "UPDATE channels SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
             params![channel_id, error, now_iso()],
         )
-        .map_err(|update_error| format!("Unable to update channel runtime error: {update_error}"))?;
+        .map_err(|update_error| {
+            format!("Unable to update channel runtime error: {update_error}")
+        })?;
     Ok(())
 }
 
@@ -1599,13 +2129,11 @@ fn telegram_api_post(
         .json::<Value>()
         .map_err(|error| format!("Unable to parse Telegram API response: {error}"))?;
     if !status.is_success() || value.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(
-            value
-                .get("description")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("Telegram API {} failed with status {}", method, status)),
-        );
+        return Err(value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("Telegram API {} failed with status {}", method, status)));
     }
     Ok(value)
 }
@@ -1635,9 +2163,17 @@ fn telegram_chat_title(chat: &Value) -> String {
             let first = chat.get("first_name").and_then(Value::as_str).unwrap_or("");
             let last = chat.get("last_name").and_then(Value::as_str).unwrap_or("");
             let combined = format!("{} {}", first, last).trim().to_string();
-            if combined.is_empty() { None } else { Some(combined) }
+            if combined.is_empty() {
+                None
+            } else {
+                Some(combined)
+            }
         })
-        .or_else(|| chat.get("username").and_then(Value::as_str).map(ToOwned::to_owned))
+        .or_else(|| {
+            chat.get("username")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .unwrap_or_else(|| "Telegram chat".into())
 }
 
@@ -1668,17 +2204,29 @@ mod tests {
 
     #[test]
     fn dispatches_immediately_when_session_is_idle() {
-        assert_eq!(resolve_channel_dispatch_plan(false, false), ChannelDispatchPlan::DispatchNow);
+        assert_eq!(
+            resolve_channel_dispatch_plan(false, false),
+            ChannelDispatchPlan::DispatchNow
+        );
     }
 
     #[test]
     fn waits_when_supervisor_runtime_is_still_processing() {
-        assert_eq!(resolve_channel_dispatch_plan(true, true), ChannelDispatchPlan::WaitForActiveRun);
-        assert_eq!(resolve_channel_dispatch_plan(false, true), ChannelDispatchPlan::WaitForActiveRun);
+        assert_eq!(
+            resolve_channel_dispatch_plan(true, true),
+            ChannelDispatchPlan::WaitForActiveRun
+        );
+        assert_eq!(
+            resolve_channel_dispatch_plan(false, true),
+            ChannelDispatchPlan::WaitForActiveRun
+        );
     }
 
     #[test]
     fn clears_stale_running_state_before_reusing_idle_session() {
-        assert_eq!(resolve_channel_dispatch_plan(true, false), ChannelDispatchPlan::RecoverStaleRunState);
+        assert_eq!(
+            resolve_channel_dispatch_plan(true, false),
+            ChannelDispatchPlan::RecoverStaleRunState
+        );
     }
 }
