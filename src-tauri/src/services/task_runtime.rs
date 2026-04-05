@@ -1026,6 +1026,13 @@ fn ensure_assignment_runtime(
         return Ok(None);
     };
 
+    std::fs::create_dir_all(runtime_cwd).map_err(|error| {
+        format!(
+            "Unable to recreate missing assignment runtime cwd {}: {error}",
+            runtime_cwd
+        )
+    })?;
+
     let mut session_id = assignment.session_id.clone();
     if session_id
         .as_deref()
@@ -1102,6 +1109,12 @@ fn recover_missing_assignment_session(
             })?;
             let role_instance = role_runtime::get_role_instance(&connection, role_instance_id)?;
             let role = roles::get_role(&connection, &role_instance.role_id)?;
+            std::fs::create_dir_all(runtime_cwd).map_err(|error| {
+                format!(
+                    "Unable to recreate missing role runtime cwd {}: {error}",
+                    runtime_cwd
+                )
+            })?;
             let created = pi_sessions::create_session_file(
                 std::path::Path::new(runtime_cwd),
                 &context.session_dir,
