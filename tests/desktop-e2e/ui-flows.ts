@@ -3,6 +3,7 @@ import {
   clickNthSelector,
   clickSelector,
   executeScript,
+  invokeCommand,
   selectByLabel,
   selectValue,
   setFieldByLabel,
@@ -18,15 +19,13 @@ export async function createProjectViaSettings(sessionId: string, name: string, 
   await clickByText(sessionId, "button", "Settings");
   await waitForText(sessionId, "Project catalog");
   await clickByText(sessionId, "button", "New project");
+  await waitForText(sessionId, "New project");
   await waitForSelector(sessionId, '[data-role="project-name"]');
   await setInputValue(sessionId, '[data-role="project-name"]', name);
   await setInputValue(sessionId, '[data-role="project-description"]', description);
-  try {
-    await clickByText(sessionId, 'button', 'Create project');
-  } catch {
-    await clickByText(sessionId, 'button', 'Save project');
-  }
+  await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
   await waitForText(sessionId, name);
+  await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: name });
 }
 
 export async function addRepositoryViaSettings(
@@ -40,7 +39,23 @@ export async function addRepositoryViaSettings(
   await clickSelector(sessionId, '[data-role="add-repository"]');
   await waitForText(sessionId, options.name);
   if (options.makeDefault) {
-    await clickByText(sessionId, 'button', 'Make default');
+    const selectedProjectName = await executeScript<string | null>(sessionId, `
+      const heading = document.querySelector('.task-detail-panel h3, .task-detail-panel h2');
+      return heading ? heading.textContent?.trim() ?? null : null;
+    `);
+    const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+    const selectedProject = projects.find((entry) => entry.name === selectedProjectName);
+    const repositories = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', {
+      projectId: selectedProject?.id,
+    });
+    const repository = repositories.find((entry) => entry.name === options.name);
+    if (!selectedProject || !repository) {
+      throw new Error(`Unable to resolve repository ${options.name} for default assignment`);
+    }
+    await invokeCommand(sessionId, 'set_project_default_repository', {
+      projectId: selectedProject.id,
+      repositoryId: repository.id,
+    });
     await waitForText(sessionId, 'Default');
   }
 }

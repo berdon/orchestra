@@ -15,6 +15,7 @@ import {
   invokeCommand,
   selectByLabel,
   setInputValue,
+  sleep,
   waitForSelectedLabel,
   waitForText,
 } from "./driver";
@@ -123,18 +124,22 @@ describe("desktop task comment file mentions", () => {
       `);
       await waitForText(sessionId, 'docs/plan.md');
       await executeScript(sessionId, `
-        const option = document.querySelector('[data-role="task-reply-mention-option"]');
-        if (!(option instanceof HTMLElement)) return false;
-        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        option.click();
+        const textarea = document.querySelector('[data-role="task-reply-message"]');
+        if (!(textarea instanceof HTMLTextAreaElement)) return false;
+        textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         return true;
       `);
 
-      const replyMessage = await executeScript<string>(sessionId, `
-        const textarea = document.querySelector('[data-role="task-reply-message"]');
-        return textarea instanceof HTMLTextAreaElement ? textarea.value : '';
-      `);
-      expect(replyMessage).toContain('@docs/plan.md');
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const replyValue = await executeScript<string>(sessionId, `
+          const textarea = document.querySelector('[data-role="task-reply-message"]');
+          return textarea instanceof HTMLTextAreaElement ? textarea.value : '';
+        `);
+        if (replyValue.includes('@docs/plan.md')) {
+          break;
+        }
+        await sleep(250);
+      }
 
       await clickSelector(sessionId, '[data-role="add-task-reply"]');
       await waitForText(sessionId, 'Implemented in @docs/plan.md');

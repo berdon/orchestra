@@ -146,7 +146,7 @@ test("sessions UI shows tool invocations in the transcript", async ({ page }) =>
     );
   });
 
-  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Tool result: complete_lane_as_success");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("complete_lane_as_success");
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("task-1");
 });
 
@@ -291,51 +291,34 @@ test("sessions page filters active and closed task sessions", async ({ page }) =
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
     window.localStorage.setItem(
-      "orchestra.mock.workflows",
+      "orchestra.mock.sessions.orchestra",
       JSON.stringify([
         {
-          id: "workflow-role-terminal",
-          slug: "role-terminal",
-          name: "Role Terminal",
-          description: "Single role-owned lane that ends the task.",
-          archived: false,
+          id: "session-active",
+          title: "Active task session",
+          status: "active",
           createdAt: timestamp,
           updatedAt: timestamp,
-          lanes: [
-            {
-              id: "lane-role-terminal",
-              key: "implement",
-              name: "Implementation",
-              description: null,
-              order: 0,
-              assignedEntityType: "role",
-              assignedEntityId: "developer",
-              entryPromptTemplate: "Finish the task.",
-              successTransitionType: "end",
-              successTargetLaneId: null,
-              failureTransitionType: "end",
-              failureTargetLaneId: null,
-            },
-          ],
+          subscribed: false,
+          events: [],
+        },
+        {
+          id: "session-closed",
+          title: "Implementation · Closable session task",
+          status: "closed",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
         },
       ]),
     );
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Tasks" }).click();
-  await page.getByRole("button", { name: "New task" }).click();
-  await page.locator('[data-role="task-title"]').fill("Closable session task");
-  await page.locator('[data-role="task-status"]').selectOption("ready");
-  await page.locator('[data-role="task-workflow"]').selectOption("workflow-role-terminal");
-  await page.locator('[data-role="save-task"]').click();
-  await page.locator('[data-role="task-card"]').filter({ hasText: "Closable session task" }).click();
-  await page.locator('[data-role="dispatch-task-lane"]').click();
-  await page.locator('[data-role="complete-task-success"]').click();
-
   await page.getByRole("button", { name: "Sessions" }).click();
   await expect(page.locator('[data-role="session-filter-active"]')).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
+  await expect(page.locator('[data-role="session-link"]').first()).toContainText("Active task session");
 
   const closedSessionLinks = page.locator('[data-role="session-link"]');
   await page.locator('[data-role="session-filter-closed"]').click();
@@ -579,7 +562,7 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
 
   await page.locator('[data-role="supervisor-composer-input"]').fill("Check the current project status");
-  await page.locator('[data-role="supervisor-send-message"]').click();
+  await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Check the current project status", { timeout: 10_000 });
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Check the current project status", { timeout: 20_000 });

@@ -74,7 +74,11 @@ describe("desktop task dispatch", () => {
         publish: true,
       });
 
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Dispatch Project'));
+      expect(project).toBeTruthy();
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Dispatch session task'));
       expect(task).toBeTruthy();

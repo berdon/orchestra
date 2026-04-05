@@ -79,6 +79,8 @@ describe("desktop inbox and messaging", () => {
 
       await clickByText(sessionId, "button", "Inbox");
       await waitForText(sessionId, "User Inbox");
+      await clickSelector(sessionId, '[data-role="open-inbox-compose"]');
+      await waitForText(sessionId, 'Send to agent');
       await selectByLabel(sessionId, '[data-role="inbox-compose-agent"]', "Mail Handler Agent");
       await setInputValue(sessionId, '[data-role="inbox-compose-body"]', directMailBody);
       await clickSelector(sessionId, '[data-role="send-inbox-message"]');

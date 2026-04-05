@@ -54,12 +54,19 @@ describe("desktop task repository info pane", () => {
       await setFieldByLabel(sessionId, "Default branch", "main");
       await clickSelector(sessionId, '[data-role="add-repository"]');
       await waitForText(sessionId, "Task Repository Info Repo");
-      await clickByText(sessionId, "button", "Make default");
-      await waitForText(sessionId, "Default");
 
       const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
       const project = projects.find((entry) => entry.name === 'Task Repository Info Project');
       expect(project).toBeTruthy();
+      const repositories = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id });
+      const repository = repositories.find((entry) => entry.name === 'Task Repository Info Repo');
+      expect(repository).toBeTruthy();
+      await invokeCommand(sessionId, 'set_project_default_repository', { projectId: project!.id, repositoryId: repository!.id });
+      await waitForText(sessionId, "Default");
+
+      const projectsAfterDefault = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+      const selectedProject = projectsAfterDefault.find((entry) => entry.name === 'Task Repository Info Project');
+      expect(selectedProject).toBeTruthy();
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'Task Repository Info Project');
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'Task Repository Info Project');
@@ -73,7 +80,7 @@ describe("desktop task repository info pane", () => {
       await clickSelector(sessionId, '[data-role="save-task"]');
       await waitForText(sessionId, 'Inspect repository info');
 
-      await clickByText(sessionId, '[role="tab"]', 'Project files');
+      await clickByText(sessionId, '[role="tab"]', 'Repo files');
       await waitForText(sessionId, 'Task Repository Info Repo');
       await waitForText(sessionId, 'Repository slug: task-repository-info-repo');
       await waitForText(sessionId, 'Managed path:');

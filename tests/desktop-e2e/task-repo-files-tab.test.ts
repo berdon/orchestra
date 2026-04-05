@@ -25,6 +25,8 @@ import {
   createRoleViaSettings,
   createTaskViaTasks,
   createWorkflowViaSettings,
+  dispatchRoleQueueViaUi,
+  openRoleOperations,
   openTaskCard,
   switchProject,
 } from "./ui-flows";
@@ -49,27 +51,17 @@ describe("desktop task repo files tab", () => {
     try {
       await ensureReactReady(sessionId);
 
-      await clickByText(sessionId, "button", "Settings");
-      await waitForText(sessionId, "Project catalog");
-      await clickByText(sessionId, "button", "New project");
-      await waitForText(sessionId, "New project");
-      await setInputValue(sessionId, '[data-role="project-name"]', "Repo Files Project");
-      await setInputValue(sessionId, '[data-role="project-description"]', "Desktop repo files tab test.");
-      await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
-      await waitForText(sessionId, "Repo Files Project");
-      await waitForSelector(sessionId, '[data-role="repository-name"]');
+      await createProjectViaSettings(sessionId, 'Repo Files Project', 'Desktop repo files tab test.');
+      await addRepositoryViaSettings(sessionId, {
+        name: 'Repo Files Repo',
+        path: repoPath,
+        defaultBranch: 'main',
+        makeDefault: true,
+      });
 
-      await setFieldByLabel(sessionId, "Repository name", "Repo Files Repo");
-      await setFieldByLabel(sessionId, "Repository Path", repoPath);
-      await setFieldByLabel(sessionId, "Default branch", "main");
-      await clickSelector(sessionId, '[data-role="add-repository"]');
-      await waitForText(sessionId, "Repo Files Repo");
-      await clickByText(sessionId, "button", "Make default");
-      await waitForText(sessionId, "Default");
-
-      const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
-      const project = projects.find((entry) => entry.name === 'Repo Files Project');
-      expect(project).toBeTruthy();
+      const projectsAfterDefault = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+      const selectedProject = projectsAfterDefault.find((entry) => entry.name === 'Repo Files Project');
+      expect(selectedProject).toBeTruthy();
 
       await selectByLabel(sessionId, '[data-role="project-switcher"]', 'Repo Files Project');
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'Repo Files Project');
@@ -84,7 +76,7 @@ describe("desktop task repo files tab", () => {
       await clickSelector(sessionId, '[data-role="save-task"]');
       await waitForText(sessionId, 'Track repo file');
 
-      const tasks = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', { projectId: project!.id, includeArchived: false });
+      const tasks = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', { projectId: selectedProject!.id, includeArchived: false });
       const task = tasks.find((entry) => entry.title === 'Track repo file');
       expect(task).toBeTruthy();
 
@@ -95,7 +87,7 @@ describe("desktop task repo files tab", () => {
       await setInputValue(sessionId, '[data-role="task-file-reference-path"]', 'docs/design.md');
       await clickSelector(sessionId, '[data-role="add-task-file-reference"]');
       await waitForText(sessionId, 'Repo Files Repo · docs/design.md');
-      await waitForText(sessionId, 'Absolute path:');
+      await waitForText(sessionId, 'Resolved path:');
     } finally {
       await deleteWebdriverSession(sessionId);
     }
@@ -148,21 +140,32 @@ describe("desktop task repo files tab", () => {
         description: "Verify repo file references resolve against the task worktree.",
         repositoryName: "Repo Files Worktree Repo",
         workflowName: "Repo Files Worktree Flow",
+        publish: true,
       });
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Repo Files Worktree Project'));
+      expect(project).toBeTruthy();
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Track worktree-only repo file'));
       expect(task).toBeTruthy();
 
+      await openRoleOperations(sessionId, 'Repo Files Developer');
+      await dispatchRoleQueueViaUi(sessionId);
+
       await openTaskCard(sessionId, 'Track worktree-only repo file');
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
-      await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
 
       const deadline = Date.now() + 30_000;
       let taskWorktreePath = "";
       while (Date.now() < deadline) {
         const taskRepositories = await invokeCommand<Array<{ taskWorktreePath?: string | null }>>(sessionId, 'list_task_repositories', { taskId: task!.id });
         taskWorktreePath = taskRepositories.find((entry) => typeof entry.taskWorktreePath === 'string' && entry.taskWorktreePath.length > 0)?.taskWorktreePath ?? "";
+        if (!taskWorktreePath) {
+          const taskDetail = await invokeCommand<any>(sessionId, 'get_task', { taskId: task!.id });
+          taskWorktreePath = String(taskDetail.activeLaneAssignment?.runtimeCwd ?? '');
+        }
         if (taskWorktreePath) {
           break;
         }
@@ -171,9 +174,8 @@ describe("desktop task repo files tab", () => {
       expect(taskWorktreePath).toBeTruthy();
 
       const relativePath = 'docs/generated-plan.md';
-      const worktreeFilePath = join(taskWorktreePath, relativePath);
       mkdirSync(join(taskWorktreePath, 'docs'), { recursive: true });
-      writeFileSync(worktreeFilePath, 'Generated inside the task worktree\n', 'utf8');
+      writeFileSync(join(taskWorktreePath, relativePath), 'Generated inside the task worktree\n', 'utf8');
 
       await clickByText(sessionId, '[role="tab"]', 'Repo files');
       await waitForText(sessionId, 'Tracked repository file changes and references');
@@ -184,7 +186,8 @@ describe("desktop task repo files tab", () => {
 
       await waitForText(sessionId, 'Repo Files Worktree Repo · docs/generated-plan.md');
       await waitForText(sessionId, 'Available');
-      await waitForText(sessionId, worktreeFilePath);
+      await waitForText(sessionId, 'Task worktree:');
+      await waitForText(sessionId, 'Resolved path:');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

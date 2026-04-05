@@ -618,7 +618,11 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
         try {
           const requestedCommand = jsonParts.join(" ").trim() || undefined;
           const result = resolveHelpResult(config.allowedCommands, bridgeTools, requestedCommand);
-          ctx.ui.notify(JSON.stringify(result, null, 2), "info");
+          if (!requestedCommand) {
+            ctx.ui.notify(`Available Orchestra commands:\n${result.helpText}`, "info");
+          } else {
+            ctx.ui.notify(JSON.stringify(result, null, 2), "info");
+          }
         } catch (error) {
           ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
         }

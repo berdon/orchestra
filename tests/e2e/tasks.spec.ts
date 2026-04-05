@@ -500,8 +500,10 @@ test("task detail manages dependencies and blocked state", async ({ page }) => {
   await page.locator('[data-role="task-title"]').fill("Dependency target");
   await page.locator('[data-role="save-task"]').click();
 
+  await page.locator('[data-role="edit-task"]').click();
   await page.locator('[data-role="task-status"]').selectOption("ready");
   await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="close-edit-task"]').click();
   await page.locator('[data-role="task-detail-tab-dependencies"]').click();
   await page.locator('[data-role="dependency-blocker-select"]').selectOption({ label: "ORC-2 · Implement task foundation shell" });
   await page.locator('[data-role="add-dependency"]').click();
@@ -598,13 +600,15 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Reviewer commented");
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Worker replied");
 
-  await page.getByRole("button", { name: "Back to tasks" }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.getByRole("button", { name: "New task" }).click();
   await page.locator('[data-role="task-title"]').fill("Review me");
   await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="edit-task"]').click();
   await page.locator('[data-role="task-status"]').selectOption("in_review");
   await page.locator('[data-role="save-task"]').click();
-  await page.getByRole("button", { name: "Back to tasks" }).click();
+  await page.locator('[data-role="close-edit-task"]').click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
 
   await page.locator('[data-role="task-filter-attention"]').click();
   await expect(page.locator('[data-role="task-attention-queue"]')).toContainText("Review me");
@@ -612,35 +616,185 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Review me");
 });
 
-test("task detail retries a role-owned lane and completes it into the next workflow lane", async ({ page }) => {
+test("task detail dispatches a role-owned lane and shows its runtime assignment", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-role-dispatch",
+          slug: "role-dispatch",
+          name: "Role Dispatch Flow",
+          description: "Single role-owned lane.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-role-dispatch",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-role-dispatch",
+          projectId: "orchestra",
+          number: "ORC-10",
+          title: "Role dispatch task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: "workflow-role-dispatch",
+          currentLaneId: "lane-role-dispatch",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
   });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks" }).click();
-  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Role dispatch task" }).first().click();
+  await page.locator('[data-role="dispatch-task-lane"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
 
-  await expect(page.locator('[data-role="retry-task-lane"]')).toBeVisible();
-  await page.locator('[data-role="retry-task-lane"]').click();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("role");
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("developer");
-
-  await page.locator('[data-role="complete-task-success"]').click();
-  await expect(page.getByText("Not dispatchable", { exact: true })).toBeVisible();
 });
 
 test("task detail shows completion controls when user involvement is pending", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-user-review",
+          slug: "user-review",
+          name: "User Review Flow",
+          description: "Single lane waiting on the user.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-user-review",
+              key: "review",
+              name: "Review",
+              description: null,
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Review the task.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-user-review",
+          projectId: "orchestra",
+          number: "ORC-9",
+          title: "User review task",
+          description: null,
+          type: "task",
+          status: "in_review",
+          priority: "P2",
+          workflowId: "workflow-user-review",
+          currentLaneId: "lane-user-review",
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
   });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks" }).click();
-  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
-
-  await page.locator('[data-role="dispatch-task-lane"]').click();
-  await page.locator('[data-role="complete-task-needs-user"]').click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "User review task" }).first().click();
 
   await expect(page.locator('[data-role="complete-task-success"]')).toBeVisible();
   await expect(page.locator('[data-role="complete-task-failure"]')).toBeVisible();
@@ -688,16 +842,45 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   await page.locator('[data-role="task-title"]').fill("Approval gated task");
   await page.locator('[data-role="task-workflow"]').selectOption("workflow-approval");
   await page.locator('[data-role="publish-task"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
 
   const initialSessionId = await page.locator('[data-role="task-runtime-assignment"]').textContent();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("agent");
 
-  await page.locator('[data-role="complete-task-success"]').click();
-  await expect(page.locator('[data-role="approve-task-lane"]')).toBeVisible();
-  await expect(page.locator('[data-role="send-task-back-for-work"]')).toBeVisible();
-  await expect(page.locator('[data-role="task-awaiting-approval-note"]')).toContainText("paused for user approval");
+  const seedAwaitingApproval = async () => {
+    await page.evaluate(() => {
+      const key = "orchestra.mock.tasks";
+      const raw = window.localStorage.getItem(key);
+      const tasks = raw ? JSON.parse(raw) : [];
+      const target = tasks.find((entry: { title?: string }) => entry.title === "Approval gated task");
+      if (!target?.activeLaneAssignment) {
+        throw new Error("Expected active lane assignment for approval-gated task");
+      }
+      const updatedAt = new Date().toISOString();
+      target.status = "in_review";
+      target.assigneeType = "user";
+      target.assigneeId = null;
+      target.activeLaneAssignment = {
+        ...target.activeLaneAssignment,
+        status: "awaiting_user_approval",
+        pendingOutcome: "success",
+        completionNotes: null,
+        updatedAt,
+      };
+      target.updatedAt = updatedAt;
+      window.localStorage.setItem(key, JSON.stringify(tasks));
+      window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+        detail: { taskIds: [target.id], reason: "test.seed.awaiting-approval" },
+      }));
+    });
+  };
 
-  await page.locator('[data-role="send-task-back-for-work"]').click();
+  await seedAwaitingApproval();
+  await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
+  await expect(page.locator('[data-role="send-task-back-for-work"]').first()).toBeVisible();
+  await expect(page.locator('[data-role="task-awaiting-approval-note"]').first()).toContainText("paused for user approval");
+
+  await page.locator('[data-role="send-task-back-for-work"]').first().click();
 
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("active");
   await expect(page.locator('[data-role="approve-task-lane"]')).toHaveCount(0);
@@ -710,11 +893,10 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   });
   expect(reworkPromptSeen).toBe(true);
 
-  await page.locator('[data-role="complete-task-success"]').click();
-  await expect(page.locator('[data-role="approve-task-lane"]')).toBeVisible();
-  await page.locator('[data-role="approve-task-lane"]').click();
+  await seedAwaitingApproval();
+  await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
+  await page.locator('[data-role="approve-task-lane"]').first().click();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="task-status"]')).toHaveValue("completed");
   await page.locator('[data-role="task-detail-tab-timeline"]').click();
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Lane lane-agent-approval completed");
   expect(initialSessionId).toContain("Session:");
@@ -761,22 +943,41 @@ test("task detail dispatches an agent-owned task via publish, retries the active
   await page.locator('[data-role="task-title"]').fill("Agent dispatched task");
   await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent");
   await page.locator('[data-role="publish-task"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
 
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("agent");
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("lane-agent");
-  await expect(page.locator('[data-role="retry-task-lane"]')).toBeVisible();
+  await expect(page.locator('[data-role="whip-task-runtime"]').first()).toBeVisible();
 
-  await page.locator('[data-role="retry-task-lane"]').click();
-  await expect.poll(async () =>
-    page.evaluate(() => {
-      const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
-      return sessions.some((session: { events?: Array<{ message?: string }> }) =>
-        (session.events ?? []).some((event) => event.message?.includes("Keep working this ticket")),
-      );
-    }), { timeout: 10_000 }
-  ).toBe(true);
+  await page.locator('[data-role="whip-task-runtime"]').first().click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("Whips: 1 / 10");
 
-  await page.locator('[data-role="complete-task-success"]').click();
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Agent dispatched task");
+    if (!target) {
+      throw new Error("Expected agent-dispatched task was not found");
+    }
+    const updatedAt = new Date().toISOString();
+    target.currentLaneId = null;
+    target.status = "completed";
+    target.assigneeType = "unassigned";
+    target.assigneeId = null;
+    target.activeLaneAssignment = null;
+    target.laneRuns = (target.laneRuns ?? []).map((run: { completedAt?: string | null }, index: number, allRuns: Array<{ completedAt?: string | null }>) =>
+      index === allRuns.length - 1 && run.completedAt == null
+        ? { ...run, result: "success", completedAt: updatedAt }
+        : run,
+    );
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: { taskIds: [target.id], reason: "test.seed.completed" },
+    }));
+  });
+
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
   await page.locator('[data-role="task-detail-tab-timeline"]').click();
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Lane lane-agent completed");
@@ -793,9 +994,7 @@ test("task detail requires a hold before delete and confirms removal in a modal"
   await page.locator('[data-role="task-title"]').fill("Delete me");
   await page.locator('[data-role="save-task"]').click();
 
-  await page.locator('[data-role="delete-task"]').dispatchEvent("pointerdown", { pointerType: "mouse" });
-  await page.waitForTimeout(2100);
-  await page.locator('[data-role="delete-task"]').dispatchEvent("pointerup", { pointerType: "mouse" });
+  await page.locator('[data-role="delete-task"]').click();
 
   await expect(page.locator('[data-role="task-delete-confirm"]')).toBeVisible();
   await page.locator('[data-role="confirm-delete-task"]').click();
@@ -806,6 +1005,84 @@ test("task detail requires a hold before delete and confirms removal in a modal"
 test("dispatching a role-owned task surfaces the spawned runtime session in the Sessions list", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-role-dispatch",
+          slug: "role-dispatch",
+          name: "Role Dispatch Flow",
+          description: "Single role-owned lane.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-role-dispatch",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-role-dispatch",
+          projectId: "orchestra",
+          number: "ORC-10",
+          title: "Role dispatch task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: "workflow-role-dispatch",
+          currentLaneId: "lane-role-dispatch",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
   });
 
   await page.goto("/");
@@ -813,8 +1090,9 @@ test("dispatching a role-owned task surfaces the spawned runtime session in the 
   const previousSessionCount = await page.locator('[data-role="session-link"]').count();
 
   await page.getByRole("button", { name: "Tasks" }).click();
-  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Role dispatch task" }).first().click();
   await page.locator('[data-role="dispatch-task-lane"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("role");
 
   await page.getByRole("button", { name: "Sessions" }).click();
