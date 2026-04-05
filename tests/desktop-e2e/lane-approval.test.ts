@@ -17,7 +17,6 @@ import {
   createRoleViaSettings,
   createTaskViaTasks,
   createWorkflowViaSettings,
-  openRoleOperations,
   openTaskCard,
   switchProject,
 } from "./ui-flows";
@@ -104,7 +103,6 @@ describe("desktop approval-gated workflow lanes", () => {
         description: "Verify approval/rework flow against the desktop runtime.",
         repositoryName: "Approval Lane Repo",
         workflowName: "Approval Flow",
-        publish: true,
       });
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
         .then((projects) => projects.find((entry) => entry.name === 'Approval Lane Project'));
@@ -115,14 +113,16 @@ describe("desktop approval-gated workflow lanes", () => {
       }).then((tasks) => tasks.find((entry) => entry.title === 'Approval gated desktop task'));
       expect(createdTask).toBeTruthy();
 
-      await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: createdTask!.id });
-      await openRoleOperations(sessionId, 'Approval Worker');
-      await clickByText(sessionId, 'button', 'Dispatch queue');
       const dispatchedTask = await waitForCondition(
         async () => {
-          await invokeCommand(sessionId, 'run_dispatcher_tick');
-          await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: role!.id }).catch(() => undefined);
-          return invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          let currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          if (!currentTask.activeLaneAssignment?.sessionId) {
+            await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: createdTask!.id }).catch(() => undefined);
+            await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+            await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: role!.id }).catch(() => undefined);
+            currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          }
+          return currentTask;
         },
         (task) => Boolean(task.activeLaneAssignment?.sessionId) && task.activeLaneAssignment?.status === 'active' && Boolean(task.activeLaneAssignment?.roleInstanceId),
       );
@@ -140,6 +140,10 @@ describe("desktop approval-gated workflow lanes", () => {
         (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
       );
       await waitForText(sessionId, "paused for user approval", 15_000);
+      const waitingRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
+      expect(waitingRoleOps.activeInstanceCount).toBe(0);
+      const waitingSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
+      expect(waitingSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('closed');
       await clickSelector(sessionId, '[data-role="send-task-back-for-work"]');
 
       const reworkedTask = await waitForCondition(
@@ -147,6 +151,8 @@ describe("desktop approval-gated workflow lanes", () => {
         (task) => task.status === "in_progress" && task.activeLaneAssignment?.status === "active",
       );
       expect(reworkedTask.activeLaneAssignment?.sessionId).toBe(workerSessionId);
+      const runningRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
+      expect(runningRoleOps.activeInstanceCount).toBe(1);
 
       await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
@@ -171,6 +177,10 @@ describe("desktop approval-gated workflow lanes", () => {
       expect(completedTask.laneRuns).toHaveLength(1);
       expect(["success", "needs_user"]).toContain(completedTask.laneRuns[0].result);
       expect(completedTask.laneRuns[0].completedAt).toBeTruthy();
+      const completedRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
+      expect(completedRoleOps.activeInstanceCount).toBe(0);
+      const finalSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
+      expect(finalSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('closed');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

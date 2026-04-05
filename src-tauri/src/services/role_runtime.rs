@@ -411,7 +411,7 @@ fn get_role_operations_counts(
     )?;
     let active_instance_count = count_query(
         connection,
-        "SELECT COUNT(*) FROM role_instances WHERE role_id = ?1 AND status IN ('running', 'waiting')",
+        "SELECT COUNT(*) FROM role_instances WHERE role_id = ?1 AND status = 'running'",
         role_id,
         "active role instances",
     )?;
@@ -563,7 +563,7 @@ fn read_role_instance(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoleInstance>
 }
 
 fn is_active_instance_status(status: &str) -> bool {
-    matches!(status, INSTANCE_STATUS_RUNNING | INSTANCE_STATUS_WAITING)
+    matches!(status, INSTANCE_STATUS_RUNNING)
 }
 
 fn role_queue_entry_id() -> String {

@@ -1771,6 +1771,7 @@ fn complete_lane(
                 normalized_notes.clone(),
                 &now,
             )?;
+            mark_assignment_worker_waiting_for_approval(connection, assignment, &now)?;
             move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
             return tasks::get_task_context(connection, task_id);
         }
@@ -1877,6 +1878,25 @@ pub fn send_lane_back_for_work(
             )
         })?;
 
+    if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
+        connection
+            .execute(
+                r#"
+                UPDATE role_instances
+                SET status = 'running',
+                    updated_at = ?2
+                WHERE id = ?1
+                "#,
+                params![role_instance_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to reactivate role instance {} for task {}: {error}",
+                    role_instance_id, task_id
+                )
+            })?;
+    }
+
     connection
         .execute(
             r#"
@@ -1929,6 +1949,34 @@ fn mark_assignment_awaiting_user_approval(
             format!(
                 "Unable to mark task lane assignment {} awaiting user approval: {error}",
                 assignment_id
+            )
+        })?;
+    Ok(())
+}
+
+fn mark_assignment_worker_waiting_for_approval(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+    now: &str,
+) -> Result<(), String> {
+    let Some(role_instance_id) = assignment.role_instance_id.as_deref() else {
+        return Ok(());
+    };
+
+    connection
+        .execute(
+            r#"
+            UPDATE role_instances
+            SET status = 'waiting',
+                updated_at = ?2
+            WHERE id = ?1
+            "#,
+            params![role_instance_id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to mark role instance {} waiting for approval: {error}",
+                role_instance_id
             )
         })?;
     Ok(())
@@ -2215,6 +2263,35 @@ pub(crate) fn validate_assignment_authorization(
         other => Err(format!(
             "Unsupported actor type for task lane completion: {other}"
         )),
+    }
+}
+
+pub fn transitioned_assignment_session_to_retire(
+    previous_assignment: Option<&TaskLaneAssignment>,
+    updated_task: &TaskDetail,
+) -> Option<String> {
+    let previous_assignment = previous_assignment?;
+    if previous_assignment.worker_type != "role" {
+        return None;
+    }
+
+    let session_id = previous_assignment.session_id.clone()?;
+    let still_active_same_session =
+        updated_task
+            .active_lane_assignment
+            .as_ref()
+            .is_some_and(|assignment| {
+                assignment.session_id.as_deref() == Some(session_id.as_str())
+                    && matches!(
+                        assignment.status.as_str(),
+                        ASSIGNMENT_STATUS_ACTIVE | ASSIGNMENT_STATUS_QUEUED
+                    )
+            });
+
+    if still_active_same_session {
+        None
+    } else {
+        Some(session_id)
     }
 }
 
@@ -3730,6 +3807,10 @@ mod tests {
             .session_id
             .clone()
             .expect("session id should exist");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance id should exist");
 
         let awaiting_review = complete_lane_as_success(
             &mut connection,
@@ -3762,6 +3843,18 @@ mod tests {
         );
         assert_eq!(awaiting_review.lane_runs.len(), 1);
         assert!(awaiting_review.lane_runs[0].completed_at.is_none());
+        let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load while awaiting approval");
+        assert_eq!(waiting_ops.active_instance_count, 0);
+        assert_eq!(waiting_ops.assigned_count, 1);
+        assert_eq!(
+            waiting_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("waiting")
+        );
 
         let reactivated_assignment = send_lane_back_for_work(&connection, &task.id)
             .expect("lane should reactivate for rework");
@@ -3774,6 +3867,17 @@ mod tests {
             tasks::get_task_context(&connection, &task.id).expect("task should reload");
         assert_eq!(reactivated_task.status, "in_progress");
         assert_eq!(reactivated_task.assignee_type, "role");
+        let running_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load after reactivation");
+        assert_eq!(running_ops.active_instance_count, 1);
+        assert_eq!(
+            running_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("running")
+        );
 
         let awaiting_review_again = complete_lane_as_success(
             &mut connection,
@@ -3800,6 +3904,18 @@ mod tests {
         assert_eq!(approved.lane_runs.len(), 1);
         assert_eq!(approved.lane_runs[0].result, "success");
         assert!(approved.lane_runs[0].completed_at.is_some());
+        let completed_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load after approval");
+        assert_eq!(completed_ops.active_instance_count, 0);
+        assert_eq!(completed_ops.assigned_count, 0);
+        assert_eq!(
+            completed_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("completed")
+        );
     }
 
     #[test]

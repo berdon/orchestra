@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     models::{AuthorizationContext, SessionModel, SessionModelState, SessionStreamEnvelope},
-    services::{database, pi_sessions::get_session_path, task_runtime},
+    services::{app_events, database, pi_sessions::get_session_path, task_runtime},
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -705,6 +705,60 @@ impl SessionRuntime {
             runtimes.remove(&self.session_id);
         }
     }
+}
+
+pub fn schedule_session_retirement(
+    app: AppHandle,
+    session_id: String,
+    delay: Duration,
+    reason: impl Into<String>,
+) {
+    let reason = reason.into();
+    thread::spawn(move || {
+        if !delay.is_zero() {
+            thread::sleep(delay);
+        }
+
+        let should_skip = database::open_connection()
+            .ok()
+            .and_then(|connection| {
+                let is_persistent_agent_session = connection
+                    .query_row(
+                        "SELECT 1 FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
+                        [session_id.as_str()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if is_persistent_agent_session {
+                    return Some(true);
+                }
+
+                task_runtime::get_active_assignment_for_session(&connection, &session_id)
+                    .ok()
+                    .map(|assignment| assignment.is_some())
+            })
+            .unwrap_or(false);
+
+        if should_skip {
+            return;
+        }
+
+        let state = app.state::<crate::state::AppState>();
+        state.log(
+            "info",
+            "sessions.retire",
+            &format!("Retiring session {} ({})", session_id, reason),
+        );
+
+        if let Ok(Some(runtime)) = state.remove_session_runtime(&session_id) {
+            runtime.shutdown();
+        }
+        let _ = state.clear_session_tracking(&session_id);
+        let _ = app_events::emit_session_change(&app, "sessions.retire", [session_id.clone()]);
+    });
 }
 
 pub fn ensure_runtime(

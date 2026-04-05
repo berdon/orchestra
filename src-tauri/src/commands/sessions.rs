@@ -194,6 +194,26 @@ fn decorate_session_record_with_connection(
     if !is_persistent_agent_session
         && task_runtime::get_active_assignment_for_session(connection, &record.id)?.is_none()
     {
+        let latest_assignment_status = connection
+            .query_row(
+                r#"
+                SELECT status
+                FROM task_lane_assignments
+                WHERE session_id = ?1
+                ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, id DESC
+                LIMIT 1
+                "#,
+                [record.id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to query latest session assignment status {}: {error}",
+                    record.id
+                )
+            })?;
+
         let task_status = connection
             .query_row(
                 r#"
@@ -212,7 +232,11 @@ fn decorate_session_record_with_connection(
                 format!("Unable to query session task status {}: {error}", record.id)
             })?;
 
-        if matches!(task_status.as_deref(), Some("completed") | Some("canceled")) {
+        if matches!(
+            latest_assignment_status.as_deref(),
+            Some("completed") | Some("failed") | Some("canceled") | Some("awaiting_user_approval")
+        ) || matches!(task_status.as_deref(), Some("completed") | Some("canceled"))
+        {
             record.status = "closed".into();
         }
     }
@@ -995,6 +1019,146 @@ mod tests {
         let dismissed_after =
             load_dismissed_session_ids(&connection).expect("dismissed ids should reload");
         assert!(dismissed_after.is_empty());
+    }
+
+    #[test]
+    fn closes_role_assignment_sessions_after_lane_handoff_even_if_task_continues() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, ?9, ?10, ?11, NULL, NULL, 0, ?12, ?13)
+                "#,
+                rusqlite::params![
+                    "task-1",
+                    "project-1",
+                    1,
+                    "ORC-1",
+                    "Handed off task",
+                    "task",
+                    "ready",
+                    "P1",
+                    "lane-review",
+                    "agent",
+                    "agent-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("task insert should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id,
+                    runtime_cwd, role_queue_entry_id, role_instance_id, prompt, started_at,
+                    completed_at, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, NULL, ?10, ?11, ?12, ?13)
+                "#,
+                rusqlite::params![
+                    "assignment-1",
+                    "task-1",
+                    "workflow-1",
+                    "lane-implement",
+                    "role",
+                    "role-1",
+                    "completed",
+                    "session-1",
+                    "instance-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:01:00Z",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:01:00Z",
+                ],
+            )
+            .expect("assignment insert should succeed");
+
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            make_session_record("session-1"),
+        )
+        .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "closed");
+    }
+
+    #[test]
+    fn closes_sessions_waiting_on_user_approval() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, ?9, ?10, NULL, NULL, NULL, 0, ?11, ?12)
+                "#,
+                rusqlite::params![
+                    "task-1",
+                    "project-1",
+                    1,
+                    "ORC-1",
+                    "Awaiting approval task",
+                    "task",
+                    "in_review",
+                    "P1",
+                    "lane-implement",
+                    "user",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("task insert should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id,
+                    runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome,
+                    completion_notes, started_at, completed_at, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, NULL, 'success', 'Ready', ?10, NULL, ?11, ?12)
+                "#,
+                rusqlite::params![
+                    "assignment-1",
+                    "task-1",
+                    "workflow-1",
+                    "lane-implement",
+                    "role",
+                    "role-1",
+                    "awaiting_user_approval",
+                    "session-1",
+                    "instance-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:01:00Z",
+                ],
+            )
+            .expect("awaiting approval assignment insert should succeed");
+
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            make_session_record("session-1"),
+        )
+        .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "closed");
     }
 
     #[test]
