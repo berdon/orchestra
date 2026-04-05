@@ -165,6 +165,13 @@ impl AppState {
             .map_err(|_| "Unable to access active session run state".to_string())
     }
 
+    pub fn active_session_run_id(&self, session_id: &str) -> Result<Option<String>, String> {
+        self.active_session_runs
+            .lock()
+            .map(|active_runs| active_runs.get(session_id).cloned())
+            .map_err(|_| "Unable to access active session run state".to_string())
+    }
+
     pub fn set_terminal_window(&self, session_id: &str, window_label: &str) -> Result<(), String> {
         self.terminal_windows
             .lock()

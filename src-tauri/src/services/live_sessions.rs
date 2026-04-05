@@ -314,6 +314,16 @@ impl SessionRuntime {
                     .get("message")
                     .map(extract_message_text)
                     .unwrap_or_default();
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.run.turn_end",
+                    &format!(
+                        "Session {} completed turn for run {} with {} chars",
+                        self.session_id,
+                        run_id,
+                        response_text.chars().count()
+                    ),
+                );
                 let _ = crate::services::channels::deliver_channel_response_for_run(
                     self.app.clone(),
                     self.app.state::<crate::state::AppState>().inner(),
@@ -326,15 +336,26 @@ impl SessionRuntime {
 
         if event_type == "error" {
             if let Some(run_id) = self.current_run_id() {
-                let _ = crate::services::channels::fail_channel_response_for_run(
-                    &run_id,
-                    &extract_rpc_error(&payload),
+                let error = extract_rpc_error(&payload);
+                self.app.state::<crate::state::AppState>().log(
+                    "error",
+                    "sessions.run.error",
+                    &format!(
+                        "Session {} received error during run {}: {}",
+                        self.session_id, run_id, error
+                    ),
                 );
+                let _ = crate::services::channels::fail_channel_response_for_run(&run_id, &error);
             }
         }
 
         if event_type == "agent_end" {
             if let Some(run_id) = self.take_current_run_id() {
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.run.agent_end",
+                    &format!("Session {} ended run {}", self.session_id, run_id),
+                );
                 let _ = self
                     .app
                     .state::<crate::state::AppState>()
@@ -358,6 +379,14 @@ impl SessionRuntime {
         }
 
         if let Some(run_id) = self.take_current_run_id() {
+            self.app.state::<crate::state::AppState>().log(
+                "error",
+                "sessions.run.process_end",
+                &format!(
+                    "Session {} terminated active run {}: {}",
+                    self.session_id, run_id, error_message
+                ),
+            );
             let _ = self
                 .app
                 .state::<crate::state::AppState>()
@@ -537,7 +566,7 @@ impl SessionRuntime {
     ) -> Result<(), String> {
         self.app.state::<crate::state::AppState>().log(
             "info",
-            "sessions.runtime.start_run",
+            "sessions.run.start",
             &format!(
                 "Session {} starting {} delivery {} with {} chars",
                 self.session_id,
@@ -571,6 +600,14 @@ impl SessionRuntime {
 
         let result = self.send_command(command);
         if let Err(error) = result {
+            self.app.state::<crate::state::AppState>().log(
+                "error",
+                "sessions.run.start_failed",
+                &format!(
+                    "Session {} failed to start {} delivery {}: {}",
+                    self.session_id, delivery_type, run_id, error
+                ),
+            );
             if delivery_type == "prompt" {
                 let _ = self.take_current_run_id();
             }
