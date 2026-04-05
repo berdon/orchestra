@@ -1357,12 +1357,12 @@ export async function clearLogs(): Promise<void> {
   await invoke("clear_logs");
 }
 
-export async function exportLogsBundle(): Promise<string> {
+export async function exportLogsBundle(includeRelatedSessionSnapshot = false): Promise<string> {
   if (!isTauriAvailable()) {
     throw new Error("Log bundle export is only available in the desktop app.");
   }
 
-  return invoke<string>("export_logs_bundle");
+  return invoke<string>("export_logs_bundle", { includeRelatedSessionSnapshot });
 }
 
 export async function openLogsWindow(): Promise<void> {

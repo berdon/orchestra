@@ -7,8 +7,10 @@ interface RuntimeLogPanelProps {
   exportingLogs?: boolean;
   exportStatusMessage?: string | null;
   exportErrorMessage?: string | null;
+  includeRelatedSessionSnapshot?: boolean;
   onRefresh: () => void;
   onClear: () => void;
+  onToggleIncludeRelatedSessionSnapshot?: (nextValue: boolean) => void;
   onExport?: () => void;
 }
 
@@ -47,8 +49,10 @@ export function RuntimeLogPanel({
   exportingLogs = false,
   exportStatusMessage = null,
   exportErrorMessage = null,
+  includeRelatedSessionSnapshot = false,
   onRefresh,
   onClear,
+  onToggleIncludeRelatedSessionSnapshot,
   onExport,
 }: RuntimeLogPanelProps) {
   return (
@@ -74,6 +78,17 @@ export function RuntimeLogPanel({
         </div>
       </div>
 
+      {onToggleIncludeRelatedSessionSnapshot ? (
+        <label className="checkbox-row" data-role="runtime-log-export-include-related">
+          <input
+            type="checkbox"
+            checked={includeRelatedSessionSnapshot}
+            onChange={(event) => onToggleIncludeRelatedSessionSnapshot(event.target.checked)}
+            disabled={exportingLogs || loadingLogs || clearingLogs}
+          />
+          <span>Include related session files and database snapshot in the zip.</span>
+        </label>
+      ) : null}
       {exportStatusMessage ? <p className="muted-copy" data-role="runtime-log-export-success">{exportStatusMessage}</p> : null}
       {exportErrorMessage ? <p className="error-copy" data-role="runtime-log-export-error">{exportErrorMessage}</p> : null}
       {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
