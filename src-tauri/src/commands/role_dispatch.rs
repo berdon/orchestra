@@ -1,8 +1,8 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     models::RoleOperationsDetail,
-    services::{database, pi_sessions, role_dispatch},
+    services::{app_events, database, live_sessions, pi_sessions, role_dispatch},
     state::AppState,
 };
 
@@ -52,6 +52,38 @@ pub fn release_role_instance(
             instance_id, outcome
         ),
     );
+    Ok(detail)
+}
+
+#[tauri::command]
+pub fn reset_role_assignments(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    role_id: String,
+) -> Result<RoleOperationsDetail, String> {
+    let mut connection = database::open_connection()?;
+    let (detail, task_ids, session_ids) =
+        role_dispatch::reset_role_assignments(&mut connection, &role_id)?;
+    state.log(
+        "info",
+        "role.assignments.reset",
+        &format!("Reset queued/active assignments for role {}", role_id),
+    );
+    if !task_ids.is_empty() {
+        let _ = app_events::emit_task_change(&app, "role.assignments.reset", task_ids);
+    }
+    if !session_ids.is_empty() {
+        let _ =
+            app_events::emit_session_change(&app, "role.assignments.reset", session_ids.clone());
+        for session_id in session_ids {
+            live_sessions::schedule_session_retirement(
+                app.clone(),
+                session_id,
+                std::time::Duration::ZERO,
+                "role.assignments.reset",
+            );
+        }
+    }
     Ok(detail)
 }
 

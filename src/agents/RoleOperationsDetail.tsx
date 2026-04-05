@@ -11,6 +11,7 @@ interface RoleOperationsDetailProps {
   onDispatch: () => Promise<void>;
   onEnqueue: (input: { title: string; summary: string; entryPrompt: string }) => Promise<void>;
   onRelease: (instanceId: string, outcome: "success" | "failure" | "canceled") => Promise<void>;
+  onResetAssignments: () => Promise<void>;
   onDispose: (instanceId: string) => Promise<void>;
 }
 
@@ -27,7 +28,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRelease, onDispose }: RoleOperationsDetailProps) {
+export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRelease, onResetAssignments, onDispose }: RoleOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<RoleWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -54,6 +55,15 @@ export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRe
             <span className="status-badge status-badge--accent">Capacity {detail.activeInstanceCount}/{detail.role.capacity}</span>
             <button className="primary-button" type="button" disabled={busy || detail.queuedCount === 0} onClick={() => void onDispatch()}>
               {busy ? "Dispatching…" : "Dispatch queue"}
+            </button>
+            <button
+              className="secondary-button secondary-button--danger"
+              data-role="reset-role-assignments"
+              type="button"
+              disabled={busy || !detail.instances.some((instance) => instance.currentQueueEntryId)}
+              onClick={() => void onResetAssignments()}
+            >
+              Reset assignments
             </button>
           </div>
         </div>

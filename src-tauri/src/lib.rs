@@ -40,7 +40,9 @@ use commands::{
         delete_repository, get_project, get_repository, list_projects, list_repositories,
         set_project_default_repository, update_project, update_repository,
     },
-    role_dispatch::{dispatch_role_queue, dispose_role_instance, release_role_instance},
+    role_dispatch::{
+        dispatch_role_queue, dispose_role_instance, release_role_instance, reset_role_assignments,
+    },
     role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
@@ -260,6 +262,7 @@ pub fn run() {
             enqueue_role_work,
             dispatch_role_queue,
             release_role_instance,
+            reset_role_assignments,
             dispose_role_instance,
             list_workflows,
             get_workflow,

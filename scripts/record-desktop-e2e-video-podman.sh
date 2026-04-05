@@ -154,7 +154,7 @@ export ORCHESTRA_PROJECT_ROOT="${WORKSPACE_DIR}"
 export ORCHESTRA_PI_EXECUTABLE="/workspace/orchestra/node_modules/.bin/pi"
 
 mkdir -p /artifacts
-ffmpeg -y -video_size 1440x920 -framerate 15 -f x11grab -i "${DISPLAY}" -codec:v libvpx-vp9 -crf 32 -b:v 0 -an "/artifacts/${RAW_FILE}" >/tmp/ffmpeg-record.log 2>&1 &
+ffmpeg -y -video_size 1440x920 -framerate 15 -f x11grab -i "${DISPLAY}" -vf format=yuv420p -pix_fmt yuv420p -codec:v libvpx -crf 10 -b:v 1M -deadline good -cpu-used 4 -auto-alt-ref 0 -an "/artifacts/${RAW_FILE}" >/tmp/ffmpeg-record.log 2>&1 &
 FFMPEG_PID=$!
 sleep 2
 
@@ -174,7 +174,7 @@ cd "${WORKSPACE_DIR}"
 ./scripts/run-desktop-e2e.sh "${TEST_FILE}"
 sleep 2
 
-ffmpeg -y -ss "${TRIM_START}" -i "/artifacts/${RAW_FILE}" -codec:v libvpx-vp9 -crf 32 -b:v 0 -an "/artifacts/${OUTPUT_FILE}" >/tmp/ffmpeg-trim.log 2>&1
+ffmpeg -y -ss "${TRIM_START}" -i "/artifacts/${RAW_FILE}" -vf format=yuv420p -pix_fmt yuv420p -codec:v libvpx -crf 10 -b:v 1M -deadline good -cpu-used 4 -auto-alt-ref 0 -an "/artifacts/${OUTPUT_FILE}" >/tmp/ffmpeg-trim.log 2>&1
 rm -f "/artifacts/${RAW_FILE}"
 SH
 chmod +x "${ENTRY_SCRIPT}"

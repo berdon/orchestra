@@ -26,6 +26,15 @@ const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
 const DEFAULT_TASK_WHIP_MAX_ATTEMPTS: i64 = 10;
 const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID and optional notes).";
 
+#[derive(Debug, Clone)]
+pub struct StaleTaskAssignmentCandidate {
+    pub assignment_id: String,
+    pub task_id: String,
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub reason: String,
+}
+
 fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
     let connection = crate::services::database::open_connection()?;
     let task = tasks::get_task_context(&connection, task_id)?;
@@ -110,6 +119,93 @@ pub fn get_current_lane_assignment(
         )
         .optional()
         .map_err(|error| format!("Unable to query current assignment for task {task_id}: {error}"))
+}
+
+pub fn get_assignment_by_id(
+    connection: &Connection,
+    assignment_id: &str,
+) -> Result<Option<TaskLaneAssignment>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                task_id,
+                workflow_id,
+                lane_id,
+                worker_type,
+                worker_id,
+                status,
+                session_id,
+                runtime_cwd,
+                role_queue_entry_id,
+                role_instance_id,
+                prompt,
+                pending_outcome,
+                completion_notes,
+                whip_count,
+                last_whip_at,
+                started_at,
+                completed_at,
+                created_at,
+                updated_at
+            FROM task_lane_assignments
+            WHERE id = ?1
+            "#,
+            [assignment_id],
+            read_assignment,
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query assignment {assignment_id}: {error}"))
+}
+
+pub fn list_current_role_assignments(
+    connection: &Connection,
+    role_id: &str,
+) -> Result<Vec<TaskLaneAssignment>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                id,
+                task_id,
+                workflow_id,
+                lane_id,
+                worker_type,
+                worker_id,
+                status,
+                session_id,
+                runtime_cwd,
+                role_queue_entry_id,
+                role_instance_id,
+                prompt,
+                pending_outcome,
+                completion_notes,
+                whip_count,
+                last_whip_at,
+                started_at,
+                completed_at,
+                created_at,
+                updated_at
+            FROM task_lane_assignments
+            WHERE worker_type = 'role'
+              AND worker_id = ?1
+              AND status IN ('queued', 'active', 'awaiting_user_approval')
+            ORDER BY updated_at DESC, created_at DESC
+            "#,
+        )
+        .map_err(|error| {
+            format!("Unable to prepare role assignment query for {role_id}: {error}")
+        })?;
+
+    let rows = statement
+        .query_map([role_id], read_assignment)
+        .map_err(|error| {
+            format!("Unable to query current role assignments for {role_id}: {error}")
+        })?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read current role assignments for {role_id}: {error}"))
 }
 
 pub fn get_active_assignment_for_session(
@@ -211,6 +307,301 @@ pub fn reset_task_runtime(
         .map_err(|error| format!("Unable to commit task reset transaction: {error}"))?;
 
     tasks::get_task_context(connection, task_id)
+}
+
+pub fn reset_role_assignments_to_queue(
+    connection: &mut Connection,
+    role_id: &str,
+    reason: &str,
+) -> Result<Vec<TaskLaneAssignment>, String> {
+    let assignments = list_current_role_assignments(connection, role_id)?;
+    let now = now_iso();
+    let note = normalize_optional(Some(reason.to_string()));
+
+    for assignment in &assignments {
+        let tx = connection.transaction().map_err(|error| {
+            format!(
+                "Unable to start role reset transaction for {}: {error}",
+                assignment.id
+            )
+        })?;
+
+        tx.execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = 'queued',
+                session_id = NULL,
+                runtime_cwd = NULL,
+                role_instance_id = NULL,
+                pending_outcome = NULL,
+                completion_notes = NULL,
+                completed_at = NULL,
+                updated_at = ?2
+            WHERE id = ?1
+            "#,
+            params![assignment.id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to queue role assignment {} during reset: {error}",
+                assignment.id
+            )
+        })?;
+
+        tx.execute(
+            r#"
+            UPDATE tasks
+            SET status = 'ready',
+                current_lane_id = ?2,
+                assignee_type = 'role',
+                assignee_id = ?3,
+                updated_at = ?4
+            WHERE id = ?1
+            "#,
+            params![
+                assignment.task_id,
+                assignment.lane_id,
+                assignment.worker_id,
+                now
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to reset task {} for role assignment {}: {error}",
+                assignment.task_id, assignment.id
+            )
+        })?;
+
+        if let Some(queue_entry_id) = assignment.role_queue_entry_id.as_deref() {
+            tx.execute(
+                r#"
+                UPDATE role_queue_entries
+                SET status = 'queued',
+                    assigned_instance_id = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    updated_at = ?2
+                WHERE id = ?1
+                "#,
+                params![queue_entry_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to requeue role queue entry {} during reset: {error}",
+                    queue_entry_id
+                )
+            })?;
+        }
+
+        if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
+            tx.execute(
+                r#"
+                UPDATE role_instances
+                SET status = 'canceled',
+                    current_queue_entry_id = NULL,
+                    last_error = ?2,
+                    updated_at = ?3
+                WHERE id = ?1
+                "#,
+                params![role_instance_id, note.clone(), now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to cancel role instance {} during reset: {error}",
+                    role_instance_id
+                )
+            })?;
+        }
+
+        if assignment.session_id.is_some() {
+            update_open_lane_run(
+                &tx,
+                &assignment.task_id,
+                &assignment.lane_id,
+                assignment.session_id.as_deref(),
+                "canceled",
+                note.clone(),
+                &now,
+            )?;
+        }
+
+        tx.commit().map_err(|error| {
+            format!(
+                "Unable to commit role reset transaction for {}: {error}",
+                assignment.id
+            )
+        })?;
+    }
+
+    Ok(assignments)
+}
+
+pub fn find_stale_task_assignment_candidates(
+    connection: &Connection,
+) -> Result<Vec<StaleTaskAssignmentCandidate>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id
+            FROM task_lane_assignments
+            WHERE status IN ('queued', 'active')
+            ORDER BY updated_at ASC, created_at ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare stale assignment query: {error}"))?;
+
+    let assignment_ids = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query stale assignment candidates: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect stale assignment candidates: {error}"))?;
+
+    let mut candidates = Vec::new();
+    for assignment_id in assignment_ids {
+        let Some(assignment) = get_assignment_by_id(connection, &assignment_id)? else {
+            continue;
+        };
+        let Some(task) = tasks::get_task_context(connection, &assignment.task_id).ok() else {
+            continue;
+        };
+        if let Some(reason) = stale_assignment_reason(connection, &assignment)? {
+            candidates.push(StaleTaskAssignmentCandidate {
+                assignment_id: assignment.id.clone(),
+                task_id: assignment.task_id.clone(),
+                project_id: task.project_id,
+                session_id: assignment.session_id.clone(),
+                reason,
+            });
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn stale_assignment_reason(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<Option<String>, String> {
+    if assignment.status == ASSIGNMENT_STATUS_ACTIVE {
+        let Some(session_id) = assignment.session_id.as_deref() else {
+            return Ok(Some("active assignment is missing a session".into()));
+        };
+        if pi_sessions::find_session_context_for_session(session_id).is_err() {
+            return Ok(Some(format!("assignment session {session_id} is missing")));
+        }
+    }
+
+    if assignment.worker_type == "agent" {
+        if assignment.status == ASSIGNMENT_STATUS_ACTIVE && assignment.worker_id.is_none() {
+            return Ok(Some("agent assignment is missing an agent id".into()));
+        }
+        return Ok(None);
+    }
+
+    let Some(queue_entry_id) = assignment.role_queue_entry_id.as_deref() else {
+        return Ok(Some("role assignment is missing a queue entry".into()));
+    };
+    let Some((queue_status, assigned_instance_id)) = connection
+        .query_row(
+            "SELECT status, assigned_instance_id FROM role_queue_entries WHERE id = ?1",
+            [queue_entry_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to query role queue entry {}: {error}",
+                queue_entry_id
+            )
+        })?
+    else {
+        return Ok(Some(format!(
+            "role queue entry {queue_entry_id} is missing"
+        )));
+    };
+
+    match assignment.status.as_str() {
+        ASSIGNMENT_STATUS_ACTIVE => {
+            let Some(role_instance_id) = assignment.role_instance_id.as_deref() else {
+                return Ok(Some(
+                    "active role assignment is missing a role instance".into(),
+                ));
+            };
+            let Some((session_id, current_queue_entry_id)) = connection
+                .query_row(
+                    "SELECT session_id, current_queue_entry_id FROM role_instances WHERE id = ?1",
+                    [role_instance_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to query role instance {}: {error}",
+                        role_instance_id
+                    )
+                })?
+            else {
+                return Ok(Some(format!("role instance {role_instance_id} is missing")));
+            };
+            if current_queue_entry_id.as_deref() != Some(queue_entry_id) {
+                return Ok(Some(format!(
+                    "role instance {role_instance_id} no longer owns queue entry {queue_entry_id}"
+                )));
+            }
+            if session_id.as_deref() != assignment.session_id.as_deref() {
+                return Ok(Some(format!(
+                    "role instance {role_instance_id} session no longer matches assignment {}",
+                    assignment.id
+                )));
+            }
+        }
+        ASSIGNMENT_STATUS_QUEUED => {
+            if queue_status == "assigned" {
+                let Some(role_instance_id) = assigned_instance_id.as_deref() else {
+                    return Ok(Some(format!(
+                        "queued role assignment {} has an assigned queue entry without an instance",
+                        assignment.id
+                    )));
+                };
+                let Some(session_id) = connection
+                    .query_row(
+                        "SELECT session_id FROM role_instances WHERE id = ?1",
+                        [role_instance_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        format!(
+                            "Unable to query role instance {}: {error}",
+                            role_instance_id
+                        )
+                    })?
+                else {
+                    return Ok(Some(format!(
+                        "assigned role instance {role_instance_id} is missing"
+                    )));
+                };
+                let Some(session_id) = session_id else {
+                    return Ok(Some(format!(
+                        "assigned role instance {role_instance_id} is missing a session"
+                    )));
+                };
+                if pi_sessions::find_session_context_for_session(&session_id).is_err() {
+                    return Ok(Some(format!(
+                        "assigned role instance session {session_id} is missing"
+                    )));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(None)
 }
 
 pub fn activate_queued_role_assignments(
@@ -3132,7 +3523,7 @@ mod tests {
             AgentUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput,
             WorkflowUpsertInput,
         },
-        services::{agents, database, roles, tasks, workflows},
+        services::{agents, database, pi_sessions, roles, tasks, workflows},
     };
 
     fn in_memory_connection() -> Connection {
@@ -3968,6 +4359,113 @@ mod tests {
                 .find(|instance| instance.id == role_instance_id)
                 .map(|instance| instance.status.as_str()),
             Some("completed")
+        );
+    }
+
+    #[test]
+    fn finds_missing_session_assignments_and_can_redispatch_them() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Recovery Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Recovery Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-recover".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Recover the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-stale-session-recovery");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-recover', 'orchestra', 'runtime-recover', 'Runtime Recovery Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![project_root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Recover stale session".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-recover".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-recover".into()),
+                repository_ids: vec!["repo-recover".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("task should dispatch");
+        let stale_session_id = assignment.session_id.clone().expect("session should exist");
+        pi_sessions::delete_session_file(&session_dir, &stale_session_id)
+            .expect("stale session file should delete");
+
+        let stale_candidates = find_stale_task_assignment_candidates(&connection)
+            .expect("stale candidates should load");
+        assert!(stale_candidates
+            .iter()
+            .any(|candidate| candidate.assignment_id == assignment.id));
+
+        let reset =
+            reset_task_runtime(&mut connection, &task.id).expect("task reset should succeed");
+        assert_eq!(reset.status, "ready");
+        assert!(reset.active_lane_assignment.is_none());
+
+        let redispatched =
+            maybe_auto_dispatch_task(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("task should redispatch")
+                .expect("redispatched assignment should exist");
+        assert_eq!(redispatched.status, "active");
+        assert_ne!(
+            redispatched.session_id.as_deref(),
+            Some(stale_session_id.as_str())
         );
     }
 

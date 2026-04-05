@@ -53,7 +53,7 @@ function toRoleOperationsSnapshot(role: RoleSummary, queueEntries: RoleQueueEntr
     role,
     queuedCount: queueEntries.filter((entry) => entry.status === "queued").length,
     assignedCount: queueEntries.filter((entry) => entry.status === "assigned").length,
-    activeInstanceCount: instances.filter((instance) => ["running", "waiting"].includes(instance.status)).length,
+    activeInstanceCount: instances.filter((instance) => instance.status === "running").length,
     idleInstanceCount: instances.filter((instance) => instance.status === "idle").length,
     latestError: instances.find((instance) => instance.lastError)?.lastError ?? null,
   };
@@ -64,7 +64,7 @@ function toRoleOperationsDetail(role: RoleDefinition, queueEntries: RoleQueueEnt
     role,
     queuedCount: queueEntries.filter((entry) => entry.status === "queued").length,
     assignedCount: queueEntries.filter((entry) => entry.status === "assigned").length,
-    activeInstanceCount: instances.filter((instance) => ["running", "waiting"].includes(instance.status)).length,
+    activeInstanceCount: instances.filter((instance) => instance.status === "running").length,
     idleInstanceCount: instances.filter((instance) => instance.status === "idle").length,
     queueEntries,
     instances,
@@ -106,7 +106,7 @@ async function runMockDispatch(roleId: string) {
 
   while (true) {
     const roleQueue = queueEntries.filter((entry) => entry.roleId === roleId && entry.status === "queued").sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
-    const activeCount = instances.filter((instance) => instance.roleId === roleId && ["running", "waiting"].includes(instance.status)).length;
+    const activeCount = instances.filter((instance) => instance.roleId === roleId && instance.status === "running").length;
     if (roleQueue.length === 0 || activeCount >= role.capacity) {
       break;
     }
@@ -231,6 +231,46 @@ export async function dispatchRoleQueue(roleId: string): Promise<RoleOperationsD
   }
 
   return invoke<RoleOperationsDetail>("dispatch_role_queue", { roleId });
+}
+
+export async function resetRoleAssignments(roleId: string): Promise<RoleOperationsDetail> {
+  if (!isTauriAvailable()) {
+    const { role, queueEntries, instances } = await loadMockRoleState(roleId);
+    const resetAt = nowIso();
+    const nextInstances = getMockRoleInstances().map((entry) =>
+      entry.roleId === roleId && entry.currentQueueEntryId
+        ? {
+            ...entry,
+            status: "canceled",
+            currentQueueEntryId: null,
+            lastError: "Role assignments reset by operator.",
+            updatedAt: resetAt,
+          }
+        : entry,
+    );
+    const nextQueueEntries = getMockQueueEntries().map((entry) =>
+      entry.roleId === roleId && entry.status === "assigned"
+        ? {
+            ...entry,
+            status: "queued",
+            assignedInstanceId: null,
+            startedAt: null,
+            completedAt: null,
+            updatedAt: resetAt,
+          }
+        : entry,
+    );
+
+    setMockRoleInstances(nextInstances);
+    setMockQueueEntries(nextQueueEntries);
+    return toRoleOperationsDetail(
+      role,
+      nextQueueEntries.filter((entry) => entry.roleId === roleId),
+      nextInstances.filter((entry) => entry.roleId === roleId),
+    );
+  }
+
+  return invoke<RoleOperationsDetail>("reset_role_assignments", { roleId });
 }
 
 export async function releaseRoleInstance(instanceId: string, outcome: "success" | "failure" | "canceled", errorMessage?: string): Promise<RoleOperationsDetail> {
