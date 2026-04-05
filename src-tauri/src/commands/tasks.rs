@@ -1,11 +1,12 @@
+use std::time::Duration;
+
 use tauri::{AppHandle, State};
 
 use crate::{
     models::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentFileMentionCandidate,
-        TaskCommentInput, TaskCommentUpdateInput, TaskDependency, TaskDetail,
-        TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
-        TaskUpsertInput,
+        TaskCommentInput, TaskCommentUpdateInput, TaskDependency, TaskDetail, TaskFileReference,
+        TaskFileReferenceInput, TaskRepository, TaskSummary, TaskUpsertInput,
     },
     services::{
         app_events, database, pi_sessions, task_attachments, task_comment_file_mentions,
@@ -33,7 +34,11 @@ fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionCont
 }
 
 fn log_task_command_failure(state: &AppState, target: &str, task_id: &str, error: &str) {
-    state.log("error", target, &format!("Task {} failed: {}", task_id, error));
+    state.log(
+        "error",
+        target,
+        &format!("Task {} failed: {}", task_id, error),
+    );
 }
 
 #[tauri::command]
@@ -74,7 +79,12 @@ pub fn search_task_comment_file_mentions(
     limit: Option<usize>,
 ) -> Result<Vec<TaskCommentFileMentionCandidate>, String> {
     let connection = database::open_connection()?;
-    task_comment_file_mentions::search_task_comment_file_mentions(&connection, &task_id, &query, limit)
+    task_comment_file_mentions::search_task_comment_file_mentions(
+        &connection,
+        &task_id,
+        &query,
+        limit,
+    )
 }
 
 #[tauri::command]
@@ -94,9 +104,17 @@ pub fn list_task_repositories(task_id: String) -> Result<Vec<TaskRepository>, St
 pub fn list_task_file_references(task_id: String) -> Result<Vec<TaskFileReference>, String> {
     let connection = database::open_connection()?;
     let task = tasks::get_task(&connection, &task_id)?;
-    let task_workspace_cwd = task.active_lane_assignment
+    let task_workspace_cwd = task
+        .active_lane_assignment
         .as_ref()
-        .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(&connection, assignment, &task_id, &task.project_id))
+        .map(|assignment| {
+            task_runtime::resolve_assignment_workspace_cwd(
+                &connection,
+                assignment,
+                &task_id,
+                &task.project_id,
+            )
+        })
         .transpose()?
         .flatten();
     task_file_references::load_task_file_references(
@@ -263,7 +281,14 @@ pub fn update_task_comment(
         "task.comment.updated",
         &format!("Updated comment {} on task {}", comment.id, comment.task_id),
     );
-    state.log_authorized_action("auth.audit", "update_task_comment", None, None, &comment.id, "success");
+    state.log_authorized_action(
+        "auth.audit",
+        "update_task_comment",
+        None,
+        None,
+        &comment.id,
+        "success",
+    );
     emit_task_change(&app, "task.comment.updated", [comment.task_id.clone()]);
     Ok(comment)
 }
@@ -281,7 +306,14 @@ pub fn delete_task_comment(
         "task.comment.deleted",
         &format!("Deleted comment {} on task {}", comment.id, comment.task_id),
     );
-    state.log_authorized_action("auth.audit", "delete_task_comment", None, None, &comment.id, "success");
+    state.log_authorized_action(
+        "auth.audit",
+        "delete_task_comment",
+        None,
+        None,
+        &comment.id,
+        "success",
+    );
     emit_task_change(&app, "task.comment.deleted", [comment.task_id.clone()]);
     Ok(comment)
 }
@@ -538,10 +570,13 @@ pub async fn approve_lane_completion(
     task_id: String,
 ) -> Result<TaskDetail, String> {
     let task_id_for_context = task_id.clone();
-    let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
-        .await
-        .map_err(|error| format!("Unable to join lane approval context task: {error}"))??;
+    let context = tauri::async_runtime::spawn_blocking(move || {
+        session_context_for_task_id(&task_id_for_context)
+    })
+    .await
+    .map_err(|error| format!("Unable to join lane approval context task: {error}"))??;
     let mut connection = database::open_connection()?;
+    let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
     let mut task = task_runtime::approve_pending_lane_completion(
         &mut connection,
         &context.project_root,
@@ -549,10 +584,8 @@ pub async fn approve_lane_completion(
         &task_id,
     )?;
 
-    let auto_dispatches = task_runtime::collect_post_completion_auto_dispatches(
-        &mut connection,
-        &task_id,
-    )?;
+    let auto_dispatches =
+        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?;
     for outcome in &auto_dispatches {
         task_runtime::start_assignment_run(
             app.clone(),
@@ -567,7 +600,11 @@ pub async fn approve_lane_completion(
     if !auto_dispatches.is_empty() {
         task = tasks::get_task_context(&connection, &task_id)?;
         let mut changed_task_ids = vec![task.id.clone()];
-        changed_task_ids.extend(auto_dispatches.iter().map(|outcome| outcome.task_id.clone()));
+        changed_task_ids.extend(
+            auto_dispatches
+                .iter()
+                .map(|outcome| outcome.task_id.clone()),
+        );
         emit_task_change(&app, "task.transition.auto_dispatch", changed_task_ids);
     }
 
@@ -577,6 +614,16 @@ pub async fn approve_lane_completion(
         &format!("Approved pending lane completion for task {}", task_id),
     );
     emit_task_change(&app, "task.transition.approved_success", [task.id.clone()]);
+    if let Some(session_id) =
+        task_runtime::transitioned_assignment_session_to_retire(previous_assignment.as_ref(), &task)
+    {
+        crate::services::live_sessions::schedule_session_retirement(
+            app.clone(),
+            session_id,
+            Duration::ZERO,
+            "task.transition.approved_success",
+        );
+    }
     Ok(task)
 }
 
@@ -588,9 +635,11 @@ pub async fn send_lane_back_for_work(
 ) -> Result<TaskDetail, String> {
     let result = async {
         let task_id_for_context = task_id.clone();
-        let context = tauri::async_runtime::spawn_blocking(move || session_context_for_task_id(&task_id_for_context))
-            .await
-            .map_err(|error| format!("Unable to join lane rework context task: {error}"))??;
+        let context = tauri::async_runtime::spawn_blocking(move || {
+            session_context_for_task_id(&task_id_for_context)
+        })
+        .await
+        .map_err(|error| format!("Unable to join lane rework context task: {error}"))??;
         let connection = database::open_connection()?;
         let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
         let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
@@ -605,20 +654,29 @@ pub async fn send_lane_back_for_work(
             emit_session_change(&app, "task.transition.rework", [session_id]);
         }
         tasks::get_task_context(&connection, &task_id)
-    }.await;
+    }
+    .await;
 
     match result {
         Ok(task) => {
             state.log(
                 "info",
                 "task.transition",
-                &format!("Sent task {} back to the current lane session for more work", task_id),
+                &format!(
+                    "Sent task {} back to the current lane session for more work",
+                    task_id
+                ),
             );
             emit_task_change(&app, "task.transition.needs_work", [task.id.clone()]);
             Ok(task)
         }
         Err(error) => {
-            log_task_command_failure(&state, "task.transition.needs_work.failed", &task_id, &error);
+            log_task_command_failure(
+                &state,
+                "task.transition.needs_work.failed",
+                &task_id,
+                &error,
+            );
             Err(error)
         }
     }
@@ -638,13 +696,18 @@ pub async fn manual_task_whip(
 ) -> Result<TaskDetail, String> {
     let connection = database::open_connection()?;
     let task = tasks::get_task_context(&connection, &task_id)?;
-    let assignment = task
-        .active_lane_assignment
-        .clone()
-        .ok_or_else(|| format!("Task {} does not have an active lane assignment to whip", task_id))?;
+    let assignment = task.active_lane_assignment.clone().ok_or_else(|| {
+        format!(
+            "Task {} does not have an active lane assignment to whip",
+            task_id
+        )
+    })?;
 
     if assignment.status != "active" {
-        return Err(format!("Task {} is not active and cannot be whipped right now", task_id));
+        return Err(format!(
+            "Task {} is not active and cannot be whipped right now",
+            task_id
+        ));
     }
 
     task_runtime::record_task_whip_sent(&connection, &assignment.id, assignment.whip_count)?;
@@ -653,7 +716,11 @@ pub async fn manual_task_whip(
         emit_session_change(&app, "task.whip.sent", [session_id]);
     }
     let updated_task = tasks::get_task_context(&connection, &task_id)?;
-    state.log("info", "task.whip.sent", &format!("Sent manual whip for task {}", task_id));
+    state.log(
+        "info",
+        "task.whip.sent",
+        &format!("Sent manual whip for task {}", task_id),
+    );
     emit_task_change(&app, "task.whip.sent", [updated_task.id.clone()]);
     Ok(updated_task)
 }
@@ -673,6 +740,7 @@ async fn complete_lane_command(
         .await
         .map_err(|error| format!("Unable to join lane completion context task: {error}"))??;
         let mut connection = database::open_connection()?;
+        let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
         let mut task = match outcome {
             "success" => task_runtime::complete_lane_as_success(
                 &mut connection,
@@ -700,10 +768,8 @@ async fn complete_lane_command(
             )?,
         };
 
-        let auto_dispatches = task_runtime::collect_post_completion_auto_dispatches(
-            &mut connection,
-            &task_id,
-        )?;
+        let auto_dispatches =
+            task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?;
         for outcome in &auto_dispatches {
             task_runtime::start_assignment_run(
                 app.clone(),
@@ -719,17 +785,24 @@ async fn complete_lane_command(
             task = tasks::get_task_context(&connection, &task_id)?;
         }
 
-        Ok::<(TaskDetail, Vec<String>), String>((
+        let retired_session_id = task_runtime::transitioned_assignment_session_to_retire(
+            previous_assignment.as_ref(),
+            &task,
+        );
+
+        Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
             task,
             auto_dispatches
                 .iter()
                 .map(|outcome| outcome.task_id.clone())
                 .collect(),
+            retired_session_id,
         ))
-    }.await;
+    }
+    .await;
 
     match result {
-        Ok((task, auto_dispatched_task_ids)) => {
+        Ok((task, auto_dispatched_task_ids, retired_session_id)) => {
             state.log(
                 "info",
                 "task.transition",
@@ -742,6 +815,14 @@ async fn complete_lane_command(
                 &format!("task.transition.{outcome}"),
                 changed_task_ids,
             );
+            if let Some(session_id) = retired_session_id {
+                crate::services::live_sessions::schedule_session_retirement(
+                    app.clone(),
+                    session_id,
+                    Duration::ZERO,
+                    format!("task.transition.{outcome}"),
+                );
+            }
             Ok(task)
         }
         Err(error) => {

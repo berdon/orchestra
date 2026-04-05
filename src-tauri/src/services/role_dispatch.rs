@@ -4,7 +4,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     models::{RoleInstance, RoleOperationsDetail},
-    services::{git_worktrees, pi_sessions, projects, role_runtime, roles, task_repositories, task_runtime, tasks, workflows},
+    services::{
+        git_worktrees, pi_sessions, projects, role_runtime, roles, task_repositories, task_runtime,
+        tasks, workflows,
+    },
 };
 
 pub fn dispatch_role_queue(
@@ -247,7 +250,10 @@ pub fn dispose_role_instance(
     }
 
     if let Some(worktree_path) = instance.worktree_path.as_deref() {
-        let shared_task_root = Path::new(&task_repositories::shared_task_workspaces_root(project_root)).to_path_buf();
+        let shared_task_root = Path::new(&task_repositories::shared_task_workspaces_root(
+            project_root,
+        ))
+        .to_path_buf();
         let should_dispose = !Path::new(worktree_path).starts_with(&shared_task_root);
         if should_dispose {
             git_worktrees::dispose_runtime_dir(Path::new(worktree_path))?;
@@ -277,14 +283,23 @@ fn resolve_queue_entry_context(
     queue_entry: &crate::models::RoleQueueEntry,
 ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let Some(task_id) = queue_entry.source_task_id.as_deref() else {
-        return Ok((fallback_project_root.to_path_buf(), fallback_session_dir.to_path_buf()));
+        return Ok((
+            fallback_project_root.to_path_buf(),
+            fallback_session_dir.to_path_buf(),
+        ));
     };
 
     let Ok(task) = tasks::get_task_context(connection, task_id) else {
-        return Ok((fallback_project_root.to_path_buf(), fallback_session_dir.to_path_buf()));
+        return Ok((
+            fallback_project_root.to_path_buf(),
+            fallback_session_dir.to_path_buf(),
+        ));
     };
     let Ok(context) = pi_sessions::session_context_for_project_id(&task.project_id) else {
-        return Ok((fallback_project_root.to_path_buf(), fallback_session_dir.to_path_buf()));
+        return Ok((
+            fallback_project_root.to_path_buf(),
+            fallback_session_dir.to_path_buf(),
+        ));
     };
     Ok((context.project_root, context.session_dir))
 }
@@ -309,7 +324,7 @@ fn next_queued_entry_id(connection: &Connection, role_id: &str) -> Result<Option
 fn active_instance_count(connection: &Connection, role_id: &str) -> Result<i64, String> {
     connection
         .query_row(
-            "SELECT COUNT(*) FROM role_instances WHERE role_id = ?1 AND status IN ('running', 'waiting')",
+            "SELECT COUNT(*) FROM role_instances WHERE role_id = ?1 AND status = 'running'",
             [role_id],
             |row| row.get(0),
         )
@@ -341,17 +356,47 @@ fn resolve_instance_runtime_cwd(
             .source_workflow_id
             .as_deref()
             .zip(queue_entry.source_lane_id.as_deref())
-            .and_then(|(workflow_id, lane_id)| workflows::get_workflow(connection, workflow_id).ok().and_then(|workflow| workflow.lanes.into_iter().find(|lane| lane.id == lane_id)))
-            .or_else(|| task.current_lane_id.as_deref().and_then(|lane_id| task.workflow_id.as_deref().and_then(|workflow_id| workflows::get_workflow(connection, workflow_id).ok().and_then(|workflow| workflow.lanes.into_iter().find(|lane| lane.id == lane_id)))));
+            .and_then(|(workflow_id, lane_id)| {
+                workflows::get_workflow(connection, workflow_id)
+                    .ok()
+                    .and_then(|workflow| workflow.lanes.into_iter().find(|lane| lane.id == lane_id))
+            })
+            .or_else(|| {
+                task.current_lane_id.as_deref().and_then(|lane_id| {
+                    task.workflow_id.as_deref().and_then(|workflow_id| {
+                        workflows::get_workflow(connection, workflow_id)
+                            .ok()
+                            .and_then(|workflow| {
+                                workflow.lanes.into_iter().find(|lane| lane.id == lane_id)
+                            })
+                    })
+                })
+            });
 
-        let runtime_root = if lane.as_ref().is_some_and(task_runtime::lane_uses_separate_worktree) {
+        let runtime_root = if lane
+            .as_ref()
+            .is_some_and(task_runtime::lane_uses_separate_worktree)
+        {
             git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?
         } else if lane.is_some() {
             projects::get_project(connection, &task.project_id)
                 .ok()
-                .and_then(|project| crate::services::orchestra_paths::default_orchestra_root().ok().map(|root| crate::services::orchestra_paths::project_root(&root, &project.slug)))
-                .map(|root| Path::new(&task_repositories::shared_task_workspaces_root(&root)).to_path_buf())
-                .unwrap_or_else(|| Path::new(&task_repositories::shared_task_workspaces_root(project_root)).to_path_buf())
+                .and_then(|project| {
+                    crate::services::orchestra_paths::default_orchestra_root()
+                        .ok()
+                        .map(|root| {
+                            crate::services::orchestra_paths::project_root(&root, &project.slug)
+                        })
+                })
+                .map(|root| {
+                    Path::new(&task_repositories::shared_task_workspaces_root(&root)).to_path_buf()
+                })
+                .unwrap_or_else(|| {
+                    Path::new(&task_repositories::shared_task_workspaces_root(
+                        project_root,
+                    ))
+                    .to_path_buf()
+                })
         } else {
             git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?
         };
@@ -364,23 +409,26 @@ fn resolve_instance_runtime_cwd(
         git_worktrees::ensure_role_runtime_dir(session_dir, role_slug, &instance.id)?
     };
 
-    std::fs::create_dir_all(&path)
-        .map_err(|error| format!("Unable to create role runtime cwd {}: {error}", path.display()))?;
+    std::fs::create_dir_all(&path).map_err(|error| {
+        format!(
+            "Unable to create role runtime cwd {}: {error}",
+            path.display()
+        )
+    })?;
 
     if let Some(task_id) = queue_entry.source_task_id.as_deref() {
         if let Ok(task) = tasks::get_task_context(connection, task_id) {
-            let _ = task_runtime::ensure_task_repository_workspaces(&task, path.to_string_lossy().as_ref());
+            let _ = task_runtime::ensure_task_repository_workspaces(
+                &task,
+                path.to_string_lossy().as_ref(),
+            );
         }
     }
 
     connection
         .execute(
             "UPDATE role_instances SET worktree_path = ?2, updated_at = ?3 WHERE id = ?1",
-            params![
-                instance.id,
-                path.to_string_lossy(),
-                crate::state::now_iso()
-            ],
+            params![instance.id, path.to_string_lossy(), crate::state::now_iso()],
         )
         .map_err(|error| {
             format!(
@@ -530,7 +578,9 @@ fn release_claimed_queue_entry(
             "#,
             params![queue_entry_id, now],
         )
-        .map_err(|error| format!("Unable to release claimed role queue entry {queue_entry_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to release claimed role queue entry {queue_entry_id}: {error}")
+        })?;
 
     connection
         .execute(
@@ -574,7 +624,7 @@ mod tests {
     use super::*;
     use crate::{
         models::{RoleInstanceInput, RoleQueueEntryInput, TaskUpsertInput},
-        services::{database::initialize_database_at, pi_sessions, roles, role_runtime, tasks},
+        services::{database::initialize_database_at, pi_sessions, role_runtime, roles, tasks},
     };
     use std::{
         env,
@@ -726,10 +776,14 @@ mod tests {
         )
         .expect("queue work should succeed");
 
-        assert!(claim_queue_entry_for_instance(&connection, &queue_entry.id, &first_instance.id)
-            .expect("first claim should succeed"));
-        assert!(!claim_queue_entry_for_instance(&connection, &queue_entry.id, &second_instance.id)
-            .expect("second claim should be rejected"));
+        assert!(
+            claim_queue_entry_for_instance(&connection, &queue_entry.id, &first_instance.id)
+                .expect("first claim should succeed")
+        );
+        assert!(
+            !claim_queue_entry_for_instance(&connection, &queue_entry.id, &second_instance.id)
+                .expect("second claim should be rejected")
+        );
     }
 
     #[test]
@@ -774,11 +828,19 @@ mod tests {
         let mut connection = open_test_connection("role-dispatch-new-lane-session");
         let role = create_role(&mut connection, "Builder", 1);
         let project_root = init_test_repo("role-dispatch-new-lane-session-project");
-        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
-        let old_session = pi_sessions::create_session_file(&project_root, &session_dir, Some("Old instance session"), false)
-            .expect("old session should create");
+        let old_session = pi_sessions::create_session_file(
+            &project_root,
+            &session_dir,
+            Some("Old instance session"),
+            false,
+        )
+        .expect("old session should create");
         let instance = role_runtime::create_role_instance(
             &mut connection,
             RoleInstanceInput {
@@ -839,8 +901,18 @@ mod tests {
             .find(|entry| entry.status == "running")
             .expect("fresh running instance should exist");
         assert_ne!(running_instance.id, instance.id);
-        assert_ne!(running_instance.session_id.as_deref(), Some(old_session.record.id.as_str()));
-        assert_eq!(detail.instances.iter().filter(|entry| entry.role_id == role.id).count(), 2);
+        assert_ne!(
+            running_instance.session_id.as_deref(),
+            Some(old_session.record.id.as_str())
+        );
+        assert_eq!(
+            detail
+                .instances
+                .iter()
+                .filter(|entry| entry.role_id == role.id)
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -848,13 +920,26 @@ mod tests {
         let mut connection = open_test_connection("role-dispatch-reentry-session");
         let role = create_role(&mut connection, "Builder", 1);
         let project_root = init_test_repo("role-dispatch-reentry-session-project");
-        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
-        let stale_session = pi_sessions::create_session_file(&project_root, &session_dir, Some("Stale instance session"), false)
-            .expect("stale session should create");
-        let prior_lane_session = pi_sessions::create_session_file(&project_root, &session_dir, Some("Prior lane session"), false)
-            .expect("prior lane session should create");
+        let stale_session = pi_sessions::create_session_file(
+            &project_root,
+            &session_dir,
+            Some("Stale instance session"),
+            false,
+        )
+        .expect("stale session should create");
+        let prior_lane_session = pi_sessions::create_session_file(
+            &project_root,
+            &session_dir,
+            Some("Prior lane session"),
+            false,
+        )
+        .expect("prior lane session should create");
         let instance = role_runtime::create_role_instance(
             &mut connection,
             RoleInstanceInput {
@@ -932,8 +1017,14 @@ mod tests {
             .find(|entry| entry.status == "running")
             .expect("fresh running instance should exist");
         assert_ne!(running_instance.id, instance.id);
-        assert_ne!(running_instance.session_id.as_deref(), Some(stale_session.record.id.as_str()));
-        assert_ne!(running_instance.session_id.as_deref(), Some(prior_lane_session.record.id.as_str()));
+        assert_ne!(
+            running_instance.session_id.as_deref(),
+            Some(stale_session.record.id.as_str())
+        );
+        assert_ne!(
+            running_instance.session_id.as_deref(),
+            Some(prior_lane_session.record.id.as_str())
+        );
     }
 
     #[test]
@@ -941,7 +1032,10 @@ mod tests {
         let mut connection = open_test_connection("role-dispatch-single-use");
         let role = create_role(&mut connection, "Reviewer", 1);
         let project_root = init_test_repo("role-dispatch-single-use-project");
-        let session_dir = project_root.parent().expect("repo should have parent").join("sessions");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
         role_runtime::enqueue_role_work(
@@ -959,11 +1053,22 @@ mod tests {
         )
         .expect("first queue work should succeed");
 
-        let first_dispatch = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
-            .expect("first dispatch should succeed");
-        let first_instance = first_dispatch.instances.first().expect("first instance should exist").clone();
-        let first_session = first_instance.session_id.clone().expect("first session should exist");
-        let first_worktree = first_instance.worktree_path.clone().expect("first worktree should exist");
+        let first_dispatch =
+            dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+                .expect("first dispatch should succeed");
+        let first_instance = first_dispatch
+            .instances
+            .first()
+            .expect("first instance should exist")
+            .clone();
+        let first_session = first_instance
+            .session_id
+            .clone()
+            .expect("first session should exist");
+        let first_worktree = first_instance
+            .worktree_path
+            .clone()
+            .expect("first worktree should exist");
 
         release_role_instance(
             &mut connection,
@@ -990,16 +1095,23 @@ mod tests {
         )
         .expect("second queue work should succeed");
 
-        let second_dispatch = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
-            .expect("second dispatch should succeed");
+        let second_dispatch =
+            dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+                .expect("second dispatch should succeed");
         let second_instance = second_dispatch
             .instances
             .iter()
             .find(|entry| entry.status == "running")
             .expect("second running instance should exist");
         assert_ne!(second_instance.id, first_instance.id);
-        assert_ne!(second_instance.session_id.as_deref(), Some(first_session.as_str()));
-        assert_ne!(second_instance.worktree_path.as_deref(), Some(first_worktree.as_str()));
+        assert_ne!(
+            second_instance.session_id.as_deref(),
+            Some(first_session.as_str())
+        );
+        assert_ne!(
+            second_instance.worktree_path.as_deref(),
+            Some(first_worktree.as_str())
+        );
     }
 
     #[test]

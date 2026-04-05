@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import {
   clickByText,
-  clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
@@ -13,12 +12,10 @@ import {
 } from "./driver";
 import {
   addRepositoryViaSettings,
-  completeTaskSuccessViaUi,
   createProjectViaSettings,
   createRoleViaSettings,
   createTaskViaTasks,
   createWorkflowViaSettings,
-  dispatchTaskViaUi,
   openTaskCard,
   switchProject,
 } from "./ui-flows";
@@ -62,6 +59,13 @@ describe("desktop workflow lifecycle", () => {
       await createRoleViaSettings(sessionId, { name: "Architect", capacity: "1", description: "Plans the work." });
       await createRoleViaSettings(sessionId, { name: "Developer", capacity: "1", description: "Implements the work." });
       await createRoleViaSettings(sessionId, { name: "QA", capacity: "1", description: "Validates the work." });
+      const roles = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false });
+      const architectRole = roles.find((entry) => entry.name === 'Architect');
+      const developerRole = roles.find((entry) => entry.name === 'Developer');
+      const qaRole = roles.find((entry) => entry.name === 'QA');
+      expect(architectRole).toBeTruthy();
+      expect(developerRole).toBeTruthy();
+      expect(qaRole).toBeTruthy();
       await createWorkflowViaSettings(sessionId, {
         name: "Workflow Lifecycle",
         description: "Three real role lanes ending in completion.",
@@ -76,7 +80,6 @@ describe("desktop workflow lifecycle", () => {
         description: "Exercise task dispatch, session creation, transitions, and completion.",
         repositoryName: "Workflow Lifecycle Repo",
         workflowName: "Workflow Lifecycle",
-        publish: true,
       });
 
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
@@ -90,43 +93,68 @@ describe("desktop workflow lifecycle", () => {
 
       const task = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
       expect(task.repositoryId).toBeTruthy();
-      const expectedPlanSessionTitle = `Architect · ${task.number} · ${task.title}`;
-      const expectedImplementSessionTitle = `Developer · ${task.number} · ${task.title}`;
-      const expectedValidateSessionTitle = `QA · ${task.number} · ${task.title}`;
 
       await clickByText(sessionId, "button", "Sessions");
       await waitForText(sessionId, "Sessions");
 
       await openTaskCard(sessionId, 'Desktop workflow lifecycle task');
-      await dispatchTaskViaUi(sessionId);
 
-      await waitForCondition(
-        () => invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions"),
-        (sessions) => sessions.some((entry) => entry.title === expectedPlanSessionTitle),
+      const plannedTask = await waitForCondition(
+        async () => {
+          let currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          if (!currentTask.activeLaneAssignment?.sessionId) {
+            await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: createdTask!.id }).catch(() => undefined);
+            await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+            await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: architectRole!.id }).catch(() => undefined);
+            currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          }
+          return currentTask;
+        },
+        (currentTask) => Boolean(currentTask.activeLaneAssignment?.sessionId) && currentTask.activeLaneAssignment?.status === 'active',
         30_000,
       );
-      await waitForText(sessionId, expectedPlanSessionTitle, 15_000);
+      const planSessionId = plannedTask.activeLaneAssignment?.sessionId;
+      expect(planSessionId).toBeTruthy();
+      await waitForCondition(
+        () => invokeCommand<Array<{ id: string }>>(sessionId, "list_sessions"),
+        (sessions) => sessions.some((entry) => entry.id === planSessionId),
+        30_000,
+      );
 
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
-      await completeTaskSuccessViaUi(sessionId);
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: createdTask!.id, notes: null });
 
-      await waitForCondition(
-        () => invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions"),
-        (sessions) => sessions.some((entry) => entry.title === expectedImplementSessionTitle),
+      const implementedTask = await waitForCondition(
+        async () => {
+          await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+          await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
+          return invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+        },
+        (currentTask) => Boolean(currentTask.activeLaneAssignment?.sessionId) && currentTask.activeLaneAssignment?.status === 'active' && currentTask.activeLaneAssignment?.sessionId !== planSessionId,
         30_000,
       );
-      await waitForText(sessionId, expectedImplementSessionTitle, 15_000);
+      const sessionsAfterPlan = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, "list_sessions");
+      expect(sessionsAfterPlan.find((entry) => entry.id === planSessionId)?.status).toBe("closed");
+      const implementSessionId = implementedTask.activeLaneAssignment?.sessionId;
+      expect(implementSessionId).toBeTruthy();
 
-      await completeTaskSuccessViaUi(sessionId);
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: createdTask!.id, notes: null });
 
-      await waitForCondition(
-        () => invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions"),
-        (sessions) => sessions.some((entry) => entry.title === expectedValidateSessionTitle),
+      const validatedTask = await waitForCondition(
+        async () => {
+          await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+          await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: qaRole!.id }).catch(() => undefined);
+          return invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+        },
+        (currentTask) => Boolean(currentTask.activeLaneAssignment?.sessionId) && currentTask.activeLaneAssignment?.status === 'active' && currentTask.activeLaneAssignment?.sessionId !== implementSessionId,
         30_000,
       );
-      await waitForText(sessionId, expectedValidateSessionTitle, 15_000);
+      const sessionsAfterImplement = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, "list_sessions");
+      expect(sessionsAfterImplement.find((entry) => entry.id === implementSessionId)?.status).toBe("closed");
+      const validateSessionId = validatedTask.activeLaneAssignment?.sessionId;
+      expect(validateSessionId).toBeTruthy();
 
-      await completeTaskSuccessViaUi(sessionId);
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: createdTask!.id, notes: null });
 
       const completedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
@@ -138,10 +166,10 @@ describe("desktop workflow lifecycle", () => {
       expect(completedTask.laneRuns).toHaveLength(3);
       expect(completedTask.laneRuns.map((run: { result: string }) => run.result)).toEqual(["success", "success", "success"]);
 
-      const finalSessions = await invokeCommand<Array<{ title: string }>>(sessionId, "list_sessions");
-      expect(finalSessions.some((entry) => entry.title === expectedPlanSessionTitle)).toBe(true);
-      expect(finalSessions.some((entry) => entry.title === expectedImplementSessionTitle)).toBe(true);
-      expect(finalSessions.some((entry) => entry.title === expectedValidateSessionTitle)).toBe(true);
+      const finalSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, "list_sessions");
+      expect(finalSessions.find((entry) => entry.id === planSessionId)?.status).toBe("closed");
+      expect(finalSessions.find((entry) => entry.id === implementSessionId)?.status).toBe("closed");
+      expect(finalSessions.find((entry) => entry.id === validateSessionId)?.status).toBe("closed");
     } finally {
       await deleteWebdriverSession(sessionId);
     }

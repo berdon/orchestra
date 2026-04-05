@@ -27,9 +27,9 @@ use crate::{
         TaskUpsertInput,
     },
     services::{
-        agents, authorization, command_authorization, database, messages, pi_sessions, policies,
-        project_settings, projects, reminders, role_runtime, roles, task_attachments,
-        task_file_references, task_runtime, tasks, workflows,
+        agents, authorization, command_authorization, database, live_sessions, messages,
+        pi_sessions, policies, project_settings, projects, reminders, role_runtime, roles,
+        task_attachments, task_file_references, task_runtime, tasks, workflows,
     },
 };
 
@@ -1327,6 +1327,8 @@ fn invoke_bridge_command(
             )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
+            let previous_assignment =
+                crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
             let task = crate::services::task_runtime::complete_lane_as_success(
                 &mut writable,
                 &context.project_root,
@@ -1340,6 +1342,21 @@ fn invoke_bridge_command(
                 &task_id,
             )? {
                 config.start_assignment_async(outcome.session_dir, &outcome.assignment)?;
+            }
+            if let Some(session_id) =
+                crate::services::task_runtime::transitioned_assignment_session_to_retire(
+                    previous_assignment.as_ref(),
+                    &task,
+                )
+            {
+                if let Some(app) = config.clone_app_handle() {
+                    live_sessions::schedule_session_retirement(
+                        app,
+                        session_id,
+                        Duration::from_millis(250),
+                        "tool.complete_lane_as_success",
+                    );
+                }
             }
             serde_json::to_value(task)
                 .map_err(|error| format!("Unable to serialize completed task lane: {error}"))
@@ -1357,6 +1374,8 @@ fn invoke_bridge_command(
             )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
+            let previous_assignment =
+                crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
             let task = crate::services::task_runtime::complete_lane_as_failure(
                 &mut writable,
                 &context.project_root,
@@ -1370,6 +1389,21 @@ fn invoke_bridge_command(
                 &task_id,
             )? {
                 config.start_assignment_async(outcome.session_dir, &outcome.assignment)?;
+            }
+            if let Some(session_id) =
+                crate::services::task_runtime::transitioned_assignment_session_to_retire(
+                    previous_assignment.as_ref(),
+                    &task,
+                )
+            {
+                if let Some(app) = config.clone_app_handle() {
+                    live_sessions::schedule_session_retirement(
+                        app,
+                        session_id,
+                        Duration::from_millis(250),
+                        "tool.complete_lane_as_failure",
+                    );
+                }
             }
             serde_json::to_value(task)
                 .map_err(|error| format!("Unable to serialize failed task lane: {error}"))
@@ -1387,6 +1421,8 @@ fn invoke_bridge_command(
             )?;
             let context = session_context_for_task_id(&task_id)?;
             let mut writable = database::open_connection()?;
+            let previous_assignment =
+                crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
             let task = crate::services::task_runtime::request_user_intervention(
                 &mut writable,
                 &context.project_root,
@@ -1395,6 +1431,21 @@ fn invoke_bridge_command(
                 notes,
                 authorization,
             )?;
+            if let Some(session_id) =
+                crate::services::task_runtime::transitioned_assignment_session_to_retire(
+                    previous_assignment.as_ref(),
+                    &task,
+                )
+            {
+                if let Some(app) = config.clone_app_handle() {
+                    live_sessions::schedule_session_retirement(
+                        app,
+                        session_id,
+                        Duration::from_millis(250),
+                        "tool.request_user_intervention",
+                    );
+                }
+            }
             serde_json::to_value(task).map_err(|error| {
                 format!("Unable to serialize user-intervention task lane: {error}")
             })
