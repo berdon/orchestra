@@ -51,3 +51,6 @@ tail -f /tmp/orchestra-dev.log
 - The Vite dev server is expected on `http://localhost:1420`.
 - Tauri icons live under `src-tauri/icons/`.
 - Desktop E2E tests must use the desktop runner scripts (`scripts/run-desktop-e2e.sh`, `scripts/run-desktop-e2e-suite.sh`, and the Podman variants). Do not run desktop specs directly with generic Playwright commands.
+- Always use PRs for Orchestra changes.
+- Before reusing an existing Orchestra branch or PR, always check whether that PR was already merged.
+- If the existing PR was merged, do **not** keep pushing to that old branch or reopen/reuse that PR. Create a fresh branch and open a new PR instead.
