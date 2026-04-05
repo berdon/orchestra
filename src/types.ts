@@ -686,6 +686,21 @@ export interface TaskCommentUpdateInput {
   message: string;
 }
 
+export interface TaskTodo {
+  id: string;
+  taskId: string;
+  laneId: string;
+  description: string;
+  completed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskTodoInput {
+  laneId?: string | null;
+  description: string;
+}
+
 export interface TaskCommentFileMentionCandidate {
   repositoryId: string;
   repositoryName: string;
@@ -877,6 +892,7 @@ export interface TaskDetail extends TaskSummary {
   taskRepositories: TaskRepository[];
   fileReferences: TaskFileReference[];
   comments: TaskComment[];
+  todos: TaskTodo[];
   laneRuns: TaskLaneRun[];
   activeLaneAssignment?: TaskLaneAssignment | null;
 }

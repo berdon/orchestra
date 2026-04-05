@@ -893,6 +893,26 @@ pub struct TaskCommentUpdateInput {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTodo {
+    pub id: String,
+    pub task_id: String,
+    pub lane_id: String,
+    pub description: String,
+    pub completed: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTodoInput {
+    #[serde(default)]
+    pub lane_id: Option<String>,
+    pub description: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkTaskCommentsReadInput {
@@ -1094,6 +1114,7 @@ pub struct TaskDetail {
     pub task_repositories: Vec<TaskRepository>,
     pub file_references: Vec<TaskFileReference>,
     pub comments: Vec<TaskComment>,
+    pub todos: Vec<TaskTodo>,
     pub lane_runs: Vec<TaskLaneRun>,
     pub active_lane_assignment: Option<TaskLaneAssignment>,
     pub created_at: String,

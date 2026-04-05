@@ -512,6 +512,119 @@ test("task detail manages dependencies and blocked state", async ({ page }) => {
   await expect(page.getByText("Not dispatchable", { exact: true })).toBeVisible();
 });
 
+test("task detail manages lane-scoped todos and blocks completion until current-lane todos are finished", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-todos",
+          slug: "workflow-todos",
+          name: "Todo Review Flow",
+          description: "User-owned review lane.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-review",
+              key: "review",
+              name: "Review",
+              description: null,
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Review the task.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-todos",
+          projectId: "orchestra",
+          number: "ORC-50",
+          title: "Todo managed task",
+          description: "Use todos before approving.",
+          type: "task",
+          status: "in_review",
+          priority: "P1",
+          workflowId: "workflow-todos",
+          currentLaneId: "lane-review",
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Todo managed task" }).first().click();
+
+  await page.locator('[data-role="task-detail-tab-todos"]').click();
+  await page.locator('[data-role="task-todo-description"]').fill("Confirm reviewer checklist is complete");
+  await page.locator('[data-role="add-task-todo"]').click();
+
+  await expect(page.locator('[data-role="task-todos"]')).toContainText("Confirm reviewer checklist is complete");
+  await expect(page.locator('[data-role="task-current-lane-todo-warning"]')).toContainText("unfinished todo");
+
+  await page.locator('[data-role="complete-task-success"]').click();
+  await expect(page.locator('.error-copy').filter({ hasText: 'unfinished todo item' }).first()).toBeVisible();
+
+  await page.locator('[data-role="mark-task-todo-finished"]').click();
+  await expect(page.locator('[data-role="task-todos"]')).toContainText("finished");
+
+  await page.locator('[data-role="mark-task-todo-unfinished"]').click();
+  await expect(page.locator('[data-role="task-todos"]')).toContainText("unfinished");
+
+  await page.locator('[data-role="mark-task-todo-finished"]').click();
+  await page.locator('[data-role="complete-task-success"]').click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((task: { id: string; status: string }) => task.id === "task-todos")?.status ?? null;
+  })).toBe("completed");
+});
+
 test("task detail opens tracked repo files when clicking @file mentions in comments", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

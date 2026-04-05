@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import hljs from "highlight.js";
-import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
@@ -25,6 +25,7 @@ type TaskDetailTab =
   | "repo-files"
   | "attachments"
   | "comments"
+  | "todos"
   | "timeline"
   | "history";
 
@@ -34,6 +35,7 @@ interface TaskDetailPageProps {
   commentDraft: TaskCommentInput;
   fileReferenceDraft: TaskFileReferenceInput;
   workflows: WorkflowSummary[];
+  workflowLanes: Array<{ id: string; name: string }>;
   agents: AgentSummary[];
   roles: RoleSummary[];
   repositories: RepositoryRecord[];
@@ -70,6 +72,10 @@ interface TaskDetailPageProps {
   onAddFileReference: () => void;
   onRemoveFileReference: (referenceId: string) => void;
   onSetDefaultFileReference: (referenceId: string) => void;
+  onAddTaskTodo: (description: string, laneId: string) => void;
+  onMarkTaskTodoFinished: (todoId: string) => void;
+  onMarkTaskTodoUnfinished: (todoId: string) => void;
+  onDeleteTaskTodo: (todoId: string) => void;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
   onDeleteComment: (commentId: string) => Promise<boolean>;
@@ -144,9 +150,33 @@ function isAnchoredToReference(comment: TaskComment, reference: TaskFileReferenc
   return comment.repositoryId === reference.repositoryId && comment.relativePath === reference.relativePath;
 }
 
+function laneLabelForTodo(task: TaskDetail, todo: TaskTodo) {
+  if (task.currentLaneId === todo.laneId) {
+    return `${todo.laneId} · current lane`;
+  }
+  return todo.laneId;
+}
+
+function groupTodosByLane(task: TaskDetail) {
+  const todosByLane = new Map<string, TaskTodo[]>();
+  for (const todo of task.todos) {
+    const group = todosByLane.get(todo.laneId) ?? [];
+    group.push(todo);
+    todosByLane.set(todo.laneId, group);
+  }
+  return Array.from(todosByLane.entries())
+    .map(([laneId, todos]) => ({ laneId, todos }))
+    .sort((left, right) => {
+      if (left.laneId === task.currentLaneId) return -1;
+      if (right.laneId === task.currentLaneId) return 1;
+      return left.laneId.localeCompare(right.laneId);
+    });
+}
+
 const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
   { id: "repo-files", label: "Repo files" },
   { id: "comments", label: "Comments" },
+  { id: "todos", label: "Todos" },
   { id: "attachments", label: "Attachments" },
   { id: "hierarchy", label: "Hierarchy" },
   { id: "dependencies", label: "Dependencies" },
@@ -163,6 +193,7 @@ export function TaskDetailPage({
   commentDraft,
   fileReferenceDraft,
   workflows,
+  workflowLanes,
   agents,
   roles,
   repositories,
@@ -199,6 +230,10 @@ export function TaskDetailPage({
   onAddFileReference,
   onRemoveFileReference,
   onSetDefaultFileReference,
+  onAddTaskTodo,
+  onMarkTaskTodoFinished,
+  onMarkTaskTodoUnfinished,
+  onDeleteTaskTodo,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
@@ -216,6 +251,8 @@ export function TaskDetailPage({
   const [loadingFileContent, setLoadingFileContent] = useState(false);
   const [defaultFileContent, setDefaultFileContent] = useState<string | null>(null);
   const [loadingDefaultFileContent, setLoadingDefaultFileContent] = useState(false);
+  const [todoDraftDescription, setTodoDraftDescription] = useState("");
+  const [todoDraftLaneId, setTodoDraftLaneId] = useState<string>(task.currentLaneId ?? draft.currentLaneId ?? "");
   const [isEditing, setIsEditing] = useState(false);
   const [pendingScrollReferenceId, setPendingScrollReferenceId] = useState<string | null>(null);
   const [historyLimit, setHistoryLimit] = useState<number>(() => {
@@ -234,6 +271,9 @@ export function TaskDetailPage({
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const recentHistory = timelineItems.slice(0, historyLimit);
   const summaryComments = commentThreads.slice(-4).reverse();
+  const todoGroups = groupTodosByLane(task);
+  const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
+  const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
 
   useEffect(() => {
     return () => {
@@ -248,7 +288,9 @@ export function TaskDetailPage({
     setReplyDraft(createReplyDraft(commentDraft.author));
     setMailDraft("");
     setMailInterrupt(false);
-  }, [task.id]);
+    setTodoDraftDescription("");
+    setTodoDraftLaneId(task.currentLaneId ?? draft.currentLaneId ?? "");
+  }, [draft.currentLaneId, task.currentLaneId, task.id]);
 
   useEffect(() => {
     if (!replyTargetCommentId) {
@@ -545,6 +587,14 @@ export function TaskDetailPage({
     await onSendMail(mailDraft, mailInterrupt);
     setMailDraft("");
     setMailInterrupt(false);
+  }
+
+  function handleAddTodo() {
+    if (!todoDraftDescription.trim() || !todoDraftLaneId) {
+      return;
+    }
+    onAddTaskTodo(todoDraftDescription, todoDraftLaneId);
+    setTodoDraftDescription("");
   }
 
   function handleOpenCommentFileReference(reference: TaskFileReference) {
@@ -913,6 +963,92 @@ export function TaskDetailPage({
             ) : <p className="muted-copy">No repo files tracked yet. Add an important repository file here to keep it visible on the task for workers and reviewers.</p>}
           </section>
         );
+      case "todos":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-todos">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Todos</p>
+                <h4>Lane checklist items</h4>
+              </div>
+            </div>
+
+            {unfinishedCurrentLaneTodos.length ? (
+              <p className="error-copy" data-role="task-current-lane-todo-warning">
+                {unfinishedCurrentLaneTodos.length} unfinished todo{unfinishedCurrentLaneTodos.length === 1 ? "" : "s"} remain for the current lane. Orchestra will block lane transitions until they are completed.
+              </p>
+            ) : null}
+
+            <div className="task-history-card" data-role="task-todo-composer">
+              <div className="task-detail-summary__history-header">
+                <div>
+                  <p className="eyebrow">Add todo</p>
+                  <h4>Create a lane-scoped checklist item</h4>
+                </div>
+              </div>
+              <div className="field-grid field-grid--two-column">
+                <label className="field-group">
+                  <span className="field-group__label">Lane</span>
+                  <select className="select-input" data-role="task-todo-lane" value={todoDraftLaneId} onChange={(event) => setTodoDraftLaneId(event.target.value)}>
+                    <option value="">Select a lane</option>
+                    {workflowLanes.map((lane) => (
+                      <option key={lane.id} value={lane.id}>{lane.name} · {lane.id}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field-group field-group--full-width">
+                  <span className="field-group__label">Description</span>
+                  <input className="text-input" data-role="task-todo-description" type="text" value={todoDraftDescription} onChange={(event) => setTodoDraftDescription(event.target.value)} placeholder="Describe the follow-up item for this lane" />
+                </label>
+              </div>
+              <div className="action-cluster action-cluster--wrap">
+                <button className="secondary-button" data-role="add-task-todo" type="button" disabled={!todoDraftDescription.trim() || !todoDraftLaneId} onClick={handleAddTodo}>Add todo</button>
+              </div>
+            </div>
+
+            {todoGroups.length ? (
+              <div className="task-section-list" data-role="task-todo-groups">
+                {todoGroups.map((group) => (
+                  <article className="task-history-card" data-role="task-todo-group" data-lane-id={group.laneId} key={group.laneId}>
+                    <div className="workflow-section__header">
+                      <strong>{group.laneId}</strong>
+                      <span className={`status-badge status-badge--${group.laneId === task.currentLaneId ? "accent" : "neutral"}`}>
+                        {group.laneId === task.currentLaneId ? "current lane" : `${group.todos.filter((todo) => !todo.completed).length} open`}
+                      </span>
+                    </div>
+                    <div className="task-section-list" data-role="task-todos">
+                      {group.todos.map((todo) => (
+                        <article className="task-history-card" data-role="task-todo-item" data-todo-id={todo.id} key={todo.id}>
+                          <div className="workflow-section__header">
+                            <div>
+                              <strong>{todo.description}</strong>
+                              <p className="muted-copy">{laneLabelForTodo(task, todo)}</p>
+                            </div>
+                            <span className={`status-badge status-badge--${todo.completed ? "success" : "warning"}`}>{todo.completed ? "finished" : "unfinished"}</span>
+                          </div>
+                          <div className="action-cluster action-cluster--wrap">
+                            {todo.completed ? (
+                              <button className="secondary-button" data-role="mark-task-todo-unfinished" type="button" onClick={() => onMarkTaskTodoUnfinished(todo.id)}>
+                                Mark unfinished
+                              </button>
+                            ) : (
+                              <button className="secondary-button" data-role="mark-task-todo-finished" type="button" onClick={() => onMarkTaskTodoFinished(todo.id)}>
+                                Mark finished
+                              </button>
+                            )}
+                            <button className="secondary-button secondary-button--danger" data-role="delete-task-todo" type="button" onClick={() => onDeleteTaskTodo(todo.id)}>
+                              Delete
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted-copy">No todos yet. Add lane-scoped checklist items here for follow-up work that should stay visible on the task.</p>}
+          </section>
+        );
       case "attachments":
         return (
           <section className="task-section" data-role="task-detail-tabpanel-attachments">
@@ -1128,6 +1264,7 @@ export function TaskDetailPage({
             <div className="session-detail__meta">
               <span>{task.number}</span>
               <span>{task.commentCount} comments</span>
+              <span>{task.todos.length} todos</span>
               <span>{task.laneRunCount} lane runs</span>
               {task.childCount ? <span>{task.childCount} children</span> : null}
               {task.attachmentCount ? <span>{task.attachmentCount} attachments</span> : null}
@@ -1229,6 +1366,24 @@ export function TaskDetailPage({
               </div>
               <p>{task.description?.trim() ? task.description : "No description provided."}</p>
             </div>
+
+            {unfinishedCurrentLaneTodos.length ? (
+              <section className="task-history-card" data-role="task-overview-todo-warning">
+                <div className="workflow-section__header">
+                  <div>
+                    <p className="eyebrow">Current lane todos</p>
+                    <h4>Remaining checklist items</h4>
+                  </div>
+                  <span className="status-badge status-badge--warning">{unfinishedCurrentLaneTodos.length} open</span>
+                </div>
+                <p className="error-copy">This lane still has unfinished todo items. Orchestra will block transitions until they are marked finished.</p>
+                <ul className="task-detail-summary__history-list">
+                  {unfinishedCurrentLaneTodos.map((todo) => (
+                    <li key={todo.id}>{todo.description}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
 
             <div className="task-detail-summary__file task-history-card">
               <div className="workflow-section__header">

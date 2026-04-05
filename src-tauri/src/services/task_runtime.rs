@@ -1747,6 +1747,19 @@ fn complete_lane(
                 unread_mail.len()
             ));
         }
+        let unfinished_todos = tasks::list_unfinished_task_todos(
+            connection,
+            task_id,
+            Some(assignment.lane_id.as_str()),
+        )?;
+        if !unfinished_todos.is_empty() {
+            return Err(format!(
+                "Task {task_id} still has {} unfinished todo item(s) for lane {}. Call list_unfinished_task_todos({task_id}, laneId={}) to review them, then finish or reopen them before using a completion tool.",
+                unfinished_todos.len(),
+                assignment.lane_id,
+                assignment.lane_id,
+            ));
+        }
     } else if !(task.assignee_type == "user" && task.status == "in_review") {
         return Err(format!("Task {task_id} has no active lane assignment"));
     }
@@ -2650,15 +2663,17 @@ fn orchestra_working_rules_block() -> String {
         "5. Whenever you resume this lane, restart after an interruption, or suspect new feedback may have arrived, call get_unread_task_comments using the canonical task ID. After you read and incorporate those comments, call mark_task_comments_read so Orchestra knows you saw them.",
         "6. Whenever you resume this lane, restart after an interruption, or Orchestra tells you to check mail, call get_unread_mail using the canonical task ID. After you read and incorporate unread mail, call mark_mail_read so Orchestra knows you handled it.",
         "7. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. If you are responding to a specific existing comment, reply in-thread by setting parentCommentId instead of starting a new top-level comment.",
-        "8. If the work needs to be split, create_subtask and describe the smaller unit clearly.",
-        "9. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
-        "10. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
-        "11. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
-        "12. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
-        "13. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
-        "14. If you need to come back to something after a short wait, external delay, or timed checkpoint, call remind_me with a concrete message and a delay in seconds or minutes so Orchestra can re-prompt you later.",
-        "15. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-        "16. When the lane is finished, explicitly transition it with the correct completion tool.",
+        "8. When you identify a smaller follow-up item for this lane that should stay visible but does not deserve its own subtask, add it with add_task_todo. Use subtasks only for separately tracked work.",
+        "9. If the work needs to be split into a separately tracked child task, create_subtask and describe the smaller unit clearly.",
+        "10. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
+        "11. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
+        "12. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
+        "13. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
+        "14. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
+        "15. If you need to come back to something after a short wait, external delay, or timed checkpoint, call remind_me with a concrete message and a delay in seconds or minutes so Orchestra can re-prompt you later.",
+        "16. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
+        "17. Immediately before any completion tool, call list_unfinished_task_todos for the canonical task ID and current lane. Finish or explicitly reopen every remaining lane todo before you try to transition.",
+        "18. When the lane is finished, explicitly transition it with the correct completion tool.",
     ]
     .join("\n")
 }
@@ -2669,6 +2684,8 @@ fn orchestra_tool_help_block() -> String {
         "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
         "- get_task_context(taskId): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
         "- list_task_comments(taskId): Call this tool when you need the full threaded task discussion, including replies and parent-child comment relationships.",
+        "- list_task_todos(taskId): Call this tool to inspect every todo recorded on the task across lanes.",
+        "- list_unfinished_task_todos(taskId, laneId?): Call this tool to inspect only unfinished todos. Use it before any completion tool, usually scoped to the current lane.",
         "- get_task_repositories(taskId): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
         "- list_task_file_references(taskId): Call this tool to inspect which repository files are already tracked on the task before adding more.",
         "- add_task_file_reference(taskId, repositoryId, relativePath): Call this tool when you create or materially change a large or central repository file that should stay visible on the task. Provide the repository id plus a repository-relative path such as docs/design.md. Good candidates are design docs, diagrams, plans, ADRs, runbooks, and similar non-source artifacts. Do not use this for ordinary source code changes unless explicitly asked.",
@@ -2680,6 +2697,9 @@ fn orchestra_tool_help_block() -> String {
         "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail, call this tool to acknowledge it. If deliveryIds is omitted, it marks all currently visible unread mail for the worker session as read.",
         "- send_mail(projectId?, taskId?, recipientType, recipientId?, body, priority?): Call this tool to send mailbox messages to the user, another agent, or the active assignment mailbox for a task. Use recipientType user, agent, or active_assignment. Set priority to interrupt when the recipient should be steered immediately.",
         "- remind_me(message, delaySeconds? | delayMinutes?): Call this tool to schedule a message back to yourself after a short delay. Use it when you need Orchestra to nudge you after waiting, polling, or giving another process time to finish.",
+        "- add_task_todo(taskId?, input): Call this tool when you discover a smaller follow-up item that should remain visible on the task but does not deserve its own subtask. In a worker session, omit taskId and laneId to default to the current assignment.",
+        "- mark_task_todo_finished(todoId): Call this tool as soon as a todo item is complete so Orchestra knows the lane is closer to done.",
+        "- mark_task_todo_unfinished(todoId): Call this tool if a previously completed todo becomes relevant again or needs rework.",
         "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
         "- add_task_dependency(blocker_task_id, blocked_task_id): Call this tool when another task must be completed before the current one can proceed safely.",
         "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
@@ -2699,6 +2719,7 @@ fn orchestra_completion_rules_block() -> String {
         "- You are not done and cannot stop until you have actually called one of those tools.",
         "- Immediately before any completion tool, call get_unread_task_comments for the canonical task ID, review any unread comments, and then call mark_task_comments_read before completing the lane.",
         "- Immediately before any completion tool, call get_unread_mail for the canonical task ID, review any unread mail, and then call mark_mail_read before completing the lane.",
+        "- Immediately before any completion tool, call list_unfinished_task_todos for the canonical task ID and current lane. Finish or intentionally reopen every remaining lane todo before you transition.",
         "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
         "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
         "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
@@ -2952,6 +2973,22 @@ fn build_lane_prompt(
     };
 
     let comments_block = render_recent_task_comments(&task.comments, 5);
+    let todos_block = if task.todos.is_empty() {
+        "No task todos recorded yet.".to_string()
+    } else {
+        task.todos
+            .iter()
+            .map(|todo| {
+                format!(
+                    "- [{}] {} ({})",
+                    if todo.completed { "x" } else { " " },
+                    todo.description,
+                    todo.lane_id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
     let mut rendered = prompt_settings.template;
     let replacements = vec![
@@ -2995,6 +3032,10 @@ fn build_lane_prompt(
         (
             "{TASK.ATTACHMENTS}",
             optional_section("Task attachments", Some(attachments_block)),
+        ),
+        (
+            "{TASK.TODOS}",
+            optional_section("Task todos", Some(todos_block)),
         ),
         ("{WORKFLOW.NAME}", workflow.name.clone()),
         ("{LANE.NAME}", lane.name.clone()),
@@ -3351,12 +3392,20 @@ mod tests {
         assert!(prompt.contains("- add_task_file_reference(taskId, repositoryId, relativePath): Call this tool when you create or materially change a large or central repository file that should stay visible on the task."));
         assert!(prompt.contains("- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake."));
         assert!(prompt.contains("- list_task_comments(taskId): Call this tool when you need the full threaded task discussion"));
+        assert!(prompt.contains("- list_task_todos(taskId): Call this tool to inspect every todo recorded on the task across lanes."));
+        assert!(prompt.contains("- list_unfinished_task_todos(taskId, laneId?): Call this tool to inspect only unfinished todos."));
+        assert!(prompt.contains("- add_task_todo(taskId?, input): Call this tool when you discover a smaller follow-up item"));
+        assert!(prompt.contains(
+            "- mark_task_todo_finished(todoId): Call this tool as soon as a todo item is complete"
+        ));
+        assert!(prompt.contains("- mark_task_todo_unfinished(todoId): Call this tool if a previously completed todo becomes relevant again or needs rework."));
         assert!(prompt.contains("- comment_on_task(taskId, author, message, interruptAgent?, parentCommentId?): Call this tool to leave a durable note in Orchestra."));
         assert!(prompt.contains("call get_unread_task_comments using the canonical task ID"));
         assert!(prompt.contains("call mark_task_comments_read so Orchestra knows you saw them"));
         assert!(prompt.contains("call get_unread_mail using the canonical task ID"));
         assert!(prompt.contains("call mark_mail_read so Orchestra knows you handled it"));
         assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
+        assert!(prompt.contains("add it with add_task_todo"));
         assert!(prompt.contains("If you create or materially change a large or central repository file that should stay visible on the task"));
         assert!(prompt.contains("Do not add normal source code or test file edits as task file references unless the human explicitly asked"));
         assert!(prompt.contains("Before you transition the task or request help, add a comment explaining exactly what happened"));
@@ -3378,6 +3427,8 @@ mod tests {
         assert!(prompt
             .contains("Immediately before any completion tool, call get_unread_task_comments"));
         assert!(prompt.contains("Immediately before any completion tool, call get_unread_mail"));
+        assert!(prompt
+            .contains("Immediately before any completion tool, call list_unfinished_task_todos"));
         assert!(prompt.contains(
             "If any completion or transition step fails, add a task comment describing the failure"
         ));
@@ -3427,6 +3478,7 @@ mod tests {
             created_at: "2026-03-22T00:00:00Z".into(),
             updated_at: "2026-03-22T00:00:00Z".into(),
             comments: Vec::new(),
+            todos: Vec::new(),
             lane_runs: Vec::new(),
         };
         let workflow = WorkflowDefinition {
@@ -3569,6 +3621,7 @@ mod tests {
                 created_at: now.clone(),
                 updated_at: now.clone(),
             }],
+            todos: Vec::new(),
             lane_runs: Vec::new(),
         };
         let workflow = WorkflowDefinition {
@@ -4118,6 +4171,125 @@ mod tests {
             }),
         )
         .expect("completion should succeed after acknowledging comments");
+        assert_eq!(updated.status, "completed");
+    }
+
+    #[test]
+    fn completion_fails_while_current_lane_todos_remain_unfinished() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Todo Completer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-todos");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Todo gated completion".into(),
+                description: Some("Do not complete while lane todos remain.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent lane should dispatch");
+        let todo = tasks::add_task_todo(
+            &mut connection,
+            &task.id,
+            crate::models::TaskTodoInput {
+                lane_id: Some(assignment.lane_id.clone()),
+                description: "Confirm reviewer checklist is done".into(),
+            },
+        )
+        .expect("todo should add");
+
+        let error = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Tried to finish too early".into()),
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+        )
+        .expect_err("completion should fail while todos remain");
+        assert!(error.contains("unfinished todo item"));
+        assert!(error.contains("list_unfinished_task_todos"));
+
+        let unfinished = tasks::list_unfinished_task_todos(
+            &connection,
+            &task.id,
+            Some(assignment.lane_id.as_str()),
+        )
+        .expect("unfinished todos should list");
+        assert_eq!(unfinished.len(), 1);
+        assert_eq!(unfinished[0].id, todo.id);
+
+        tasks::mark_task_todo_finished(&connection, &todo.id).expect("todo should mark finished");
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Todo finished".into()),
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+        )
+        .expect("completion should succeed once todos are finished");
         assert_eq!(updated.status, "completed");
     }
 

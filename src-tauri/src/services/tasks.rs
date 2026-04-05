@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::{
     models::{
         TaskComment, TaskCommentInput, TaskCommentReceipt, TaskDependency, TaskDetail,
-        TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskUpsertInput,
+        TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -140,6 +140,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     task_repositories: Vec::new(),
                     file_references: Vec::new(),
                     comments: Vec::new(),
+                    todos: Vec::new(),
                     lane_runs: Vec::new(),
                     active_lane_assignment: None,
                     created_at: row.get(26)?,
@@ -178,6 +179,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
             .and_then(|assignment| assignment.runtime_cwd.as_deref()),
     )?;
     task.comments = load_task_comments(connection, task_id)?;
+    task.todos = load_task_todos(connection, task_id, None, None)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
     Ok(task)
 }
@@ -194,6 +196,85 @@ pub fn list_task_comments(
         return Err(format!("Task {task_id} was not found"));
     }
     load_task_comments(connection, task_id)
+}
+
+pub fn list_task_todos(connection: &Connection, task_id: &str) -> Result<Vec<TaskTodo>, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+    load_task_todos(connection, task_id, None, None)
+}
+
+pub fn list_unfinished_task_todos(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: Option<&str>,
+) -> Result<Vec<TaskTodo>, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+    load_task_todos(connection, task_id, lane_id, Some(false))
+}
+
+pub fn add_task_todo(
+    connection: &Connection,
+    task_id: &str,
+    input: TaskTodoInput,
+) -> Result<TaskTodo, String> {
+    let task = get_task(connection, task_id)?;
+    let lane_id = normalized_optional_string(input.lane_id)
+        .ok_or_else(|| "laneId: A workflow lane is required for task todos.".to_string())?;
+    validate_task_todo_input(connection, &task, &lane_id, &input.description)?;
+    let now = now_iso();
+    let todo = TaskTodo {
+        id: task_todo_id(),
+        task_id: task.id,
+        lane_id,
+        description: input.description.trim().to_string(),
+        completed: false,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO task_todos (id, task_id, lane_id, description, completed, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)
+            "#,
+            params![
+                todo.id,
+                todo.task_id,
+                todo.lane_id,
+                todo.description,
+                todo.created_at,
+                todo.updated_at,
+            ],
+        )
+        .map_err(|error| format!("Unable to create task todo for task {task_id}: {error}"))?;
+
+    get_task_todo(connection, &todo.id)?
+        .ok_or_else(|| format!("Task todo {} was not found after creation", todo.id))
+}
+
+pub fn mark_task_todo_finished(connection: &Connection, todo_id: &str) -> Result<TaskTodo, String> {
+    update_task_todo_completion(connection, todo_id, true)
+}
+
+pub fn mark_task_todo_unfinished(
+    connection: &Connection,
+    todo_id: &str,
+) -> Result<TaskTodo, String> {
+    update_task_todo_completion(connection, todo_id, false)
+}
+
+pub fn delete_task_todo(connection: &Connection, todo_id: &str) -> Result<TaskTodo, String> {
+    let todo = get_task_todo(connection, todo_id)?
+        .ok_or_else(|| format!("Task todo {todo_id} was not found"))?;
+    connection
+        .execute("DELETE FROM task_todos WHERE id = ?1", [todo_id])
+        .map_err(|error| format!("Unable to delete task todo {todo_id}: {error}"))?;
+    Ok(todo)
 }
 
 pub fn create_task(
@@ -1301,6 +1382,102 @@ fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<Tas
         .map_err(|error| format!("Unable to collect task lane runs for {task_id}: {error}"))
 }
 
+fn load_task_todos(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: Option<&str>,
+    completed: Option<bool>,
+) -> Result<Vec<TaskTodo>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, task_id, lane_id, description, completed, created_at, updated_at
+            FROM task_todos
+            WHERE task_id = ?1
+              AND (?2 IS NULL OR lane_id = ?2)
+              AND (?3 IS NULL OR completed = ?3)
+            ORDER BY completed ASC, created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare task todo query: {error}"))?;
+
+    let completed_filter = completed.map(|value| if value { 1 } else { 0 });
+    let rows = statement
+        .query_map(params![task_id, lane_id, completed_filter], |row| {
+            Ok(TaskTodo {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                lane_id: row.get(2)?,
+                description: row.get(3)?,
+                completed: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("Unable to read task todos for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect task todos for {task_id}: {error}"))
+}
+
+fn get_task_todo(connection: &Connection, todo_id: &str) -> Result<Option<TaskTodo>, String> {
+    connection
+        .query_row(
+            "SELECT id, task_id, lane_id, description, completed, created_at, updated_at FROM task_todos WHERE id = ?1",
+            [todo_id],
+            |row| {
+                Ok(TaskTodo {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    lane_id: row.get(2)?,
+                    description: row.get(3)?,
+                    completed: row.get::<_, i64>(4)? != 0,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query task todo {todo_id}: {error}"))
+}
+
+fn update_task_todo_completion(
+    connection: &Connection,
+    todo_id: &str,
+    completed: bool,
+) -> Result<TaskTodo, String> {
+    let _existing = get_task_todo(connection, todo_id)?
+        .ok_or_else(|| format!("Task todo {todo_id} was not found"))?;
+    let now = now_iso();
+    connection
+        .execute(
+            "UPDATE task_todos SET completed = ?2, updated_at = ?3 WHERE id = ?1",
+            params![todo_id, if completed { 1 } else { 0 }, now],
+        )
+        .map_err(|error| format!("Unable to update task todo {todo_id}: {error}"))?;
+    get_task_todo(connection, todo_id)?
+        .ok_or_else(|| format!("Task todo {todo_id} was not found after update"))
+}
+
+fn validate_task_todo_input(
+    connection: &Connection,
+    task: &TaskDetail,
+    lane_id: &str,
+    description: &str,
+) -> Result<(), String> {
+    if description.trim().is_empty() {
+        return Err("description: Task todo description is required.".into());
+    }
+    let workflow_id = task
+        .workflow_id
+        .as_deref()
+        .ok_or_else(|| "laneId: Task todos require the task to have a workflow.".to_string())?;
+    if !lane_exists_for_workflow(connection, workflow_id, lane_id)? {
+        return Err("laneId: Todo lane must belong to the task workflow.".into());
+    }
+    Ok(())
+}
+
 fn load_parent_summary(
     connection: &Connection,
     parent_task_id: Option<&str>,
@@ -1884,6 +2061,10 @@ fn task_id() -> String {
     format!("task-{}", Uuid::new_v4().simple())
 }
 
+fn task_todo_id() -> String {
+    format!("task-todo-{}", Uuid::new_v4().simple())
+}
+
 fn dependency_id() -> String {
     format!("task-dependency-{}", Uuid::new_v4().simple())
 }
@@ -2236,6 +2417,62 @@ mod tests {
         .expect_err("reject missing workflow for lane");
 
         assert!(error.contains("currentLaneId"));
+    }
+
+    #[test]
+    fn adds_lists_and_updates_task_todos() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Todo target", "in_progress", None);
+        let first = add_task_todo(
+            &mut connection,
+            &task.id,
+            TaskTodoInput {
+                lane_id: Some("lane-plan".into()),
+                description: "Confirm the approach with the latest context".into(),
+            },
+        )
+        .expect("first todo should add");
+        let second = add_task_todo(
+            &mut connection,
+            &task.id,
+            TaskTodoInput {
+                lane_id: Some("lane-plan".into()),
+                description: "Update implementation notes".into(),
+            },
+        )
+        .expect("second todo should add");
+
+        let listed = list_task_todos(&connection, &task.id).expect("todos should list");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, first.id);
+        assert_eq!(listed[1].id, second.id);
+
+        let unfinished_before =
+            list_unfinished_task_todos(&connection, &task.id, Some("lane-plan"))
+                .expect("unfinished todos should list");
+        assert_eq!(unfinished_before.len(), 2);
+
+        let finished =
+            mark_task_todo_finished(&connection, &first.id).expect("todo should mark finished");
+        assert!(finished.completed);
+
+        let unfinished_after = list_unfinished_task_todos(&connection, &task.id, Some("lane-plan"))
+            .expect("unfinished todos should reload");
+        assert_eq!(unfinished_after.len(), 1);
+        assert_eq!(unfinished_after[0].id, second.id);
+
+        let reopened =
+            mark_task_todo_unfinished(&connection, &first.id).expect("todo should reopen");
+        assert!(!reopened.completed);
+
+        let deleted = delete_task_todo(&connection, &second.id).expect("todo should delete");
+        assert_eq!(deleted.id, second.id);
+        let remaining =
+            list_task_todos(&connection, &task.id).expect("remaining todos should list");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, first.id);
     }
 
     #[test]

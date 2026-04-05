@@ -7,6 +7,7 @@ import {
   addTaskAttachment,
   addTaskDependency,
   addTaskFileReference,
+  addTaskTodo,
   approveLaneCompletion,
   commentOnTask,
   deleteTaskComment,
@@ -34,6 +35,9 @@ import {
   stopSessionRuntime,
   manualTaskWhip,
   listTaskMessages,
+  markTaskTodoFinished,
+  markTaskTodoUnfinished,
+  deleteTaskTodo,
   sendMailboxMessage,
   updateTask,
 } from "../lib/tauri";
@@ -140,6 +144,10 @@ function sameData<T>(current: T, next: T) {
 const TASK_EVENT_TOOL_NAMES = new Set([
   "create_task",
   "create_subtask",
+  "add_task_todo",
+  "mark_task_todo_finished",
+  "mark_task_todo_unfinished",
+  "delete_task_todo",
   "update_task",
   "comment_on_task",
   "dispatch_task_lane",
@@ -320,6 +328,11 @@ export function TasksPage({
   const dependencyCandidates = useMemo(
     () => tasks.filter((task) => route.kind === "detail" && task.id !== route.taskId),
     [route, tasks],
+  );
+
+  const taskWorkflowLanes = useMemo(
+    () => (taskDetail?.workflowId ? (workflowDefinitions[taskDetail.workflowId]?.lanes ?? []).map((lane) => ({ id: lane.id, name: lane.name })) : []),
+    [taskDetail?.workflowId, workflowDefinitions],
   );
 
   async function loadTasksData(options?: { silent?: boolean }) {
@@ -744,6 +757,53 @@ export function TasksPage({
     }
   }
 
+  async function handleAddTaskTodo(description: string, laneId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await addTaskTodo(route.taskId, { description, laneId });
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to add task todo.");
+    }
+  }
+
+  async function handleMarkTaskTodoFinished(todoId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    await runDetailAction(`task-todo-finished-${todoId}`, async () => {
+      await markTaskTodoFinished(todoId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    }, "Unable to mark task todo finished.");
+  }
+
+  async function handleMarkTaskTodoUnfinished(todoId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    await runDetailAction(`task-todo-unfinished-${todoId}`, async () => {
+      await markTaskTodoUnfinished(todoId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    }, "Unable to mark task todo unfinished.");
+  }
+
+  async function handleDeleteTaskTodo(todoId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    await runDetailAction(`task-todo-delete-${todoId}`, async () => {
+      await deleteTaskTodo(todoId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    }, "Unable to delete task todo.");
+  }
+
   async function handleAddComment(draft: TaskCommentInput): Promise<boolean> {
     if (route.kind !== "detail") {
       return false;
@@ -990,7 +1050,9 @@ export function TasksPage({
           loading={loadingTaskDetail}
           onAddAttachment={(files) => void handleAttachmentInputChange(files)}
           onAddComment={(draft) => handleAddComment(draft)}
+          onAddTaskTodo={(description, laneId) => void handleAddTaskTodo(description, laneId)}
           onDeleteComment={(commentId) => handleDeleteComment(commentId)}
+          onDeleteTaskTodo={(todoId) => void handleDeleteTaskTodo(todoId)}
           onAddDependency={() => void handleAddDependency()}
           onAddFileReference={() => void handleAddFileReference()}
           onApproveCompletion={() => void handleApproveLaneCompletion()}
@@ -1015,6 +1077,8 @@ export function TasksPage({
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
           onSetDefaultFileReference={(referenceId) => void handleSetDefaultFileReference(referenceId)}
+          onMarkTaskTodoFinished={(todoId) => void handleMarkTaskTodoFinished(todoId)}
+          onMarkTaskTodoUnfinished={(todoId) => void handleMarkTaskTodoUnfinished(todoId)}
           onSave={() => void handleSaveDetailTask()}
           onSelectBlocker={setSelectedBlockerTaskId}
           pendingActionId={detailActionPending}
@@ -1028,6 +1092,7 @@ export function TasksPage({
           taskMessages={taskMessages}
           timelineItems={timelineItems}
           workflows={workflowSummaries}
+          workflowLanes={taskWorkflowLanes}
           onSendMail={(body, interrupt) => handleSendTaskMail(body, interrupt)}
         />
       ) : (
