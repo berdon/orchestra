@@ -10,16 +10,31 @@ use crate::{
     state::AppState,
 };
 
-const DISPATCHER_INTERVAL: Duration = Duration::from_secs(3);
+const DISPATCHER_MIN_INTERVAL: Duration = Duration::from_secs(5);
+const DISPATCHER_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn start_dispatcher_loop(app: AppHandle) {
-    thread::spawn(move || loop {
-        thread::sleep(DISPATCHER_INTERVAL);
-        let _ = run_dispatcher_tick(app.clone());
+    thread::spawn(move || {
+        let mut next_interval = DISPATCHER_MIN_INTERVAL;
+        loop {
+            thread::sleep(next_interval);
+            match run_dispatcher_tick_and_count(app.clone()) {
+                Ok(actions) => {
+                    next_interval = next_dispatcher_interval(next_interval, actions);
+                }
+                Err(_) => {
+                    next_interval = DISPATCHER_MIN_INTERVAL;
+                }
+            }
+        }
     });
 }
 
 pub fn run_dispatcher_tick(app: AppHandle) -> Result<(), String> {
+    run_dispatcher_tick_and_count(app).map(|_| ())
+}
+
+fn run_dispatcher_tick_and_count(app: AppHandle) -> Result<usize, String> {
     let state = app.state::<AppState>();
     {
         let mut guard = state
@@ -27,7 +42,7 @@ pub fn run_dispatcher_tick(app: AppHandle) -> Result<(), String> {
             .lock()
             .map_err(|_| "Unable to access dispatcher tick state".to_string())?;
         if *guard {
-            return Ok(());
+            return Ok(0);
         }
         *guard = true;
     }
@@ -41,7 +56,7 @@ pub fn run_dispatcher_tick(app: AppHandle) -> Result<(), String> {
     result
 }
 
-fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), String> {
+fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, String> {
     state.log(
         "info",
         "dispatcher.tick.started",
@@ -109,15 +124,33 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<(), Str
     let whip_results = process_task_whips(app.clone(), state)?;
     let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
 
+    let total_actions = agent_dispatches
+        + activated_roles
+        + auto_dispatched_tasks
+        + whip_results
+        + reminder_results;
+
     state.log(
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} auto-dispatched tasks, {} whip actions, {} reminder actions",
-            agent_dispatches, activated_roles, auto_dispatched_tasks, whip_results, reminder_results
+            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
+            agent_dispatches, activated_roles, auto_dispatched_tasks, whip_results, reminder_results, total_actions
         ),
     );
-    Ok(())
+    Ok(total_actions)
+}
+
+fn next_dispatcher_interval(current: Duration, actions: usize) -> Duration {
+    if actions > 0 {
+        return DISPATCHER_MIN_INTERVAL;
+    }
+
+    let doubled = current.as_secs().saturating_mul(2);
+    Duration::from_secs(doubled.clamp(
+        DISPATCHER_MIN_INTERVAL.as_secs(),
+        DISPATCHER_MAX_INTERVAL.as_secs(),
+    ))
 }
 
 fn auto_dispatch_work_ready_tasks(app: AppHandle, state: &AppState) -> Result<usize, String> {
@@ -290,4 +323,45 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
     }
 
     Ok(actions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatcher_interval_resets_when_work_happens() {
+        assert_eq!(
+            next_dispatcher_interval(Duration::from_secs(40), 1),
+            DISPATCHER_MIN_INTERVAL
+        );
+    }
+
+    #[test]
+    fn dispatcher_interval_exponentially_backs_off_when_idle() {
+        assert_eq!(
+            next_dispatcher_interval(DISPATCHER_MIN_INTERVAL, 0),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            next_dispatcher_interval(Duration::from_secs(10), 0),
+            Duration::from_secs(20)
+        );
+        assert_eq!(
+            next_dispatcher_interval(Duration::from_secs(20), 0),
+            Duration::from_secs(40)
+        );
+    }
+
+    #[test]
+    fn dispatcher_interval_caps_at_sixty_seconds() {
+        assert_eq!(
+            next_dispatcher_interval(Duration::from_secs(40), 0),
+            DISPATCHER_MAX_INTERVAL
+        );
+        assert_eq!(
+            next_dispatcher_interval(DISPATCHER_MAX_INTERVAL, 0),
+            DISPATCHER_MAX_INTERVAL
+        );
+    }
 }
