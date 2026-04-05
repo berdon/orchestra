@@ -9,7 +9,7 @@ import {
   executeScript,
   invokeCommand,
 } from "./driver";
-import { createAgentViaSettings, createTaskViaTasks, createWorkflowViaSettings } from "./ui-flows";
+import { createProjectViaSettings, createTaskViaTasks, createWorkflowViaSettings, switchProject } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
@@ -20,12 +20,8 @@ describe("desktop task whip configuration", () => {
       await ensureReactReady(sessionId);
 
       await clickByText(sessionId, "button", "Settings");
-      await createAgentViaSettings(sessionId, {
-        name: "Whip Agent",
-        description: "Agent used to test task whip configuration.",
-        systemPrompt: "Keep working until the task is complete and use the completion tools when you are done.",
-        thinkingLevel: "medium",
-      });
+      await createProjectViaSettings(sessionId, "Whip Project", "Desktop whip threshold coverage.");
+      await switchProject(sessionId, "Whip Project");
       await createWorkflowViaSettings(sessionId, {
         name: "Whip Flow",
         lanes: [
@@ -33,7 +29,7 @@ describe("desktop task whip configuration", () => {
             name: "Implement",
             key: "implement",
             ownerType: "agent",
-            ownerReference: "whip-agent",
+            ownerReference: "supervisor",
             entryPromptTemplate: "Keep going until done.",
           },
         ],
@@ -55,7 +51,11 @@ describe("desktop task whip configuration", () => {
         whipMaxAttempts: 3,
       });
 
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Whip Project'));
+      expect(project).toBeTruthy();
       const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Whip-configured task'));
       expect(createdTask).toBeTruthy();

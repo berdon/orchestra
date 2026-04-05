@@ -42,7 +42,18 @@ describe("desktop local repository project flow", () => {
       await clickByText(sessionId, "button", "New project");
       await setInputValue(sessionId, '[data-role="project-name"]', "Local Repo Project");
       await setInputValue(sessionId, '[data-role="project-description"]', "Project with a brand-new managed local repository.");
-      await clickByText(sessionId, "button", "Create project");
+      await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
+      let projectCreated = false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
+        if (projects.some((entry) => entry.name === 'Local Repo Project')) {
+          projectCreated = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      expect(projectCreated).toBe(true);
+      await clickByText(sessionId, 'a', 'Local Repo Project');
       await waitForText(sessionId, "Local Repo Project");
 
       await clickSelector(sessionId, '[data-role="repository-mode-local-new"]');

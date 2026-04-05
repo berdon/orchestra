@@ -1785,7 +1785,7 @@ export function App() {
         return;
       case "create-task":
         setActivePage("tasks");
-        setTasksCreateProjectId(activeProjectId);
+        setTasksCreateProjectId(activeProjectId ?? "orchestra");
         setTasksCreateToken((current) => current + 1);
         return;
       case "create-session":

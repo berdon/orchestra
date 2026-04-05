@@ -198,7 +198,11 @@ describe("desktop task detail reorganization", () => {
         repositoryName: "Task Detail Actions Repo",
         workflowName: "Task Detail Action Flow",
       });
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Task Detail Actions Project'));
+      expect(project).toBeTruthy();
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Task detail action coverage'));
       expect(task).toBeTruthy();

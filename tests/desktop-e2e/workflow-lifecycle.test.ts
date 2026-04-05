@@ -79,7 +79,11 @@ describe("desktop workflow lifecycle", () => {
         publish: true,
       });
 
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Workflow Lifecycle Project'));
+      expect(project).toBeTruthy();
       const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Desktop workflow lifecycle task'));
       expect(createdTask).toBeTruthy();

@@ -57,7 +57,12 @@ pub fn list_tasks(
     project_id: &str,
     include_archived: bool,
 ) -> Result<Vec<TaskSummary>, String> {
-    projects::ensure_project_exists(connection, project_id)?;
+    if let Err(error) = projects::ensure_project_exists(connection, project_id) {
+        if project_id == DEFAULT_PROJECT_ID {
+            return Ok(Vec::new());
+        }
+        return Err(error);
+    }
     let mut statement = connection
         .prepare(&format!(
             r#"

@@ -79,6 +79,29 @@ function findInlineButtonCallbackData(message: HarnessSentMessage, label: string
   return null;
 }
 
+async function dispatchTaskLaneWhenReady(sessionId: string, taskId: string, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      await invokeCommand(sessionId, "dispatch_task_lane", { taskId });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!lastError.includes("already processing a message")) {
+        throw error;
+      }
+    }
+    await waitForCondition(
+      () => invokeCommand<any[]>(sessionId, "list_sessions", {}),
+      (sessions) => sessions.every((entry) => !String(entry.title ?? "").includes("Supervisor main session") || String(entry.status ?? "") === "idle"),
+      15_000,
+    ).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting to dispatch task ${taskId}: ${lastError}`);
+}
+
 describe("desktop channels telegram flow", () => {
   it.skipIf(!isDesktopE2E)("supports Telegram project switching buttons and task commands on the canonical supervisor session", async () => {
     const harness = await createTelegramHarness();
@@ -220,7 +243,7 @@ describe("desktop channels telegram flow", () => {
         (message) => message.text.includes("ORC-1") && message.text.includes(taskTitle) && message.text.includes(`Project: ${secondProjectName}`),
       );
 
-      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: approvalTask.id });
+      await dispatchTaskLaneWhenReady(sessionId, approvalTask.id);
       await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
         (task) => Boolean(task.activeLaneAssignment?.sessionId),
@@ -305,7 +328,7 @@ describe("desktop channels telegram flow", () => {
           parentTaskId: null,
         },
       });
-      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: mailTask.id });
+      await dispatchTaskLaneWhenReady(sessionId, mailTask.id);
       await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: mailTask.id }),
         (task) => task.status === "in_progress" && task.activeLaneAssignment?.status === "active",

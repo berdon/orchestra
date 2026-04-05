@@ -113,7 +113,11 @@ describe("desktop autonomous workflow", () => {
         workflowName: "Autonomous Desktop Workflow",
         publish: true,
       });
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Autonomous Workflow Project'));
+      expect(project).toBeTruthy();
       const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Autonomous desktop workflow task'));
       expect(createdTask).toBeTruthy();

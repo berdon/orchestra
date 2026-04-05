@@ -468,19 +468,6 @@ pub fn update_agent_runtime_dispatch_state_for_project(
     last_error: Option<&str>,
 ) -> Result<AgentRuntimeState, String> {
     let now = now_iso();
-    if let Some(session_id) = session_id {
-        connection
-            .execute(
-                r#"
-                UPDATE agent_runtime_states
-                SET main_session_id = ?2,
-                    updated_at = CASE WHEN project_id = ?3 THEN ?4 ELSE updated_at END
-                WHERE agent_id = ?1
-                "#,
-                params![agent_id, session_id, project_id, now],
-            )
-            .map_err(|error| format!("Unable to synchronize main session for {agent_id}: {error}"))?;
-    }
 
     connection
         .execute(

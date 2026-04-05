@@ -244,10 +244,8 @@ test("agents page shows project-scoped agent runtime state from dispatched task 
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.locator('[data-role="new-task"]').click();
   await page.locator('[data-role="task-title"]').fill("Agent runtime view task");
-  await page.locator('[data-role="task-status"]').selectOption("ready");
   await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent");
-  await page.locator('[data-role="save-task"]').click();
-  await page.locator('[data-role="dispatch-task-lane"]').click();
+  await page.locator('[data-role="publish-task"]').click();
 
   await page.getByRole("button", { name: "Agents" }).click();
   await page.getByRole("link", { name: /Data/i }).click();

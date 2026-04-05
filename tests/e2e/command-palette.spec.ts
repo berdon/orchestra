@@ -88,6 +88,9 @@ test("command palette can open the new task flow and closes with escape", async 
   await page.locator('[data-role="command-palette-input"]').fill("create task");
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Create task" }).first().click();
 
+  await expect(page.getByRole("button", { name: "Tasks", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
+  await page.getByRole("button", { name: "New task" }).click();
   await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
 });
 

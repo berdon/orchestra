@@ -26,7 +26,11 @@ describe("desktop task comment replies", () => {
         title: "Comment reply task",
         description: "Exercise threaded comment replies in the task detail UI.",
       });
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Comment Reply Project'));
+      expect(project).toBeTruthy();
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
         includeArchived: false,
       }).then((tasks) => tasks.find((entry) => entry.title === 'Comment reply task'));
       expect(task).toBeTruthy();

@@ -7,6 +7,7 @@ test("chat nav lists named agents and excludes roles", async ({ page }) => {
 
   await page.goto("/");
 
+  await expect(page.getByRole("button", { name: "Settings" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: /^Roles$/ }).click();
   await page.locator('[data-role="new-role"]').click();
