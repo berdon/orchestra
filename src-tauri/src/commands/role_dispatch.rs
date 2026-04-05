@@ -76,6 +76,9 @@ pub fn reset_role_assignments(
         let _ =
             app_events::emit_session_change(&app, "role.assignments.reset", session_ids.clone());
         for session_id in session_ids {
+            if let Ok(context) = pi_sessions::find_session_context_for_session(&session_id) {
+                let _ = pi_sessions::delete_session_file(&context.session_dir, &session_id);
+            }
             live_sessions::schedule_session_retirement(
                 app.clone(),
                 session_id,
