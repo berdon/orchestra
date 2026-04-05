@@ -64,6 +64,8 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
     );
     let context = pi_sessions::detect_session_context(None)?;
 
+    let stale_assignment_recoveries = recover_stale_task_assignments(app.clone(), state)?;
+
     let agent_dispatches = agent_dispatch::dispatch_all_agent_queues(
         app.clone(),
         state,
@@ -124,7 +126,8 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
     let whip_results = process_task_whips(app.clone(), state)?;
     let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
 
-    let total_actions = agent_dispatches
+    let total_actions = stale_assignment_recoveries
+        + agent_dispatches
         + activated_roles
         + auto_dispatched_tasks
         + whip_results
@@ -134,8 +137,8 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} agent dispatches, {} activated role assignments, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
-            agent_dispatches, activated_roles, auto_dispatched_tasks, whip_results, reminder_results, total_actions
+            "Completed dispatcher tick with {} stale assignment recoveries, {} agent dispatches, {} activated role assignments, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
+            stale_assignment_recoveries, agent_dispatches, activated_roles, auto_dispatched_tasks, whip_results, reminder_results, total_actions
         ),
     );
     Ok(total_actions)
@@ -151,6 +154,83 @@ fn next_dispatcher_interval(current: Duration, actions: usize) -> Duration {
         DISPATCHER_MIN_INTERVAL.as_secs(),
         DISPATCHER_MAX_INTERVAL.as_secs(),
     ))
+}
+
+fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<usize, String> {
+    let connection = database::open_connection()?;
+    let candidates = task_runtime::find_stale_task_assignment_candidates(&connection)?;
+    drop(connection);
+
+    let mut recovered = 0;
+    for candidate in candidates {
+        let mut connection = database::open_connection()?;
+        let Some(current_assignment) =
+            task_runtime::get_assignment_by_id(&connection, &candidate.assignment_id)?
+        else {
+            continue;
+        };
+        if current_assignment.status != "active" && current_assignment.status != "queued" {
+            continue;
+        }
+
+        let task = task_runtime::reset_task_runtime(&mut connection, &candidate.task_id)?;
+        state.log(
+            "warn",
+            "task.runtime.stale_assignment_recovered",
+            &format!(
+                "Recovered stale assignment {} for task {}: {}",
+                candidate.assignment_id, candidate.task_id, candidate.reason
+            ),
+        );
+        let _ = app_events::emit_task_change(
+            &app,
+            "task.runtime.stale_assignment_recovered",
+            [task.id.clone()],
+        );
+        if let Some(session_id) = candidate.session_id.clone() {
+            let _ = app_events::emit_session_change(
+                &app,
+                "task.runtime.stale_assignment_recovered",
+                [session_id.clone()],
+            );
+            crate::services::live_sessions::schedule_session_retirement(
+                app.clone(),
+                session_id,
+                Duration::ZERO,
+                "task.runtime.stale_assignment_recovered",
+            );
+        }
+
+        let candidate_context = pi_sessions::session_context_for_project_id(&candidate.project_id)?;
+        if let Some(assignment) = task_runtime::maybe_auto_dispatch_task(
+            &mut connection,
+            &candidate_context.project_root,
+            &candidate_context.session_dir,
+            &candidate.task_id,
+        )? {
+            task_runtime::start_assignment_run(
+                app.clone(),
+                state,
+                candidate_context.session_dir.clone(),
+                &assignment,
+            )?;
+            if let Some(session_id) = assignment.session_id.clone() {
+                let _ = app_events::emit_session_change(
+                    &app,
+                    "task.runtime.assignment_restarted",
+                    [session_id],
+                );
+            }
+            let _ = app_events::emit_task_change(
+                &app,
+                "task.runtime.assignment_restarted",
+                [assignment.task_id.clone()],
+            );
+        }
+        recovered += 1;
+    }
+
+    Ok(recovered)
 }
 
 fn auto_dispatch_work_ready_tasks(app: AppHandle, state: &AppState) -> Result<usize, String> {

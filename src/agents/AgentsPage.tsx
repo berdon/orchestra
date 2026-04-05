@@ -8,6 +8,7 @@ import {
   getRoleOperations,
   listRoleOperations,
   releaseRoleInstance,
+  resetRoleAssignments,
 } from "../lib/roleRuntime";
 import { AgentOperationsDetail } from "./AgentOperationsDetail";
 import { RoleOperationsDetail } from "./RoleOperationsDetail";
@@ -265,6 +266,12 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
             onRelease={(instanceId, outcome) =>
               runBusyAction(async () => {
                 const detail = await releaseRoleInstance(instanceId, outcome, outcome === "failure" ? "Marked failed by operator." : undefined);
+                await refreshSelectedRole(detail.role.id);
+              })
+            }
+            onResetAssignments={() =>
+              runBusyAction(async () => {
+                const detail = await resetRoleAssignments(selectedRoleDetail.role.id);
                 await refreshSelectedRole(detail.role.id);
               })
             }

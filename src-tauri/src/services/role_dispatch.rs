@@ -236,6 +236,27 @@ pub fn release_role_instance(
     role_runtime::get_role_operations(connection, &instance.role_id)
 }
 
+pub fn reset_role_assignments(
+    connection: &mut Connection,
+    role_id: &str,
+) -> Result<(RoleOperationsDetail, Vec<String>, Vec<String>), String> {
+    let assignments = task_runtime::reset_role_assignments_to_queue(
+        connection,
+        role_id,
+        "Role assignments reset by operator",
+    )?;
+    let detail = role_runtime::get_role_operations(connection, role_id)?;
+    let task_ids = assignments
+        .iter()
+        .map(|assignment| assignment.task_id.clone())
+        .collect();
+    let session_ids = assignments
+        .iter()
+        .filter_map(|assignment| assignment.session_id.clone())
+        .collect();
+    Ok((detail, task_ids, session_ids))
+}
+
 pub fn dispose_role_instance(
     connection: &mut Connection,
     project_root: &Path,
@@ -623,8 +644,14 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::{
-        models::{RoleInstanceInput, RoleQueueEntryInput, TaskUpsertInput},
-        services::{database::initialize_database_at, pi_sessions, role_runtime, roles, tasks},
+        models::{
+            RoleInstanceInput, RoleQueueEntryInput, TaskUpsertInput, WorkflowLaneInput,
+            WorkflowUpsertInput,
+        },
+        services::{
+            database::initialize_database_at, pi_sessions, role_runtime, roles, task_runtime,
+            tasks, workflows,
+        },
     };
     use std::{
         env,
@@ -1112,6 +1139,115 @@ mod tests {
             second_instance.worktree_path.as_deref(),
             Some(first_worktree.as_str())
         );
+    }
+
+    #[test]
+    fn resets_role_assignments_back_to_queue() {
+        let mut connection = open_test_connection("role-reset-assignments");
+        let role = create_role(&mut connection, "Resettable", 1);
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Reset Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-reset".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("role-reset-assignments-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-reset', 'orchestra', 'role-reset', 'Role Reset Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Reset role assignment".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-reset".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-reset".into()),
+                repository_ids: vec!["repo-reset".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+        assert_eq!(assignment.status, "active");
+        let original_session_id = assignment.session_id.clone();
+
+        let (detail, changed_task_ids, changed_session_ids) =
+            reset_role_assignments(&mut connection, &role.id).expect("role reset should succeed");
+        assert_eq!(changed_task_ids, vec![task.id.clone()]);
+        assert_eq!(
+            changed_session_ids,
+            vec![original_session_id.clone().expect("session should exist")]
+        );
+        assert_eq!(detail.queued_count, 1);
+        assert_eq!(detail.active_instance_count, 0);
+        assert!(detail
+            .instances
+            .iter()
+            .all(|instance| instance.current_queue_entry_id.is_none()));
+
+        let reset_task =
+            tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(reset_task.status, "ready");
+        let queued_assignment = reset_task
+            .active_lane_assignment
+            .expect("queued assignment should remain");
+        assert_eq!(queued_assignment.status, "queued");
+        assert!(queued_assignment.session_id.is_none());
+        assert!(queued_assignment.role_instance_id.is_none());
+
+        let _ = dispatch_role_queue(&mut connection, &project_root, &session_dir, &role.id)
+            .expect("queue should redispatch");
+        let activated = task_runtime::activate_queued_role_assignments(&connection)
+            .expect("queued assignment should activate");
+        assert_eq!(activated.len(), 1);
+        assert_eq!(activated[0].task_id, task.id);
+        assert_eq!(activated[0].status, "active");
+        assert!(activated[0].session_id.is_some());
     }
 
     #[test]
