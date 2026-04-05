@@ -17,6 +17,7 @@ Agent orchestration framework focused on getting project work done.
 - [Agent runtime plan](docs/agent-runtime-plan.md)
 - [Task system plan](docs/task-system-plan.md)
 - [Bridge hardening plan](docs/bridge-hardening-plan.md)
+- [Mobile driver client design](docs/mobile-driver-client-design.md)
 
 ## App scaffold
 
