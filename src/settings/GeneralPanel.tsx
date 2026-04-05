@@ -11,11 +11,17 @@ interface GeneralPanelProps {
   logs: LogEntry[];
   loadingLogs: boolean;
   clearingLogs: boolean;
+  exportingLogs: boolean;
+  logExportMessage: string | null;
+  logExportError: string | null;
+  includeRelatedSessionSnapshot: boolean;
   onRefreshBridgeDiagnostics: () => void;
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
   onSaveSessionPromptTemplate: (template: string | null) => void;
   onRefreshLogs: () => void;
+  onToggleIncludeRelatedSessionSnapshot: (nextValue: boolean) => void;
+  onExportLogs: () => void;
   onClearLogs: () => void;
 }
 
@@ -34,11 +40,17 @@ export function GeneralPanel({
   logs,
   loadingLogs,
   clearingLogs,
+  exportingLogs,
+  logExportMessage,
+  logExportError,
+  includeRelatedSessionSnapshot,
   onRefreshBridgeDiagnostics,
   onCleanupStaleBridges,
   onOpenLogsWindow,
   onSaveSessionPromptTemplate,
   onRefreshLogs,
+  onToggleIncludeRelatedSessionSnapshot,
+  onExportLogs,
   onClearLogs,
 }: GeneralPanelProps) {
   const [templateDraft, setTemplateDraft] = useState("");
@@ -279,7 +291,13 @@ export function GeneralPanel({
         logs={logs}
         loadingLogs={loadingLogs}
         clearingLogs={clearingLogs}
+        exportingLogs={exportingLogs}
+        exportStatusMessage={logExportMessage}
+        exportErrorMessage={logExportError}
+        includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
         onRefresh={onRefreshLogs}
+        onToggleIncludeRelatedSessionSnapshot={onToggleIncludeRelatedSessionSnapshot}
+        onExport={onExportLogs}
         onClear={onClearLogs}
       />
     </section>

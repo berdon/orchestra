@@ -435,6 +435,10 @@ pub fn deliver_channel_response_for_run(
         .chat_id
         .clone()
         .ok_or_else(|| format!("Channel {} is missing a Telegram chat id", channel.id))?;
+    let origin_activity = load_channel_activity(&connection, &origin.channel_activity_id)?;
+    let total_age_ms = origin_activity
+        .as_ref()
+        .and_then(|activity| elapsed_millis_since(&activity.created_at));
     let trimmed = response_text.trim();
     if trimmed.is_empty() {
         mark_channel_activity_status(
@@ -443,6 +447,19 @@ pub fn deliver_channel_response_for_run(
             ACTIVITY_STATUS_COMPLETED,
             None,
         )?;
+        state.log(
+            "info",
+            "channels.telegram.reply",
+            &format!(
+                "Completed channel activity {} for session {} run_id={} with empty response total_age_ms={}",
+                origin.channel_activity_id,
+                session_id,
+                run_id,
+                total_age_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".into()),
+            ),
+        );
         return Ok(());
     }
 
@@ -476,8 +493,15 @@ pub fn deliver_channel_response_for_run(
         "info",
         "channels.telegram.reply",
         &format!(
-            "Delivered channel response for run {} via {}",
-            run_id, channel.name
+            "Delivered channel response activity={} session={} run_id={} via {} response_chars={} total_age_ms={}",
+            origin.channel_activity_id,
+            session_id,
+            run_id,
+            channel.name,
+            trimmed.chars().count(),
+            total_age_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".into()),
         ),
     );
     let _ = app;
@@ -702,6 +726,20 @@ fn process_telegram_updates(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    if !updates.is_empty() {
+        state.log(
+            "info",
+            "channels.telegram.poll",
+            &format!(
+                "Channel {} fetched {} Telegram update(s) at offset {}",
+                channel.id,
+                updates.len(),
+                offset
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "start".into())
+            ),
+        );
+    }
 
     let mut newest_update_id = channel
         .state
@@ -760,13 +798,26 @@ fn process_telegram_updates(
                 external_message_id.as_deref(),
             )?;
         } else {
-            queue_inbound_channel_message(
+            let queued = queue_inbound_channel_message(
                 &connection,
                 &channel.id,
                 external_message_id.as_deref(),
                 Some(&chat_id),
                 body,
             )?;
+            state.log(
+                "info",
+                "channels.telegram.queue",
+                &format!(
+                    "Channel {} queued Telegram message activity={} external_message_id={} chat_id={} chars={} preview={:?}",
+                    channel.id,
+                    queued.id,
+                    queued.external_message_id.as_deref().unwrap_or("<none>"),
+                    queued.chat_id.as_deref().unwrap_or("<none>"),
+                    queued.body.chars().count(),
+                    preview_text(&queued.body, 120),
+                ),
+            );
             let _ = send_telegram_channel_message(
                 &connection,
                 &channel,
@@ -1603,13 +1654,42 @@ fn dispatch_next_channel_message(
         .as_ref()
         .map(|runtime| runtime.has_active_prompt())
         .unwrap_or(false);
+    let session_marked_running = state.is_session_running(&resolved.session_id)?;
+    let active_run_id = state.active_session_run_id(&resolved.session_id)?;
+    let queue_age_ms = elapsed_millis_since(&activity.created_at);
 
-    match resolve_channel_dispatch_plan(
-        state.is_session_running(&resolved.session_id)?,
-        runtime_has_active_prompt,
-    ) {
-        ChannelDispatchPlan::WaitForActiveRun => return Ok(()),
+    match resolve_channel_dispatch_plan(session_marked_running, runtime_has_active_prompt) {
+        ChannelDispatchPlan::WaitForActiveRun => {
+            state.log(
+                "info",
+                "channels.dispatch.wait",
+                &format!(
+                    "Channel {} waiting to dispatch activity {} to session {} queue_age_ms={} session_marked_running={} runtime_has_active_prompt={} active_run_id={}",
+                    channel.id,
+                    activity.id,
+                    resolved.session_id,
+                    queue_age_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".into()),
+                    session_marked_running,
+                    runtime_has_active_prompt,
+                    active_run_id.as_deref().unwrap_or("<none>"),
+                ),
+            );
+            return Ok(());
+        }
         ChannelDispatchPlan::RecoverStaleRunState => {
+            state.log(
+                "warn",
+                "channels.dispatch.recover_stale_run",
+                &format!(
+                    "Channel {} recovering stale run state before dispatching activity {} to session {} previous_run_id={}",
+                    channel.id,
+                    activity.id,
+                    resolved.session_id,
+                    active_run_id.as_deref().unwrap_or("<none>"),
+                ),
+            );
             state.clear_active_session_run(&resolved.session_id)?;
         }
         ChannelDispatchPlan::DispatchNow => {}
@@ -1653,6 +1733,22 @@ fn dispatch_next_channel_message(
                 &activity.id,
                 Some(&resolved.project_id),
             )?;
+            state.log(
+                "info",
+                "channels.dispatch.start",
+                &format!(
+                    "Channel {} dispatched activity {} to session {} run_id={} queue_age_ms={} prompt_chars={} preview={:?}",
+                    channel.id,
+                    activity.id,
+                    resolved.session_id,
+                    run_id,
+                    queue_age_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".into()),
+                    activity.body.chars().count(),
+                    preview_text(&activity.body, 120),
+                ),
+            );
             let _ = send_telegram_chat_action(&connection, &channel, TELEGRAM_CHAT_ACTION_TYPING);
             Ok(())
         }
@@ -1664,6 +1760,14 @@ fn dispatch_next_channel_message(
                 ACTIVITY_STATUS_FAILED,
                 Some(&error),
             )?;
+            state.log(
+                "error",
+                "channels.dispatch.failed",
+                &format!(
+                    "Channel {} failed to dispatch activity {} to session {} run_id={} error={}",
+                    channel.id, activity.id, resolved.session_id, run_id, error
+                ),
+            );
             Err(error)
         }
     }
@@ -1736,13 +1840,32 @@ fn wrap_channel_prompt(channel: &StoredChannelRecord, project_name: &str, body: 
     )
 }
 
+fn preview_text(body: &str, max_chars: usize) -> String {
+    let condensed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut preview = condensed.chars().take(max_chars).collect::<String>();
+    if condensed.chars().count() > max_chars {
+        preview.push('…');
+    }
+    preview
+}
+
+fn elapsed_millis_since(timestamp: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|value| {
+            Utc::now()
+                .signed_duration_since(value.with_timezone(&Utc))
+                .num_milliseconds()
+        })
+}
+
 fn queue_inbound_channel_message(
     connection: &Connection,
     channel_id: &str,
     external_message_id: Option<&str>,
     chat_id: Option<&str>,
     body: &str,
-) -> Result<(), String> {
+) -> Result<ChannelActivityEntry, String> {
     if let Some(external_message_id) = external_message_id {
         let existing = connection
             .query_row(
@@ -1753,11 +1876,21 @@ fn queue_inbound_channel_message(
             .optional()
             .map_err(|error| format!("Unable to query existing channel activity: {error}"))?;
         if existing.is_some() {
-            return Ok(());
+            return load_channel_activity_by_external_message_id(
+                connection,
+                channel_id,
+                external_message_id,
+            )?
+            .ok_or_else(|| {
+                format!(
+                    "Channel {} already stored inbound Telegram message {} but it could not be reloaded",
+                    channel_id, external_message_id
+                )
+            });
         }
     }
 
-    let _ = insert_channel_activity(
+    insert_channel_activity(
         connection,
         channel_id,
         DIRECTION_INBOUND,
@@ -1769,8 +1902,7 @@ fn queue_inbound_channel_message(
         body,
         ACTIVITY_STATUS_QUEUED,
         None,
-    )?;
-    Ok(())
+    )
 }
 
 fn next_queued_inbound_message(
@@ -1792,6 +1924,48 @@ fn next_queued_inbound_message(
         )
         .optional()
         .map_err(|error| format!("Unable to query queued channel message: {error}"))
+}
+
+fn load_channel_activity_by_external_message_id(
+    connection: &Connection,
+    channel_id: &str,
+    external_message_id: &str,
+) -> Result<Option<ChannelActivityEntry>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT id, channel_id, direction, message_kind, external_message_id, chat_id, session_id, run_id,
+                   body, status, error, created_at, updated_at
+            FROM channel_activity
+            WHERE channel_id = ?1 AND direction = ?2 AND external_message_id = ?3
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            "#,
+            params![channel_id, DIRECTION_INBOUND, external_message_id],
+            read_channel_activity,
+        )
+        .optional()
+        .map_err(|error| format!("Unable to reload channel activity for {}: {error}", external_message_id))
+}
+
+fn load_channel_activity(
+    connection: &Connection,
+    activity_id: &str,
+) -> Result<Option<ChannelActivityEntry>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT id, channel_id, direction, message_kind, external_message_id, chat_id, session_id, run_id,
+                   body, status, error, created_at, updated_at
+            FROM channel_activity
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+            [activity_id],
+            read_channel_activity,
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query channel activity {activity_id}: {error}"))
 }
 
 fn mark_channel_activity_dispatched(

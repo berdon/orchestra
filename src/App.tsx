@@ -10,6 +10,7 @@ import {
   getInitialAgentTerminalWindowFlag,
   getInitialLogsWindowFlag,
   getLogs,
+  exportLogsBundle,
   getSessionModelState,
   getSessionRecord,
   getCurrentAgentTerminalSessionId,
@@ -482,6 +483,10 @@ export function App() {
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
+  const [exportingLogs, setExportingLogs] = useState(false);
+  const [logExportMessage, setLogExportMessage] = useState<string | null>(null);
+  const [logExportError, setLogExportError] = useState<string | null>(null);
+  const [includeRelatedSessionSnapshot, setIncludeRelatedSessionSnapshot] = useState(false);
   const [loadingBridgeDiagnostics, setLoadingBridgeDiagnostics] = useState(false);
   const [refreshingBridgeDiagnostics, setRefreshingBridgeDiagnostics] = useState(false);
   const [isLogsWindow, setIsLogsWindow] = useState(() => getInitialLogsWindowFlag());
@@ -745,6 +750,25 @@ export function App() {
 
   async function handleOpenLogsWindow() {
     await openLogsWindow();
+  }
+
+  async function handleExportLogsBundle() {
+    setExportingLogs(true);
+    setLogExportMessage(null);
+    setLogExportError(null);
+    try {
+      const bundlePath = await exportLogsBundle(includeRelatedSessionSnapshot);
+      setLogExportMessage(
+        includeRelatedSessionSnapshot
+          ? `Saved log bundle with related sessions and database snapshot to ${bundlePath}`
+          : `Saved log bundle to ${bundlePath}`,
+      );
+      setLogs(await getLogs());
+    } catch (error) {
+      setLogExportError(error instanceof Error ? error.message : "Unable to export log bundle.");
+    } finally {
+      setExportingLogs(false);
+    }
   }
 
   async function loadBridgeDiagnostics(options?: { background?: boolean }) {
@@ -1948,7 +1972,13 @@ export function App() {
           logs={logs}
           loadingLogs={loadingLogs}
           clearingLogs={clearingLogs}
+          exportingLogs={exportingLogs}
+          exportStatusMessage={logExportMessage}
+          exportErrorMessage={logExportError}
+          includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
           onRefresh={() => void loadLogs()}
+          onToggleIncludeRelatedSessionSnapshot={setIncludeRelatedSessionSnapshot}
+          onExport={() => void handleExportLogsBundle()}
           onClear={() => void handleClearLogs()}
         />
       </main>
@@ -2126,11 +2156,17 @@ export function App() {
               logs={logs}
               loadingLogs={loadingLogs}
               clearingLogs={clearingLogs}
+              exportingLogs={exportingLogs}
+              logExportMessage={logExportMessage}
+              logExportError={logExportError}
+              includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
               onRefreshBridgeDiagnostics={() => void loadBridgeDiagnostics({ background: true })}
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
               onRefreshLogs={() => void loadLogs()}
+              onToggleIncludeRelatedSessionSnapshot={setIncludeRelatedSessionSnapshot}
+              onExportLogs={() => void handleExportLogsBundle()}
               onClearLogs={() => void handleClearLogs()}
             />
           )
