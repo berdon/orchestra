@@ -236,10 +236,83 @@ pub fn release_role_instance(
     role_runtime::get_role_operations(connection, &instance.role_id)
 }
 
+fn collect_role_reset_session_ids(
+    connection: &Connection,
+    assignments: &[crate::models::TaskLaneAssignment],
+) -> Result<Vec<String>, String> {
+    let mut session_ids = std::collections::BTreeSet::new();
+
+    for assignment in assignments {
+        if let Some(session_id) = assignment.session_id.as_deref() {
+            session_ids.insert(session_id.to_string());
+        }
+
+        if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
+            if let Some(session_id) = connection
+                .query_row(
+                    "SELECT session_id FROM role_instances WHERE id = ?1",
+                    [role_instance_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to query role instance {} during reset: {error}",
+                        role_instance_id
+                    )
+                })?
+                .flatten()
+            {
+                session_ids.insert(session_id);
+            }
+        }
+
+        if let Some(queue_entry_id) = assignment.role_queue_entry_id.as_deref() {
+            if let Some(assigned_instance_id) = connection
+                .query_row(
+                    "SELECT assigned_instance_id FROM role_queue_entries WHERE id = ?1",
+                    [queue_entry_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to query role queue entry {} during reset: {error}",
+                        queue_entry_id
+                    )
+                })?
+                .flatten()
+            {
+                if let Some(session_id) = connection
+                    .query_row(
+                        "SELECT session_id FROM role_instances WHERE id = ?1",
+                        [assigned_instance_id.as_str()],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        format!(
+                            "Unable to query queued role instance {} during reset: {error}",
+                            assigned_instance_id
+                        )
+                    })?
+                    .flatten()
+                {
+                    session_ids.insert(session_id);
+                }
+            }
+        }
+    }
+
+    Ok(session_ids.into_iter().collect())
+}
+
 pub fn reset_role_assignments(
     connection: &mut Connection,
     role_id: &str,
 ) -> Result<(RoleOperationsDetail, Vec<String>, Vec<String>), String> {
+    let existing_assignments = task_runtime::list_current_role_assignments(connection, role_id)?;
+    let session_ids = collect_role_reset_session_ids(connection, &existing_assignments)?;
     let assignments = task_runtime::reset_role_assignments_to_queue(
         connection,
         role_id,
@@ -249,10 +322,6 @@ pub fn reset_role_assignments(
     let task_ids = assignments
         .iter()
         .map(|assignment| assignment.task_id.clone())
-        .collect();
-    let session_ids = assignments
-        .iter()
-        .filter_map(|assignment| assignment.session_id.clone())
         .collect();
     Ok((detail, task_ids, session_ids))
 }
@@ -1229,6 +1298,10 @@ mod tests {
             .instances
             .iter()
             .all(|instance| instance.current_queue_entry_id.is_none()));
+        assert!(detail
+            .instances
+            .iter()
+            .all(|instance| instance.session_id.is_none()));
 
         let reset_task =
             tasks::get_task_context(&connection, &task.id).expect("task should reload");

@@ -309,6 +309,34 @@ pub fn reset_task_runtime(
     tasks::get_task_context(connection, task_id)
 }
 
+fn clear_role_instance_for_reset(
+    connection: &Connection,
+    instance_id: &str,
+    note: Option<String>,
+    now: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            r#"
+            UPDATE role_instances
+            SET status = 'canceled',
+                current_queue_entry_id = NULL,
+                session_id = NULL,
+                last_error = ?2,
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+            params![instance_id, note, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to cancel role instance {} during reset: {error}",
+                instance_id
+            )
+        })?;
+    Ok(())
+}
+
 pub fn reset_role_assignments_to_queue(
     connection: &mut Connection,
     role_id: &str,
@@ -373,6 +401,21 @@ pub fn reset_role_assignments_to_queue(
         })?;
 
         if let Some(queue_entry_id) = assignment.role_queue_entry_id.as_deref() {
+            let assigned_instance_id = tx
+                .query_row(
+                    "SELECT assigned_instance_id FROM role_queue_entries WHERE id = ?1",
+                    [queue_entry_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to inspect role queue entry {} during reset: {error}",
+                        queue_entry_id
+                    )
+                })?
+                .flatten();
+
             tx.execute(
                 r#"
                 UPDATE role_queue_entries
@@ -391,26 +434,14 @@ pub fn reset_role_assignments_to_queue(
                     queue_entry_id
                 )
             })?;
+
+            if let Some(instance_id) = assigned_instance_id.as_deref() {
+                clear_role_instance_for_reset(&tx, instance_id, note.clone(), &now)?;
+            }
         }
 
         if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
-            tx.execute(
-                r#"
-                UPDATE role_instances
-                SET status = 'canceled',
-                    current_queue_entry_id = NULL,
-                    last_error = ?2,
-                    updated_at = ?3
-                WHERE id = ?1
-                "#,
-                params![role_instance_id, note.clone(), now],
-            )
-            .map_err(|error| {
-                format!(
-                    "Unable to cancel role instance {} during reset: {error}",
-                    role_instance_id
-                )
-            })?;
+            clear_role_instance_for_reset(&tx, role_instance_id, note.clone(), &now)?;
         }
 
         if assignment.session_id.is_some() {
