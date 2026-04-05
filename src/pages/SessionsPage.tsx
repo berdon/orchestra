@@ -158,7 +158,8 @@ export function SessionsPage({
                   <button
                     className="session-delete-button"
                     type="button"
-                    aria-label={`Delete ${session.title}`}
+                    aria-label={`Dismiss ${session.title}`}
+                    title="Dismiss from session list"
                     onClick={() => onDeleteSession(session.id)}
                   >
                     ×
@@ -171,7 +172,7 @@ export function SessionsPage({
           {sessionFilter === "closed" ? (
             <div className="session-list-footer">
               <button className="secondary-button secondary-button--danger" data-role="delete-closed-sessions" type="button" onClick={onDeleteClosedSessions}>
-                Delete closed
+                Dismiss closed
               </button>
             </div>
           ) : null}

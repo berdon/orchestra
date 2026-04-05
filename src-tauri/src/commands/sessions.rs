@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
-use rusqlite::OptionalExtension;
+use chrono::{Duration, Utc};
+use rusqlite::{params, OptionalExtension};
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
@@ -260,7 +261,9 @@ fn resolve_session_runtime_root(
         }
     }
 
-    if let Some(header_cwd) = get_session_header_cwd(session_dir, session_id)?.filter(|path| path.is_dir()) {
+    if let Some(header_cwd) =
+        get_session_header_cwd(session_dir, session_id)?.filter(|path| path.is_dir())
+    {
         return Ok(header_cwd);
     }
 
@@ -279,6 +282,8 @@ fn resolve_session_paths(session_id: &str) -> Result<(PathBuf, PathBuf), String>
     Ok((runtime_root, storage_context.session_dir))
 }
 
+const DISMISSED_SESSION_RETENTION_DAYS: i64 = 7;
+
 fn log_session_command_failure(
     state: &AppState,
     target: &str,
@@ -293,17 +298,91 @@ fn log_session_command_failure(
     );
 }
 
+fn load_dismissed_session_ids(
+    connection: &rusqlite::Connection,
+) -> Result<HashSet<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT session_id FROM session_list_entries WHERE dismissed_at IS NOT NULL")
+        .map_err(|error| format!("Unable to prepare dismissed session query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query dismissed sessions: {error}"))?;
+    rows.collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("Unable to read dismissed sessions: {error}"))
+}
+
+fn dismiss_session_entry(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<(), String> {
+    let now = crate::state::now_iso();
+    connection
+        .execute(
+            r#"
+            INSERT INTO session_list_entries (session_id, dismissed_at, created_at, updated_at)
+            VALUES (?1, ?2, ?2, ?2)
+            ON CONFLICT(session_id) DO UPDATE SET dismissed_at = excluded.dismissed_at, updated_at = excluded.updated_at
+            "#,
+            params![session_id, now],
+        )
+        .map_err(|error| format!("Unable to dismiss session {session_id}: {error}"))?;
+    Ok(())
+}
+
+fn restore_session_entry(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM session_list_entries WHERE session_id = ?1",
+            [session_id],
+        )
+        .map_err(|error| format!("Unable to restore dismissed session {session_id}: {error}"))?;
+    Ok(())
+}
+
+fn cleanup_dismissed_sessions(connection: &rusqlite::Connection) -> Result<Vec<String>, String> {
+    let cutoff = (Utc::now() - Duration::days(DISMISSED_SESSION_RETENTION_DAYS)).to_rfc3339();
+    let mut statement = connection
+        .prepare("SELECT session_id FROM session_list_entries WHERE dismissed_at IS NOT NULL AND dismissed_at <= ?1")
+        .map_err(|error| format!("Unable to prepare dismissed session cleanup query: {error}"))?;
+    let rows = statement
+        .query_map([cutoff], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            format!("Unable to query dismissed session cleanup candidates: {error}")
+        })?;
+    let session_ids = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read dismissed session cleanup candidates: {error}"))?;
+
+    for session_id in &session_ids {
+        if let Ok(context) = find_session_context_for_session(session_id) {
+            let _ = delete_session_file(&context.session_dir, session_id);
+        }
+        let _ = restore_session_entry(connection, session_id);
+    }
+
+    Ok(session_ids)
+}
+
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     spawn_blocking(move || {
+        let connection = database::open_connection()?;
+        cleanup_dismissed_sessions(&connection)?;
+        let dismissed_ids = load_dismissed_session_ids(&connection)?;
+        drop(connection);
+
         let mut sessions = all_session_contexts()?
             .into_iter()
             .map(|context| list_real_sessions(&context.session_dir, &subscribed))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .flatten()
+            .filter(|record| !dismissed_ids.contains(&record.id))
             .map(|record| decorate_session_record(&terminal_attached_session_ids, record))
             .collect::<Result<Vec<_>, _>>()?;
         sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -402,17 +481,17 @@ pub async fn delete_session(
     state.clear_session_tracking(&session_id)?;
     let session_id_for_task = session_id.clone();
     spawn_blocking(move || {
-        let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
-        delete_session_file(&session_dir, &session_id_for_task)
+        let connection = database::open_connection()?;
+        dismiss_session_entry(&connection, &session_id_for_task)
     })
     .await
-    .map_err(|error| format!("Unable to join delete_session task: {error}"))??;
+    .map_err(|error| format!("Unable to join dismiss_session task: {error}"))??;
     state.log(
         "info",
-        "sessions.delete",
-        &format!("Deleted pi session {}", session_id),
+        "sessions.dismiss",
+        &format!("Dismissed pi session {} from the session list", session_id),
     );
-    let _ = app_events::emit_session_change(&app, "sessions.delete", [session_id]);
+    let _ = app_events::emit_session_change(&app, "sessions.dismiss", [session_id]);
     Ok(())
 }
 
@@ -423,10 +502,13 @@ pub async fn resume_session(
     session_id: String,
 ) -> Result<SessionRecord, String> {
     let session_id_for_task = session_id.clone();
-    let (project_root, session_dir) =
-        spawn_blocking(move || resolve_session_paths(&session_id_for_task))
-            .await
-            .map_err(|error| format!("Unable to join resume_session context task: {error}"))??;
+    let (project_root, session_dir) = spawn_blocking(move || {
+        let connection = database::open_connection()?;
+        restore_session_entry(&connection, &session_id_for_task)?;
+        resolve_session_paths(&session_id_for_task)
+    })
+    .await
+    .map_err(|error| format!("Unable to join resume_session context task: {error}"))??;
 
     state.set_session_subscription(&session_id, true)?;
     let _ = ensure_runtime(
@@ -881,6 +963,38 @@ mod tests {
         .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "closed");
+    }
+
+    #[test]
+    fn dismiss_and_restore_session_entries_round_trip() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        dismiss_session_entry(&connection, "session-1").expect("dismiss should succeed");
+        let dismissed = load_dismissed_session_ids(&connection).expect("dismissed ids should load");
+        assert!(dismissed.contains("session-1"));
+
+        restore_session_entry(&connection, "session-1").expect("restore should succeed");
+        let dismissed_after =
+            load_dismissed_session_ids(&connection).expect("dismissed ids should reload");
+        assert!(!dismissed_after.contains("session-1"));
+    }
+
+    #[test]
+    fn cleanup_stale_dismissed_sessions_removes_old_entries() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection.execute(
+            "INSERT INTO session_list_entries (session_id, dismissed_at, created_at, updated_at) VALUES (?1, ?2, ?2, ?2)",
+            rusqlite::params!["stale-session", "2000-01-01T00:00:00Z"],
+        ).expect("stale dismiss entry should insert");
+
+        let cleaned = cleanup_dismissed_sessions(&connection).expect("cleanup should succeed");
+        assert_eq!(cleaned, vec!["stale-session".to_string()]);
+        let dismissed_after =
+            load_dismissed_session_ids(&connection).expect("dismissed ids should reload");
+        assert!(dismissed_after.is_empty());
     }
 
     #[test]

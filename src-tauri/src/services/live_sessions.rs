@@ -5,7 +5,7 @@ use std::{
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use rusqlite::OptionalExtension;
@@ -19,6 +19,7 @@ use crate::{
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const NON_PROMPT_DELIVERY_GRACE: Duration = Duration::from_secs(90);
 
 fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
     let path = app
@@ -62,6 +63,7 @@ pub struct SessionRuntime {
     subscribed: Mutex<bool>,
     current_run_id: Mutex<Option<String>>,
     closed: Mutex<bool>,
+    last_non_prompt_delivery_at: Mutex<Option<Instant>>,
     app: AppHandle,
 }
 
@@ -194,6 +196,7 @@ impl SessionRuntime {
             subscribed: Mutex::new(false),
             current_run_id: Mutex::new(None),
             closed: Mutex::new(false),
+            last_non_prompt_delivery_at: Mutex::new(None),
             app,
         });
 
@@ -365,7 +368,8 @@ impl SessionRuntime {
                 &error_message,
             );
             let _ = crate::services::role_dispatch::fail_role_run(&self.session_id, &error_message);
-            let _ = crate::services::channels::fail_channel_response_for_run(&run_id, &error_message);
+            let _ =
+                crate::services::channels::fail_channel_response_for_run(&run_id, &error_message);
             self.emit_stream_event(json!({
                 "type": "error",
                 "message": error_message,
@@ -561,6 +565,10 @@ impl SessionRuntime {
             other => return Err(format!("Unsupported session delivery type: {other}")),
         };
 
+        if delivery_type != "prompt" {
+            self.mark_non_prompt_delivery();
+        }
+
         let result = self.send_command(command);
         if let Err(error) = result {
             if delivery_type == "prompt" {
@@ -633,11 +641,30 @@ impl SessionRuntime {
     }
 
     fn close_if_idle(&self) {
-        if self.is_subscribed() || self.current_run_id().is_some() || self.is_closed() {
+        if self.is_subscribed()
+            || self.current_run_id().is_some()
+            || self.is_closed()
+            || self.has_recent_non_prompt_delivery()
+        {
             return;
         }
 
         self.teardown_process();
+    }
+
+    fn mark_non_prompt_delivery(&self) {
+        if let Ok(mut last) = self.last_non_prompt_delivery_at.lock() {
+            *last = Some(Instant::now());
+        }
+    }
+
+    fn has_recent_non_prompt_delivery(&self) -> bool {
+        self.last_non_prompt_delivery_at
+            .lock()
+            .ok()
+            .and_then(|last| *last)
+            .map(|instant| instant.elapsed() < NON_PROMPT_DELIVERY_GRACE)
+            .unwrap_or(false)
     }
 
     fn is_closed(&self) -> bool {

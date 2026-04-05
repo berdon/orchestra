@@ -870,7 +870,7 @@ export function App() {
       });
       await loadSessions();
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to delete session.");
+      setSessionActionError(error instanceof Error ? error.message : "Unable to dismiss session.");
     } finally {
       setIsSubmitting(false);
     }
@@ -900,7 +900,7 @@ export function App() {
       });
       await loadSessions();
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to delete closed sessions.");
+      setSessionActionError(error instanceof Error ? error.message : "Unable to dismiss closed sessions.");
     } finally {
       setIsSubmitting(false);
     }
