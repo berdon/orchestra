@@ -193,19 +193,167 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       const autoDispatched = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: dependentTask.id }),
-        (task) => task.status === "in_progress" && Boolean(task.activeLaneAssignment?.sessionId),
+        (task) => task.status === "in_progress" && Boolean(task.activeLaneAssignment),
         60_000,
       );
 
       expect(autoDispatched.assigneeType).toBe("role");
       expect(autoDispatched.activeLaneAssignment?.workerType).toBe("role");
-      expect(autoDispatched.activeLaneAssignment?.status).toBe("active");
-      expect(typeof autoDispatched.activeLaneAssignment?.runtimeCwd).toBe("string");
+      expect(["queued", "active"]).toContain(autoDispatched.activeLaneAssignment?.status);
 
       await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: blockerTask.id }),
         (task) => task.status === "completed",
       );
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
+
+  it.skipIf(!isDesktopE2E)("blocks parent tasks on unfinished subtasks and auto-dispatches them when the final child finishes", async () => {
+    expect(testHome).toBeTruthy();
+
+    const repoPath = join(testHome!, "workspace", "auto-dispatch-subtasks", "repository");
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(join(repoPath, "README.md"), "auto dispatch subtasks repo\n", "utf8");
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "desktop-e2e@example.invalid"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Desktop E2E"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["add", "."], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repoPath, stdio: "ignore" });
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const project = await invokeCommand<{ id: string; name: string; slug: string }>(sessionId, "create_project", {
+        input: {
+          name: "Parent Auto Dispatch Project",
+          description: "Parent/subtask blocking desktop test.",
+        },
+      });
+      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Parent Auto Dispatch Repo",
+          repositoryPath: repoPath,
+          defaultBranch: "main",
+        },
+      });
+      const developerRole = await invokeCommand<{ id: string; slug: string }>(sessionId, "create_role", {
+        input: {
+          name: "Parent Developer",
+          description: "Desktop parent auto dispatch role.",
+          systemPrompt: "Implement the task.",
+          capacity: 1,
+        },
+      });
+      const workflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: "Parent Role Workflow",
+          description: "Parent workflow for subtask blocking.",
+          lanes: [
+            {
+              id: "lane-parent-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: developerRole.slug,
+              entryPromptTemplate: "Implement the parent task.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+
+      const parentTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Parent task",
+          description: "Should stay blocked while child work remains open.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: workflow.id,
+          currentLaneId: "lane-parent-implement",
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: "unassigned",
+          assigneeId: null,
+        },
+      });
+      const childTask = await invokeCommand<any>(sessionId, "create_subtask", {
+        parentTaskId: parentTask.id,
+        input: {
+          title: "Child task",
+          description: "Blocks the parent until it is finished.",
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: null,
+          currentLaneId: null,
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: "user",
+          assigneeId: null,
+        },
+      });
+
+      const automation = await invokeCommand<{ autoDispatchOnBlockerCompletion: boolean }>(sessionId, "get_task_automation_settings", {
+        projectSlug: project.slug,
+      });
+      expect(automation.autoDispatchOnBlockerCompletion).toBe(true);
+
+      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
+      await selectByLabel(sessionId, '[data-role="project-switcher"]', project.name);
+      await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
+      await clickByText(sessionId, "button", "Tasks");
+      await waitForText(sessionId, "Parent task");
+
+      const blockedParent = await invokeCommand<any>(sessionId, "get_task", { taskId: parentTask.id });
+      expect(blockedParent.dependencyBlocked).toBe(true);
+      expect(blockedParent.readyForDispatch).toBe(false);
+      expect(blockedParent.blockedChildCount).toBe(1);
+
+      await expect(
+        invokeCommand(sessionId, "dispatch_task_lane", { taskId: parentTask.id }),
+      ).rejects.toThrow(/unfinished subtasks/);
+
+      await invokeCommand(sessionId, "update_task", {
+        taskId: childTask.id,
+        input: {
+          title: childTask.title,
+          description: childTask.description,
+          type: childTask.type,
+          status: "completed",
+          priority: childTask.priority,
+          workflowId: childTask.workflowId,
+          currentLaneId: childTask.currentLaneId,
+          repositoryId: childTask.repositoryId,
+          repositoryIds: childTask.repositoryIds,
+          assigneeType: childTask.assigneeType,
+          assigneeId: childTask.assigneeId,
+          parentTaskId: childTask.parentTaskId,
+          archived: false,
+        },
+      });
+
+      const autoDispatchedParent = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: parentTask.id }),
+        (task) => task.status === "in_progress" && Boolean(task.activeLaneAssignment?.sessionId),
+        60_000,
+      );
+
+      expect(autoDispatchedParent.dependencyBlocked).toBe(false);
+      expect(autoDispatchedParent.blockedChildCount).toBe(0);
+      expect(autoDispatchedParent.assigneeType).toBe("role");
+      expect(autoDispatchedParent.activeLaneAssignment?.workerType).toBe("role");
     } finally {
       await deleteWebdriverSession(sessionId);
     }

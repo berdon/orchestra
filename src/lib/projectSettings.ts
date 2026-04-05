@@ -132,7 +132,7 @@ export async function getTaskAutomationSettings(projectSlug = DEFAULT_PROJECT_SL
     const settings = getStoredProjectSettings();
     return {
       projectSlug,
-      autoDispatchOnBlockerCompletion: settings.general?.autoDispatchOnBlockerCompletion ?? false,
+      autoDispatchOnBlockerCompletion: settings.general?.autoDispatchOnBlockerCompletion ?? true,
       updatedAt: settings.general?.updatedAt ?? null,
     };
   }

@@ -8,9 +8,12 @@ use crate::models::{
     ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryRemoteInput,
     RepositoryUpsertInput,
 };
-use crate::services::orchestra_paths::{
-    default_orchestra_root, managed_repository_checkout_dir, managed_repository_root, project_root,
-    sanitize_slug,
+use crate::services::{
+    orchestra_paths::{
+        default_orchestra_root, managed_repository_checkout_dir, managed_repository_root,
+        project_root, sanitize_slug,
+    },
+    project_settings,
 };
 
 pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, String> {
@@ -210,6 +213,7 @@ pub fn create_project(
         .map_err(|error| format!("Unable to create project: {error}"))?;
 
     ensure_project_root_exists(&slug)?;
+    let _ = project_settings::update_task_automation_settings(&slug, true)?;
 
     get_project(connection, &project_id)
 }
@@ -1055,7 +1059,9 @@ mod tests {
     #[test]
     fn resolves_project_runtime_root_from_existing_default_repository_path() {
         let database_path = unique_temp_path("projects-runtime-root").join("orchestra.db");
-        let database_parent = database_path.parent().expect("database path should have a parent");
+        let database_parent = database_path
+            .parent()
+            .expect("database path should have a parent");
         fs::create_dir_all(database_parent).expect("database parent should exist");
         crate::services::database::initialize_database_at(&database_path)
             .expect("database schema should initialize");

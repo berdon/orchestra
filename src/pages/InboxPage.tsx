@@ -27,7 +27,7 @@ function summarizeAttentionReason(task: TaskSummary) {
     return "Blocked and needs user attention.";
   }
   if (task.dependencyBlocked) {
-    return "Blocked by unresolved dependencies.";
+    return "Blocked by unresolved dependencies or unfinished subtasks.";
   }
   return "Needs attention.";
 }
