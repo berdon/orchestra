@@ -4,8 +4,12 @@ interface RuntimeLogPanelProps {
   logs: LogEntry[];
   loadingLogs: boolean;
   clearingLogs: boolean;
+  exportingLogs?: boolean;
+  exportStatusMessage?: string | null;
+  exportErrorMessage?: string | null;
   onRefresh: () => void;
   onClear: () => void;
+  onExport?: () => void;
 }
 
 function formatLogLevelCode(level: LogLevel) {
@@ -36,7 +40,17 @@ function formatLogMessage(message: string) {
   return message.replace(/\s+/g, " ").trim();
 }
 
-export function RuntimeLogPanel({ logs, loadingLogs, clearingLogs, onRefresh, onClear }: RuntimeLogPanelProps) {
+export function RuntimeLogPanel({
+  logs,
+  loadingLogs,
+  clearingLogs,
+  exportingLogs = false,
+  exportStatusMessage = null,
+  exportErrorMessage = null,
+  onRefresh,
+  onClear,
+  onExport,
+}: RuntimeLogPanelProps) {
   return (
     <section className="panel log-panel">
       <div className="panel__header">
@@ -46,15 +60,22 @@ export function RuntimeLogPanel({ logs, loadingLogs, clearingLogs, onRefresh, on
         </div>
 
         <div className="action-cluster">
-          <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingLogs || clearingLogs}>
+          <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingLogs || clearingLogs || exportingLogs}>
             Refresh
           </button>
-          <button className="secondary-button secondary-button--danger" type="button" onClick={onClear} disabled={clearingLogs}>
+          {onExport ? (
+            <button className="secondary-button" data-role="export-log-bundle" type="button" onClick={onExport} disabled={loadingLogs || clearingLogs || exportingLogs}>
+              {exportingLogs ? "Exporting…" : "Export zip"}
+            </button>
+          ) : null}
+          <button className="secondary-button secondary-button--danger" type="button" onClick={onClear} disabled={clearingLogs || exportingLogs}>
             {clearingLogs ? "Clearing…" : "Clear logs"}
           </button>
         </div>
       </div>
 
+      {exportStatusMessage ? <p className="muted-copy" data-role="runtime-log-export-success">{exportStatusMessage}</p> : null}
+      {exportErrorMessage ? <p className="error-copy" data-role="runtime-log-export-error">{exportErrorMessage}</p> : null}
       {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
       {!loadingLogs && logs.length === 0 ? <p className="muted-copy">No logs yet.</p> : null}
 
