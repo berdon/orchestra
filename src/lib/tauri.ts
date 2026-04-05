@@ -58,6 +58,7 @@ const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
 const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
+const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
 const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
 const CURRENT_PROJECT_ID = "orchestra";
 
@@ -105,6 +106,10 @@ function sessionStorageKey() {
 
 function sessionModelStorageKey() {
   return `${SESSION_MODEL_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+}
+
+function dismissedSessionStorageKey() {
+  return `${DISMISSED_SESSION_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
 }
 
 const MOCK_MODELS: SessionModel[] = [
@@ -455,6 +460,14 @@ function appendMockLog(level: LogLevel, target: string, message: string) {
   const logs = ensureMockLogs();
   const updated = [createLogEntry(level, target, message), ...logs].slice(0, 200);
   setStoredValue(LOG_STORAGE_KEY, updated);
+}
+
+function getDismissedMockSessionIds() {
+  return new Set(getStoredValue<string[]>(dismissedSessionStorageKey()) ?? []);
+}
+
+function saveDismissedMockSessionIds(ids: Iterable<string>) {
+  setStoredValue(dismissedSessionStorageKey(), Array.from(new Set(ids)).sort());
 }
 
 function saveMockSessions(sessions: SessionRecord[]) {
@@ -1379,7 +1392,8 @@ export async function getCurrentAgentTerminalSessionId(): Promise<string | null>
 
 export async function listSessions(): Promise<SessionRecord[]> {
   if (!isTauriAvailable()) {
-    return sortSessions(ensureMockSessions());
+    const dismissed = getDismissedMockSessionIds();
+    return sortSessions(ensureMockSessions().filter((session) => !dismissed.has(session.id)));
   }
 
   return invoke<SessionRecord[]>("list_sessions");
@@ -1427,11 +1441,10 @@ export async function createSession(title?: string, projectSlug?: string | null)
 
 export async function deleteSession(sessionId: string): Promise<void> {
   if (!isTauriAvailable()) {
-    saveMockSessions(ensureMockSessions().filter((session) => session.id !== sessionId));
-    const models = getMockSessionModels();
-    delete models[sessionId];
-    setMockSessionModels(models);
-    appendMockLog("info", "sessions.delete", `Deleted session ${sessionId}`);
+    const dismissed = getDismissedMockSessionIds();
+    dismissed.add(sessionId);
+    saveDismissedMockSessionIds(dismissed);
+    appendMockLog("info", "sessions.dismiss", `Dismissed session ${sessionId}`);
     return;
   }
 
@@ -1440,9 +1453,12 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
 export async function resumeSession(sessionId: string): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
+    const dismissed = getDismissedMockSessionIds();
+    dismissed.delete(sessionId);
+    saveDismissedMockSessionIds(dismissed);
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
-      status: "active",
+      status: current.status === "closed" ? "closed" : "active",
       subscribed: true,
       updatedAt: nowIso(),
       events: [...current.events, createEvent("system", "Session resumed from the Sessions page.")],

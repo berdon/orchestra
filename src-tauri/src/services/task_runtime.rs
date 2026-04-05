@@ -10,8 +10,9 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_runtime, agents, live_sessions, messages, pi_sessions, project_settings, projects,
-        role_dispatch, role_runtime, task_repositories, tasks, workflows,
+        agent_dispatch, agent_runtime, agents, live_sessions, messages, pi_sessions,
+        project_settings, projects, role_dispatch, role_runtime, roles, task_repositories, tasks,
+        workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -1021,22 +1022,136 @@ fn ensure_assignment_runtime(
     session_dir: PathBuf,
     assignment: &TaskLaneAssignment,
 ) -> Result<Option<(String, std::sync::Arc<live_sessions::SessionRuntime>)>, String> {
-    let Some(session_id) = assignment.session_id.as_deref() else {
-        return Ok(None);
-    };
     let Some(runtime_cwd) = assignment.runtime_cwd.as_deref() else {
         return Ok(None);
     };
+
+    let mut session_id = assignment.session_id.clone();
+    if session_id
+        .as_deref()
+        .is_none_or(|value| pi_sessions::find_session_context_for_session(value).is_err())
+    {
+        let connection = crate::services::database::open_connection()?;
+        session_id = Some(recover_missing_assignment_session(
+            &connection,
+            assignment,
+            runtime_cwd,
+        )?);
+    }
+
+    let Some(session_id) = session_id else {
+        return Ok(None);
+    };
+
+    let actual_session_dir = pi_sessions::find_session_context_for_session(&session_id)
+        .map(|context| context.session_dir)
+        .unwrap_or(session_dir);
 
     let runtime = live_sessions::ensure_runtime(
         &state.session_runtimes,
         app,
         PathBuf::from(runtime_cwd),
-        session_dir,
-        session_id,
+        actual_session_dir,
+        &session_id,
     )?;
 
-    Ok(Some((session_id.to_string(), runtime)))
+    Ok(Some((session_id, runtime)))
+}
+
+fn recover_missing_assignment_session(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+    runtime_cwd: &str,
+) -> Result<String, String> {
+    let task = tasks::get_task_context(connection, &assignment.task_id)?;
+    let context = pi_sessions::session_context_for_project_id(&task.project_id)?;
+    let now = now_iso();
+
+    match assignment.worker_type.as_str() {
+        "agent" => {
+            let agent_id = assignment
+                .worker_id
+                .as_deref()
+                .ok_or_else(|| format!("Assignment {} is missing an agent id", assignment.id))?;
+            let agent = agents::get_agent(&connection, agent_id)?;
+            let runtime_state = agent_dispatch::ensure_main_session(
+                &context.project_root,
+                &context.session_dir,
+                &task.project_id,
+                agent_id,
+            )?;
+            let session_id = runtime_state
+                .main_session_id
+                .ok_or_else(|| format!("Agent {} has no main session", agent.name))?;
+            connection
+                .execute(
+                    "UPDATE task_lane_assignments SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![assignment.id, session_id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to refresh missing agent assignment session {}: {error}",
+                        assignment.id
+                    )
+                })?;
+            Ok(session_id)
+        }
+        "role" => {
+            let role_instance_id = assignment.role_instance_id.as_deref().ok_or_else(|| {
+                format!("Assignment {} is missing a role instance id", assignment.id)
+            })?;
+            let role_instance = role_runtime::get_role_instance(&connection, role_instance_id)?;
+            let role = roles::get_role(&connection, &role_instance.role_id)?;
+            let created = pi_sessions::create_session_file(
+                std::path::Path::new(runtime_cwd),
+                &context.session_dir,
+                Some(&format!("{} · {}", role.name, task.title)),
+                false,
+            )?;
+            if let (Some(provider), Some(model)) = (role.provider.as_deref(), role.model.as_deref())
+            {
+                let _ = pi_sessions::set_session_model(
+                    std::path::Path::new(runtime_cwd),
+                    &context.session_dir,
+                    &created.record.id,
+                    provider,
+                    model,
+                )?;
+            }
+            let _ = pi_sessions::set_session_thinking_level(
+                std::path::Path::new(runtime_cwd),
+                &context.session_dir,
+                &created.record.id,
+                &role.thinking_level,
+            )?;
+            connection
+                .execute(
+                    "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![role_instance.id, created.record.id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to refresh role instance session {}: {error}",
+                        role_instance.id
+                    )
+                })?;
+            connection
+                .execute(
+                    "UPDATE task_lane_assignments SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![assignment.id, created.record.id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to refresh missing role assignment session {}: {error}",
+                        assignment.id
+                    )
+                })?;
+            Ok(created.record.id)
+        }
+        other => Err(format!(
+            "Unsupported assignment worker type {other} for session recovery"
+        )),
+    }
 }
 
 fn start_assignment_prompt(

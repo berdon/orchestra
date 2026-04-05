@@ -352,6 +352,44 @@ test("sessions page filters active and closed task sessions", async ({ page }) =
   await expect(closedSessionLinks).toContainText("Implementation · Closable session task");
 });
 
+test("session dismiss hides a closed session without deleting its stored record", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-dismiss-me",
+          title: "Dismissable closed session",
+          status: "closed",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            { id: "assistant-1", kind: "assistant", message: "Already finished.", timestamp },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="session-filter-closed"]').click();
+  await expect(page.locator('[data-role="session-link"]')).toContainText("Dismissable closed session");
+  await page.getByRole("button", { name: "Dismiss Dismissable closed session" }).evaluate((element: HTMLButtonElement) => element.click());
+
+  const stored = await page.evaluate(() => ({
+    sessions: JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]"),
+    dismissed: JSON.parse(window.localStorage.getItem("orchestra.mock.dismissed-sessions.orchestra") ?? "[]"),
+  }));
+  expect(stored.sessions).toHaveLength(1);
+  expect(stored.sessions[0]?.id).toBe("session-dismiss-me");
+  expect(stored.dismissed).toContain("session-dismiss-me");
+
+});
+
 test("sessions page hides debug paths behind a dev-only toggle below the chat panel", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
