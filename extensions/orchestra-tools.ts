@@ -404,7 +404,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (["get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references"].includes(tool.name)) {
+  if (["get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references", "list_task_todos"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -414,6 +414,29 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "list_unfinished_task_todos") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and optionally laneId to scope unfinished todos to one lane.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        laneId: Type.Optional(Type.String({ description: "Optional workflow lane id to scope unfinished todos." })),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; laneId?: string }) {
+        const payload = {
+          taskId: params.taskId,
+          ...(params.laneId ? { laneId: params.laneId } : {}),
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
@@ -441,6 +464,52 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
             relativePath: params.relativePath,
           },
         };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "add_task_todo") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide description and optionally taskId and laneId. In a worker session, omitting taskId and laneId defaults to the active assignment.`,
+      parameters: Type.Object({
+        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id. Omit in an active worker session to use the current task." })),
+        laneId: Type.Optional(Type.String({ description: "Optional workflow lane id. Omit in an active worker session to use the current lane." })),
+        description: Type.String({ description: "Todo description to track on the task." }),
+      }),
+      async execute(_toolCallId: string, params: { taskId?: string; laneId?: string; description: string }) {
+        const payload = {
+          ...(params.taskId ? { taskId: params.taskId } : {}),
+          input: {
+            ...(params.laneId ? { laneId: params.laneId } : {}),
+            description: params.description,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (["mark_task_todo_finished", "mark_task_todo_unfinished", "delete_task_todo"].includes(tool.name)) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide todoId.`,
+      parameters: Type.Object({
+        todoId: Type.String({ description: "Task todo id to update." }),
+      }),
+      async execute(_toolCallId: string, params: { todoId: string }) {
+        const payload = { todoId: params.todoId };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],

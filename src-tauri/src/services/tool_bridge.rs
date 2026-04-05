@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
@@ -24,7 +24,7 @@ use crate::{
         BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkMailboxMessagesReadInput,
         MarkTaskCommentsReadInput, OrchestraToolDefinition, RoleQueueEntryInput,
         SendMailboxMessageInput, TaskAttachmentInput, TaskCommentInput, TaskLaneAssignment,
-        TaskUpsertInput,
+        TaskTodoInput, TaskUpsertInput,
     },
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
@@ -112,6 +112,8 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "get_task",
     "get_task_context",
     "list_task_comments",
+    "list_task_todos",
+    "list_unfinished_task_todos",
     "get_unread_task_comments",
     "mark_task_comments_read",
     "get_unread_mail",
@@ -124,6 +126,10 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "remove_task_file_reference",
     "create_task",
     "create_subtask",
+    "add_task_todo",
+    "mark_task_todo_finished",
+    "mark_task_todo_unfinished",
+    "delete_task_todo",
     "update_task",
     "comment_on_task",
     "dispatch_task_lane",
@@ -1031,6 +1037,21 @@ fn invoke_bridge_command(
             serde_json::to_value(tasks::list_task_comments(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task comments: {error}"))
         }
+        "list_task_todos" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(tasks::list_task_todos(connection, &task_id)?)
+                .map_err(|error| format!("Unable to serialize task todos: {error}"))
+        }
+        "list_unfinished_task_todos" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let lane_id = payload.get("laneId").and_then(Value::as_str);
+            serde_json::to_value(tasks::list_unfinished_task_todos(
+                connection, &task_id, lane_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize unfinished task todos: {error}"))
+        }
         "get_unread_task_comments" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
@@ -1247,6 +1268,63 @@ fn invoke_bridge_command(
                 input,
             )?)
             .map_err(|error| format!("Unable to serialize task: {error}"))
+        }
+        "add_task_todo" => {
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            let mut input: TaskTodoInput = serde_json::from_value(
+                payload
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| payload.clone()),
+            )
+            .map_err(|error| format!("Unable to parse task todo input: {error}"))?;
+            let payload_task_id = payload
+                .get("taskId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string);
+            let inferred_context = if payload_task_id.is_none() || input.lane_id.is_none() {
+                Some(resolve_active_worker_task_context(
+                    connection,
+                    authorization,
+                    session_id,
+                )?)
+            } else {
+                None
+            };
+            let task_id = payload_task_id
+                .or_else(|| {
+                    inferred_context
+                        .as_ref()
+                        .map(|(task_id, _)| task_id.clone())
+                })
+                .ok_or_else(|| {
+                    "taskId: Task id is required when there is no active worker assignment."
+                        .to_string()
+                })?;
+            if input.lane_id.is_none() {
+                input.lane_id = inferred_context.map(|(_, lane_id)| lane_id);
+            }
+            serde_json::to_value(tasks::add_task_todo(connection, &task_id, input)?)
+                .map_err(|error| format!("Unable to serialize task todo: {error}"))
+        }
+        "mark_task_todo_finished" => {
+            let todo_id = require_string(&payload, "todoId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            serde_json::to_value(tasks::mark_task_todo_finished(connection, &todo_id)?)
+                .map_err(|error| format!("Unable to serialize task todo: {error}"))
+        }
+        "mark_task_todo_unfinished" => {
+            let todo_id = require_string(&payload, "todoId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            serde_json::to_value(tasks::mark_task_todo_unfinished(connection, &todo_id)?)
+                .map_err(|error| format!("Unable to serialize task todo: {error}"))
+        }
+        "delete_task_todo" => {
+            let todo_id = require_string(&payload, "todoId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.update")?;
+            serde_json::to_value(tasks::delete_task_todo(connection, &todo_id)?)
+                .map_err(|error| format!("Unable to serialize task todo: {error}"))
         }
         "update_task" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -1661,6 +1739,68 @@ fn invoke_bridge_command(
             .map_err(|error| format!("Unable to serialize worker overlay: {error}"))
         }
         _ => Err(format!("Unsupported Orchestra bridge command: {command}")),
+    }
+}
+
+fn resolve_active_worker_task_context(
+    connection: &Connection,
+    authorization: Option<&AuthorizationContext>,
+    session_id: Option<&str>,
+) -> Result<(String, String), String> {
+    if let Some(session_id) = session_id {
+        if let Some(assignment) =
+            task_runtime::get_active_assignment_for_session(connection, session_id)?
+        {
+            if task_runtime::assignment_owned_by_worker_authorization(&assignment, authorization) {
+                return Ok((assignment.task_id, assignment.lane_id));
+            }
+        }
+    }
+
+    let authorization = authorization.ok_or_else(|| {
+        "This command requires an active worker authorization context when taskId is omitted."
+            .to_string()
+    })?;
+
+    match authorization.actor_type.as_str() {
+        "agent" => connection
+            .query_row(
+                r#"
+                SELECT task_id, lane_id
+                FROM task_lane_assignments
+                WHERE worker_type = 'agent'
+                  AND worker_id = ?1
+                  AND status = 'active'
+                ORDER BY updated_at DESC, created_at DESC, id DESC
+                LIMIT 1
+                "#,
+                [authorization.actor_id.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to resolve active agent task context: {error}"))?
+            .ok_or_else(|| "This agent does not have an active task assignment.".to_string()),
+        "role_instance" => connection
+            .query_row(
+                r#"
+                SELECT task_id, lane_id
+                FROM task_lane_assignments
+                WHERE role_instance_id = ?1
+                  AND status = 'active'
+                ORDER BY updated_at DESC, created_at DESC, id DESC
+                LIMIT 1
+                "#,
+                [authorization.actor_id.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to resolve active role task context: {error}"))?
+            .ok_or_else(|| {
+                "This role instance does not have an active task assignment.".to_string()
+            }),
+        _ => Err(
+            "Only active agent and role sessions can infer the current task todo context.".into(),
+        ),
     }
 }
 
@@ -2144,6 +2284,106 @@ mod tests {
             })
             .expect("reminder count should query");
         assert_eq!(stored_count, 1);
+    }
+
+    #[test]
+    fn add_task_todo_defaults_to_the_active_worker_task_and_lane() {
+        let mut connection = open_test_connection("bridge-task-todos");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at) VALUES ('workflow-dev', 'workflow-dev', 'Workflow Dev', NULL, 0, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("workflow should insert");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Todo Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.read".into(), "tasks.update".into()],
+            },
+        )
+        .expect("agent should create");
+        connection
+            .execute(
+                "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, assigned_entity_id, success_transition_type, failure_transition_type, created_at, updated_at) VALUES ('lane-plan', 'workflow-dev', 'plan', 'Plan', 0, 'agent', ?1, 'end', 'end', ?2, ?2)",
+                params![agent.slug.as_str(), now.as_str()],
+            )
+            .expect("lane should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Bridge task todo target".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-task-todo', ?1, 'workflow-dev', 'lane-plan', 'agent', ?2, 'active', 'session-task-todo', '/tmp/task-todo', NULL, NULL, 'Prompt', 0, NULL, ?3, NULL, ?3, ?3)",
+                params![task.id.as_str(), agent.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        let config = dummy_bridge_config("bridge-task-todo");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+
+        let todo = invoke_bridge_command(
+            &config,
+            &connection,
+            "add_task_todo",
+            Some(&authorization),
+            Some("session-task-todo"),
+            json!({ "description": "Follow up on the active lane" }),
+        )
+        .expect("task todo should add through bridge");
+
+        assert_eq!(
+            todo.get("taskId").and_then(Value::as_str),
+            Some(task.id.as_str())
+        );
+        assert_eq!(
+            todo.get("laneId").and_then(Value::as_str),
+            Some("lane-plan")
+        );
+        assert_eq!(todo.get("completed").and_then(Value::as_bool), Some(false));
+
+        let unfinished = invoke_bridge_command(
+            &config,
+            &connection,
+            "list_unfinished_task_todos",
+            Some(&authorization),
+            Some("session-task-todo"),
+            json!({ "taskId": task.id, "laneId": "lane-plan" }),
+        )
+        .expect("unfinished task todos should list");
+        assert_eq!(unfinished.as_array().map(Vec::len), Some(1));
     }
 
     #[test]

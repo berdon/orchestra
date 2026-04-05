@@ -6,7 +6,8 @@ use crate::{
     models::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentFileMentionCandidate,
         TaskCommentInput, TaskCommentUpdateInput, TaskDependency, TaskDetail, TaskFileReference,
-        TaskFileReferenceInput, TaskRepository, TaskSummary, TaskUpsertInput,
+        TaskFileReferenceInput, TaskRepository, TaskSummary, TaskTodo, TaskTodoInput,
+        TaskUpsertInput,
     },
     services::{
         app_events, database, pi_sessions, task_attachments, task_comment_file_mentions,
@@ -70,6 +71,122 @@ pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
 pub fn list_task_comments(task_id: String) -> Result<Vec<TaskComment>, String> {
     let connection = database::open_connection()?;
     tasks::list_task_comments(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn list_task_todos(task_id: String) -> Result<Vec<TaskTodo>, String> {
+    let connection = database::open_connection()?;
+    tasks::list_task_todos(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn list_unfinished_task_todos(
+    task_id: String,
+    lane_id: Option<String>,
+) -> Result<Vec<TaskTodo>, String> {
+    let connection = database::open_connection()?;
+    tasks::list_unfinished_task_todos(&connection, &task_id, lane_id.as_deref())
+}
+
+#[tauri::command]
+pub fn add_task_todo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    input: TaskTodoInput,
+) -> Result<TaskTodo, String> {
+    let connection = database::open_connection()?;
+    let todo = tasks::add_task_todo(&connection, &task_id, input)?;
+    state.log(
+        "info",
+        "task.todo.added",
+        &format!("Added task todo {} to task {}", todo.id, task_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "add_task_todo",
+        None,
+        None,
+        &todo.id,
+        "success",
+    );
+    emit_task_change(&app, "task.todo.added", [task_id]);
+    Ok(todo)
+}
+
+#[tauri::command]
+pub fn mark_task_todo_finished(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    todo_id: String,
+) -> Result<TaskTodo, String> {
+    let connection = database::open_connection()?;
+    let todo = tasks::mark_task_todo_finished(&connection, &todo_id)?;
+    state.log(
+        "info",
+        "task.todo.finished",
+        &format!("Marked task todo {} finished", todo_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "mark_task_todo_finished",
+        None,
+        None,
+        &todo_id,
+        "success",
+    );
+    emit_task_change(&app, "task.todo.finished", [todo.task_id.clone()]);
+    Ok(todo)
+}
+
+#[tauri::command]
+pub fn mark_task_todo_unfinished(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    todo_id: String,
+) -> Result<TaskTodo, String> {
+    let connection = database::open_connection()?;
+    let todo = tasks::mark_task_todo_unfinished(&connection, &todo_id)?;
+    state.log(
+        "info",
+        "task.todo.unfinished",
+        &format!("Marked task todo {} unfinished", todo_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "mark_task_todo_unfinished",
+        None,
+        None,
+        &todo_id,
+        "success",
+    );
+    emit_task_change(&app, "task.todo.unfinished", [todo.task_id.clone()]);
+    Ok(todo)
+}
+
+#[tauri::command]
+pub fn delete_task_todo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    todo_id: String,
+) -> Result<TaskTodo, String> {
+    let connection = database::open_connection()?;
+    let todo = tasks::delete_task_todo(&connection, &todo_id)?;
+    state.log(
+        "info",
+        "task.todo.deleted",
+        &format!("Deleted task todo {}", todo_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "delete_task_todo",
+        None,
+        None,
+        &todo_id,
+        "success",
+    );
+    emit_task_change(&app, "task.todo.deleted", [todo.task_id.clone()]);
+    Ok(todo)
 }
 
 #[tauri::command]

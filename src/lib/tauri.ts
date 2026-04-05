@@ -36,6 +36,8 @@ import type {
   TaskLaneAssignment,
   TaskLaneRun,
   TaskSummary,
+  TaskTodo,
+  TaskTodoInput,
   TaskUpsertInput,
   WorkflowDefinition,
   WorkflowLane,
@@ -612,6 +614,7 @@ function seedMockTasks(): TaskDetail[] {
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
+      todos: [],
       laneRuns: [],
     },
     {
@@ -664,6 +667,7 @@ function seedMockTasks(): TaskDetail[] {
           updatedAt: timestamp,
         },
       ],
+      todos: [],
       laneRuns: secondLane
         ? [
             {
@@ -719,6 +723,7 @@ function seedMockTasks(): TaskDetail[] {
       createdAt: timestamp,
       updatedAt: timestamp,
       comments: [],
+      todos: [],
       laneRuns: [],
     },
   ];
@@ -824,6 +829,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     dependencyBlocked: false,
     readyForDispatch: false,
     attachments: task.attachments ?? [],
+    todos: task.todos ?? [],
     activeLaneAssignment: task.activeLaneAssignment ?? null,
   }));
   const bareById = new Map(bareTasks.map((task) => [task.id, task]));
@@ -949,6 +955,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
     comments: existingTask?.comments ?? [],
+    todos: existingTask?.todos ?? [],
     laneRuns: existingTask?.laneRuns ?? [],
   };
 }
@@ -1781,6 +1788,132 @@ export async function getTask(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("get_task", { taskId });
 }
 
+export async function listTaskTodos(taskId: string): Promise<TaskTodo[]> {
+  if (!isTauriAvailable()) {
+    return listMockTaskTodos(taskId);
+  }
+
+  return invoke<TaskTodo[]>("list_task_todos", { taskId });
+}
+
+export async function listUnfinishedTaskTodos(taskId: string, laneId?: string | null): Promise<TaskTodo[]> {
+  if (!isTauriAvailable()) {
+    return listMockTaskTodos(taskId, laneId ?? undefined, false);
+  }
+
+  return invoke<TaskTodo[]>("list_unfinished_task_todos", { taskId, laneId: laneId ?? null });
+}
+
+export async function addTaskTodo(taskId: string, input: TaskTodoInput): Promise<TaskTodo> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found`);
+    }
+    const description = input.description.trim();
+    const laneId = input.laneId?.trim() || null;
+    if (!description) {
+      throw new Error("description: Task todo description is required.");
+    }
+    if (!task.workflowId) {
+      throw new Error("laneId: Task todos require the task to have a workflow.");
+    }
+    if (!laneId) {
+      throw new Error("laneId: A workflow lane is required for task todos.");
+    }
+    const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+    if (!workflow?.lanes.some((entry) => entry.id === laneId)) {
+      throw new Error("laneId: Todo lane must belong to the task workflow.");
+    }
+    const timestamp = nowIso();
+    const todo: TaskTodo = {
+      id: createId("task-todo"),
+      taskId,
+      laneId,
+      description,
+      completed: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    saveMockTasks(tasks.map((entry) => (entry.id === taskId ? { ...entry, todos: [...(entry.todos ?? []), todo], updatedAt: timestamp } : entry)));
+    appendMockLog("info", "task.todo.added", `Added todo ${todo.id} to task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.todo.added" });
+    return todo;
+  }
+
+  return invoke<TaskTodo>("add_task_todo", { taskId, input });
+}
+
+export async function markTaskTodoFinished(todoId: string): Promise<TaskTodo> {
+  if (!isTauriAvailable()) {
+    const { task, todo } = resolveMockTaskTodo(todoId);
+    const updatedAt = nowIso();
+    saveMockTasks(
+      ensureMockTasks().map((entry) =>
+        entry.id === task.id
+          ? {
+              ...entry,
+              todos: (entry.todos ?? []).map((candidate) =>
+                candidate.id === todoId ? { ...candidate, completed: true, updatedAt } : candidate,
+              ),
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
+    appendMockLog("info", "task.todo.finished", `Marked todo ${todoId} finished`);
+    emitMockTaskChange({ taskIds: [task.id], reason: "task.todo.finished" });
+    return resolveMockTaskTodo(todoId).todo;
+  }
+
+  return invoke<TaskTodo>("mark_task_todo_finished", { todoId });
+}
+
+export async function markTaskTodoUnfinished(todoId: string): Promise<TaskTodo> {
+  if (!isTauriAvailable()) {
+    const { task, todo } = resolveMockTaskTodo(todoId);
+    const updatedAt = nowIso();
+    saveMockTasks(
+      ensureMockTasks().map((entry) =>
+        entry.id === task.id
+          ? {
+              ...entry,
+              todos: (entry.todos ?? []).map((candidate) =>
+                candidate.id === todoId ? { ...candidate, completed: false, updatedAt } : candidate,
+              ),
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
+    appendMockLog("info", "task.todo.unfinished", `Marked todo ${todoId} unfinished`);
+    emitMockTaskChange({ taskIds: [task.id], reason: "task.todo.unfinished" });
+    return resolveMockTaskTodo(todoId).todo;
+  }
+
+  return invoke<TaskTodo>("mark_task_todo_unfinished", { todoId });
+}
+
+export async function deleteTaskTodo(todoId: string): Promise<TaskTodo> {
+  if (!isTauriAvailable()) {
+    const { task, todo } = resolveMockTaskTodo(todoId);
+    const updatedAt = nowIso();
+    saveMockTasks(
+      ensureMockTasks().map((entry) =>
+        entry.id === task.id
+          ? { ...entry, todos: (entry.todos ?? []).filter((candidate) => candidate.id !== todoId), updatedAt }
+          : entry,
+      ),
+    );
+    appendMockLog("info", "task.todo.deleted", `Deleted todo ${todoId}`);
+    emitMockTaskChange({ taskIds: [task.id], reason: "task.todo.deleted" });
+    return todo;
+  }
+
+  return invoke<TaskTodo>("delete_task_todo", { todoId });
+}
+
 export async function createTask(input: TaskUpsertInput, projectId?: string | null): Promise<TaskDetail> {
   const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
@@ -2173,6 +2306,24 @@ async function autoDispatchMockDependentTasks(blockerTaskId: string) {
   return autoDispatchedTaskIds;
 }
 
+function listMockTaskTodos(taskId: string, laneId?: string | null, completed?: boolean) {
+  const task = ensureMockTasks().find((entry) => entry.id === taskId);
+  if (!task) {
+    throw new Error(`Task ${taskId} was not found`);
+  }
+  return (task.todos ?? []).filter((todo) => (laneId ? todo.laneId === laneId : true) && (completed === undefined ? true : todo.completed === completed));
+}
+
+function resolveMockTaskTodo(todoId: string) {
+  for (const task of ensureMockTasks()) {
+    const todo = (task.todos ?? []).find((entry) => entry.id === todoId);
+    if (todo) {
+      return { task, todo };
+    }
+  }
+  throw new Error(`Task todo ${todoId} was not found`);
+}
+
 async function completeMockTaskLane(taskId: string, outcome: "success" | "failure" | "needs_user", notes?: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
@@ -2187,6 +2338,12 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 
   const updatedAt = nowIso();
   const normalizedNotes = notes?.trim() || null;
+  const unfinishedLaneTodos = listMockTaskTodos(taskId, lane.id, false);
+  if (unfinishedLaneTodos.length > 0) {
+    throw new Error(
+      `Task ${taskId} still has ${unfinishedLaneTodos.length} unfinished todo item(s) for lane ${lane.id}. Finish or reopen them before using a completion tool.`,
+    );
+  }
 
   if (
     outcome === "success"

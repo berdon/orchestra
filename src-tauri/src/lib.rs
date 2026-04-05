@@ -14,9 +14,9 @@ use commands::{
         validate_agent,
     },
     app::{
-        cleanup_stale_bridge_instances, clear_logs, get_app_info, get_bridge_diagnostics,
-        get_logs, get_pi_executable_diagnostic, get_session_storage_info, list_pi_models,
-        open_logs_window, report_client_error,
+        cleanup_stale_bridge_instances, clear_logs, get_app_info, get_bridge_diagnostics, get_logs,
+        get_pi_executable_diagnostic, get_session_storage_info, list_pi_models, open_logs_window,
+        report_client_error,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -33,8 +33,7 @@ use commands::{
     },
     project_settings::{
         get_session_prompt_settings, get_task_automation_settings, get_worker_overlay,
-        update_session_prompt_settings, update_task_automation_settings,
-        update_worker_overlay,
+        update_session_prompt_settings, update_task_automation_settings, update_worker_overlay,
     },
     projects::{
         attach_repository_remote, create_project, create_repository, delete_project,
@@ -50,13 +49,15 @@ use commands::{
         subscribe_session, unsubscribe_session,
     },
     tasks::{
-        add_task_attachment, add_task_dependency, add_task_file_reference, approve_lane_completion,
-        comment_on_task, complete_lane_as_failure, complete_lane_as_success, create_subtask,
-        create_task, delete_task, delete_task_comment, dispatch_task_lane, get_task,
-        get_task_context, get_task_file_content, list_task_comments, list_task_file_references,
-        list_task_repositories, list_tasks, manual_task_whip, remove_task_attachment,
-        remove_task_dependency, remove_task_file_reference, request_user_intervention,
-        reset_task_runtime, search_task_comment_file_mentions, send_lane_back_for_work,
+        add_task_attachment, add_task_dependency, add_task_file_reference, add_task_todo,
+        approve_lane_completion, comment_on_task, complete_lane_as_failure,
+        complete_lane_as_success, create_subtask, create_task, delete_task, delete_task_comment,
+        delete_task_todo, dispatch_task_lane, get_task, get_task_context, get_task_file_content,
+        list_task_comments, list_task_file_references, list_task_repositories, list_task_todos,
+        list_tasks, list_unfinished_task_todos, manual_task_whip, mark_task_todo_finished,
+        mark_task_todo_unfinished, remove_task_attachment, remove_task_dependency,
+        remove_task_file_reference, request_user_intervention, reset_task_runtime,
+        search_task_comment_file_mentions, send_lane_back_for_work,
         set_default_task_file_reference, update_task, update_task_comment,
     },
     workflows::{
@@ -216,6 +217,8 @@ pub fn run() {
             get_task,
             get_task_context,
             list_task_comments,
+            list_task_todos,
+            list_unfinished_task_todos,
             search_task_comment_file_mentions,
             list_task_repositories,
             list_task_file_references,
@@ -223,11 +226,15 @@ pub fn run() {
             get_task_file_content,
             create_task,
             create_subtask,
+            add_task_todo,
             update_task,
             delete_task,
+            delete_task_todo,
             comment_on_task,
             update_task_comment,
             delete_task_comment,
+            mark_task_todo_finished,
+            mark_task_todo_unfinished,
             dispatch_task_lane,
             complete_lane_as_success,
             complete_lane_as_failure,
@@ -283,12 +290,17 @@ pub fn run() {
                     );
                 }
             }
-            if let Ok(channel_shutdown_count) = services::channels::shutdown_all_channel_runtimes(&state) {
+            if let Ok(channel_shutdown_count) =
+                services::channels::shutdown_all_channel_runtimes(&state)
+            {
                 if channel_shutdown_count > 0 {
                     state.log(
                         "info",
                         "channels.runtime.shutdown",
-                        &format!("Shut down {} channel runtimes during app exit", channel_shutdown_count),
+                        &format!(
+                            "Shut down {} channel runtimes during app exit",
+                            channel_shutdown_count
+                        ),
                     );
                 }
             }

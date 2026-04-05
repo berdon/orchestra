@@ -30,6 +30,26 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "tasks.comment",
       },
       {
+        name: "list_task_todos",
+        description: "List task todos",
+        requiredPermission: "tasks.read",
+      },
+      {
+        name: "list_unfinished_task_todos",
+        description: "List unfinished task todos",
+        requiredPermission: "tasks.read",
+      },
+      {
+        name: "add_task_todo",
+        description: "Add a task todo",
+        requiredPermission: "tasks.update",
+      },
+      {
+        name: "mark_task_todo_finished",
+        description: "Mark a task todo finished",
+        requiredPermission: "tasks.update",
+      },
+      {
         name: "list_tasks",
         description: "List tasks for a project",
         requiredPermission: "tasks.read",
@@ -112,6 +132,10 @@ describe("orchestra tools extension bridge tool setup", () => {
         "get_task_context",
         "add_task_file_reference",
         "comment_on_task",
+        "list_task_todos",
+        "list_unfinished_task_todos",
+        "add_task_todo",
+        "mark_task_todo_finished",
         "list_tasks",
         "create_task",
         "get_worker_overlay",
@@ -155,29 +179,57 @@ describe("orchestra tools extension bridge tool setup", () => {
       interruptAgent: false,
     });
 
+    const listTaskTodosTool = registeredTools.find((tool) => tool.name === "list_task_todos");
+    expect(listTaskTodosTool.parameters.properties.taskId).toBeTruthy();
+    const listTaskTodosResult = await listTaskTodosTool.execute("tool-call-5", {
+      taskId: "task-1",
+    });
+
+    const listUnfinishedTodosTool = registeredTools.find((tool) => tool.name === "list_unfinished_task_todos");
+    expect(listUnfinishedTodosTool.parameters.properties.taskId).toBeTruthy();
+    expect(listUnfinishedTodosTool.parameters.properties.laneId).toBeTruthy();
+    const listUnfinishedTodosResult = await listUnfinishedTodosTool.execute("tool-call-6", {
+      taskId: "task-1",
+      laneId: "lane-implement",
+    });
+
+    const addTaskTodoTool = registeredTools.find((tool) => tool.name === "add_task_todo");
+    expect(addTaskTodoTool.parameters.properties.description).toBeTruthy();
+    const addTaskTodoResult = await addTaskTodoTool.execute("tool-call-7", {
+      taskId: "task-1",
+      laneId: "lane-implement",
+      description: "Write regression coverage",
+    });
+
+    const markTaskTodoFinishedTool = registeredTools.find((tool) => tool.name === "mark_task_todo_finished");
+    expect(markTaskTodoFinishedTool.parameters.properties.todoId).toBeTruthy();
+    const markTaskTodoFinishedResult = await markTaskTodoFinishedTool.execute("tool-call-8", {
+      todoId: "todo-1",
+    });
+
     const listProjectsTool = registeredTools.find((tool) => tool.name === "list_projects");
     expect(listProjectsTool.parameters.properties.inputJson).toBeUndefined();
-    const listProjectsResult = await listProjectsTool.execute("tool-call-5", {});
+    const listProjectsResult = await listProjectsTool.execute("tool-call-9", {});
 
     const getProjectTool = registeredTools.find((tool) => tool.name === "get_project");
     expect(getProjectTool.parameters.properties.projectId).toBeTruthy();
-    const getProjectResult = await getProjectTool.execute("tool-call-6", {
+    const getProjectResult = await getProjectTool.execute("tool-call-10", {
       projectId: "project-1",
     });
 
     const listRepositoriesTool = registeredTools.find((tool) => tool.name === "list_repositories");
     expect(listRepositoriesTool.parameters.properties.projectId).toBeTruthy();
-    const listRepositoriesResult = await listRepositoriesTool.execute("tool-call-7", {
+    const listRepositoriesResult = await listRepositoriesTool.execute("tool-call-11", {
       projectId: "project-1",
     });
 
     const getRepositoryTool = registeredTools.find((tool) => tool.name === "get_repository");
     expect(getRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
-    const getRepositoryResult = await getRepositoryTool.execute("tool-call-8", {
+    const getRepositoryResult = await getRepositoryTool.execute("tool-call-12", {
       repositoryId: "repo-1",
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(fetchMock).toHaveBeenCalledTimes(12);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
     expect(request.payload).toEqual({ taskId: "task-1", notes: "Ship it" });
@@ -204,16 +256,34 @@ describe("orchestra tools extension bridge tool setup", () => {
         parentCommentId: null,
       },
     });
-    const listProjectsRequest = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    const listTaskTodosRequest = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    expect(listTaskTodosRequest.command).toBe("list_task_todos");
+    expect(listTaskTodosRequest.payload).toEqual({ taskId: "task-1" });
+    const listUnfinishedTodosRequest = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
+    expect(listUnfinishedTodosRequest.command).toBe("list_unfinished_task_todos");
+    expect(listUnfinishedTodosRequest.payload).toEqual({ taskId: "task-1", laneId: "lane-implement" });
+    const addTaskTodoRequest = JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body));
+    expect(addTaskTodoRequest.command).toBe("add_task_todo");
+    expect(addTaskTodoRequest.payload).toEqual({
+      taskId: "task-1",
+      input: {
+        laneId: "lane-implement",
+        description: "Write regression coverage",
+      },
+    });
+    const markTaskTodoFinishedRequest = JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body));
+    expect(markTaskTodoFinishedRequest.command).toBe("mark_task_todo_finished");
+    expect(markTaskTodoFinishedRequest.payload).toEqual({ todoId: "todo-1" });
+    const listProjectsRequest = JSON.parse(String(fetchMock.mock.calls[8]?.[1]?.body));
     expect(listProjectsRequest.command).toBe("list_projects");
     expect(listProjectsRequest.payload).toEqual({});
-    const getProjectRequest = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
+    const getProjectRequest = JSON.parse(String(fetchMock.mock.calls[9]?.[1]?.body));
     expect(getProjectRequest.command).toBe("get_project");
     expect(getProjectRequest.payload).toEqual({ projectId: "project-1" });
-    const listRepositoriesRequest = JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body));
+    const listRepositoriesRequest = JSON.parse(String(fetchMock.mock.calls[10]?.[1]?.body));
     expect(listRepositoriesRequest.command).toBe("list_repositories");
     expect(listRepositoriesRequest.payload).toEqual({ projectId: "project-1" });
-    const getRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body));
+    const getRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[11]?.[1]?.body));
     expect(getRepositoryRequest.command).toBe("get_repository");
     expect(getRepositoryRequest.payload).toEqual({ repositoryId: "repo-1" });
     expect(result.details.command).toBe("complete_lane_as_success");
@@ -224,6 +294,14 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(repoFileResult.content[0]?.text).toContain("add_task_file_reference");
     expect(commentResult.details.command).toBe("comment_on_task");
     expect(commentResult.content[0]?.text).toContain("comment_on_task");
+    expect(listTaskTodosResult.details.command).toBe("list_task_todos");
+    expect(listTaskTodosResult.content[0]?.text).toContain("list_task_todos");
+    expect(listUnfinishedTodosResult.details.command).toBe("list_unfinished_task_todos");
+    expect(listUnfinishedTodosResult.content[0]?.text).toContain("list_unfinished_task_todos");
+    expect(addTaskTodoResult.details.command).toBe("add_task_todo");
+    expect(addTaskTodoResult.content[0]?.text).toContain("add_task_todo");
+    expect(markTaskTodoFinishedResult.details.command).toBe("mark_task_todo_finished");
+    expect(markTaskTodoFinishedResult.content[0]?.text).toContain("mark_task_todo_finished");
     expect(listProjectsResult.details.command).toBe("list_projects");
     expect(listProjectsResult.content[0]?.text).toContain("list_projects");
     expect(getProjectResult.details.command).toBe("get_project");

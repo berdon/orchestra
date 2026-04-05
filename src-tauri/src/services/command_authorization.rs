@@ -134,6 +134,12 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "List task comments with reply threading metadata",
         "tasks.read",
     ),
+    ("list_task_todos", "List task todo items", "tasks.read"),
+    (
+        "list_unfinished_task_todos",
+        "List unfinished task todo items",
+        "tasks.read",
+    ),
     (
         "get_unread_task_comments",
         "Get unread task comments for the active lane session",
@@ -186,6 +192,22 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     ("create_task", "Create a task", "tasks.create"),
     ("create_subtask", "Create a subtask", "tasks.create"),
+    ("add_task_todo", "Add a task todo item", "tasks.update"),
+    (
+        "mark_task_todo_finished",
+        "Mark a task todo item finished",
+        "tasks.update",
+    ),
+    (
+        "mark_task_todo_unfinished",
+        "Mark a task todo item unfinished",
+        "tasks.update",
+    ),
+    (
+        "delete_task_todo",
+        "Delete a task todo item",
+        "tasks.update",
+    ),
     ("update_task", "Update a task", "tasks.update"),
     ("delete_task", "Delete a task", "tasks.delete"),
     ("comment_on_task", "Comment on a task", "tasks.comment"),
