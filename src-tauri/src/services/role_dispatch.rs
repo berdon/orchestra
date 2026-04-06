@@ -244,16 +244,167 @@ pub fn release_role_instance(
     role_runtime::get_role_operations(connection, &instance.role_id)
 }
 
-fn collect_role_reset_session_ids(
+fn deduplicate_open_role_lane_queue_state(
+    connection: &Connection,
+    role_id: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let now = crate::state::now_iso();
+    let mut queue_entries_by_lane =
+        std::collections::BTreeMap::<(String, String), Vec<crate::models::RoleQueueEntry>>::new();
+
+    for queue_entry in role_runtime::list_role_queue_entries(connection, Some(role_id))? {
+        if queue_entry.source_type != "workflow_lane"
+            || !matches!(queue_entry.status.as_str(), "queued" | "assigned")
+        {
+            continue;
+        }
+        let (Some(task_id), Some(lane_id)) = (
+            queue_entry.source_task_id.as_deref(),
+            queue_entry.source_lane_id.as_deref(),
+        ) else {
+            continue;
+        };
+        queue_entries_by_lane
+            .entry((task_id.to_string(), lane_id.to_string()))
+            .or_default()
+            .push(queue_entry);
+    }
+
+    let mut assignments = task_runtime::list_current_role_assignments(connection, role_id)?;
+    assignments.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut keep_assignment_by_lane = std::collections::BTreeMap::new();
+    let mut keep_queue_entry_by_lane = std::collections::BTreeMap::new();
+    for assignment in assignments {
+        let key = (assignment.task_id.clone(), assignment.lane_id.clone());
+        if let Some(keep_assignment_id) = keep_assignment_by_lane.get(&key) {
+            connection
+                .execute(
+                    r#"
+                    UPDATE task_lane_assignments
+                    SET status = 'canceled',
+                        session_id = NULL,
+                        runtime_cwd = NULL,
+                        role_instance_id = NULL,
+                        pending_outcome = NULL,
+                        completion_notes = ?2,
+                        completed_at = ?3,
+                        updated_at = ?3
+                    WHERE id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')
+                    "#,
+                    params![assignment.id, reason, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to cancel duplicate task assignment {} during role reset cleanup (keeping {}): {error}",
+                        assignment.id, keep_assignment_id
+                    )
+                })?;
+            continue;
+        }
+
+        keep_assignment_by_lane.insert(key.clone(), assignment.id.clone());
+        let canonical_queue_entry_id = assignment
+            .role_queue_entry_id
+            .clone()
+            .filter(|queue_entry_id| {
+                queue_entries_by_lane
+                    .get(&key)
+                    .map(|entries| entries.iter().any(|entry| entry.id == *queue_entry_id))
+                    .unwrap_or(false)
+            })
+            .or_else(|| {
+                queue_entries_by_lane
+                    .get(&key)
+                    .and_then(|entries| entries.first().map(|entry| entry.id.clone()))
+            });
+
+        if let Some(queue_entry_id) = canonical_queue_entry_id {
+            keep_queue_entry_by_lane.insert(key.clone(), queue_entry_id.clone());
+            if assignment.role_queue_entry_id.as_deref() != Some(queue_entry_id.as_str()) {
+                connection
+                    .execute(
+                        "UPDATE task_lane_assignments SET role_queue_entry_id = ?2, updated_at = ?3 WHERE id = ?1",
+                        params![assignment.id, queue_entry_id, now],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Unable to repoint task assignment {} to canonical role queue entry {} during reset cleanup: {error}",
+                            assignment.id, queue_entry_id
+                        )
+                    })?;
+            }
+        }
+    }
+
+    for (key, queue_entries) in queue_entries_by_lane {
+        let keep_queue_entry_id = keep_queue_entry_by_lane
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| queue_entries[0].id.clone());
+        for queue_entry in queue_entries {
+            if queue_entry.id == keep_queue_entry_id {
+                continue;
+            }
+            connection
+                .execute(
+                    r#"
+                    UPDATE role_queue_entries
+                    SET status = 'canceled',
+                        assigned_instance_id = NULL,
+                        started_at = NULL,
+                        completed_at = ?2,
+                        updated_at = ?2
+                    WHERE id = ?1 AND status IN ('queued', 'assigned')
+                    "#,
+                    params![queue_entry.id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to cancel duplicate role queue entry {} during reset cleanup: {error}",
+                        queue_entry.id
+                    )
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn session_dir_for_task_id(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let Ok(task) = tasks::get_task_context(connection, task_id) else {
+        return Ok(None);
+    };
+    let project = projects::get_project(connection, &task.project_id)?;
+    let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()?;
+    Ok(Some(crate::services::orchestra_paths::project_session_dir(
+        &orchestra_root,
+        &project.slug,
+    )))
+}
+
+fn collect_role_reset_session_contexts(
     connection: &Connection,
     role_id: &str,
     assignments: &[crate::models::TaskLaneAssignment],
-) -> Result<Vec<String>, String> {
-    let mut session_ids = std::collections::BTreeSet::new();
+) -> Result<Vec<(String, std::path::PathBuf)>, String> {
+    let mut session_contexts = std::collections::BTreeMap::new();
 
     for assignment in assignments {
-        if let Some(session_id) = assignment.session_id.as_deref() {
-            session_ids.insert(session_id.to_string());
+        let assignment_session_dir = session_dir_for_task_id(connection, &assignment.task_id)?;
+        if let (Some(session_id), Some(session_dir)) = (
+            assignment.session_id.as_deref(),
+            assignment_session_dir.as_ref(),
+        ) {
+            session_contexts.insert(session_id.to_string(), session_dir.clone());
         }
 
         if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
@@ -272,7 +423,9 @@ fn collect_role_reset_session_ids(
                 })?
                 .flatten()
             {
-                session_ids.insert(session_id);
+                if let Some(session_dir) = assignment_session_dir.as_ref() {
+                    session_contexts.insert(session_id, session_dir.clone());
+                }
             }
         }
 
@@ -307,7 +460,9 @@ fn collect_role_reset_session_ids(
                     })?
                     .flatten()
                 {
-                    session_ids.insert(session_id);
+                    if let Some(session_dir) = assignment_session_dir.as_ref() {
+                        session_contexts.insert(session_id, session_dir.clone());
+                    }
                 }
             }
         }
@@ -315,7 +470,7 @@ fn collect_role_reset_session_ids(
 
     let mut statement = connection
         .prepare(
-            "SELECT session_id FROM role_instances WHERE role_id = ?1 AND session_id IS NOT NULL",
+            "SELECT session_id, current_queue_entry_id FROM role_instances WHERE role_id = ?1 AND session_id IS NOT NULL",
         )
         .map_err(|error| {
             format!(
@@ -324,16 +479,51 @@ fn collect_role_reset_session_ids(
             )
         })?;
     let rows = statement
-        .query_map([role_id], |row| row.get::<_, String>(0))
+        .query_map([role_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
         .map_err(|error| format!("Unable to query role sessions for {}: {error}", role_id))?;
-    for session_id in rows {
-        session_ids
-            .insert(session_id.map_err(|error| {
-                format!("Unable to read role session for {}: {error}", role_id)
-            })?);
+    for row in rows {
+        let (session_id, current_queue_entry_id) =
+            row.map_err(|error| format!("Unable to read role session for {}: {error}", role_id))?;
+        if session_contexts.contains_key(&session_id) {
+            continue;
+        }
+
+        let session_dir = if let Some(queue_entry_id) = current_queue_entry_id.as_deref() {
+            let source_task_id = connection
+                .query_row(
+                    "SELECT source_task_id FROM role_queue_entries WHERE id = ?1",
+                    [queue_entry_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to query role queue entry {} for session context lookup: {error}",
+                        queue_entry_id
+                    )
+                })?
+                .flatten();
+            if let Some(task_id) = source_task_id.as_deref() {
+                session_dir_for_task_id(connection, task_id)?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(session_dir) = session_dir {
+            session_contexts.insert(session_id, session_dir);
+        } else if let Ok(context) =
+            crate::services::pi_sessions::find_session_context_for_session(&session_id)
+        {
+            session_contexts.insert(session_id, context.session_dir);
+        }
     }
 
-    Ok(session_ids.into_iter().collect())
+    Ok(session_contexts.into_iter().collect())
 }
 
 pub fn reset_role_assignments(
@@ -348,7 +538,8 @@ pub fn reset_role_assignments(
     String,
 > {
     let existing_assignments = task_runtime::list_current_role_assignments(connection, role_id)?;
-    let session_ids = collect_role_reset_session_ids(connection, role_id, &existing_assignments)?;
+    let session_contexts =
+        collect_role_reset_session_contexts(connection, role_id, &existing_assignments)?;
     let assignments = task_runtime::reset_role_assignments_to_queue(
         connection,
         role_id,
@@ -402,18 +593,15 @@ pub fn reset_role_assignments(
                 role_id
             )
         })?;
+    deduplicate_open_role_lane_queue_state(
+        connection,
+        role_id,
+        "Duplicate role lane assignment removed during role reset",
+    )?;
     let detail = role_runtime::get_role_operations(connection, role_id)?;
     let task_ids = assignments
         .iter()
         .map(|assignment| assignment.task_id.clone())
-        .collect();
-    let session_contexts = session_ids
-        .into_iter()
-        .filter_map(|session_id| {
-            crate::services::pi_sessions::find_session_context_for_session(&session_id)
-                .ok()
-                .map(|context| (session_id, context.session_dir))
-        })
         .collect();
     Ok((detail, task_ids, session_contexts))
 }
@@ -1682,6 +1870,151 @@ mod tests {
             .instances
             .iter()
             .all(|instance| instance.session_id.is_none()));
+    }
+
+    #[test]
+    fn reset_role_assignments_deduplicates_open_queue_entries_and_assignments() {
+        let mut connection = open_test_connection("role-reset-dedup");
+        let role = create_role(&mut connection, "Resettable", 1);
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Reset Dedup Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-reset-dedup".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("role-reset-dedup-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-reset-dedup', 'orchestra', 'role-reset-dedup', 'Role Reset Dedup Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Reset duplicate role assignment".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-reset-dedup".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-reset-dedup".into()),
+                repository_ids: vec!["repo-reset-dedup".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+        let _original_queue_entry_id = assignment
+            .role_queue_entry_id
+            .clone()
+            .expect("queue entry should exist");
+
+        let duplicate_queue_entry_id = "queue-duplicate-reset";
+        connection.execute(
+            "INSERT INTO role_queue_entries (id, role_id, status, source_type, source_task_id, source_workflow_id, source_lane_id, title, summary, entry_prompt, assigned_instance_id, created_at, updated_at, started_at, completed_at) VALUES (?1, ?2, 'queued', 'workflow_lane', ?3, ?4, ?5, 'ORC-1 · Duplicate', NULL, NULL, NULL, ?6, ?6, NULL, NULL)",
+            params![
+                duplicate_queue_entry_id,
+                role.id.as_str(),
+                task.id.as_str(),
+                workflow.id.as_str(),
+                "lane-reset-dedup",
+                now.as_str(),
+            ],
+        ).expect("duplicate queue entry should insert");
+        connection.execute(
+            "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-duplicate-reset', ?1, ?2, 'lane-reset-dedup', 'role', ?3, 'queued', NULL, NULL, ?4, NULL, 'Prompt', NULL, NULL, 0, NULL, ?5, NULL, ?5, ?5)",
+            params![
+                task.id.as_str(),
+                workflow.id.as_str(),
+                role.id.as_str(),
+                duplicate_queue_entry_id,
+                now.as_str(),
+            ],
+        ).expect("duplicate assignment should insert");
+
+        let (detail, changed_task_ids, _) =
+            reset_role_assignments(&mut connection, &role.id).expect("reset should succeed");
+        assert_eq!(changed_task_ids, vec![task.id.clone(), task.id.clone()]);
+        assert_eq!(detail.queued_count, 1);
+
+        let open_assignments = task_runtime::list_current_role_assignments(&connection, &role.id)
+            .expect("open assignments should list");
+        assert_eq!(open_assignments.len(), 1);
+        assert_eq!(open_assignments[0].task_id, task.id);
+        assert_eq!(open_assignments[0].lane_id, "lane-reset-dedup");
+        assert_eq!(open_assignments[0].status, "queued");
+
+        let queue_entries =
+            role_runtime::list_role_queue_entries(&connection, Some(role.id.as_str()))
+                .expect("queue entries should list");
+        assert_eq!(queue_entries.len(), 2);
+        let queued_entry = queue_entries
+            .iter()
+            .find(|entry| entry.status == "queued")
+            .expect("one queued queue entry should remain");
+        assert_eq!(
+            open_assignments[0].role_queue_entry_id.as_deref(),
+            Some(queued_entry.id.as_str())
+        );
+        assert_eq!(
+            queue_entries
+                .iter()
+                .filter(|entry| entry.status == "queued")
+                .count(),
+            1
+        );
+        assert_eq!(
+            queue_entries
+                .iter()
+                .find(|entry| entry.id == duplicate_queue_entry_id)
+                .expect("duplicate queue entry should remain for history")
+                .status,
+            if queued_entry.id == duplicate_queue_entry_id {
+                "queued"
+            } else {
+                "canceled"
+            }
+        );
     }
 
     #[test]
