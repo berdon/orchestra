@@ -10,7 +10,7 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_dispatch, agent_runtime, agents, live_sessions, messages, pi_sessions,
+        agent_dispatch, agent_runtime, agents, channels, live_sessions, messages, pi_sessions,
         project_settings, projects, role_dispatch, role_runtime, roles, task_repositories, tasks,
         workflows,
     },
@@ -2364,7 +2364,15 @@ fn complete_lane(
             )?;
             mark_assignment_worker_waiting_for_approval(connection, assignment, &now)?;
             move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
-            return tasks::get_task_context(connection, task_id);
+            let updated = tasks::get_task_context(connection, task_id)?;
+            let _ = channels::notify_task_user_attention_channels(
+                connection,
+                &updated,
+                &lane,
+                "awaiting_user_approval",
+                normalized_notes.as_deref(),
+            );
+            return Ok(updated);
         }
 
         update_open_lane_run(
@@ -2391,6 +2399,15 @@ fn complete_lane(
 
     transition_task_after_completion(connection, &task, &lane, outcome, &now)?;
     let updated = tasks::get_task_context(connection, task_id)?;
+    if outcome == "needs_user" {
+        let _ = channels::notify_task_user_attention_channels(
+            connection,
+            &updated,
+            &lane,
+            "needs_user",
+            normalized_notes.as_deref(),
+        );
+    }
     Ok(updated)
 }
 

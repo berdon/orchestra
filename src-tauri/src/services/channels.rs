@@ -19,8 +19,8 @@ use uuid::Uuid;
 use crate::{
     models::{
         ChannelActivityEntry, ChannelDetail, ChannelSummary, ChannelUpsertInput, MailboxMessage,
-        SendMailboxMessageInput, TelegramBotValidation, TelegramChannelConfig,
-        TelegramChannelConfigInput, TelegramChatCandidate,
+        SendMailboxMessageInput, TaskDetail, TelegramBotValidation, TelegramChannelConfig,
+        TelegramChannelConfigInput, TelegramChatCandidate, WorkflowLane,
     },
     services::{
         agent_dispatch, database,
@@ -42,6 +42,7 @@ const MESSAGE_KIND_MESSAGE: &str = "message";
 const MESSAGE_KIND_COMMAND: &str = "command";
 const MESSAGE_KIND_RESPONSE: &str = "response";
 const MESSAGE_KIND_STATUS: &str = "status";
+const MESSAGE_KIND_NOTIFICATION: &str = "notification";
 const TELEGRAM_CHAT_ACTION_TYPING: &str = "typing";
 const TELEGRAM_CALLBACK_PROJECT_PREFIX: &str = "project:";
 const ACTIVITY_STATUS_QUEUED: &str = "queued";
@@ -581,6 +582,42 @@ pub fn fail_channel_response_for_run(run_id: &str, error_message: &str) -> Resul
         ACTIVITY_STATUS_FAILED,
         Some(error_message),
     )
+}
+
+pub fn notify_task_user_attention_channels(
+    connection: &Connection,
+    task: &TaskDetail,
+    lane: &WorkflowLane,
+    reason: &str,
+    notes: Option<&str>,
+) -> Result<usize, String> {
+    let project = projects::get_project(connection, &task.project_id)?;
+    let body = format_task_user_attention_notification(&project.name, task, lane, reason, notes);
+    let channels = load_runnable_channels(connection)?
+        .into_iter()
+        .filter(|channel| channel.kind == CHANNEL_KIND_TELEGRAM)
+        .filter(|channel| channel.default_project_id.as_deref() == Some(task.project_id.as_str()))
+        .collect::<Vec<_>>();
+
+    let mut delivered = 0usize;
+    for channel in channels {
+        match send_telegram_channel_message(
+            connection,
+            &channel,
+            MESSAGE_KIND_NOTIFICATION,
+            &body,
+            ACTIVITY_STATUS_COMPLETED,
+            None,
+            None,
+        ) {
+            Ok(_) => delivered += 1,
+            Err(error) => {
+                let _ = record_failed_channel_notification(connection, &channel, &body, &error);
+            }
+        }
+    }
+
+    Ok(delivered)
 }
 
 pub fn sync_channel_runtimes(app: AppHandle, state: &AppState) -> Result<(), String> {
@@ -1558,6 +1595,42 @@ fn short_delivery_id(message: &MailboxMessage) -> String {
     message.delivery_id.chars().take(12).collect()
 }
 
+fn format_task_user_attention_notification(
+    project_name: &str,
+    task: &TaskDetail,
+    lane: &WorkflowLane,
+    reason: &str,
+    notes: Option<&str>,
+) -> String {
+    let headline = match reason {
+        "awaiting_user_approval" => "Task awaiting user approval",
+        "needs_user" => "Task requires user intervention",
+        _ => "Task requires user attention",
+    };
+    let action = match reason {
+        "awaiting_user_approval" => {
+            "Review the task in Orchestra and either approve it or send it back for more work."
+        }
+        "needs_user" => "Review the task in Orchestra and decide how to unblock or continue it.",
+        _ => "Review the task in Orchestra.",
+    };
+
+    let mut lines = vec![
+        headline.to_string(),
+        format!("Project: {}", project_name),
+        format!("Task: {} — {}", task.number, task.title),
+        format!("Lane: {}", lane.name),
+        format!("Task ID: {}", task.id),
+        action.to_string(),
+    ];
+    if let Some(notes) = notes.map(str::trim).filter(|value| !value.is_empty()) {
+        lines.push(String::new());
+        lines.push("Notes:".into());
+        lines.push(first_line(notes));
+    }
+    lines.join("\n")
+}
+
 fn first_line(body: &str) -> String {
     let line = body.lines().next().unwrap_or("").trim();
     if line.len() > 72 {
@@ -2068,6 +2141,33 @@ fn update_channel_activity_timestamps(
         )
         .map_err(|error| format!("Unable to update channel activity timestamp: {error}"))?;
     Ok(())
+}
+
+fn record_failed_channel_notification(
+    connection: &Connection,
+    channel: &StoredChannelRecord,
+    body: &str,
+    error: &str,
+) -> Result<(), String> {
+    let chat_id = channel
+        .config
+        .telegram
+        .as_ref()
+        .and_then(|telegram| telegram.chat_id.as_deref());
+    let _ = insert_channel_activity(
+        connection,
+        &channel.id,
+        DIRECTION_OUTBOUND,
+        MESSAGE_KIND_NOTIFICATION,
+        None,
+        chat_id,
+        None,
+        None,
+        body,
+        ACTIVITY_STATUS_FAILED,
+        Some(error),
+    );
+    record_channel_runtime_error(&channel.id, error)
 }
 
 fn send_telegram_channel_message(
