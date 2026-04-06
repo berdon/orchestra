@@ -84,7 +84,9 @@ impl SessionRuntime {
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
         let extension_path = resolve_orchestra_extension_path(&app)?;
 
-        let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
+        let pi_executable = app
+            .state::<crate::state::AppState>()
+            .sync_pi_runtime_health()?;
         let args = vec![
             "--offline".to_string(),
             "--mode".to_string(),

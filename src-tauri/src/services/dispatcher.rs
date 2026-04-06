@@ -57,6 +57,10 @@ fn run_dispatcher_tick_and_count(app: AppHandle) -> Result<usize, String> {
 }
 
 fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, String> {
+    if state.sync_pi_runtime_health().is_err() {
+        return Ok(0);
+    }
+
     state.log(
         "info",
         "dispatcher.tick.started",

@@ -453,6 +453,9 @@ pub async fn create_session(
     title: Option<String>,
     project_slug: Option<String>,
 ) -> Result<SessionRecord, String> {
+    state
+        .sync_pi_runtime_health()
+        .map_err(|error| format!("Unable to create session because PI is unavailable: {error}"))?;
     let title_for_task = title.clone();
     let project_slug_for_task = project_slug.clone();
     let (project_root, session_dir, created) = spawn_blocking(move || {
@@ -534,6 +537,9 @@ pub async fn resume_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
+    state
+        .sync_pi_runtime_health()
+        .map_err(|error| format!("Unable to resume session because PI is unavailable: {error}"))?;
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) = spawn_blocking(move || {
         let connection = database::open_connection()?;
@@ -578,6 +584,9 @@ pub async fn subscribe_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
+    state
+        .sync_pi_runtime_health()
+        .map_err(|error| format!("Unable to subscribe to session because PI is unavailable: {error}"))?;
     let result: Result<SessionRecord, String> = async {
         let session_id_for_task = session_id.clone();
         let (project_root, session_dir) =

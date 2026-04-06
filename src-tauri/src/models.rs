@@ -8,6 +8,8 @@ pub struct AppInfo {
     pub environment: String,
     pub backend_status: String,
     pub version_display: String,
+    pub dispatch_blocked: bool,
+    pub dispatch_blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

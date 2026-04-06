@@ -1320,6 +1320,8 @@ export async function getAppInfo(): Promise<AppInfo> {
       environment: "browser",
       backendStatus: "mock",
       versionDisplay: "0.1.0-mock0000",
+      dispatchBlocked: false,
+      dispatchBlockedReason: null,
     };
   }
 

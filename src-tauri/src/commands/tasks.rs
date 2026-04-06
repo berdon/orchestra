@@ -618,6 +618,9 @@ pub async fn dispatch_task_lane(
     state: State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDetail, String> {
+    state
+        .sync_pi_runtime_health()
+        .map_err(|error| format!("Unable to dispatch task lane because PI is unavailable: {error}"))?;
     let task_id_for_context = task_id.clone();
     let context = tauri::async_runtime::spawn_blocking(move || {
         session_context_for_task_id(&task_id_for_context)
@@ -701,8 +704,16 @@ pub async fn approve_lane_completion(
         &task_id,
     )?;
 
-    let auto_dispatches =
-        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?;
+    let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
+        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
+    } else {
+        state.log(
+            "warn",
+            "task.transition.auto_dispatch.blocked",
+            &format!("Skipped auto-dispatch after approving task {} because PI is unavailable", task_id),
+        );
+        Vec::new()
+    };
     for outcome in &auto_dispatches {
         task_runtime::start_assignment_run(
             app.clone(),
@@ -885,8 +896,16 @@ async fn complete_lane_command(
             )?,
         };
 
-        let auto_dispatches =
-            task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?;
+        let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
+            task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
+        } else {
+            state.log(
+                "warn",
+                "task.transition.auto_dispatch.blocked",
+                &format!("Skipped auto-dispatch after transitioning task {} because PI is unavailable", task_id),
+            );
+            Vec::new()
+        };
         for outcome in &auto_dispatches {
             task_runtime::start_assignment_run(
                 app.clone(),

@@ -21,21 +21,27 @@ use crate::{
         orchestra_paths::default_orchestra_root,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session_path,
-            list_available_models, resolve_pi_executable,
+            list_available_models,
         },
     },
     state::AppState,
 };
 
 #[tauri::command]
-pub fn get_app_info() -> AppInfo {
+pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
     let version = env!("CARGO_PKG_VERSION");
     let hash = option_env!("ORCHESTRA_GIT_HASH").unwrap_or("dev");
+    let dispatch_blocked_reason = match state.sync_pi_runtime_health() {
+        Ok(_) => None,
+        Err(error) => Some(error),
+    };
     AppInfo {
         app_name: "Orchestra".into(),
         environment: "tauri".into(),
         backend_status: "connected".into(),
         version_display: format!("{}-{}", version, hash),
+        dispatch_blocked: dispatch_blocked_reason.is_some(),
+        dispatch_blocked_reason,
     }
 }
 
@@ -232,7 +238,7 @@ pub fn get_session_storage_info(
 
 #[tauri::command]
 pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableDiagnostic {
-    match resolve_pi_executable(None) {
+    match state.sync_pi_runtime_health() {
         Ok(path) => PiExecutableDiagnostic {
             resolved_path: Some(path.display().to_string()),
             error: None,
