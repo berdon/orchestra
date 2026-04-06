@@ -52,7 +52,6 @@ pub fn dispatch_agent_queue(
         Some(agent_id),
         false,
     )?;
-    drop(connection);
 
     if queue_entries.is_empty() {
         return Ok(false);
@@ -65,6 +64,10 @@ pub fn dispatch_agent_queue(
             .collect::<Vec<_>>();
         let mut delivered = false;
         for entry in queue_entries {
+            if !agent_runtime::queue_entry_is_valid(&connection, &entry)? {
+                let _ = agent_runtime::cancel_agent_queue_entry(&connection, &entry.id)?;
+                continue;
+            }
             if entry.delivery_mode == "prompt" {
                 continue;
             }
@@ -81,9 +84,18 @@ pub fn dispatch_agent_queue(
         return Ok(delivered);
     }
 
-    let next_entry = queue_entries
-        .into_iter()
-        .find(|entry| entry.status == "queued");
+    let mut next_entry = None;
+    for entry in queue_entries {
+        if entry.status != "queued" {
+            continue;
+        }
+        if !agent_runtime::queue_entry_is_valid(&connection, &entry)? {
+            let _ = agent_runtime::cancel_agent_queue_entry(&connection, &entry.id)?;
+            continue;
+        }
+        next_entry = Some(entry);
+        break;
+    }
     let Some(entry) = next_entry else {
         return Ok(false);
     };
@@ -324,8 +336,12 @@ pub fn ensure_main_session(
         }
     }
 
-    if let Some(global_session_id) = agent_runtime::find_global_main_session_id(&connection, agent_id)? {
-        if crate::services::pi_sessions::find_session_context_for_session(&global_session_id).is_ok() {
+    if let Some(global_session_id) =
+        agent_runtime::find_global_main_session_id(&connection, agent_id)?
+    {
+        if crate::services::pi_sessions::find_session_context_for_session(&global_session_id)
+            .is_ok()
+        {
             return agent_runtime::update_agent_runtime_dispatch_state_for_project(
                 &connection,
                 project_id,

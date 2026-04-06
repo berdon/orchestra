@@ -8,7 +8,8 @@ interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
   onOpenSession: (agentId: string) => void;
   onOpenSessionTerminal: (agentId: string) => void;
-  onDeleteQueuedEntry: (queueEntryId: string) => void;
+  onDeleteQueuedEntry: (entry: AgentOperationsDetail["queueEntries"][number]) => void;
+  onCancelActiveWorkflowEntry: (entry: AgentOperationsDetail["queueEntries"][number], requeue: boolean) => void;
   busy?: boolean;
 }
 
@@ -25,7 +26,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, busy = false }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, onCancelActiveWorkflowEntry, busy = false }: AgentOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -165,9 +166,32 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
                     data-role={`delete-agent-queue-entry-${entry.id}`}
                     type="button"
                     disabled={busy}
-                    onClick={() => onDeleteQueuedEntry(entry.id)}
+                    onClick={() => onDeleteQueuedEntry(entry)}
                   >
                     Delete queued item
+                  </button>
+                </div>
+              ) : null}
+
+              {entry.status === "dispatched" && entry.sourceType === "workflow_lane" && entry.sourceTaskId ? (
+                <div className="action-cluster">
+                  <button
+                    className="secondary-button"
+                    data-role={`requeue-agent-work-item-${entry.id}`}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onCancelActiveWorkflowEntry(entry, true)}
+                  >
+                    Cancel + requeue
+                  </button>
+                  <button
+                    className="secondary-button secondary-button--danger"
+                    data-role={`cancel-agent-work-item-${entry.id}`}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onCancelActiveWorkflowEntry(entry, false)}
+                  >
+                    Cancel item
                   </button>
                 </div>
               ) : null}

@@ -243,6 +243,33 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
     Ok(duplicate_ids)
 }
 
+pub fn task_lane_queue_source_is_valid(
+    connection: &Connection,
+    task_id: &str,
+    workflow_id: Option<&str>,
+    lane_id: &str,
+) -> Result<bool, String> {
+    let Ok(task) = tasks::get_task_context(connection, task_id) else {
+        return Ok(false);
+    };
+
+    if task.archived || matches!(task.status.as_str(), "completed" | "canceled") {
+        return Ok(false);
+    }
+
+    if task.current_lane_id.as_deref() != Some(lane_id) {
+        return Ok(false);
+    }
+
+    if let Some(workflow_id) = workflow_id {
+        if task.workflow_id.as_deref() != Some(workflow_id) {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 pub fn get_assignment_by_id(
     connection: &Connection,
     assignment_id: &str,

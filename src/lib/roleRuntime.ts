@@ -233,6 +233,23 @@ export async function dispatchRoleQueue(roleId: string): Promise<RoleOperationsD
   return invoke<RoleOperationsDetail>("dispatch_role_queue", { roleId });
 }
 
+export async function deleteRoleQueueEntry(queueEntryId: string): Promise<RoleQueueEntry> {
+  if (!isTauriAvailable()) {
+    const entries = getMockQueueEntries();
+    const entry = entries.find((current) => current.id === queueEntryId);
+    if (!entry) {
+      throw new Error(`Role queue entry ${queueEntryId} was not found`);
+    }
+    if (entry.status !== "queued") {
+      throw new Error(`Role queue entry ${queueEntryId} is ${entry.status} and cannot be deleted unless it is queued`);
+    }
+    setMockQueueEntries(entries.filter((current) => current.id !== queueEntryId));
+    return entry;
+  }
+
+  return invoke<RoleQueueEntry>("delete_role_queue_entry", { queueEntryId });
+}
+
 export async function resetRoleAssignments(roleId: string): Promise<RoleOperationsDetail> {
   if (!isTauriAvailable()) {
     const { role, queueEntries, instances } = await loadMockRoleState(roleId);

@@ -35,6 +35,27 @@ pub fn dispatch_role_queue(
         }
 
         let queue_entry = role_runtime::get_role_queue_entry(connection, &queue_entry_id)?;
+        if !role_runtime::queue_entry_is_valid(connection, &queue_entry)? {
+            connection
+                .execute(
+                    r#"
+                    UPDATE role_queue_entries
+                    SET status = 'canceled',
+                        assigned_instance_id = NULL,
+                        completed_at = ?2,
+                        updated_at = ?2
+                    WHERE id = ?1 AND status = 'queued'
+                    "#,
+                    params![queue_entry.id, crate::state::now_iso()],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to cancel invalid role queue entry {}: {error}",
+                        queue_entry.id
+                    )
+                })?;
+            continue;
+        }
         let instance = role_runtime::create_role_instance(
             connection,
             crate::models::RoleInstanceInput {
@@ -1431,6 +1452,12 @@ mod tests {
             },
         )
         .expect("task should create");
+        connection
+            .execute(
+                "UPDATE tasks SET current_lane_id = 'lane-implement', updated_at = ?2 WHERE id = ?1",
+                params![task.id.as_str(), crate::state::now_iso()],
+            )
+            .expect("task should be placed in implement lane");
 
         role_runtime::enqueue_role_work(
             &mut connection,
@@ -1438,7 +1465,7 @@ mod tests {
                 role_id: role.id.clone(),
                 source_type: "workflow_lane".into(),
                 source_task_id: Some(task.id.clone()),
-                source_workflow_id: Some("workflow-1".into()),
+                source_workflow_id: None,
                 source_lane_id: Some("lane-implement".into()),
                 title: "Enter implement lane".into(),
                 summary: None,
@@ -1530,6 +1557,12 @@ mod tests {
             },
         )
         .expect("task should create");
+        connection
+            .execute(
+                "UPDATE tasks SET current_lane_id = 'lane-implement', updated_at = ?2 WHERE id = ?1",
+                params![task.id.as_str(), crate::state::now_iso()],
+            )
+            .expect("task should be placed in implement lane");
 
         connection
             .execute(
@@ -1554,7 +1587,7 @@ mod tests {
                 role_id: role.id.clone(),
                 source_type: "workflow_lane".into(),
                 source_task_id: Some(task.id.clone()),
-                source_workflow_id: Some("workflow-1".into()),
+                source_workflow_id: None,
                 source_lane_id: Some("lane-implement".into()),
                 title: "Re-enter implement lane".into(),
                 summary: None,

@@ -7,7 +7,7 @@ use crate::{
         AgentOperationsDetail, AgentOperationsSnapshot, AgentQueueEntry, AgentQueueEntryInput,
         AgentRuntimeState,
     },
-    services::agents,
+    services::{agents, task_runtime},
 };
 
 const DEFAULT_PROJECT_ID: &str = "orchestra";
@@ -54,7 +54,8 @@ pub fn get_agent_operations_for_project(
 ) -> Result<AgentOperationsDetail, String> {
     let agent = agents::require_agent_in_project(connection, project_id, agent_id)?;
     let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
-    let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
+    let queue_entries =
+        list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
     Ok(AgentOperationsDetail {
         agent,
@@ -204,7 +205,11 @@ pub fn list_agent_queue_entries_for_project(
     };
 
     let mut statement = connection
-        .prepare(if agent_id.is_some() { sql_for_agent } else { sql_all })
+        .prepare(if agent_id.is_some() {
+            sql_for_agent
+        } else {
+            sql_all
+        })
         .map_err(|error| format!("Unable to prepare agent queue query: {error}"))?;
 
     let rows = if let Some(agent_id) = agent_id {
@@ -214,7 +219,9 @@ pub fn list_agent_queue_entries_for_project(
     } else {
         statement
             .query_map(params![project_id], read_agent_queue_entry)
-            .map_err(|error| format!("Unable to query agent queue entries for project {project_id}: {error}"))?
+            .map_err(|error| {
+                format!("Unable to query agent queue entries for project {project_id}: {error}")
+            })?
     };
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -236,7 +243,24 @@ pub fn enqueue_agent_work_for_project(
     let normalized = normalize_agent_queue_entry_input(input)?;
     let agent = agents::require_agent_in_project(connection, project_id, &normalized.agent_id)?;
     if agent.archived {
-        return Err(format!("Agent {} is archived and cannot accept runtime work", agent.name));
+        return Err(format!(
+            "Agent {} is archived and cannot accept runtime work",
+            agent.name
+        ));
+    }
+
+    if normalized.source_type == "workflow_lane"
+        && !queue_entry_source_is_valid(
+            connection,
+            normalized.source_task_id.as_deref(),
+            normalized.source_workflow_id.as_deref(),
+            normalized.source_lane_id.as_deref(),
+        )?
+    {
+        return Err(format!(
+            "Task/lane source for agent work is no longer valid: task={:?} workflow={:?} lane={:?}",
+            normalized.source_task_id, normalized.source_workflow_id, normalized.source_lane_id
+        ));
     }
 
     ensure_agent_runtime_state_for_project(connection, project_id, &normalized.agent_id)?;
@@ -282,7 +306,9 @@ pub fn enqueue_agent_work_for_project(
                 now,
             ],
         )
-        .map_err(|error| format!("Unable to enqueue agent work in project {project_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to enqueue agent work in project {project_id}: {error}")
+        })?;
 
     get_agent_queue_entry(connection, &entry_id)
 }
@@ -300,7 +326,9 @@ pub fn list_agent_queue_targets(connection: &Connection) -> Result<Vec<(String, 
         .map_err(|error| format!("Unable to prepare agent queue target query: {error}"))?;
 
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|error| format!("Unable to query agent queue targets: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -346,7 +374,9 @@ pub fn mark_agent_queue_entry_dispatched(
             "#,
             params![queue_entry_id, session_id, run_id, now],
         )
-        .map_err(|error| format!("Unable to mark agent queue entry {queue_entry_id} dispatched: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to mark agent queue entry {queue_entry_id} dispatched: {error}")
+        })?;
 
     if updated == 0 {
         return Ok(None);
@@ -374,7 +404,9 @@ pub fn claim_next_agent_queue_entry(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| format!("Unable to query next agent queue entry for {agent_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to query next agent queue entry for {agent_id}: {error}")
+        })?;
 
     let Some(next_id) = next_id else {
         return Ok(None);
@@ -430,10 +462,73 @@ pub fn delete_agent_queue_entry(
         )
         .map_err(|error| format!("Unable to delete agent queue entry {queue_entry_id}: {error}"))?;
     if deleted == 0 {
-        return Err(format!("Agent queue entry {queue_entry_id} could not be deleted"));
+        return Err(format!(
+            "Agent queue entry {queue_entry_id} could not be deleted"
+        ));
     }
 
     Ok(entry)
+}
+
+pub fn cancel_agent_queue_entry(
+    connection: &Connection,
+    queue_entry_id: &str,
+) -> Result<AgentQueueEntry, String> {
+    let entry = get_agent_queue_entry(connection, queue_entry_id)?;
+    if !matches!(
+        entry.status.as_str(),
+        QUEUE_STATUS_QUEUED | QUEUE_STATUS_DISPATCHED
+    ) {
+        return Err(format!(
+            "Agent queue entry {queue_entry_id} is {} and cannot be canceled unless it is queued or dispatched",
+            entry.status
+        ));
+    }
+
+    let now = now_iso();
+    connection
+        .execute(
+            r#"
+            UPDATE agent_queue_entries
+            SET status = 'canceled',
+                completed_at = ?2,
+                updated_at = ?2
+            WHERE id = ?1 AND status IN ('queued', 'dispatched')
+            "#,
+            params![queue_entry_id, now],
+        )
+        .map_err(|error| format!("Unable to cancel agent queue entry {queue_entry_id}: {error}"))?;
+
+    get_agent_queue_entry(connection, queue_entry_id)
+}
+
+pub fn queue_entry_source_is_valid(
+    connection: &Connection,
+    source_task_id: Option<&str>,
+    source_workflow_id: Option<&str>,
+    source_lane_id: Option<&str>,
+) -> Result<bool, String> {
+    let (Some(task_id), Some(lane_id)) = (source_task_id, source_lane_id) else {
+        return Ok(true);
+    };
+
+    task_runtime::task_lane_queue_source_is_valid(connection, task_id, source_workflow_id, lane_id)
+}
+
+pub fn queue_entry_is_valid(
+    connection: &Connection,
+    entry: &AgentQueueEntry,
+) -> Result<bool, String> {
+    if entry.source_type != "workflow_lane" {
+        return Ok(true);
+    }
+
+    queue_entry_source_is_valid(
+        connection,
+        entry.source_task_id.as_deref(),
+        entry.source_workflow_id.as_deref(),
+        entry.source_lane_id.as_deref(),
+    )
 }
 
 pub fn update_agent_runtime_dispatch_state(
@@ -523,7 +618,8 @@ fn build_agent_operations_snapshot(
 ) -> Result<AgentOperationsSnapshot, String> {
     let agent = agents::get_agent(connection, agent_id)?;
     let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
-    let queue_entries = list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
+    let queue_entries =
+        list_agent_queue_entries_for_project(connection, project_id, Some(agent_id), false)?;
 
     Ok(AgentOperationsSnapshot {
         agent,
@@ -560,7 +656,10 @@ fn normalize_agent_queue_entry_input(
     if input.message.is_empty() {
         return Err("message: Queue entry message is required.".into());
     }
-    if !matches!(input.delivery_mode.as_str(), "prompt" | "follow_up" | "steer") {
+    if !matches!(
+        input.delivery_mode.as_str(),
+        "prompt" | "follow_up" | "steer"
+    ) {
         return Err("deliveryMode: Must be one of prompt, follow_up, steer.".into());
     }
     Ok(input)
@@ -626,7 +725,10 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{models::AgentUpsertInput, services::database};
+    use crate::{
+        models::{AgentUpsertInput, TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput},
+        services::{database, tasks, workflows},
+    };
     use rusqlite::Connection;
 
     fn in_memory_connection() -> Connection {
@@ -656,6 +758,16 @@ mod tests {
         .id
     }
 
+    fn ensure_default_project(connection: &Connection) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+    }
+
     #[test]
     fn ensures_runtime_state_once_per_agent() {
         let mut connection = in_memory_connection();
@@ -664,6 +776,81 @@ mod tests {
         let second = ensure_agent_runtime_state(&connection, &agent_id).expect("runtime state");
         assert_eq!(first.agent_id, second.agent_id);
         assert_eq!(first.status, RUNTIME_STATUS_IDLE);
+    }
+
+    #[test]
+    fn rejects_invalid_task_lane_agent_work() {
+        let mut connection = in_memory_connection();
+        ensure_default_project(&connection);
+        let agent_id = create_agent(&mut connection);
+        let agent = agents::get_agent(&connection, &agent_id).expect("agent should load");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Agent Queue Guard Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-agent-guard".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Guard invalid agent queueing".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-agent-guard".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "UPDATE tasks SET current_lane_id = 'lane-other', updated_at = ?2 WHERE id = ?1",
+                params![task.id.as_str(), now_iso()],
+            )
+            .expect("task lane should update");
+
+        let error = enqueue_agent_work(
+            &connection,
+            AgentQueueEntryInput {
+                agent_id: agent_id.clone(),
+                source_type: "workflow_lane".into(),
+                source_task_id: Some(task.id.clone()),
+                source_workflow_id: Some(workflow.id.clone()),
+                source_lane_id: Some("lane-agent-guard".into()),
+                delivery_mode: "prompt".into(),
+                title: "Invalid agent lane work".into(),
+                message: "This should not queue.".into(),
+            },
+        )
+        .expect_err("invalid task lane work should be rejected");
+        assert!(error.contains("no longer valid"));
     }
 
     #[test]
@@ -699,7 +886,8 @@ mod tests {
         )
         .expect("second queue entry");
 
-        let entries = list_agent_queue_entries(&connection, Some(&agent_id), false).expect("queue entries");
+        let entries =
+            list_agent_queue_entries(&connection, Some(&agent_id), false).expect("queue entries");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "First");
         assert_eq!(entries[1].title, "Second");
@@ -756,8 +944,14 @@ mod tests {
         let project_b = get_agent_operations_for_project(&connection, "project-b", &agent_id)
             .expect("project b operations");
 
-        assert_eq!(project_a.runtime_state.main_session_id.as_deref(), Some("session-project-a"));
-        assert_eq!(project_b.runtime_state.main_session_id.as_deref(), Some("session-project-b"));
+        assert_eq!(
+            project_a.runtime_state.main_session_id.as_deref(),
+            Some("session-project-a")
+        );
+        assert_eq!(
+            project_b.runtime_state.main_session_id.as_deref(),
+            Some("session-project-b")
+        );
         assert_eq!(project_a.queue_entries.len(), 1);
         assert!(project_b.queue_entries.is_empty());
     }
@@ -811,11 +1005,14 @@ mod tests {
         )
         .expect("queued entry");
 
-        let deleted = delete_agent_queue_entry(&connection, &queued.id).expect("queued entry should delete");
+        let deleted =
+            delete_agent_queue_entry(&connection, &queued.id).expect("queued entry should delete");
         assert_eq!(deleted.id, queued.id);
-        assert!(list_agent_queue_entries(&connection, Some(&agent_id), false)
-            .expect("queue entries should load")
-            .is_empty());
+        assert!(
+            list_agent_queue_entries(&connection, Some(&agent_id), false)
+                .expect("queue entries should load")
+                .is_empty()
+        );
 
         let dispatched = enqueue_agent_work(
             &connection,
@@ -831,9 +1028,10 @@ mod tests {
             },
         )
         .expect("dispatched seed entry");
-        let _ = mark_agent_queue_entry_dispatched(&connection, &dispatched.id, "session-1", "run-1")
-            .expect("dispatch should succeed")
-            .expect("entry should dispatch");
+        let _ =
+            mark_agent_queue_entry_dispatched(&connection, &dispatched.id, "session-1", "run-1")
+                .expect("dispatch should succeed")
+                .expect("entry should dispatch");
 
         let error = delete_agent_queue_entry(&connection, &dispatched.id)
             .expect_err("dispatched entry should not be deletable");

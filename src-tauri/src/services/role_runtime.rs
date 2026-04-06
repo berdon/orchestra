@@ -7,7 +7,7 @@ use crate::{
         RoleDefinition, RoleInstance, RoleInstanceInput, RoleOperationsDetail,
         RoleOperationsSnapshot, RoleQueueEntry, RoleQueueEntryInput, RoleSummary,
     },
-    services::roles,
+    services::{roles, task_runtime},
 };
 
 const QUEUE_STATUS_QUEUED: &str = "queued";
@@ -137,6 +137,20 @@ pub fn enqueue_role_work(
 ) -> Result<RoleQueueEntry, String> {
     let normalized = normalize_role_queue_entry_input(input)?;
     ensure_role_is_assignable(connection, &normalized.role_id)?;
+
+    if normalized.source_type == "workflow_lane"
+        && !queue_entry_source_is_valid(
+            connection,
+            normalized.source_task_id.as_deref(),
+            normalized.source_workflow_id.as_deref(),
+            normalized.source_lane_id.as_deref(),
+        )?
+    {
+        return Err(format!(
+            "Task/lane source for role work is no longer valid: task={:?} workflow={:?} lane={:?}",
+            normalized.source_task_id, normalized.source_workflow_id, normalized.source_lane_id
+        ));
+    }
 
     if normalized.source_type == "workflow_lane" {
         if let (Some(task_id), Some(lane_id)) = (
@@ -360,6 +374,62 @@ pub fn cancel_duplicate_open_workflow_lane_queue_entries(
     }
 
     Ok(duplicate_ids)
+}
+
+pub fn delete_role_queue_entry(
+    connection: &Connection,
+    queue_entry_id: &str,
+) -> Result<RoleQueueEntry, String> {
+    let entry = get_role_queue_entry(connection, queue_entry_id)?;
+    if entry.status != QUEUE_STATUS_QUEUED {
+        return Err(format!(
+            "Role queue entry {queue_entry_id} is {} and cannot be deleted unless it is queued",
+            entry.status
+        ));
+    }
+
+    let deleted = connection
+        .execute(
+            "DELETE FROM role_queue_entries WHERE id = ?1 AND status = 'queued'",
+            params![queue_entry_id],
+        )
+        .map_err(|error| format!("Unable to delete role queue entry {queue_entry_id}: {error}"))?;
+    if deleted == 0 {
+        return Err(format!(
+            "Role queue entry {queue_entry_id} could not be deleted"
+        ));
+    }
+
+    Ok(entry)
+}
+
+pub fn queue_entry_source_is_valid(
+    connection: &Connection,
+    source_task_id: Option<&str>,
+    source_workflow_id: Option<&str>,
+    source_lane_id: Option<&str>,
+) -> Result<bool, String> {
+    let (Some(task_id), Some(lane_id)) = (source_task_id, source_lane_id) else {
+        return Ok(true);
+    };
+
+    task_runtime::task_lane_queue_source_is_valid(connection, task_id, source_workflow_id, lane_id)
+}
+
+pub fn queue_entry_is_valid(
+    connection: &Connection,
+    entry: &RoleQueueEntry,
+) -> Result<bool, String> {
+    if entry.source_type != "workflow_lane" {
+        return Ok(true);
+    }
+
+    queue_entry_source_is_valid(
+        connection,
+        entry.source_task_id.as_deref(),
+        entry.source_workflow_id.as_deref(),
+        entry.source_lane_id.as_deref(),
+    )
 }
 
 pub fn list_role_instances(
@@ -726,7 +796,10 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{database::initialize_database_at, roles};
+    use crate::{
+        models::{TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput},
+        services::{database::initialize_database_at, roles, tasks, workflows},
+    };
     use std::{
         env,
         path::PathBuf,
@@ -770,6 +843,16 @@ mod tests {
         .expect("role should create")
     }
 
+    fn ensure_default_project(connection: &Connection) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+    }
+
     #[test]
     fn enqueues_runtime_work_and_lists_queue_entries() {
         let mut connection = open_test_connection("role-runtime-queue");
@@ -800,18 +883,138 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_task_lane_role_work() {
+        let mut connection = open_test_connection("role-runtime-invalid-task-lane");
+        ensure_default_project(&connection);
+        let role = create_role(&mut connection, "Reviewer", 2);
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Role Queue Guard Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-role-guard".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Guard invalid lane queueing".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-role-guard".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "UPDATE tasks SET current_lane_id = 'lane-other', updated_at = ?2 WHERE id = ?1",
+                params![task.id.as_str(), now_iso()],
+            )
+            .expect("task lane should update");
+
+        let error = enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "workflow_lane".into(),
+                source_task_id: Some(task.id.clone()),
+                source_workflow_id: Some(workflow.id.clone()),
+                source_lane_id: Some("lane-role-guard".into()),
+                title: "Invalid role lane work".into(),
+                summary: None,
+                entry_prompt: None,
+            },
+        )
+        .expect_err("invalid task lane work should be rejected");
+        assert!(error.contains("no longer valid"));
+    }
+
+    #[test]
     fn reuses_existing_workflow_lane_queue_entry_for_same_task_and_lane() {
         let mut connection = open_test_connection("role-runtime-dedup");
+        ensure_default_project(&connection);
         let role = create_role(&mut connection, "Reviewer", 2);
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Role Dedup Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-role-dedup".into()),
+                    key: "review".into(),
+                    name: "Review".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Deduplicate queue entries".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-role-dedup".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
 
         let first = enqueue_role_work(
             &mut connection,
             RoleQueueEntryInput {
                 role_id: role.id.clone(),
                 source_type: "workflow_lane".into(),
-                source_task_id: Some("task-1".into()),
-                source_workflow_id: Some("workflow-1".into()),
-                source_lane_id: Some("lane-1".into()),
+                source_task_id: Some(task.id.clone()),
+                source_workflow_id: Some(workflow.id.clone()),
+                source_lane_id: Some("lane-role-dedup".into()),
                 title: "ORC-1 · Review lane".into(),
                 summary: Some("First queue entry".into()),
                 entry_prompt: Some("Review the lane work.".into()),
@@ -824,9 +1027,9 @@ mod tests {
             RoleQueueEntryInput {
                 role_id: role.id.clone(),
                 source_type: "workflow_lane".into(),
-                source_task_id: Some("task-1".into()),
-                source_workflow_id: Some("workflow-1".into()),
-                source_lane_id: Some("lane-1".into()),
+                source_task_id: Some(task.id.clone()),
+                source_workflow_id: Some(workflow.id.clone()),
+                source_lane_id: Some("lane-role-dedup".into()),
                 title: "ORC-1 · Review lane".into(),
                 summary: Some("Second queue entry".into()),
                 entry_prompt: Some("Review the lane work again.".into()),
@@ -839,6 +1042,59 @@ mod tests {
             .expect("role queue should list");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, first.id);
+    }
+
+    #[test]
+    fn deletes_only_queued_role_queue_entries() {
+        let mut connection = open_test_connection("role-runtime-delete-queue");
+        let role = create_role(&mut connection, "Reviewer", 2);
+
+        let queued = enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                title: "Queued role work".into(),
+                summary: None,
+                entry_prompt: None,
+            },
+        )
+        .expect("queued entry should create");
+
+        let deleted = delete_role_queue_entry(&connection, &queued.id)
+            .expect("queued role entry should delete");
+        assert_eq!(deleted.id, queued.id);
+        assert!(list_role_queue_entries(&connection, Some(role.id.as_str()))
+            .expect("queue entries should list")
+            .is_empty());
+
+        let assigned = enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "manual".into(),
+                source_task_id: None,
+                source_workflow_id: None,
+                source_lane_id: None,
+                title: "Assigned role work".into(),
+                summary: None,
+                entry_prompt: None,
+            },
+        )
+        .expect("assigned seed entry should create");
+        connection
+            .execute(
+                "UPDATE role_queue_entries SET status = 'assigned', updated_at = ?2 WHERE id = ?1",
+                params![assigned.id.as_str(), now_iso()],
+            )
+            .expect("assigned state should update");
+
+        let error = delete_role_queue_entry(&connection, &assigned.id)
+            .expect_err("assigned role entry should not be deletable");
+        assert!(error.contains("cannot be deleted unless it is queued"));
     }
 
     #[test]
