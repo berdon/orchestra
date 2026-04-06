@@ -204,6 +204,166 @@ test("agents page deletes queued work items from an agent queue", async ({ page 
   expect(storedQueue).toHaveLength(0);
 });
 
+test("agents page deletes queued work items from a role queue", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const now = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.roles",
+      JSON.stringify([
+        {
+          id: "role-delete-queue",
+          slug: "queue-cleaner-role",
+          name: "Queue Cleaner Role",
+          description: "Role used to verify queued work deletion.",
+          provider: null,
+          model: null,
+          thinkingLevel: "medium",
+          capacity: 1,
+          policyIds: [],
+          directPermissions: [],
+          archived: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.role-queue",
+      JSON.stringify([
+        {
+          id: "role-queue-delete-me",
+          roleId: "role-delete-queue",
+          status: "queued",
+          sourceType: "manual",
+          sourceTaskId: null,
+          sourceWorkflowId: null,
+          sourceLaneId: null,
+          title: "Queued role cleanup item",
+          summary: "Remove this queued role work item.",
+          entryPrompt: "Delete me.",
+          assignedInstanceId: null,
+          createdAt: now,
+          updatedAt: now,
+          startedAt: null,
+          completedAt: null,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Queue Cleaner Role/i }).click();
+  await page.locator('[data-role="role-work-filter-queued"]').click();
+  await expect(page.locator(".workflow-lane-card")).toContainText("Queued role cleanup item");
+  await page.locator('[data-role="delete-role-queue-entry-role-queue-delete-me"]').click();
+  await expect(page.locator(".workflow-lane-card")).toHaveCount(0);
+
+  const storedQueue = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.role-queue") ?? "[]"));
+  expect(storedQueue).toHaveLength(0);
+});
+
+test("agents page can cancel active agent workflow work without requeueing", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-agent-cancel",
+          slug: "agent-cancel-flow",
+          name: "Agent Cancel Flow",
+          description: "Single agent-owned lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent-cancel",
+              key: "agent",
+              name: "Agent",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Cancel active agent work");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent-cancel");
+  await page.locator('[data-role="publish-task"]').click();
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+  await expect(page.locator(".workflow-lane-card")).toContainText("Cancel active agent work");
+  await page.locator('[data-role^="cancel-agent-work-item-"]').click();
+  await expect(page.getByText("No active work right now.")).toBeVisible();
+});
+
+test("agents page can cancel and requeue active agent workflow work", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-agent-requeue",
+          slug: "agent-requeue-flow",
+          name: "Agent Requeue Flow",
+          description: "Single agent-owned lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent-requeue",
+              key: "agent",
+              name: "Agent",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Requeue active agent work");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent-requeue");
+  await page.locator('[data-role="publish-task"]').click();
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Data/i }).click();
+  await expect(page.locator(".workflow-lane-card")).toContainText("Requeue active agent work");
+  await page.locator('[data-role^="requeue-agent-work-item-"]').click();
+  await expect(page.locator(".workflow-lane-card")).toContainText("Requeue active agent work");
+});
+
 test("agents page shows project-scoped agent runtime state from dispatched task work", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

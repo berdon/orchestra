@@ -60,3 +60,32 @@ pub fn enqueue_role_work(
     );
     Ok(queue_entry)
 }
+
+#[tauri::command]
+pub fn delete_role_queue_entry(
+    state: State<'_, AppState>,
+    queue_entry_id: String,
+    authorization: Option<AuthorizationContext>,
+) -> Result<RoleQueueEntry, String> {
+    let connection = database::open_connection()?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "roles.enqueue",
+    )?;
+    let queue_entry = role_runtime::delete_role_queue_entry(&connection, &queue_entry_id)?;
+    state.log(
+        "info",
+        "role.queue.updated",
+        &format!("Deleted queued runtime work {}", queue_entry.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "delete_role_queue_entry",
+        authorization.as_ref(),
+        Some("roles.enqueue"),
+        &queue_entry.id,
+        "success",
+    );
+    Ok(queue_entry)
+}

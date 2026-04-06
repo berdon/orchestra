@@ -10,6 +10,8 @@ interface RoleOperationsDetailProps {
   busy?: boolean;
   onDispatch: () => Promise<void>;
   onEnqueue: (input: { title: string; summary: string; entryPrompt: string }) => Promise<void>;
+  onDeleteQueuedEntry: (entry: RoleOperationsDetail["queueEntries"][number]) => Promise<void>;
+  onCancelActiveEntry: (entry: RoleOperationsDetail["queueEntries"][number], requeue: boolean) => Promise<void>;
   onRelease: (instanceId: string, outcome: "success" | "failure" | "canceled") => Promise<void>;
   onResetAssignments: () => Promise<void>;
   onDispose: (instanceId: string) => Promise<void>;
@@ -28,7 +30,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRelease, onResetAssignments, onDispose }: RoleOperationsDetailProps) {
+export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onDeleteQueuedEntry, onCancelActiveEntry, onRelease, onResetAssignments, onDispose }: RoleOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<RoleWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -135,6 +137,43 @@ export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRe
                 <span>Created: {formatDateTime(entry.createdAt)}</span>
                 <span>Started: {formatDateTime(entry.startedAt)}</span>
               </div>
+
+              {entry.status === "queued" ? (
+                <div className="action-cluster">
+                  <button
+                    className="secondary-button secondary-button--danger"
+                    data-role={`delete-role-queue-entry-${entry.id}`}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onDeleteQueuedEntry(entry)}
+                  >
+                    Delete queued item
+                  </button>
+                </div>
+              ) : null}
+
+              {entry.status === "assigned" ? (
+                <div className="action-cluster">
+                  <button
+                    className="secondary-button"
+                    data-role={`requeue-role-work-item-${entry.id}`}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onCancelActiveEntry(entry, true)}
+                  >
+                    Cancel + requeue
+                  </button>
+                  <button
+                    className="secondary-button secondary-button--danger"
+                    data-role={`cancel-role-work-item-${entry.id}`}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onCancelActiveEntry(entry, false)}
+                  >
+                    Cancel item
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
         </div>

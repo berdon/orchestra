@@ -43,7 +43,9 @@ use commands::{
     role_dispatch::{
         dispatch_role_queue, dispose_role_instance, release_role_instance, reset_role_assignments,
     },
-    role_runtime::{enqueue_role_work, get_role_operations, list_role_operations},
+    role_runtime::{
+        delete_role_queue_entry, enqueue_role_work, get_role_operations, list_role_operations,
+    },
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
         create_session, delete_session, get_session_model_state, get_session_record, list_sessions,
@@ -261,6 +263,7 @@ pub fn run() {
             list_role_operations,
             get_role_operations,
             enqueue_role_work,
+            delete_role_queue_entry,
             dispatch_role_queue,
             release_role_instance,
             reset_role_assignments,

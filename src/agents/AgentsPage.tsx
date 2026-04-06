@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { deleteAgentQueueEntry, getAgentOperations, listAgentOperations } from "../lib/agents";
 import {
+  deleteRoleQueueEntry,
   dispatchRoleQueue,
   disposeRoleInstance,
   enqueueRoleWork,
@@ -10,6 +11,7 @@ import {
   releaseRoleInstance,
   resetRoleAssignments,
 } from "../lib/roleRuntime";
+import { dispatchTaskLane, resetTaskRuntime, stopSessionRuntime } from "../lib/tauri";
 import { AgentOperationsDetail } from "./AgentOperationsDetail";
 import { RoleOperationsDetail } from "./RoleOperationsDetail";
 import type {
@@ -165,6 +167,13 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
     }
   }
 
+  async function stopSessionIfPresent(sessionId?: string | null) {
+    if (!sessionId) {
+      return;
+    }
+    await stopSessionRuntime(sessionId);
+  }
+
   return (
     <section className="workforce-shell">
       <aside className="workforce-nav-panel">
@@ -263,6 +272,46 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
                 await refreshSelectedRole(selectedRoleDetail.role.id);
               })
             }
+            onDeleteQueuedEntry={(entry) =>
+              runBusyAction(async () => {
+                if (entry.sourceType === "workflow_lane" && entry.sourceTaskId) {
+                  await resetTaskRuntime(entry.sourceTaskId);
+                } else {
+                  await deleteRoleQueueEntry(entry.id);
+                }
+                await refreshSelectedRole(selectedRoleDetail.role.id);
+              })
+            }
+            onCancelActiveEntry={(entry, requeue) =>
+              runBusyAction(async () => {
+                if (entry.sourceType === "workflow_lane" && entry.sourceTaskId) {
+                  const sessionId = selectedRoleDetail.instances.find((instance) => instance.id === entry.assignedInstanceId)?.sessionId;
+                  await stopSessionIfPresent(sessionId);
+                  await resetTaskRuntime(entry.sourceTaskId);
+                  if (requeue) {
+                    await dispatchTaskLane(entry.sourceTaskId);
+                  }
+                } else {
+                  if (!entry.assignedInstanceId) {
+                    throw new Error("Active role work is missing an assigned instance.");
+                  }
+                  await releaseRoleInstance(entry.assignedInstanceId, "canceled");
+                  if (requeue) {
+                    await enqueueRoleWork({
+                      roleId: selectedRoleDetail.role.id,
+                      sourceType: entry.sourceType,
+                      sourceTaskId: entry.sourceTaskId ?? null,
+                      sourceWorkflowId: entry.sourceWorkflowId ?? null,
+                      sourceLaneId: entry.sourceLaneId ?? null,
+                      title: entry.title,
+                      summary: entry.summary ?? null,
+                      entryPrompt: entry.entryPrompt ?? null,
+                    });
+                  }
+                }
+                await refreshSelectedRole(selectedRoleDetail.role.id);
+              })
+            }
             onRelease={(instanceId, outcome) =>
               runBusyAction(async () => {
                 const detail = await releaseRoleInstance(instanceId, outcome, outcome === "failure" ? "Marked failed by operator." : undefined);
@@ -286,9 +335,26 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
           <AgentOperationsDetail
             busy={busy}
             detail={selectedAgentDetail}
-            onDeleteQueuedEntry={(queueEntryId) =>
+            onDeleteQueuedEntry={(entry) =>
               runBusyAction(async () => {
-                await deleteAgentQueueEntry(queueEntryId);
+                if (entry.sourceType === "workflow_lane" && entry.sourceTaskId) {
+                  await resetTaskRuntime(entry.sourceTaskId);
+                } else {
+                  await deleteAgentQueueEntry(entry.id);
+                }
+                await refreshSelectedAgent(selectedAgentDetail.agent.id);
+              })
+            }
+            onCancelActiveWorkflowEntry={(entry, requeue) =>
+              runBusyAction(async () => {
+                await stopSessionIfPresent(entry.sessionId ?? selectedAgentDetail.runtimeState.mainSessionId);
+                if (!entry.sourceTaskId) {
+                  throw new Error("Active workflow work is missing a task id.");
+                }
+                await resetTaskRuntime(entry.sourceTaskId);
+                if (requeue) {
+                  await dispatchTaskLane(entry.sourceTaskId);
+                }
                 await refreshSelectedAgent(selectedAgentDetail.agent.id);
               })
             }

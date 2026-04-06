@@ -58,6 +58,8 @@ const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
 const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
 const ROLE_STORAGE_KEY = "orchestra.mock.roles";
+const ROLE_QUEUE_STORAGE_KEY = "orchestra.mock.role-queue";
+const ROLE_INSTANCE_STORAGE_KEY = "orchestra.mock.role-instances";
 const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
 const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
@@ -382,6 +384,22 @@ function saveStoredMockAgentQueue(entries: Array<Record<string, unknown>>) {
 
 function getStoredMockRoles() {
   return getStoredValue<RoleSummary[]>(ROLE_STORAGE_KEY) ?? [];
+}
+
+function getStoredMockRoleQueue() {
+  return getStoredValue<Array<Record<string, unknown>>>(ROLE_QUEUE_STORAGE_KEY) ?? [];
+}
+
+function saveStoredMockRoleQueue(entries: Array<Record<string, unknown>>) {
+  setStoredValue(ROLE_QUEUE_STORAGE_KEY, entries);
+}
+
+function getStoredMockRoleInstances() {
+  return getStoredValue<Array<Record<string, unknown>>>(ROLE_INSTANCE_STORAGE_KEY) ?? [];
+}
+
+function saveStoredMockRoleInstances(instances: Array<Record<string, unknown>>) {
+  setStoredValue(ROLE_INSTANCE_STORAGE_KEY, instances);
 }
 
 function migrateMockWorkflowWorkerRefs(workflows: WorkflowDefinition[]) {
@@ -2689,11 +2707,62 @@ export async function manualTaskWhip(taskId: string): Promise<TaskDetail> {
 export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
+    const resetAt = nowIso();
+    const activeAssignment = task.activeLaneAssignment;
     const updated: TaskDetail = {
       ...task,
+      status: task.currentLaneId ? "ready" : task.status,
       activeLaneAssignment: null,
-      updatedAt: nowIso(),
+      updatedAt: resetAt,
     };
+
+    if (activeAssignment?.workerType === "agent") {
+      saveStoredMockAgentQueue(
+        getStoredMockAgentQueue().filter((entry) => entry.sourceTaskId !== taskId),
+      );
+      saveStoredMockAgentRuntimes(
+        getStoredMockAgentRuntimes().map((runtime) =>
+          runtime.agentId === activeAssignment.workerId && runtime.projectId === CURRENT_PROJECT_ID
+            ? {
+                ...runtime,
+                status: "idle",
+                currentQueueEntryId: null,
+                lastError: null,
+                updatedAt: resetAt,
+              }
+            : runtime,
+        ),
+      );
+    }
+
+    if (activeAssignment?.workerType === "role") {
+      saveStoredMockRoleQueue(
+        getStoredMockRoleQueue().map((entry) =>
+          entry.sourceTaskId === taskId && ["queued", "assigned"].includes(String(entry.status ?? ""))
+            ? {
+                ...entry,
+                status: "canceled",
+                assignedInstanceId: null,
+                completedAt: resetAt,
+                updatedAt: resetAt,
+              }
+            : entry,
+        ),
+      );
+      saveStoredMockRoleInstances(
+        getStoredMockRoleInstances().map((instance) =>
+          instance.id === activeAssignment.roleInstanceId
+            ? {
+                ...instance,
+                status: "idle",
+                currentQueueEntryId: null,
+                updatedAt: resetAt,
+              }
+            : instance,
+        ),
+      );
+    }
+
     saveMockTasks(ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)));
     emitMockTaskChange({ taskIds: [taskId], reason: "task.runtime.reset" });
     return getTask(taskId);
