@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -22,6 +23,7 @@ pub struct AppState {
     terminal_windows: Mutex<HashMap<String, String>>,
     terminal_sessions: Mutex<HashMap<String, Arc<AgentTerminalSession>>>,
     pub dispatcher_tick_active: Mutex<bool>,
+    pi_dispatch_block_reason: Mutex<Option<String>>,
     pub tool_bridge: Arc<ToolBridgeConfig>,
 }
 
@@ -61,6 +63,7 @@ impl AppState {
             terminal_windows: Mutex::new(HashMap::new()),
             terminal_sessions: Mutex::new(HashMap::new()),
             dispatcher_tick_active: Mutex::new(false),
+            pi_dispatch_block_reason: Mutex::new(None),
             tool_bridge,
         }
     }
@@ -222,6 +225,47 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access terminal session state".to_string())
             .map(|mut sessions| sessions.remove(session_id))
+    }
+
+    pub fn sync_pi_runtime_health(&self) -> Result<PathBuf, String> {
+        match crate::services::pi_sessions::resolve_pi_executable(None) {
+            Ok(path) => {
+                let was_blocked = self
+                    .pi_dispatch_block_reason
+                    .lock()
+                    .map_err(|_| "Unable to access PI dispatch block state".to_string())?
+                    .take()
+                    .is_some();
+                if was_blocked {
+                    self.log(
+                        "info",
+                        "pi.dispatch.unblocked",
+                        &format!(
+                            "PI executable is available again at {}. Dispatching re-enabled.",
+                            path.display()
+                        ),
+                    );
+                }
+                Ok(path)
+            }
+            Err(error) => {
+                let mut guard = self
+                    .pi_dispatch_block_reason
+                    .lock()
+                    .map_err(|_| "Unable to access PI dispatch block state".to_string())?;
+                let changed = guard.as_deref() != Some(error.as_str());
+                *guard = Some(error.clone());
+                drop(guard);
+                if changed {
+                    self.log(
+                        "error",
+                        "pi.dispatch.blocked",
+                        &format!("Dispatching disabled: {error}"),
+                    );
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn clear_session_tracking(&self, session_id: &str) -> Result<(), String> {

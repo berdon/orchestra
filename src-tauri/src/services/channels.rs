@@ -1336,8 +1336,16 @@ fn telegram_approve_task(
         &task_id,
     )?;
 
-    let auto_dispatches =
-        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?;
+    let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
+        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
+    } else {
+        state.log(
+            "warn",
+            "task.transition.auto_dispatch.blocked",
+            &format!("Skipped auto-dispatch after Telegram approval for task {} because PI is unavailable", task_id),
+        );
+        Vec::new()
+    };
     for outcome in &auto_dispatches {
         task_runtime::start_assignment_run(
             app.clone(),

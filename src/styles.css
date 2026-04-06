@@ -566,6 +566,14 @@ strong {
   font-size: 0.92rem;
 }
 
+.app-status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .session-debug-toggle {
   justify-self: start;
   border: 0;

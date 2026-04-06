@@ -103,6 +103,9 @@ pub async fn ensure_agent_session(
     agent_id: String,
     project_id: Option<String>,
 ) -> Result<SessionRecord, String> {
+    state
+        .sync_pi_runtime_health()
+        .map_err(|error| format!("Unable to open agent session because PI is unavailable: {error}"))?;
     let (context, resolved_project_id) = if let Some(project_id) = project_id {
         (
             crate::services::pi_sessions::session_context_for_project_id(&project_id)?,
@@ -152,6 +155,9 @@ pub async fn open_agent_session_terminal(
     agent_id: String,
     project_id: Option<String>,
 ) -> Result<SessionRecord, String> {
+    state
+        .sync_pi_runtime_health()
+        .map_err(|error| format!("Unable to open agent terminal because PI is unavailable: {error}"))?;
     let (context, resolved_project_id) = if let Some(project_id) = project_id {
         (
             crate::services::pi_sessions::session_context_for_project_id(&project_id)?,

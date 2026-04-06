@@ -20,6 +20,8 @@ export interface AppInfo {
   environment: "tauri" | "browser";
   backendStatus: "connected" | "mock";
   versionDisplay: string;
+  dispatchBlocked: boolean;
+  dispatchBlockedReason?: string | null;
 }
 
 export interface PiExecutableDiagnostic {

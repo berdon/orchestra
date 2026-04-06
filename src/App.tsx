@@ -799,6 +799,14 @@ export function App() {
     }
   }
 
+  async function loadAppInfo() {
+    try {
+      setAppInfo(await getAppInfo());
+    } catch (error) {
+      setSessionActionError(await reportClientError("ui.app.info", error, "Unable to load app info."));
+    }
+  }
+
   async function loadSessionPromptSettings() {
     if (!activeProject) {
       setSessionPromptSettings(null);
@@ -1301,7 +1309,7 @@ export function App() {
       });
     };
 
-    void getAppInfo().then(setAppInfo);
+    void loadAppInfo();
     void isCurrentLogsWindow().then(setIsLogsWindow);
     void isCurrentAgentTerminalWindow().then(setIsAgentTerminalWindow);
     void getCurrentAgentTerminalSessionId().then(setAgentTerminalSessionId);
@@ -1317,6 +1325,25 @@ export function App() {
     }
     setChatSessionId(null);
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (isDetachedWindow) {
+      return;
+    }
+
+    void loadAppInfo();
+    const intervalId = window.setInterval(() => {
+      void loadAppInfo();
+    }, 10000);
+    const refreshOnFocus = () => {
+      void loadAppInfo();
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [isDetachedWindow]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(supervisorQuickChatStorageKey(activeProjectId));
@@ -2102,7 +2129,7 @@ export function App() {
                 className="primary-button"
                 data-role="create-session"
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
                 onClick={() =>
                   void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null))
                 }
@@ -2135,6 +2162,17 @@ export function App() {
             </button>
           </div>
         </header>
+
+        {appInfo?.dispatchBlockedReason ? (
+          <div className="session-readonly-banner app-status-banner" data-role="dispatch-blocked-banner">
+            <div>
+              <strong>Dispatching disabled.</strong> {appInfo.dispatchBlockedReason}
+            </div>
+            <button className="secondary-button" type="button" data-role="retry-pi-health-check" onClick={() => void loadAppInfo()}>
+              Retry check
+            </button>
+          </div>
+        ) : null}
 
         {activePage === "settings" ? (
           settingsTab === "projects" ? (
