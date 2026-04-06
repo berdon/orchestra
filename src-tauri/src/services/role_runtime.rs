@@ -138,6 +138,29 @@ pub fn enqueue_role_work(
     let normalized = normalize_role_queue_entry_input(input)?;
     ensure_role_is_assignable(connection, &normalized.role_id)?;
 
+    if normalized.source_type == "workflow_lane" {
+        if let (Some(task_id), Some(lane_id)) = (
+            normalized.source_task_id.as_deref(),
+            normalized.source_lane_id.as_deref(),
+        ) {
+            if let Some(existing) = find_open_workflow_lane_queue_entry(
+                connection,
+                &normalized.role_id,
+                task_id,
+                lane_id,
+            )? {
+                cancel_duplicate_open_workflow_lane_queue_entries(
+                    connection,
+                    &normalized.role_id,
+                    task_id,
+                    lane_id,
+                    &existing.id,
+                )?;
+                return Ok(existing);
+            }
+        }
+    }
+
     let queue_entry_id = role_queue_entry_id();
     let now = now_iso();
     let tx = connection
@@ -219,6 +242,124 @@ pub fn get_role_queue_entry(
         .optional()
         .map_err(|error| format!("Unable to query role queue entry {queue_entry_id}: {error}"))?
         .ok_or_else(|| format!("Role queue entry {queue_entry_id} was not found"))
+}
+
+pub fn find_open_workflow_lane_queue_entry(
+    connection: &Connection,
+    role_id: &str,
+    task_id: &str,
+    lane_id: &str,
+) -> Result<Option<RoleQueueEntry>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                role_id,
+                status,
+                source_type,
+                source_task_id,
+                source_workflow_id,
+                source_lane_id,
+                title,
+                summary,
+                entry_prompt,
+                assigned_instance_id,
+                created_at,
+                updated_at,
+                started_at,
+                completed_at
+            FROM role_queue_entries
+            WHERE role_id = ?1
+              AND source_type = 'workflow_lane'
+              AND source_task_id = ?2
+              AND source_lane_id = ?3
+              AND status IN ('queued', 'assigned')
+            ORDER BY CASE status WHEN 'assigned' THEN 0 ELSE 1 END,
+                     created_at ASC,
+                     id ASC
+            LIMIT 1
+            "#,
+            params![role_id, task_id, lane_id],
+            read_role_queue_entry,
+        )
+        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to query open workflow-lane queue entry for role {role_id} task {task_id} lane {lane_id}: {error}"
+            )
+        })
+}
+
+pub fn cancel_duplicate_open_workflow_lane_queue_entries(
+    connection: &Connection,
+    role_id: &str,
+    task_id: &str,
+    lane_id: &str,
+    keep_queue_entry_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id
+            FROM role_queue_entries
+            WHERE role_id = ?1
+              AND source_type = 'workflow_lane'
+              AND source_task_id = ?2
+              AND source_lane_id = ?3
+              AND status IN ('queued', 'assigned')
+              AND id <> ?4
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to prepare duplicate workflow-lane queue query for role {role_id} task {task_id} lane {lane_id}: {error}"
+            )
+        })?;
+    let duplicate_ids = statement
+        .query_map(params![role_id, task_id, lane_id, keep_queue_entry_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|error| {
+            format!(
+                "Unable to query duplicate workflow-lane queue entries for role {role_id} task {task_id} lane {lane_id}: {error}"
+            )
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "Unable to read duplicate workflow-lane queue entries for role {role_id} task {task_id} lane {lane_id}: {error}"
+            )
+        })?;
+
+    if duplicate_ids.is_empty() {
+        return Ok(duplicate_ids);
+    }
+
+    let now = now_iso();
+    for duplicate_id in &duplicate_ids {
+        connection
+            .execute(
+                r#"
+                UPDATE role_queue_entries
+                SET status = 'canceled',
+                    assigned_instance_id = NULL,
+                    started_at = NULL,
+                    completed_at = ?2,
+                    updated_at = ?2
+                WHERE id = ?1 AND status IN ('queued', 'assigned')
+                "#,
+                params![duplicate_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to cancel duplicate workflow-lane queue entry {duplicate_id}: {error}"
+                )
+            })?;
+    }
+
+    Ok(duplicate_ids)
 }
 
 pub fn list_role_instances(
@@ -656,6 +797,48 @@ mod tests {
             .expect("role queue should list");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, entry.id);
+    }
+
+    #[test]
+    fn reuses_existing_workflow_lane_queue_entry_for_same_task_and_lane() {
+        let mut connection = open_test_connection("role-runtime-dedup");
+        let role = create_role(&mut connection, "Reviewer", 2);
+
+        let first = enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "workflow_lane".into(),
+                source_task_id: Some("task-1".into()),
+                source_workflow_id: Some("workflow-1".into()),
+                source_lane_id: Some("lane-1".into()),
+                title: "ORC-1 · Review lane".into(),
+                summary: Some("First queue entry".into()),
+                entry_prompt: Some("Review the lane work.".into()),
+            },
+        )
+        .expect("first workflow-lane queue entry should create");
+
+        let second = enqueue_role_work(
+            &mut connection,
+            RoleQueueEntryInput {
+                role_id: role.id.clone(),
+                source_type: "workflow_lane".into(),
+                source_task_id: Some("task-1".into()),
+                source_workflow_id: Some("workflow-1".into()),
+                source_lane_id: Some("lane-1".into()),
+                title: "ORC-1 · Review lane".into(),
+                summary: Some("Second queue entry".into()),
+                entry_prompt: Some("Review the lane work again.".into()),
+            },
+        )
+        .expect("duplicate workflow-lane queue entry should reuse existing row");
+
+        assert_eq!(first.id, second.id);
+        let entries = list_role_queue_entries(&connection, Some(role.id.as_str()))
+            .expect("role queue should list");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, first.id);
     }
 
     #[test]

@@ -121,6 +121,128 @@ pub fn get_current_lane_assignment(
         .map_err(|error| format!("Unable to query current assignment for task {task_id}: {error}"))
 }
 
+pub fn find_open_assignment_for_task_lane(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: &str,
+) -> Result<Option<TaskLaneAssignment>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                task_id,
+                workflow_id,
+                lane_id,
+                worker_type,
+                worker_id,
+                status,
+                session_id,
+                runtime_cwd,
+                role_queue_entry_id,
+                role_instance_id,
+                prompt,
+                pending_outcome,
+                completion_notes,
+                whip_count,
+                last_whip_at,
+                started_at,
+                completed_at,
+                created_at,
+                updated_at
+            FROM task_lane_assignments
+            WHERE task_id = ?1
+              AND lane_id = ?2
+              AND status IN ('queued', 'active', 'awaiting_user_approval')
+            ORDER BY CASE status
+                     WHEN 'active' THEN 0
+                     WHEN 'awaiting_user_approval' THEN 1
+                     ELSE 2
+                     END,
+                     created_at ASC,
+                     id ASC
+            LIMIT 1
+            "#,
+            params![task_id, lane_id],
+            read_assignment,
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to query open assignment for task {task_id} lane {lane_id}: {error}")
+        })
+}
+
+pub fn cancel_duplicate_open_assignments_for_task_lane(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: &str,
+    keep_assignment_id: &str,
+    reason: &str,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id
+            FROM task_lane_assignments
+            WHERE task_id = ?1
+              AND lane_id = ?2
+              AND status IN ('queued', 'active', 'awaiting_user_approval')
+              AND id <> ?3
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to prepare duplicate assignment query for task {task_id} lane {lane_id}: {error}"
+            )
+        })?;
+    let duplicate_ids = statement
+        .query_map(params![task_id, lane_id, keep_assignment_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|error| {
+            format!(
+                "Unable to query duplicate assignments for task {task_id} lane {lane_id}: {error}"
+            )
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "Unable to read duplicate assignments for task {task_id} lane {lane_id}: {error}"
+            )
+        })?;
+
+    if duplicate_ids.is_empty() {
+        return Ok(duplicate_ids);
+    }
+
+    let now = now_iso();
+    for duplicate_id in &duplicate_ids {
+        connection
+            .execute(
+                r#"
+                UPDATE task_lane_assignments
+                SET status = 'canceled',
+                    session_id = NULL,
+                    runtime_cwd = NULL,
+                    role_instance_id = NULL,
+                    pending_outcome = NULL,
+                    completion_notes = ?2,
+                    completed_at = ?3,
+                    updated_at = ?3
+                WHERE id = ?1
+                  AND status IN ('queued', 'active', 'awaiting_user_approval')
+                "#,
+                params![duplicate_id, reason, now],
+            )
+            .map_err(|error| {
+                format!("Unable to cancel duplicate assignment {duplicate_id}: {error}")
+            })?;
+    }
+
+    Ok(duplicate_ids)
+}
+
 pub fn get_assignment_by_id(
     connection: &Connection,
     assignment_id: &str,
@@ -755,10 +877,6 @@ pub fn dispatch_task_lane(
     session_dir: &Path,
     task_id: &str,
 ) -> Result<TaskLaneAssignment, String> {
-    if let Some(active) = get_active_lane_assignment(connection, task_id)? {
-        return Ok(active);
-    }
-
     let task = tasks::get_task_context(connection, task_id)?;
     let workflow = load_task_workflow(connection, &task)?;
     let lane = resolve_task_lane(&workflow, &task)?;
@@ -781,6 +899,17 @@ pub fn dispatch_task_lane(
             "Task {} is currently in user-owned lane {} and cannot be dispatched to runtime",
             task.id, lane.name
         ));
+    }
+
+    if let Some(existing) = find_open_assignment_for_task_lane(connection, task_id, &lane.id)? {
+        cancel_duplicate_open_assignments_for_task_lane(
+            connection,
+            task_id,
+            &lane.id,
+            &existing.id,
+            "Removed duplicate open task lane assignment",
+        )?;
+        return Ok(existing);
     }
 
     let assignment_id = format!("task-assignment-{}", Uuid::new_v4().simple());
