@@ -60,7 +60,7 @@ export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onRe
               className="secondary-button secondary-button--danger"
               data-role="reset-role-assignments"
               type="button"
-              disabled={busy || !detail.instances.some((instance) => instance.currentQueueEntryId)}
+              disabled={busy || detail.assignedCount === 0 && detail.activeInstanceCount === 0}
               onClick={() => void onResetAssignments()}
             >
               Reset assignments
