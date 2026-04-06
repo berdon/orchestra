@@ -243,6 +243,8 @@ export async function resetRoleAssignments(roleId: string): Promise<RoleOperatio
             ...entry,
             status: "canceled",
             currentQueueEntryId: null,
+            sessionId: null,
+            worktreePath: null,
             lastError: "Role assignments reset by operator.",
             updatedAt: resetAt,
           }

@@ -62,7 +62,7 @@ pub fn reset_role_assignments(
     role_id: String,
 ) -> Result<RoleOperationsDetail, String> {
     let mut connection = database::open_connection()?;
-    let (detail, task_ids, session_ids) =
+    let (detail, task_ids, session_contexts) =
         role_dispatch::reset_role_assignments(&mut connection, &role_id)?;
     state.log(
         "info",
@@ -72,13 +72,15 @@ pub fn reset_role_assignments(
     if !task_ids.is_empty() {
         let _ = app_events::emit_task_change(&app, "role.assignments.reset", task_ids);
     }
-    if !session_ids.is_empty() {
+    if !session_contexts.is_empty() {
+        let session_ids = session_contexts
+            .iter()
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
         let _ =
             app_events::emit_session_change(&app, "role.assignments.reset", session_ids.clone());
-        for session_id in session_ids {
-            if let Ok(context) = pi_sessions::find_session_context_for_session(&session_id) {
-                let _ = pi_sessions::delete_session_file(&context.session_dir, &session_id);
-            }
+        for (session_id, session_dir) in session_contexts {
+            let _ = pi_sessions::delete_session_file(&session_dir, &session_id);
             live_sessions::schedule_session_retirement(
                 app.clone(),
                 session_id,

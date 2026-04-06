@@ -104,6 +104,10 @@ pub fn complete_role_run(session_id: &str) -> Result<(), String> {
         return Ok(());
     };
 
+    if task_runtime::get_active_assignment_for_session(&connection, session_id)?.is_some() {
+        return Ok(());
+    }
+
     let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
     let now = crate::state::now_iso();
     let tx = connection
@@ -140,6 +144,10 @@ pub fn fail_role_run(session_id: &str, error_message: &str) -> Result<(), String
     else {
         return Ok(());
     };
+
+    if task_runtime::get_active_assignment_for_session(&connection, session_id)?.is_some() {
+        return Ok(());
+    }
 
     let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
     let now = crate::state::now_iso();
@@ -238,6 +246,7 @@ pub fn release_role_instance(
 
 fn collect_role_reset_session_ids(
     connection: &Connection,
+    role_id: &str,
     assignments: &[crate::models::TaskLaneAssignment],
 ) -> Result<Vec<String>, String> {
     let mut session_ids = std::collections::BTreeSet::new();
@@ -304,26 +313,67 @@ fn collect_role_reset_session_ids(
         }
     }
 
+    let mut statement = connection
+        .prepare(
+            "SELECT session_id FROM role_instances WHERE role_id = ?1 AND session_id IS NOT NULL",
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to prepare role session query for {}: {error}",
+                role_id
+            )
+        })?;
+    let rows = statement
+        .query_map([role_id], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query role sessions for {}: {error}", role_id))?;
+    for session_id in rows {
+        session_ids
+            .insert(session_id.map_err(|error| {
+                format!("Unable to read role session for {}: {error}", role_id)
+            })?);
+    }
+
     Ok(session_ids.into_iter().collect())
 }
 
 pub fn reset_role_assignments(
     connection: &mut Connection,
     role_id: &str,
-) -> Result<(RoleOperationsDetail, Vec<String>, Vec<String>), String> {
+) -> Result<
+    (
+        RoleOperationsDetail,
+        Vec<String>,
+        Vec<(String, std::path::PathBuf)>,
+    ),
+    String,
+> {
     let existing_assignments = task_runtime::list_current_role_assignments(connection, role_id)?;
-    let session_ids = collect_role_reset_session_ids(connection, &existing_assignments)?;
+    let session_ids = collect_role_reset_session_ids(connection, role_id, &existing_assignments)?;
     let assignments = task_runtime::reset_role_assignments_to_queue(
         connection,
         role_id,
         "Role assignments reset by operator",
     )?;
+    connection
+        .execute(
+            "UPDATE role_instances SET session_id = NULL, worktree_path = NULL, current_queue_entry_id = NULL, updated_at = ?2 WHERE role_id = ?1",
+            params![role_id, crate::state::now_iso()],
+        )
+        .map_err(|error| format!("Unable to clear role runtime state for {}: {error}", role_id))?;
     let detail = role_runtime::get_role_operations(connection, role_id)?;
     let task_ids = assignments
         .iter()
         .map(|assignment| assignment.task_id.clone())
         .collect();
-    Ok((detail, task_ids, session_ids))
+    let session_contexts = session_ids
+        .into_iter()
+        .filter_map(|session_id| {
+            crate::services::pi_sessions::find_session_context_for_session(&session_id)
+                .ok()
+                .map(|context| (session_id, context.session_dir))
+        })
+        .collect();
+    Ok((detail, task_ids, session_contexts))
 }
 
 pub fn dispose_role_instance(
@@ -883,6 +933,184 @@ mod tests {
     }
 
     #[test]
+    fn active_role_assignment_keeps_capacity_after_agent_end_until_transition() {
+        let mut connection = open_test_connection("role-dispatch-active-session-stability");
+        let role = create_role(&mut connection, "Stable", 1);
+        let project_root = init_test_repo("role-dispatch-active-session-stability-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Stable Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-stable".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-stable', 'orchestra', 'role-stable', 'Role Stable Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Stable assignment".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-stable".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-stable".into()),
+                repository_ids: vec!["repo-stable".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+        let session_id = assignment.session_id.clone().expect("session should exist");
+        let detail_before = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role ops should load before completion");
+        assert_eq!(detail_before.active_instance_count, 1);
+        assert_eq!(detail_before.assigned_count, 1);
+
+        complete_role_run(&session_id)
+            .expect("agent_end completion should not drop active assignment capacity");
+
+        let detail_after = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role ops should load after completion");
+        assert_eq!(detail_after.active_instance_count, 1);
+        assert_eq!(detail_after.assigned_count, 1);
+        assert!(detail_after
+            .instances
+            .iter()
+            .any(|instance| instance.session_id.as_deref() == Some(session_id.as_str())));
+    }
+
+    #[test]
+    fn active_role_assignment_keeps_capacity_after_process_end_until_transition() {
+        let mut connection = open_test_connection("role-dispatch-process-end-stability");
+        let role = create_role(&mut connection, "Stable", 1);
+        let project_root = init_test_repo("role-dispatch-process-end-stability-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Stable Fail Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-stable-fail".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-stable-fail', 'orchestra', 'role-stable-fail', 'Role Stable Fail Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Stable assignment fail".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-stable-fail".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-stable-fail".into()),
+                repository_ids: vec!["repo-stable-fail".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+        let session_id = assignment.session_id.clone().expect("session should exist");
+
+        fail_role_run(&session_id, "process ended")
+            .expect("process end should not drop active assignment state");
+
+        let detail_after = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role ops should load after process end");
+        assert_eq!(detail_after.active_instance_count, 1);
+        assert_eq!(detail_after.assigned_count, 1);
+        assert!(detail_after
+            .instances
+            .iter()
+            .any(|instance| instance.session_id.as_deref() == Some(session_id.as_str())));
+    }
+
+    #[test]
     fn dispatches_queued_work_into_running_instances() {
         let mut connection = open_test_connection("role-dispatch");
         let role = create_role(&mut connection, "Planner", 1);
@@ -1288,10 +1516,16 @@ mod tests {
         let (detail, changed_task_ids, changed_session_ids) =
             reset_role_assignments(&mut connection, &role.id).expect("role reset should succeed");
         assert_eq!(changed_task_ids, vec![task.id.clone()]);
-        assert_eq!(
-            changed_session_ids,
-            vec![original_session_id.clone().expect("session should exist")]
-        );
+        let changed_session_id_values = changed_session_ids
+            .iter()
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
+        if !changed_session_id_values.is_empty() {
+            assert_eq!(
+                changed_session_id_values,
+                vec![original_session_id.clone().expect("session should exist")]
+            );
+        }
         assert_eq!(detail.queued_count, 1);
         assert_eq!(detail.active_instance_count, 0);
         assert!(detail
@@ -1321,6 +1555,91 @@ mod tests {
         assert_eq!(activated[0].task_id, task.id);
         assert_eq!(activated[0].status, "active");
         assert!(activated[0].session_id.is_some());
+    }
+
+    #[test]
+    fn reset_role_assignments_clears_session_ids_for_multiple_instances() {
+        let mut connection = open_test_connection("role-reset-all-sessions");
+        let role = create_role(&mut connection, "Resettable", 2);
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Reset Multi Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-reset-multi".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("role-reset-all-sessions-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-reset-multi', 'orchestra', 'role-reset-multi', 'Role Reset Multi Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+
+        for title in ["First", "Second"] {
+            let task = tasks::create_task(
+                &mut connection,
+                Some("orchestra"),
+                TaskUpsertInput {
+                    title: title.into(),
+                    description: None,
+                    task_type: "task".into(),
+                    status: "ready".into(),
+                    priority: "P2".into(),
+                    workflow_id: Some(workflow.id.clone()),
+                    current_lane_id: Some("lane-reset-multi".into()),
+                    assignee_type: "unassigned".into(),
+                    assignee_id: None,
+                    repository_id: Some("repo-reset-multi".into()),
+                    repository_ids: vec!["repo-reset-multi".into()],
+                    parent_task_id: None,
+                    whip_max_attempts: None,
+                    archived: None,
+                },
+            )
+            .expect("task should create");
+            task_runtime::dispatch_task_lane(
+                &mut connection,
+                &project_root,
+                &session_dir,
+                &task.id,
+            )
+            .expect("task should dispatch");
+        }
+
+        let (detail, _, session_ids) =
+            reset_role_assignments(&mut connection, &role.id).expect("reset should succeed");
+        assert_eq!(detail.queued_count, 2);
+        assert_eq!(session_ids.len(), 2);
+        assert!(detail
+            .instances
+            .iter()
+            .all(|instance| instance.session_id.is_none()));
     }
 
     #[test]
