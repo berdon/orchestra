@@ -354,12 +354,54 @@ pub fn reset_role_assignments(
         role_id,
         "Role assignments reset by operator",
     )?;
+
+    let now = crate::state::now_iso();
     connection
         .execute(
-            "UPDATE role_instances SET session_id = NULL, worktree_path = NULL, current_queue_entry_id = NULL, updated_at = ?2 WHERE role_id = ?1",
-            params![role_id, crate::state::now_iso()],
+            r#"
+            UPDATE role_queue_entries
+            SET status = 'queued',
+                assigned_instance_id = NULL,
+                started_at = NULL,
+                completed_at = NULL,
+                updated_at = ?2
+            WHERE role_id = ?1 AND status = 'assigned'
+            "#,
+            params![role_id, now],
         )
-        .map_err(|error| format!("Unable to clear role runtime state for {}: {error}", role_id))?;
+        .map_err(|error| {
+            format!(
+                "Unable to clear assigned role queue entries for {}: {error}",
+                role_id
+            )
+        })?;
+
+    connection
+        .execute(
+            r#"
+            UPDATE role_instances
+            SET status = CASE
+                    WHEN status IN ('completed', 'failed', 'canceled') THEN status
+                    ELSE 'canceled'
+                END,
+                current_queue_entry_id = NULL,
+                session_id = NULL,
+                worktree_path = NULL,
+                last_error = CASE
+                    WHEN status IN ('completed', 'failed', 'canceled') THEN last_error
+                    ELSE 'Role assignments reset by operator'
+                END,
+                updated_at = ?2
+            WHERE role_id = ?1
+            "#,
+            params![role_id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to clear role runtime state for {}: {error}",
+                role_id
+            )
+        })?;
     let detail = role_runtime::get_role_operations(connection, role_id)?;
     let task_ids = assignments
         .iter()
