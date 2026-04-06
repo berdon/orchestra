@@ -831,7 +831,7 @@ export function App() {
       });
       setChatSessionId((current) => (current && nextSessions.some((session) => session.id === current) ? current : null));
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to load sessions.");
+      setSessionActionError(await reportClientError("ui.sessions.load", error, "Unable to load sessions."));
     } finally {
       if (!options?.background) {
         setLoadingSessions(false);
@@ -882,6 +882,9 @@ export function App() {
 
     try {
       await deleteSession(sessionId);
+      setSessions((current) => current.filter((session) => session.id !== sessionId));
+      setSelectedSessionId((current) => (current === sessionId ? null : current));
+      setChatSessionId((current) => (current === sessionId ? null : current));
       setPendingRuns((current) => {
         const next = { ...current };
         delete next[sessionId];
@@ -892,9 +895,9 @@ export function App() {
         delete next[sessionId];
         return next;
       });
-      await loadSessions();
+      await loadSessions({ background: true });
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to dismiss session.");
+      setSessionActionError(await reportClientError("ui.sessions.dismiss", error, "Unable to dismiss session."));
     } finally {
       setIsSubmitting(false);
     }
@@ -908,6 +911,10 @@ export function App() {
       for (const session of closedSessions) {
         await deleteSession(session.id);
       }
+      const closedSessionIds = new Set(closedSessions.map((session) => session.id));
+      setSessions((current) => current.filter((session) => !closedSessionIds.has(session.id)));
+      setSelectedSessionId((current) => (current && closedSessionIds.has(current) ? null : current));
+      setChatSessionId((current) => (current && closedSessionIds.has(current) ? null : current));
       setPendingRuns((current) => {
         const next = { ...current };
         for (const session of closedSessions) {
@@ -922,9 +929,9 @@ export function App() {
         }
         return next;
       });
-      await loadSessions();
+      await loadSessions({ background: true });
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to dismiss closed sessions.");
+      setSessionActionError(await reportClientError("ui.sessions.dismiss_closed", error, "Unable to dismiss closed sessions."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1560,6 +1567,30 @@ export function App() {
       cancelled = true;
     };
   }, [activePage, isDetachedWindow, viewedSession?.id, viewedSession?.subscribed, viewedSession?.terminalAttached, applySessionUpdate, mergeSessionRecord]);
+
+  useEffect(() => {
+    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat") || !viewedSession?.id) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void getSessionRecord(viewedSession.id)
+      .then((record) => {
+        if (!cancelled) {
+          mergeSessionRecord(record, { select: false });
+        }
+      })
+      .catch(async (error) => {
+        if (!cancelled) {
+          setSessionActionError(await reportClientError("ui.sessions.record.load", error, "Unable to load session."));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, isDetachedWindow, mergeSessionRecord, viewedSession?.id]);
 
   useEffect(() => {
     if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat") || !viewedSession?.id || viewedSession.status !== "active") {

@@ -226,7 +226,7 @@ pub fn list_sessions(
     session_dir: &Path,
     subscribed_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
-    let mut sessions = list_stored_sessions(session_dir, subscribed_ids)?;
+    let mut sessions = list_stored_session_summaries(session_dir, subscribed_ids)?;
     sessions.sort_by(|left, right| right.record.updated_at.cmp(&left.record.updated_at));
     Ok(sessions.into_iter().map(|session| session.record).collect())
 }
@@ -539,7 +539,7 @@ fn infer_project_slug(project_root: &Path) -> String {
     sanitize_slug(file_name)
 }
 
-fn list_stored_sessions(
+fn list_stored_session_summaries(
     session_dir: &Path,
     subscribed_ids: &HashSet<String>,
 ) -> Result<Vec<StoredSession>, String> {
@@ -563,13 +563,13 @@ fn list_stored_sessions(
             continue;
         }
 
-        let subscribed = path
-            .file_name()
-            .and_then(|_| parse_session_header_id(&path).ok())
-            .map(|id| subscribed_ids.contains(&id))
-            .unwrap_or(false);
+        let session_id = match parse_session_header_id(&path) {
+            Ok(session_id) => session_id,
+            Err(_) => continue,
+        };
+        let subscribed = subscribed_ids.contains(&session_id);
 
-        if let Ok(session) = parse_session_file(&path, subscribed) {
+        if let Ok(session) = parse_session_file_summary(&path, subscribed) {
             sessions.push(session);
         }
     }
@@ -630,28 +630,8 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
         .first()
         .ok_or_else(|| format!("Session file {} is empty", path.display()))?;
 
-    if header.get("type").and_then(Value::as_str) != Some("session") {
-        return Err(format!(
-            "Session file {} does not start with a session header",
-            path.display()
-        ));
-    }
-
-    let session_id = header
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("Session file {} is missing a session id", path.display()))?
-        .to_string();
-    let created_timestamp = header
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(now_iso);
-    let created_at = normalize_timestamp(&created_timestamp);
-
-    let mut title = None;
-    let mut updated_at = created_at.clone();
-    let mut updated_sort_key = timestamp_sort_key(&updated_at);
+    let (session_id, created_at, mut title, mut updated_at, mut updated_sort_key) =
+        parse_session_header(path, header)?;
     let mut first_user_message = None;
     let mut last_visible_role = None;
     let mut events = Vec::new();
@@ -803,6 +783,170 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
             debug_info: None,
         },
     })
+}
+
+fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSession, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("Unable to read session file {}: {error}", path.display()))?;
+
+    let non_empty_lines = content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some((index, trimmed))
+            }
+        })
+        .collect::<Vec<_>>();
+    let last_non_empty_index = non_empty_lines.last().map(|(index, _)| *index);
+    let content_ends_with_newline = content.ends_with('\n');
+
+    let Some((_, header_line)) = non_empty_lines.first() else {
+        return Err(format!("Session file {} is empty", path.display()));
+    };
+    let header = serde_json::from_str::<Value>(header_line).map_err(|error| {
+        format!(
+            "Unable to parse session header {} as JSON: {error}",
+            path.display()
+        )
+    })?;
+    let (session_id, created_at, mut title, mut updated_at, mut updated_sort_key) =
+        parse_session_header(path, &header)?;
+    let mut first_user_message = None;
+    let mut last_visible_role = None;
+
+    for (index, line) in non_empty_lines.into_iter().skip(1) {
+        let value = match serde_json::from_str::<Value>(line) {
+            Ok(value) => value,
+            Err(error)
+                if Some(index) == last_non_empty_index
+                    && error.classify() == serde_json::error::Category::Eof
+                    && !content_ends_with_newline =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Unable to parse session file {} as JSONL: {error}",
+                    path.display()
+                ));
+            }
+        };
+
+        let entry_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let entry_timestamp = normalize_timestamp(
+            value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .unwrap_or(&created_at),
+        );
+        maybe_update_timestamp(&entry_timestamp, &mut updated_at, &mut updated_sort_key);
+
+        match entry_type {
+            "session_info" => {
+                if let Some(name) = value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .and_then(non_empty_trimmed)
+                {
+                    title = Some(name.to_string());
+                }
+            }
+            "message" => {
+                let Some(message) = value.get("message") else {
+                    continue;
+                };
+                let role = message
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let message_text = extract_message_text(message);
+                let message_timestamp = message_timestamp(message, &entry_timestamp);
+                maybe_update_timestamp(&message_timestamp, &mut updated_at, &mut updated_sort_key);
+
+                match role {
+                    "user" => {
+                        if let Some(text) = non_empty_trimmed(&message_text) {
+                            if first_user_message.is_none() {
+                                first_user_message = Some(text.to_string());
+                            }
+                            last_visible_role = Some("user");
+                        }
+                    }
+                    "assistant" => {
+                        if non_empty_trimmed(&message_text).is_some() {
+                            last_visible_role = Some("assistant");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let title = title
+        .or_else(|| first_user_message.map(|message| truncate_for_title(&message)))
+        .unwrap_or_else(|| format!("Session {}", &session_id[..session_id.len().min(8)]));
+    let status = match last_visible_role {
+        Some("user") => "active",
+        _ => "idle",
+    }
+    .to_string();
+
+    Ok(StoredSession {
+        path: path.to_path_buf(),
+        record: SessionRecord {
+            id: session_id,
+            title,
+            status,
+            created_at,
+            updated_at,
+            subscribed,
+            events: Vec::new(),
+            terminal_attached: false,
+            debug_info: None,
+        },
+    })
+}
+
+fn parse_session_header(
+    path: &Path,
+    header: &Value,
+) -> Result<(String, String, Option<String>, String, i64), String> {
+    if header.get("type").and_then(Value::as_str) != Some("session") {
+        return Err(format!(
+            "Session file {} does not start with a session header",
+            path.display()
+        ));
+    }
+
+    let session_id = header
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("Session file {} is missing a session id", path.display()))?
+        .to_string();
+    let created_timestamp = header
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(now_iso);
+    let created_at = normalize_timestamp(&created_timestamp);
+    let updated_sort_key = timestamp_sort_key(&created_at);
+
+    Ok((
+        session_id,
+        created_at.clone(),
+        None,
+        created_at,
+        updated_sort_key,
+    ))
 }
 
 fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
@@ -1801,11 +1945,15 @@ process.stdin.on('end', () => {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, session_id);
         assert_eq!(sessions[0].title, "Named session");
-        assert_eq!(sessions[0].events.len(), 2);
-        assert_eq!(sessions[0].events[0].kind, "user");
-        assert_eq!(sessions[0].events[1].kind, "assistant");
-        assert_eq!(sessions[0].events[1].message, "Real pi session reply");
+        assert!(sessions[0].events.is_empty());
         assert!(sessions[0].subscribed);
+
+        let full_session =
+            get_session(&session_dir, &session_id, true).expect("full session should load");
+        assert_eq!(full_session.events.len(), 2);
+        assert_eq!(full_session.events[0].kind, "user");
+        assert_eq!(full_session.events[1].kind, "assistant");
+        assert_eq!(full_session.events[1].message, "Real pi session reply");
     }
 
     #[test]
