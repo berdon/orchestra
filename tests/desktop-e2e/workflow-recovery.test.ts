@@ -7,6 +7,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   sleep,
   waitForText,
@@ -123,6 +124,14 @@ describe("desktop workflow recovery", () => {
 
       await openRoleOperations(sessionId, roleName);
       await waitForText(sessionId, roleName);
+      const resetEnabled = await executeScript<boolean>(
+        sessionId,
+        `
+          const button = document.querySelector('[data-role="reset-role-assignments"]');
+          return button instanceof HTMLButtonElement ? !button.disabled : false;
+        `,
+      );
+      expect(resetEnabled).toBe(true);
       await clickSelector(sessionId, '[data-role="reset-role-assignments"]');
 
       const resetRoleOps = await waitForCondition(
