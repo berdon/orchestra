@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use rusqlite::{params, Connection};
 
@@ -19,27 +21,59 @@ pub fn database_path() -> Result<PathBuf, String> {
     Ok(orchestra_database_path(&root))
 }
 
+static DATABASE_INIT_PATH: OnceLock<PathBuf> = OnceLock::new();
+static DATABASE_INIT_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn initialize_database() -> Result<PathBuf, String> {
+    ensure_database_initialized()
+}
+
+pub fn open_connection() -> Result<Connection, String> {
+    let path = ensure_database_initialized()?;
+    open_configured_connection(&path)
+}
+
+fn ensure_database_initialized() -> Result<PathBuf, String> {
+    if let Some(path) = DATABASE_INIT_PATH.get() {
+        return Ok(path.clone());
+    }
+
+    let _guard = DATABASE_INIT_LOCK
+        .lock()
+        .map_err(|_| "Unable to acquire Orchestra database initialization lock".to_string())?;
+    if let Some(path) = DATABASE_INIT_PATH.get() {
+        return Ok(path.clone());
+    }
+
     let path = database_path()?;
-    let connection = Connection::open(&path).map_err(|error| {
+    let connection = open_configured_connection(&path)?;
+    apply_migrations(&connection)?;
+    let _ = DATABASE_INIT_PATH.set(path.clone());
+    Ok(path)
+}
+
+fn open_configured_connection(path: &Path) -> Result<Connection, String> {
+    let connection = Connection::open(path).map_err(|error| {
         format!(
             "Unable to open Orchestra database {}: {error}",
             path.display()
         )
     })?;
-
-    apply_migrations(&connection)?;
-    Ok(path)
+    configure_connection(&connection)?;
+    Ok(connection)
 }
 
-pub fn open_connection() -> Result<Connection, String> {
-    let path = initialize_database()?;
-    Connection::open(&path).map_err(|error| {
-        format!(
-            "Unable to open Orchestra database {}: {error}",
-            path.display()
-        )
-    })
+fn configure_connection(connection: &Connection) -> Result<(), String> {
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("Unable to set Orchestra database busy timeout: {error}"))?;
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .map_err(|error| format!("Unable to enable Orchestra database foreign keys: {error}"))?;
+    connection
+        .pragma_update(None, "journal_mode", "WAL")
+        .map_err(|error| format!("Unable to enable Orchestra database WAL mode: {error}"))?;
+    Ok(())
 }
 
 pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
@@ -1429,12 +1463,7 @@ pub fn initialize_database_at(path: &std::path::Path) -> Result<(), String> {
         .ok_or_else(|| format!("Database path {} has no parent directory", path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Unable to create directory {}: {error}", parent.display()))?;
-    let connection = Connection::open(path).map_err(|error| {
-        format!(
-            "Unable to open Orchestra database {}: {error}",
-            path.display()
-        )
-    })?;
+    let connection = open_configured_connection(path)?;
     apply_migrations(&connection)
 }
 
@@ -1458,6 +1487,17 @@ mod tests {
                 .as_millis()
         );
         env::temp_dir().join(suffix).join("orchestra.db")
+    }
+
+    #[test]
+    fn initialize_database_at_enables_wal_mode() {
+        let path = unique_temp_db("wal-mode");
+        initialize_database_at(&path).expect("database should initialize");
+        let connection = Connection::open(&path).expect("database should open");
+        let journal_mode: String = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("journal mode should query");
+        assert_eq!(journal_mode.to_lowercase(), "wal");
     }
 
     #[test]
