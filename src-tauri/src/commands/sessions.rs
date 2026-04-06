@@ -172,8 +172,11 @@ fn decorate_session_record_with_connection(
     connection: &rusqlite::Connection,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     mut record: SessionRecord,
+    include_debug_info: bool,
 ) -> Result<SessionRecord, String> {
-    record.debug_info = load_session_debug_info(connection, &record.id)?;
+    if include_debug_info {
+        record.debug_info = load_session_debug_info(connection, &record.id)?;
+    }
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
 
     let is_persistent_agent_session = connection
@@ -247,9 +250,15 @@ fn decorate_session_record_with_connection(
 fn decorate_session_record(
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     record: SessionRecord,
+    include_debug_info: bool,
 ) -> Result<SessionRecord, String> {
     let connection = database::open_connection()?;
-    decorate_session_record_with_connection(&connection, terminal_attached_session_ids, record)
+    decorate_session_record_with_connection(
+        &connection,
+        terminal_attached_session_ids,
+        record,
+        include_debug_info,
+    )
 }
 
 fn load_decorated_session_record(
@@ -259,7 +268,7 @@ fn load_decorated_session_record(
     terminal_attached_session_ids: &std::collections::HashSet<String>,
 ) -> Result<SessionRecord, String> {
     let record = get_session(session_dir, session_id, subscribed)?;
-    decorate_session_record(terminal_attached_session_ids, record)
+    decorate_session_record(terminal_attached_session_ids, record, true)
 }
 
 fn resolve_session_runtime_root(
@@ -407,7 +416,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionReco
             .into_iter()
             .flatten()
             .filter(|record| !dismissed_ids.contains(&record.id))
-            .map(|record| decorate_session_record(&terminal_attached_session_ids, record))
+            .map(|record| decorate_session_record(&terminal_attached_session_ids, record, false))
             .collect::<Result<Vec<_>, _>>()?;
         sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         Ok::<_, String>(sessions)
@@ -983,6 +992,7 @@ mod tests {
             &connection,
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
+            false,
         )
         .expect("session decoration should succeed");
 
@@ -1086,6 +1096,7 @@ mod tests {
             &connection,
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
+            false,
         )
         .expect("session decoration should succeed");
 
@@ -1155,6 +1166,7 @@ mod tests {
             &connection,
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
+            false,
         )
         .expect("session decoration should succeed");
 
@@ -1224,6 +1236,7 @@ mod tests {
             &connection,
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
+            false,
         )
         .expect("session decoration should succeed");
 
