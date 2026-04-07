@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { memo, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
 
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
@@ -64,6 +64,137 @@ interface SessionChatPanelProps {
   emptyStateDescription?: string;
 }
 
+interface SessionComposerProps {
+  session: SessionRecord;
+  sessionPending: boolean;
+  selectedModelState?: SessionModelState;
+  sessionReadOnly: boolean;
+  loadingModelSessionId: string | null;
+  changingModelSessionId: string | null;
+  draftMessage: string;
+  formatDateTime: (timestamp: string) => string;
+  formatModelOptionLabel: (state: SessionModelState | undefined) => string;
+  onModelChange: (value: string) => void;
+  onDraftChange: (value: string) => void;
+  onSendMessage: () => void;
+  onStopSession: () => void;
+}
+
+const SessionComposer = memo(function SessionComposer({
+  session,
+  sessionPending,
+  selectedModelState,
+  sessionReadOnly,
+  loadingModelSessionId,
+  changingModelSessionId,
+  draftMessage,
+  formatDateTime,
+  formatModelOptionLabel,
+  onModelChange,
+  onDraftChange,
+  onSendMessage,
+  onStopSession,
+}: SessionComposerProps) {
+  function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSendMessage();
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      onSendMessage();
+    }
+  }
+
+  function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    onDraftChange(event.target.value);
+  }
+
+  return (
+    <>
+      {sessionReadOnly ? (
+        <div className="session-readonly-banner" data-role="session-terminal-readonly">
+          This session is currently attached to an embedded terminal window. Close that window to resume chat here.
+        </div>
+      ) : null}
+
+      <form className="composer" onSubmit={handleComposerSubmit}>
+        <label className="field-group field-group--composer">
+          <span className="field-group__label">Send</span>
+          <textarea
+            className="text-area"
+            data-role="composer-input"
+            rows={4}
+            placeholder="Tell the session what to do next…"
+            value={draftMessage}
+            disabled={sessionReadOnly}
+            onChange={handleDraftChange}
+            onKeyDown={handleComposerKeyDown}
+          />
+        </label>
+        <div className="composer__footer">
+          <div className="composer__meta">
+            <p className="muted-copy">
+              {sessionReadOnly
+                ? "This session is read-only while the embedded terminal window is attached."
+                : sessionPending
+                  ? "Response in progress…"
+                  : "Press Ctrl+Enter or ⌘+Enter to send."}
+            </p>
+            <div className="session-detail__meta session-detail__meta--footer">
+              <span>Created {formatDateTime(session.createdAt)}</span>
+              <span>Updated {formatDateTime(session.updatedAt)}</span>
+            </div>
+          </div>
+          <div className="composer__actions">
+            <div className="session-model-field session-model-field--composer">
+              <select
+                className="select-input"
+                aria-label="Session model"
+                value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
+                disabled={
+                  sessionReadOnly ||
+                  loadingModelSessionId === session.id ||
+                  changingModelSessionId === session.id ||
+                  sessionPending
+                }
+                onChange={(event) => onModelChange(event.target.value)}
+              >
+                {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
+                  <option value="">{formatModelOptionLabel(selectedModelState)}</option>
+                ) : null}
+                {selectedModelState?.availableModels.map((model) => (
+                  <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                    {model.name} · {model.provider}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              className="secondary-button"
+              data-role="stop-session-runtime"
+              type="button"
+              disabled={sessionReadOnly || !sessionPending}
+              onClick={onStopSession}
+            >
+              Stop
+            </button>
+            <button
+              className="primary-button"
+              data-role="send-message"
+              type="submit"
+              disabled={sessionReadOnly || draftMessage.trim().length === 0}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </form>
+    </>
+  );
+});
+
 export function SessionChatPanel({
   session,
   title,
@@ -119,22 +250,6 @@ export function SessionChatPanel({
       clientHeight: node.clientHeight,
     });
   }, [displayedEvents, session?.id, transcriptRef, wrapTranscript]);
-
-  function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onSendMessage();
-  }
-
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      onSendMessage();
-    }
-  }
-
-  function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    onDraftChange(event.target.value);
-  }
 
   function handleTranscriptScroll(event: UIEvent<HTMLDivElement>) {
     const node = event.currentTarget;
@@ -224,84 +339,21 @@ export function SessionChatPanel({
             ) : null}
           </div>
 
-          {sessionReadOnly ? (
-            <div className="session-readonly-banner" data-role="session-terminal-readonly">
-              This session is currently attached to an embedded terminal window. Close that window to resume chat here.
-            </div>
-          ) : null}
-
-          <form className="composer" onSubmit={handleComposerSubmit}>
-            <label className="field-group field-group--composer">
-              <span className="field-group__label">Send</span>
-              <textarea
-                className="text-area"
-                data-role="composer-input"
-                rows={4}
-                placeholder="Tell the session what to do next…"
-                value={draftMessage}
-                disabled={sessionReadOnly}
-                onChange={handleDraftChange}
-                onKeyDown={handleComposerKeyDown}
-              />
-            </label>
-            <div className="composer__footer">
-              <div className="composer__meta">
-                <p className="muted-copy">
-                  {sessionReadOnly
-                    ? "This session is read-only while the embedded terminal window is attached."
-                    : sessionPending
-                      ? "Response in progress…"
-                      : "Press Ctrl+Enter or ⌘+Enter to send."}
-                </p>
-                <div className="session-detail__meta session-detail__meta--footer">
-                  <span>Created {formatDateTime(session.createdAt)}</span>
-                  <span>Updated {formatDateTime(session.updatedAt)}</span>
-                </div>
-              </div>
-              <div className="composer__actions">
-                <div className="session-model-field session-model-field--composer">
-                  <select
-                    className="select-input"
-                    aria-label="Session model"
-                    value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
-                    disabled={
-                      sessionReadOnly ||
-                      loadingModelSessionId === session.id ||
-                      changingModelSessionId === session.id ||
-                      sessionPending
-                    }
-                    onChange={(event) => onModelChange(event.target.value)}
-                  >
-                    {!selectedModelState?.availableModels.length || !selectedModelState.currentModel ? (
-                      <option value="">{formatModelOptionLabel(selectedModelState)}</option>
-                    ) : null}
-                    {selectedModelState?.availableModels.map((model) => (
-                      <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-                        {model.name} · {model.provider}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  className="secondary-button"
-                  data-role="stop-session-runtime"
-                  type="button"
-                  disabled={sessionReadOnly || !sessionPending}
-                  onClick={onStopSession}
-                >
-                  Stop
-                </button>
-                <button
-                  className="primary-button"
-                  data-role="send-message"
-                  type="submit"
-                  disabled={sessionReadOnly || draftMessage.trim().length === 0}
-                >
-                  Send
-                </button>
-              </div>
-            </div>
-          </form>
+          <SessionComposer
+            session={session}
+            sessionPending={sessionPending}
+            selectedModelState={selectedModelState}
+            sessionReadOnly={sessionReadOnly}
+            loadingModelSessionId={loadingModelSessionId}
+            changingModelSessionId={changingModelSessionId}
+            draftMessage={draftMessage}
+            formatDateTime={formatDateTime}
+            formatModelOptionLabel={formatModelOptionLabel}
+            onModelChange={onModelChange}
+            onDraftChange={onDraftChange}
+            onSendMessage={onSendMessage}
+            onStopSession={onStopSession}
+          />
         </>
       ) : (
         <div className="empty-state">
