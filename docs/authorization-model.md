@@ -140,6 +140,9 @@ Use `resource.action` naming.
 
 Examples:
 - `projects.read`
+- `projects.create`
+- `projects.update`
+- `projects.delete`
 - `repositories.read`
 - `repositories.write`
 - `worktrees.create`

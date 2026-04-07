@@ -191,7 +191,7 @@ pub fn resolve_project_runtime_root(
 }
 
 pub fn create_project(
-    connection: &mut Connection,
+    connection: &Connection,
     input: ProjectUpsertInput,
 ) -> Result<ProjectDetail, String> {
     let normalized = normalize_project_input(input);
