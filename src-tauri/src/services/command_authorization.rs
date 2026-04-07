@@ -112,6 +112,9 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     ("list_projects", "List Orchestra projects", "projects.read"),
     ("get_project", "Get an Orchestra project", "projects.read"),
+    ("create_project", "Create an Orchestra project", "projects.create"),
+    ("update_project", "Update an Orchestra project", "projects.update"),
+    ("delete_project", "Delete an Orchestra project", "projects.delete"),
     (
         "list_repositories",
         "List Orchestra repositories",
@@ -121,6 +124,31 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "get_repository",
         "Get an Orchestra repository",
         "projects.read",
+    ),
+    (
+        "create_repository",
+        "Create an Orchestra repository",
+        "repositories.write",
+    ),
+    (
+        "update_repository",
+        "Update an Orchestra repository",
+        "repositories.write",
+    ),
+    (
+        "delete_repository",
+        "Delete an Orchestra repository",
+        "repositories.write",
+    ),
+    (
+        "attach_repository_remote",
+        "Attach or update a repository remote",
+        "repositories.write",
+    ),
+    (
+        "set_project_default_repository",
+        "Set the default repository for a project",
+        "projects.update",
     ),
     ("list_tasks", "List tasks", "tasks.read"),
     ("get_task", "Get a task", "tasks.read"),

@@ -80,6 +80,21 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "projects.read",
       },
       {
+        name: "create_project",
+        description: "Create an Orchestra project",
+        requiredPermission: "projects.create",
+      },
+      {
+        name: "update_project",
+        description: "Update an Orchestra project",
+        requiredPermission: "projects.update",
+      },
+      {
+        name: "delete_project",
+        description: "Delete an Orchestra project",
+        requiredPermission: "projects.delete",
+      },
+      {
         name: "list_repositories",
         description: "List Orchestra repositories",
         requiredPermission: "projects.read",
@@ -88,6 +103,31 @@ describe("orchestra tools extension bridge tool setup", () => {
         name: "get_repository",
         description: "Get an Orchestra repository",
         requiredPermission: "projects.read",
+      },
+      {
+        name: "create_repository",
+        description: "Create an Orchestra repository",
+        requiredPermission: "repositories.write",
+      },
+      {
+        name: "update_repository",
+        description: "Update an Orchestra repository",
+        requiredPermission: "repositories.write",
+      },
+      {
+        name: "delete_repository",
+        description: "Delete an Orchestra repository",
+        requiredPermission: "repositories.write",
+      },
+      {
+        name: "attach_repository_remote",
+        description: "Attach a repository remote",
+        requiredPermission: "repositories.write",
+      },
+      {
+        name: "set_project_default_repository",
+        description: "Set the default repository for a project",
+        requiredPermission: "projects.update",
       },
     ]);
     process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({ actorType: "user", actorId: "tester" });
@@ -142,8 +182,16 @@ describe("orchestra tools extension bridge tool setup", () => {
         "update_worker_overlay",
         "list_projects",
         "get_project",
+        "create_project",
+        "update_project",
+        "delete_project",
         "list_repositories",
         "get_repository",
+        "create_repository",
+        "update_repository",
+        "delete_repository",
+        "attach_repository_remote",
+        "set_project_default_repository",
       ]),
     );
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
@@ -217,19 +265,81 @@ describe("orchestra tools extension bridge tool setup", () => {
       projectId: "project-1",
     });
 
+    const createProjectTool = registeredTools.find((tool) => tool.name === "create_project");
+    expect(createProjectTool.parameters.properties.name).toBeTruthy();
+    const createProjectResult = await createProjectTool.execute("tool-call-11", {
+      name: "Bridge project",
+      description: "Created through the bridge tool",
+    });
+
+    const updateProjectTool = registeredTools.find((tool) => tool.name === "update_project");
+    expect(updateProjectTool.parameters.properties.projectId).toBeTruthy();
+    const updateProjectResult = await updateProjectTool.execute("tool-call-12", {
+      projectId: "project-1",
+      name: "Updated bridge project",
+      description: "Updated through the bridge tool",
+    });
+
+    const deleteProjectTool = registeredTools.find((tool) => tool.name === "delete_project");
+    expect(deleteProjectTool.parameters.properties.projectId).toBeTruthy();
+    const deleteProjectResult = await deleteProjectTool.execute("tool-call-13", {
+      projectId: "project-2",
+    });
+
     const listRepositoriesTool = registeredTools.find((tool) => tool.name === "list_repositories");
     expect(listRepositoriesTool.parameters.properties.projectId).toBeTruthy();
-    const listRepositoriesResult = await listRepositoriesTool.execute("tool-call-11", {
+    const listRepositoriesResult = await listRepositoriesTool.execute("tool-call-14", {
       projectId: "project-1",
     });
 
     const getRepositoryTool = registeredTools.find((tool) => tool.name === "get_repository");
     expect(getRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
-    const getRepositoryResult = await getRepositoryTool.execute("tool-call-12", {
+    const getRepositoryResult = await getRepositoryTool.execute("tool-call-15", {
       repositoryId: "repo-1",
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(12);
+    const createRepositoryTool = registeredTools.find((tool) => tool.name === "create_repository");
+    expect(createRepositoryTool.parameters.properties.projectId).toBeTruthy();
+    const createRepositoryResult = await createRepositoryTool.execute("tool-call-16", {
+      projectId: "project-1",
+      name: "New repo",
+      mode: "existing",
+      repositoryPath: "/tmp/new-repo",
+      defaultBranch: "main",
+    });
+
+    const updateRepositoryTool = registeredTools.find((tool) => tool.name === "update_repository");
+    expect(updateRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
+    const updateRepositoryResult = await updateRepositoryTool.execute("tool-call-17", {
+      repositoryId: "repo-1",
+      name: "Updated repo",
+      mode: "existing",
+      repositoryPath: "/tmp/updated-repo",
+      defaultBranch: "develop",
+    });
+
+    const deleteRepositoryTool = registeredTools.find((tool) => tool.name === "delete_repository");
+    expect(deleteRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
+    const deleteRepositoryResult = await deleteRepositoryTool.execute("tool-call-18", {
+      repositoryId: "repo-2",
+    });
+
+    const attachRepositoryRemoteTool = registeredTools.find((tool) => tool.name === "attach_repository_remote");
+    expect(attachRepositoryRemoteTool.parameters.properties.remoteUrl).toBeTruthy();
+    const attachRepositoryRemoteResult = await attachRepositoryRemoteTool.execute("tool-call-19", {
+      repositoryId: "repo-1",
+      remoteUrl: "git@example.com:org/repo.git",
+      remoteName: "origin",
+    });
+
+    const setProjectDefaultRepositoryTool = registeredTools.find((tool) => tool.name === "set_project_default_repository");
+    expect(setProjectDefaultRepositoryTool.parameters.properties.projectId).toBeTruthy();
+    const setProjectDefaultRepositoryResult = await setProjectDefaultRepositoryTool.execute("tool-call-20", {
+      projectId: "project-1",
+      repositoryId: "repo-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(20);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
     expect(request.payload).toEqual({ taskId: "task-1", notes: "Ship it" });
@@ -280,12 +390,72 @@ describe("orchestra tools extension bridge tool setup", () => {
     const getProjectRequest = JSON.parse(String(fetchMock.mock.calls[9]?.[1]?.body));
     expect(getProjectRequest.command).toBe("get_project");
     expect(getProjectRequest.payload).toEqual({ projectId: "project-1" });
-    const listRepositoriesRequest = JSON.parse(String(fetchMock.mock.calls[10]?.[1]?.body));
+    const createProjectRequest = JSON.parse(String(fetchMock.mock.calls[10]?.[1]?.body));
+    expect(createProjectRequest.command).toBe("create_project");
+    expect(createProjectRequest.payload).toEqual({
+      input: {
+        name: "Bridge project",
+        description: "Created through the bridge tool",
+      },
+    });
+    const updateProjectRequest = JSON.parse(String(fetchMock.mock.calls[11]?.[1]?.body));
+    expect(updateProjectRequest.command).toBe("update_project");
+    expect(updateProjectRequest.payload).toEqual({
+      projectId: "project-1",
+      input: {
+        name: "Updated bridge project",
+        description: "Updated through the bridge tool",
+      },
+    });
+    const deleteProjectRequest = JSON.parse(String(fetchMock.mock.calls[12]?.[1]?.body));
+    expect(deleteProjectRequest.command).toBe("delete_project");
+    expect(deleteProjectRequest.payload).toEqual({ projectId: "project-2" });
+    const listRepositoriesRequest = JSON.parse(String(fetchMock.mock.calls[13]?.[1]?.body));
     expect(listRepositoriesRequest.command).toBe("list_repositories");
     expect(listRepositoriesRequest.payload).toEqual({ projectId: "project-1" });
-    const getRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[11]?.[1]?.body));
+    const getRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[14]?.[1]?.body));
     expect(getRepositoryRequest.command).toBe("get_repository");
     expect(getRepositoryRequest.payload).toEqual({ repositoryId: "repo-1" });
+    const createRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[15]?.[1]?.body));
+    expect(createRepositoryRequest.command).toBe("create_repository");
+    expect(createRepositoryRequest.payload).toEqual({
+      projectId: "project-1",
+      input: {
+        name: "New repo",
+        mode: "existing",
+        repositoryPath: "/tmp/new-repo",
+        defaultBranch: "main",
+      },
+    });
+    const updateRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[16]?.[1]?.body));
+    expect(updateRepositoryRequest.command).toBe("update_repository");
+    expect(updateRepositoryRequest.payload).toEqual({
+      repositoryId: "repo-1",
+      input: {
+        name: "Updated repo",
+        mode: "existing",
+        repositoryPath: "/tmp/updated-repo",
+        defaultBranch: "develop",
+      },
+    });
+    const deleteRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[17]?.[1]?.body));
+    expect(deleteRepositoryRequest.command).toBe("delete_repository");
+    expect(deleteRepositoryRequest.payload).toEqual({ repositoryId: "repo-2" });
+    const attachRepositoryRemoteRequest = JSON.parse(String(fetchMock.mock.calls[18]?.[1]?.body));
+    expect(attachRepositoryRemoteRequest.command).toBe("attach_repository_remote");
+    expect(attachRepositoryRemoteRequest.payload).toEqual({
+      repositoryId: "repo-1",
+      input: {
+        remoteUrl: "git@example.com:org/repo.git",
+        remoteName: "origin",
+      },
+    });
+    const setProjectDefaultRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[19]?.[1]?.body));
+    expect(setProjectDefaultRepositoryRequest.command).toBe("set_project_default_repository");
+    expect(setProjectDefaultRepositoryRequest.payload).toEqual({
+      projectId: "project-1",
+      repositoryId: "repo-1",
+    });
     expect(result.details.command).toBe("complete_lane_as_success");
     expect(result.content[0]?.text).toContain("complete_lane_as_success");
     expect(taskContextResult.details.command).toBe("get_task_context");
@@ -306,10 +476,26 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(listProjectsResult.content[0]?.text).toContain("list_projects");
     expect(getProjectResult.details.command).toBe("get_project");
     expect(getProjectResult.content[0]?.text).toContain("get_project");
+    expect(createProjectResult.details.command).toBe("create_project");
+    expect(createProjectResult.content[0]?.text).toContain("create_project");
+    expect(updateProjectResult.details.command).toBe("update_project");
+    expect(updateProjectResult.content[0]?.text).toContain("update_project");
+    expect(deleteProjectResult.details.command).toBe("delete_project");
+    expect(deleteProjectResult.content[0]?.text).toContain("delete_project");
     expect(listRepositoriesResult.details.command).toBe("list_repositories");
     expect(listRepositoriesResult.content[0]?.text).toContain("list_repositories");
     expect(getRepositoryResult.details.command).toBe("get_repository");
     expect(getRepositoryResult.content[0]?.text).toContain("get_repository");
+    expect(createRepositoryResult.details.command).toBe("create_repository");
+    expect(createRepositoryResult.content[0]?.text).toContain("create_repository");
+    expect(updateRepositoryResult.details.command).toBe("update_repository");
+    expect(updateRepositoryResult.content[0]?.text).toContain("update_repository");
+    expect(deleteRepositoryResult.details.command).toBe("delete_repository");
+    expect(deleteRepositoryResult.content[0]?.text).toContain("delete_repository");
+    expect(attachRepositoryRemoteResult.details.command).toBe("attach_repository_remote");
+    expect(attachRepositoryRemoteResult.content[0]?.text).toContain("attach_repository_remote");
+    expect(setProjectDefaultRepositoryResult.details.command).toBe("set_project_default_repository");
+    expect(setProjectDefaultRepositoryResult.content[0]?.text).toContain("set_project_default_repository");
   });
 
   test("exposes project-scoped tool parameters and detailed help", async () => {

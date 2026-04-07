@@ -21,6 +21,18 @@ type TaskInputParams = {
   archived?: boolean;
 };
 
+type ProjectInputParams = {
+  name: string;
+  description?: string;
+};
+
+type RepositoryInputParams = {
+  name: string;
+  mode?: string;
+  repositoryPath?: string;
+  defaultBranch?: string;
+};
+
 type BridgeConfig = {
   bridgeUrl: string;
   token: string;
@@ -187,6 +199,22 @@ function buildTaskInput(params: TaskInputParams) {
   };
 }
 
+function buildProjectInput(params: ProjectInputParams) {
+  return {
+    name: params.name,
+    ...(params.description !== undefined ? { description: params.description } : {}),
+  };
+}
+
+function buildRepositoryInput(params: RepositoryInputParams) {
+  return {
+    name: params.name,
+    ...(params.mode !== undefined ? { mode: params.mode } : {}),
+    ...(params.repositoryPath !== undefined ? { repositoryPath: params.repositoryPath } : {}),
+    ...(params.defaultBranch !== undefined ? { defaultBranch: params.defaultBranch } : {}),
+  };
+}
+
 export function createBridgeTool(tool: OrchestraToolDefinition) {
   if (tool.name === "list_projects") {
     return {
@@ -212,6 +240,69 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId.`,
       parameters: Type.Object({
         projectId: Type.String({ description: "Orchestra project id to load." }),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string }) {
+        const payload = { projectId: params.projectId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "create_project") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the project name and optional description.`,
+      parameters: Type.Object({
+        name: Type.String({ description: "Project name." }),
+        description: Type.Optional(Type.String({ description: "Optional project description." })),
+      }),
+      async execute(_toolCallId: string, params: ProjectInputParams) {
+        const payload = { input: buildProjectInput(params) };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_project") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus the new name and optional description.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Project id to update." }),
+        name: Type.String({ description: "Updated project name." }),
+        description: Type.Optional(Type.String({ description: "Optional updated project description." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string } & ProjectInputParams) {
+        const payload = {
+          projectId: params.projectId,
+          input: buildProjectInput(params),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "delete_project") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId. This removes the project and its Orchestra-managed state.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Project id to delete." }),
       }),
       async execute(_toolCallId: string, params: { projectId: string }) {
         const payload = { projectId: params.projectId };
@@ -253,6 +344,127 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       }),
       async execute(_toolCallId: string, params: { repositoryId: string }) {
         const payload = { repositoryId: params.repositoryId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "create_repository") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus repository metadata.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Project id that should own the repository." }),
+        name: Type.String({ description: "Repository display name." }),
+        mode: Type.Optional(Type.String({ description: "Repository mode, such as existing or local_new." })),
+        repositoryPath: Type.Optional(Type.String({ description: "Optional source repository path when attaching an existing repository." })),
+        defaultBranch: Type.Optional(Type.String({ description: "Optional default branch." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string } & RepositoryInputParams) {
+        const payload = {
+          projectId: params.projectId,
+          input: buildRepositoryInput(params),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_repository") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide repositoryId plus updated repository metadata.`,
+      parameters: Type.Object({
+        repositoryId: Type.String({ description: "Repository id to update." }),
+        name: Type.String({ description: "Updated repository display name." }),
+        mode: Type.Optional(Type.String({ description: "Repository mode, such as existing or local_new." })),
+        repositoryPath: Type.Optional(Type.String({ description: "Optional source repository path when updating an existing repository." })),
+        defaultBranch: Type.Optional(Type.String({ description: "Optional default branch." })),
+      }),
+      async execute(_toolCallId: string, params: { repositoryId: string } & RepositoryInputParams) {
+        const payload = {
+          repositoryId: params.repositoryId,
+          input: buildRepositoryInput(params),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "delete_repository") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide repositoryId.`,
+      parameters: Type.Object({
+        repositoryId: Type.String({ description: "Repository id to delete." }),
+      }),
+      async execute(_toolCallId: string, params: { repositoryId: string }) {
+        const payload = { repositoryId: params.repositoryId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "attach_repository_remote") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide repositoryId plus the remote URL and optional remote name.`,
+      parameters: Type.Object({
+        repositoryId: Type.String({ description: "Repository id whose remote should be attached or updated." }),
+        remoteUrl: Type.String({ description: "Remote URL to attach." }),
+        remoteName: Type.Optional(Type.String({ description: "Optional remote name. Defaults to the service default if omitted." })),
+      }),
+      async execute(_toolCallId: string, params: { repositoryId: string; remoteUrl: string; remoteName?: string }) {
+        const payload = {
+          repositoryId: params.repositoryId,
+          input: {
+            remoteUrl: params.remoteUrl,
+            ...(params.remoteName !== undefined ? { remoteName: params.remoteName } : {}),
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "set_project_default_repository") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId and optionally repositoryId (omit it to clear the default).`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Project id whose default repository should be updated." }),
+        repositoryId: Type.Optional(Type.String({ description: "Optional repository id to make the default for the project." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string; repositoryId?: string }) {
+        const payload = {
+          projectId: params.projectId,
+          ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
