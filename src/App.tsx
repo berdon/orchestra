@@ -89,6 +89,7 @@ const SETTINGS_TABS = [
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
+const VIEWED_SESSION_REFRESH_GRACE_MS = 20_000;
 
 function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
   const stored = window.localStorage.getItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY);
@@ -524,6 +525,8 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
+  const viewedSessionMissingGraceRef = useRef<{ sessionId: string; graceUntil: number } | null>(null);
+  const sessionsRef = useRef<SessionRecord[]>([]);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -562,6 +565,10 @@ export function App() {
   const supervisorSessionDraftMessage = supervisorSession ? draftMessages[supervisorSession.id] ?? "" : "";
   const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
   const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   useEffect(() => {
     window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, taskBoardViewMode);
@@ -829,7 +836,36 @@ export function App() {
     setSessionActionError(null);
 
     try {
-      const nextSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
+      const listedSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
+      const viewedSessionId = options?.background ? viewedSessionIdRef.current : null;
+      const preservedViewedSession = viewedSessionId
+        ? sessionsRef.current.find((session) => session.id === viewedSessionId) ?? null
+        : null;
+      const isViewedSessionMissing = Boolean(
+        viewedSessionId
+        && preservedViewedSession
+        && !listedSessions.some((session) => session.id === preservedViewedSession.id),
+      );
+
+      let nextSessions = listedSessions;
+      if (isViewedSessionMissing && preservedViewedSession && viewedSessionId) {
+        const now = Date.now();
+        const existingGrace = viewedSessionMissingGraceRef.current;
+        const matchingGrace = existingGrace?.sessionId === viewedSessionId ? existingGrace : null;
+        const grace = matchingGrace ?? {
+          sessionId: viewedSessionId,
+          graceUntil: now + VIEWED_SESSION_REFRESH_GRACE_MS,
+        };
+
+        viewedSessionMissingGraceRef.current = grace;
+        if (now < grace.graceUntil) {
+          nextSessions = sortSessionRecords([preservedViewedSession, ...listedSessions]);
+        }
+      } else {
+        viewedSessionMissingGraceRef.current = null;
+      }
+
+      sessionsRef.current = nextSessions;
       setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
       setSelectedSessionId((current) => {
         const nextSelectedSessionId = current && nextSessions.some((session) => session.id === current)
@@ -1531,12 +1567,30 @@ export function App() {
       return;
     }
 
+    const sessionSurfaceActive = activePage === "sessions" || activePage === "chat";
     const previousViewedSessionId = viewedSessionIdRef.current;
-    const nextViewedSessionId = (activePage === "sessions" || activePage === "chat") ? viewedSession?.id ?? null : null;
+    const canGracefullyHoldViewedSession = Boolean(
+      sessionSurfaceActive
+      && !viewedSession?.id
+      && previousViewedSessionId
+      && viewedSessionMissingGraceRef.current?.sessionId === previousViewedSessionId
+      && Date.now() < viewedSessionMissingGraceRef.current.graceUntil,
+    );
+    const nextViewedSessionId = sessionSurfaceActive
+      ? viewedSession?.id ?? (canGracefullyHoldViewedSession ? previousViewedSessionId : null)
+      : null;
 
     viewedSessionIdRef.current = nextViewedSessionId;
 
-    if (previousViewedSessionId && previousViewedSessionId !== nextViewedSessionId) {
+    if (!sessionSurfaceActive || viewedSession?.id) {
+      viewedSessionMissingGraceRef.current = null;
+    }
+
+    if (
+      previousViewedSessionId
+      && previousViewedSessionId !== nextViewedSessionId
+      && (!sessionSurfaceActive || Boolean(viewedSession?.id))
+    ) {
       void unsubscribeSession(previousViewedSessionId)
         .then((record) => {
           mergeSessionRecord(record, { select: false });
@@ -1546,7 +1600,7 @@ export function App() {
         });
     }
 
-    if ((activePage !== "sessions" && activePage !== "chat") || !viewedSession) {
+    if (!sessionSurfaceActive || !viewedSession) {
       return;
     }
 
@@ -1564,6 +1618,10 @@ export function App() {
             setSessionActionError(await reportClientError("ui.sessions.subscribe", error, "Unable to subscribe to session."));
           }
         });
+
+      return () => {
+        cancelled = true;
+      };
     }
 
     setLoadingModelSessionId(viewedSession.id);
