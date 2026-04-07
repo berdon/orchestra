@@ -1,7 +1,11 @@
 use tauri::State;
 
 use crate::{
-    models::{WorkflowDefinition, WorkflowSummary, WorkflowUpsertInput, WorkflowValidationResult},
+    models::{
+        WorkflowDefinition, WorkflowLaneInput, WorkflowLanePatchInput,
+        WorkflowLaneReorderInput, WorkflowSummary, WorkflowUpsertInput,
+        WorkflowValidationResult,
+    },
     services::{database, workflows},
     state::AppState,
 };
@@ -87,6 +91,103 @@ pub fn duplicate_workflow(
     state.log_authorized_action(
         "auth.audit",
         "duplicate_workflow",
+        None,
+        None,
+        &workflow_id,
+        "success",
+    );
+    Ok(workflow)
+}
+
+#[tauri::command]
+pub fn add_workflow_lane(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    input: WorkflowLaneInput,
+) -> Result<WorkflowDefinition, String> {
+    let mut connection = database::open_connection()?;
+    let workflow = workflows::add_workflow_lane(&mut connection, &workflow_id, input)?;
+    state.log(
+        "info",
+        "workflow.updated",
+        &format!("Added lane to workflow {}", workflow.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "add_workflow_lane",
+        None,
+        None,
+        &workflow_id,
+        "success",
+    );
+    Ok(workflow)
+}
+
+#[tauri::command]
+pub fn update_workflow_lane(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    lane_id: String,
+    input: WorkflowLanePatchInput,
+) -> Result<WorkflowDefinition, String> {
+    let mut connection = database::open_connection()?;
+    let workflow = workflows::update_workflow_lane(&mut connection, &workflow_id, &lane_id, input)?;
+    state.log(
+        "info",
+        "workflow.updated",
+        &format!("Updated lane {} on workflow {}", lane_id, workflow.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "update_workflow_lane",
+        None,
+        None,
+        &lane_id,
+        "success",
+    );
+    Ok(workflow)
+}
+
+#[tauri::command]
+pub fn delete_workflow_lane(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    lane_id: String,
+) -> Result<WorkflowDefinition, String> {
+    let mut connection = database::open_connection()?;
+    let workflow = workflows::delete_workflow_lane(&mut connection, &workflow_id, &lane_id)?;
+    state.log(
+        "info",
+        "workflow.updated",
+        &format!("Deleted lane {} from workflow {}", lane_id, workflow.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "delete_workflow_lane",
+        None,
+        None,
+        &lane_id,
+        "success",
+    );
+    Ok(workflow)
+}
+
+#[tauri::command]
+pub fn reorder_workflow_lanes(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    input: WorkflowLaneReorderInput,
+) -> Result<WorkflowDefinition, String> {
+    let mut connection = database::open_connection()?;
+    let workflow = workflows::reorder_workflow_lanes(&mut connection, &workflow_id, input)?;
+    state.log(
+        "info",
+        "workflow.updated",
+        &format!("Reordered lanes for workflow {}", workflow.id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "reorder_workflow_lanes",
         None,
         None,
         &workflow_id,

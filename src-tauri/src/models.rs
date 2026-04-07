@@ -1220,6 +1220,30 @@ pub struct WorkflowLaneInput {
     pub failure_target_lane_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowLanePatchInput {
+    pub key: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub order: Option<i64>,
+    pub assigned_entity_type: Option<String>,
+    pub assigned_entity_id: Option<String>,
+    pub entry_prompt_template: Option<String>,
+    pub use_separate_worktree: Option<bool>,
+    pub require_user_approval_on_success: Option<bool>,
+    pub success_transition_type: Option<String>,
+    pub success_target_lane_id: Option<String>,
+    pub failure_transition_type: Option<String>,
+    pub failure_target_lane_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowLaneReorderInput {
+    pub lane_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowValidationResult {

@@ -52,8 +52,25 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     ("list_workflows", "List workflows", "workflows.read"),
     ("get_workflow", "Get a workflow", "workflows.read"),
+    ("validate_workflow", "Validate a workflow definition", "workflows.read"),
     ("create_workflow", "Create a workflow", "workflows.create"),
     ("update_workflow", "Update a workflow", "workflows.update"),
+    ("add_workflow_lane", "Add a lane to a workflow", "workflows.update"),
+    (
+        "update_workflow_lane",
+        "Update a workflow lane",
+        "workflows.update",
+    ),
+    (
+        "delete_workflow_lane",
+        "Delete a workflow lane",
+        "workflows.update",
+    ),
+    (
+        "reorder_workflow_lanes",
+        "Reorder workflow lanes",
+        "workflows.update",
+    ),
     (
         "duplicate_workflow",
         "Duplicate a workflow",

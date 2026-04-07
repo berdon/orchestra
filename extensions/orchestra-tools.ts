@@ -215,6 +215,47 @@ function buildRepositoryInput(params: RepositoryInputParams) {
   };
 }
 
+function workflowLaneSchema() {
+  return Type.Object({
+    id: Type.Optional(Type.String({ description: "Optional lane id. Omit when adding a new lane and Orchestra will generate one." })),
+    key: Type.String({ description: "Stable lane key/slug." }),
+    name: Type.String({ description: "Human-readable lane name." }),
+    description: Type.Optional(Type.String({ description: "Optional lane description." })),
+    order: Type.Optional(Type.Number({ description: "Optional zero-based lane order." })),
+    assignedEntityType: Type.String({ description: "Lane owner type: user, agent, or role." }),
+    assignedEntityId: Type.Optional(Type.String({ description: "Required for agent/role lanes. Omit for user lanes." })),
+    entryPromptTemplate: Type.Optional(Type.String({ description: "Optional entry prompt template for the lane." })),
+    useSeparateWorktree: Type.Optional(Type.Boolean({ description: "Whether this lane should use a separate worktree when supported." })),
+    requireUserApprovalOnSuccess: Type.Optional(Type.Boolean({ description: "Whether lane completion should wait for user approval before advancing." })),
+    successTransitionType: Type.String({ description: "Success transition type: lane, user_intervention, or end." }),
+    successTargetLaneId: Type.Optional(Type.String({ description: "Required when successTransitionType is lane." })),
+    failureTransitionType: Type.String({ description: "Failure transition type: lane, user_intervention, or end." }),
+    failureTargetLaneId: Type.Optional(Type.String({ description: "Required when failureTransitionType is lane." })),
+  });
+}
+
+function workflowLanePatchSchema() {
+  return Type.Object({
+    key: Type.Optional(Type.String({ description: "Optional updated lane key/slug." })),
+    name: Type.Optional(Type.String({ description: "Optional updated lane name." })),
+    description: Type.Optional(Type.String({ description: "Optional updated lane description." })),
+    order: Type.Optional(Type.Number({ description: "Optional updated zero-based order." })),
+    assignedEntityType: Type.Optional(Type.String({ description: "Optional updated lane owner type: user, agent, or role." })),
+    assignedEntityId: Type.Optional(Type.String({ description: "Optional updated lane owner id." })),
+    entryPromptTemplate: Type.Optional(Type.String({ description: "Optional updated entry prompt template." })),
+    useSeparateWorktree: Type.Optional(Type.Boolean({ description: "Optional updated separate-worktree flag." })),
+    requireUserApprovalOnSuccess: Type.Optional(Type.Boolean({ description: "Optional updated user-approval-on-success flag." })),
+    successTransitionType: Type.Optional(Type.String({ description: "Optional updated success transition type: lane, user_intervention, or end." })),
+    successTargetLaneId: Type.Optional(Type.String({ description: "Optional updated success target lane id." })),
+    failureTransitionType: Type.Optional(Type.String({ description: "Optional updated failure transition type: lane, user_intervention, or end." })),
+    failureTargetLaneId: Type.Optional(Type.String({ description: "Optional updated failure target lane id." })),
+  });
+}
+
+function workflowSchemaDescription(tool: OrchestraToolDefinition) {
+  return `${tool.description} Requires permission: ${tool.requiredPermission}.`;
+}
+
 export function createBridgeTool(tool: OrchestraToolDefinition) {
   if (tool.name === "list_projects") {
     return {
@@ -465,6 +506,267 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
           projectId: params.projectId,
           ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
         };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "list_workflows") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Optionally include archived workflows.`,
+      parameters: Type.Object({
+        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived workflows should be included." })),
+      }),
+      async execute(_toolCallId: string, params: { includeArchived?: boolean }) {
+        const payload = {
+          ...(params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide workflowId to inspect the full workflow and its lanes.`,
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id to load." }),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string }) {
+        const payload = { workflowId: params.workflowId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "validate_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the workflow definition you want validated.`,
+      parameters: Type.Object({
+        name: Type.String({ description: "Workflow name." }),
+        description: Type.Optional(Type.String({ description: "Optional workflow description." })),
+        lanes: Type.Array(workflowLaneSchema(), { description: "Workflow lanes to validate." }),
+      }),
+      async execute(_toolCallId: string, params: { name: string; description?: string; lanes: unknown[] }) {
+        const payload = {
+          input: {
+            name: params.name,
+            ...(params.description !== undefined ? { description: params.description } : {}),
+            lanes: params.lanes,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "create_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflow metadata plus the full lane array.",
+      parameters: Type.Object({
+        name: Type.String({ description: "Workflow name." }),
+        description: Type.Optional(Type.String({ description: "Optional workflow description." })),
+        lanes: Type.Array(workflowLaneSchema(), { description: "Workflow lanes to create." }),
+      }),
+      async execute(_toolCallId: string, params: { name: string; description?: string; lanes: unknown[] }) {
+        const payload = {
+          input: {
+            name: params.name,
+            ...(params.description !== undefined ? { description: params.description } : {}),
+            lanes: params.lanes,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId plus the full updated lane array.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id to update." }),
+        name: Type.String({ description: "Updated workflow name." }),
+        description: Type.Optional(Type.String({ description: "Optional updated workflow description." })),
+        lanes: Type.Array(workflowLaneSchema(), { description: "Full updated workflow lanes array." }),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string; name: string; description?: string; lanes: unknown[] }) {
+        const payload = {
+          workflowId: params.workflowId,
+          input: {
+            name: params.name,
+            ...(params.description !== undefined ? { description: params.description } : {}),
+            lanes: params.lanes,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "add_workflow_lane") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId plus the new lane definition.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id that should receive the new lane." }),
+        input: workflowLaneSchema(),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string; input: unknown }) {
+        const payload = {
+          workflowId: params.workflowId,
+          input: params.input,
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_workflow_lane") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId, laneId, and the lane patch fields you want to change.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id that owns the lane." }),
+        laneId: Type.String({ description: "Workflow lane id to update." }),
+        input: workflowLanePatchSchema(),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string; laneId: string; input: unknown }) {
+        const payload = {
+          workflowId: params.workflowId,
+          laneId: params.laneId,
+          input: params.input,
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "delete_workflow_lane") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId and laneId.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id that owns the lane." }),
+        laneId: Type.String({ description: "Workflow lane id to delete." }),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string; laneId: string }) {
+        const payload = {
+          workflowId: params.workflowId,
+          laneId: params.laneId,
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "reorder_workflow_lanes") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId and the complete ordered laneIds array.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id whose lanes should be reordered." }),
+        laneIds: Type.Array(Type.String({ description: "Lane id in the desired order." })),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string; laneIds: string[] }) {
+        const payload = {
+          workflowId: params.workflowId,
+          input: {
+            laneIds: params.laneIds,
+          },
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "duplicate_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId and optionally a newName.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id to duplicate." }),
+        newName: Type.Optional(Type.String({ description: "Optional name for the duplicated workflow." })),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string; newName?: string }) {
+        const payload = {
+          workflowId: params.workflowId,
+          ...(params.newName !== undefined ? { newName: params.newName } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "archive_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id to archive." }),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string }) {
+        const payload = { workflowId: params.workflowId };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],

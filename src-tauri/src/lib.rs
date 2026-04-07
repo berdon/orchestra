@@ -65,8 +65,9 @@ use commands::{
         set_default_task_file_reference, update_task, update_task_comment,
     },
     workflows::{
-        archive_workflow, create_workflow, duplicate_workflow, get_workflow, list_workflows,
-        update_workflow, validate_workflow,
+        add_workflow_lane, archive_workflow, create_workflow, delete_workflow_lane,
+        duplicate_workflow, get_workflow, list_workflows, reorder_workflow_lanes,
+        update_workflow, update_workflow_lane, validate_workflow,
     },
 };
 use state::AppState;
@@ -273,6 +274,10 @@ pub fn run() {
             validate_workflow,
             create_workflow,
             update_workflow,
+            add_workflow_lane,
+            update_workflow_lane,
+            delete_workflow_lane,
+            reorder_workflow_lanes,
             duplicate_workflow,
             archive_workflow
         ])

@@ -178,8 +178,13 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "remove_task_attachment",
     "list_workflows",
     "get_workflow",
+    "validate_workflow",
     "create_workflow",
     "update_workflow",
+    "add_workflow_lane",
+    "update_workflow_lane",
+    "delete_workflow_lane",
+    "reorder_workflow_lanes",
     "duplicate_workflow",
     "archive_workflow",
     "list_policies",
@@ -1704,6 +1709,14 @@ fn invoke_bridge_command(
             serde_json::to_value(workflows::get_workflow(connection, &workflow_id)?)
                 .map_err(|error| format!("Unable to serialize workflow: {error}"))
         }
+        "validate_workflow" => {
+            command_authorization::require_permission(connection, authorization, "workflows.read")?;
+            let input =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse workflow input: {error}"))?;
+            serde_json::to_value(workflows::validate_workflow(connection, &input)?)
+                .map_err(|error| format!("Unable to serialize workflow validation: {error}"))
+        }
         "create_workflow" => {
             command_authorization::require_permission(
                 connection,
@@ -1729,6 +1742,78 @@ fn invoke_bridge_command(
                     .map_err(|error| format!("Unable to parse workflow input: {error}"))?;
             let mut writable = database::open_connection()?;
             serde_json::to_value(workflows::update_workflow(
+                &mut writable,
+                &workflow_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize workflow: {error}"))
+        }
+        "add_workflow_lane" => {
+            let workflow_id = require_string(&payload, "workflowId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "workflows.update",
+            )?;
+            let input =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse workflow lane input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(workflows::add_workflow_lane(
+                &mut writable,
+                &workflow_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize workflow: {error}"))
+        }
+        "update_workflow_lane" => {
+            let workflow_id = require_string(&payload, "workflowId")?;
+            let lane_id = require_string(&payload, "laneId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "workflows.update",
+            )?;
+            let input =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse workflow lane patch input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(workflows::update_workflow_lane(
+                &mut writable,
+                &workflow_id,
+                &lane_id,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize workflow: {error}"))
+        }
+        "delete_workflow_lane" => {
+            let workflow_id = require_string(&payload, "workflowId")?;
+            let lane_id = require_string(&payload, "laneId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "workflows.update",
+            )?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(workflows::delete_workflow_lane(
+                &mut writable,
+                &workflow_id,
+                &lane_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize workflow: {error}"))
+        }
+        "reorder_workflow_lanes" => {
+            let workflow_id = require_string(&payload, "workflowId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "workflows.update",
+            )?;
+            let input =
+                serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse workflow lane reorder input: {error}"))?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(workflows::reorder_workflow_lanes(
                 &mut writable,
                 &workflow_id,
                 input,
@@ -1919,7 +2004,7 @@ mod tests {
     use super::*;
     use crate::{
         models::{AgentUpsertInput, TaskUpsertInput},
-        services::{agents, database::initialize_database_at, policies, tasks},
+        services::{agents, database, database::initialize_database_at, policies, tasks},
     };
     use rusqlite::params;
     use std::{
@@ -2162,221 +2247,435 @@ mod tests {
 
     #[test]
     fn project_and_repository_commands_round_trip_through_bridge() {
-        let mut connection = open_test_connection("tool-bridge-projects");
-        let config = dummy_bridge_config("projects");
-        let authorization = Some(&AuthorizationContext {
-            actor_type: "user".into(),
-            actor_id: "tester".into(),
-        });
+        with_temp_home("tool-bridge-projects", || {
+            let connection = database::open_connection().expect("database should open");
+            let config = dummy_bridge_config("projects");
+            let authorization = Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            });
 
-        let created_project = invoke_bridge_command(
+            let created_project = invoke_bridge_command(
+                &config,
+                &connection,
+                "create_project",
+                authorization,
+                None,
+                json!({
+                    "input": {
+                        "name": "Bridge Project",
+                        "description": "Project bridge test"
+                    }
+                }),
+            )
+            .expect("create_project should succeed");
+            let project_id = created_project
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("project id should serialize")
+                .to_string();
+
+            let projects_result = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_projects",
+                authorization,
+                None,
+                json!({}),
+            )
+            .expect("list_projects should succeed");
+            assert!(projects_result
+                .as_array()
+                .expect("projects should serialize as an array")
+                .iter()
+                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(project_id.as_str())));
+
+            let updated_project = invoke_bridge_command(
+                &config,
+                &connection,
+                "update_project",
+                authorization,
+                None,
+                json!({
+                    "projectId": project_id,
+                    "input": {
+                        "name": "Bridge Project Updated",
+                        "description": "Updated over the bridge"
+                    }
+                }),
+            )
+            .expect("update_project should succeed");
+            assert_eq!(
+                updated_project.get("name").and_then(Value::as_str),
+                Some("Bridge Project Updated")
+            );
+
+            let created_repository = invoke_bridge_command(
+                &config,
+                &connection,
+                "create_repository",
+                authorization,
+                None,
+                json!({
+                    "projectId": project_id,
+                    "input": {
+                        "name": "Bridge Repo",
+                        "mode": "existing",
+                        "repositoryPath": "/tmp/bridge-repo",
+                        "defaultBranch": "main"
+                    }
+                }),
+            )
+            .expect("create_repository should succeed");
+            let repository_id = created_repository
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("repository id should serialize")
+                .to_string();
+
+            let project_detail = invoke_bridge_command(
+                &config,
+                &connection,
+                "get_project",
+                authorization,
+                None,
+                json!({ "projectId": project_id }),
+            )
+            .expect("get_project should succeed");
+            assert!(project_detail
+                .get("repositories")
+                .and_then(Value::as_array)
+                .expect("project repositories should serialize as an array")
+                .iter()
+                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(repository_id.as_str())));
+
+            let repositories = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_repositories",
+                authorization,
+                None,
+                json!({ "projectId": project_id }),
+            )
+            .expect("list_repositories should succeed");
+            assert!(repositories
+                .as_array()
+                .expect("repositories should serialize as an array")
+                .iter()
+                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(repository_id.as_str())));
+
+            let updated_repository = invoke_bridge_command(
+                &config,
+                &connection,
+                "update_repository",
+                authorization,
+                None,
+                json!({
+                    "repositoryId": repository_id,
+                    "input": {
+                        "name": "Bridge Repo Updated",
+                        "mode": "existing",
+                        "repositoryPath": "/tmp/bridge-repo-updated",
+                        "defaultBranch": "develop"
+                    }
+                }),
+            )
+            .expect("update_repository should succeed");
+            assert_eq!(
+                updated_repository.get("name").and_then(Value::as_str),
+                Some("Bridge Repo Updated")
+            );
+
+            let attached_remote = invoke_bridge_command(
+                &config,
+                &connection,
+                "attach_repository_remote",
+                authorization,
+                None,
+                json!({
+                    "repositoryId": repository_id,
+                    "input": {
+                        "remoteUrl": "git@example.com:org/repo.git",
+                        "remoteName": "origin"
+                    }
+                }),
+            )
+            .expect("attach_repository_remote should succeed");
+            assert_eq!(
+                attached_remote.get("sourcePath").and_then(Value::as_str),
+                Some("git@example.com:org/repo.git")
+            );
+
+            let project_with_default_repository = invoke_bridge_command(
+                &config,
+                &connection,
+                "set_project_default_repository",
+                authorization,
+                None,
+                json!({ "projectId": project_id, "repositoryId": repository_id }),
+            )
+            .expect("set_project_default_repository should succeed");
+            assert_eq!(
+                project_with_default_repository
+                    .get("defaultRepositoryId")
+                    .and_then(Value::as_str),
+                Some(repository_id.as_str())
+            );
+
+            let repository_detail = invoke_bridge_command(
+                &config,
+                &connection,
+                "get_repository",
+                authorization,
+                None,
+                json!({ "repositoryId": repository_id }),
+            )
+            .expect("get_repository should succeed");
+            assert_eq!(
+                repository_detail.get("projectId").and_then(Value::as_str),
+                Some(project_id.as_str())
+            );
+
+            let deleted_repository = invoke_bridge_command(
+                &config,
+                &connection,
+                "delete_repository",
+                authorization,
+                None,
+                json!({ "repositoryId": repository_id }),
+            )
+            .expect("delete_repository should succeed");
+            assert_eq!(
+                deleted_repository.get("id").and_then(Value::as_str),
+                Some(repository_id.as_str())
+            );
+
+            let deleted_project = invoke_bridge_command(
+                &config,
+                &connection,
+                "delete_project",
+                authorization,
+                None,
+                json!({ "projectId": project_id }),
+            )
+            .expect("delete_project should succeed");
+            assert_eq!(
+                deleted_project.get("id").and_then(Value::as_str),
+                Some(project_id.as_str())
+            );
+        });
+    }
+
+    #[test]
+    fn workflow_lane_commands_round_trip_through_bridge() {
+        with_temp_home("tool-bridge-workflows", || {
+            let connection = database::open_connection().expect("database should open");
+            let config = dummy_bridge_config("workflows");
+            let authorization = Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            });
+
+        let validation = invoke_bridge_command(
             &config,
             &connection,
-            "create_project",
+            "validate_workflow",
             authorization,
             None,
             json!({
                 "input": {
-                    "name": "Bridge Project",
-                    "description": "Project bridge test"
+                    "name": "Validation workflow",
+                    "description": "Workflow validation through bridge",
+                    "lanes": [
+                        {
+                            "key": "plan",
+                            "name": "Plan",
+                            "assignedEntityType": "user",
+                            "successTransitionType": "end",
+                            "failureTransitionType": "end"
+                        }
+                    ]
                 }
             }),
         )
-        .expect("create_project should succeed");
-        let project_id = created_project
-            .get("id")
-            .and_then(Value::as_str)
-            .expect("project id should serialize")
-            .to_string();
+        .expect("validate_workflow should succeed");
+        assert_eq!(validation.get("valid").and_then(Value::as_bool), Some(true));
 
-        let projects_result = invoke_bridge_command(
+        let created_workflow = invoke_bridge_command(
             &config,
             &connection,
-            "list_projects",
+            "create_workflow",
+            authorization,
+            None,
+            json!({
+                "input": {
+                    "name": "Bridge workflow",
+                    "description": "Workflow created through bridge",
+                    "lanes": [
+                        {
+                            "id": "lane-plan",
+                            "key": "plan",
+                            "name": "Plan",
+                            "assignedEntityType": "user",
+                            "successTransitionType": "end",
+                            "failureTransitionType": "end"
+                        }
+                    ]
+                }
+            }),
+        )
+        .expect("create_workflow should succeed");
+        let workflow_id = created_workflow
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("workflow id should serialize")
+            .to_string();
+
+        let workflow_list = invoke_bridge_command(
+            &config,
+            &connection,
+            "list_workflows",
             authorization,
             None,
             json!({}),
         )
-        .expect("list_projects should succeed");
-        assert!(projects_result
+        .expect("list_workflows should succeed");
+        assert!(workflow_list
             .as_array()
-            .expect("projects should serialize as an array")
+            .expect("workflows should serialize as an array")
             .iter()
-            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(project_id.as_str())));
+            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(workflow_id.as_str())));
 
-        let updated_project = invoke_bridge_command(
+        let added_lane = invoke_bridge_command(
             &config,
             &connection,
-            "update_project",
+            "add_workflow_lane",
             authorization,
             None,
             json!({
-                "projectId": project_id,
+                "workflowId": workflow_id,
                 "input": {
-                    "name": "Bridge Project Updated",
-                    "description": "Updated over the bridge"
+                    "id": "lane-review",
+                    "key": "review",
+                    "name": "Review",
+                    "assignedEntityType": "user",
+                    "successTransitionType": "end",
+                    "failureTransitionType": "lane",
+                    "failureTargetLaneId": "lane-plan"
                 }
             }),
         )
-        .expect("update_project should succeed");
+        .expect("add_workflow_lane should succeed");
         assert_eq!(
-            updated_project.get("name").and_then(Value::as_str),
-            Some("Bridge Project Updated")
+            added_lane
+                .get("lanes")
+                .and_then(Value::as_array)
+                .map(|lanes| lanes.len()),
+            Some(2)
         );
 
-        let created_repository = invoke_bridge_command(
+        let updated_lane = invoke_bridge_command(
             &config,
             &connection,
-            "create_repository",
+            "update_workflow_lane",
             authorization,
             None,
             json!({
-                "projectId": project_id,
+                "workflowId": workflow_id,
+                "laneId": "lane-review",
                 "input": {
-                    "name": "Bridge Repo",
-                    "mode": "existing",
-                    "repositoryPath": "/tmp/bridge-repo",
-                    "defaultBranch": "main"
+                    "name": "Code review"
                 }
             }),
         )
-        .expect("create_repository should succeed");
-        let repository_id = created_repository
-            .get("id")
-            .and_then(Value::as_str)
-            .expect("repository id should serialize")
-            .to_string();
-
-        let project_detail = invoke_bridge_command(
-            &config,
-            &connection,
-            "get_project",
-            authorization,
-            None,
-            json!({ "projectId": project_id }),
-        )
-        .expect("get_project should succeed");
-        assert!(project_detail
-            .get("repositories")
+        .expect("update_workflow_lane should succeed");
+        assert!(updated_lane
+            .get("lanes")
             .and_then(Value::as_array)
-            .expect("project repositories should serialize as an array")
+            .expect("workflow lanes should serialize")
             .iter()
-            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(repository_id.as_str())));
+            .any(|entry| {
+                entry.get("id").and_then(Value::as_str) == Some("lane-review")
+                    && entry.get("name").and_then(Value::as_str) == Some("Code review")
+            }));
 
-        let repositories = invoke_bridge_command(
+        let reordered = invoke_bridge_command(
             &config,
             &connection,
-            "list_repositories",
-            authorization,
-            None,
-            json!({ "projectId": project_id }),
-        )
-        .expect("list_repositories should succeed");
-        assert!(repositories
-            .as_array()
-            .expect("repositories should serialize as an array")
-            .iter()
-            .any(|entry| entry.get("id").and_then(Value::as_str) == Some(repository_id.as_str())));
-
-        let updated_repository = invoke_bridge_command(
-            &config,
-            &connection,
-            "update_repository",
+            "reorder_workflow_lanes",
             authorization,
             None,
             json!({
-                "repositoryId": repository_id,
+                "workflowId": workflow_id,
                 "input": {
-                    "name": "Bridge Repo Updated",
-                    "mode": "existing",
-                    "repositoryPath": "/tmp/bridge-repo-updated",
-                    "defaultBranch": "develop"
+                    "laneIds": ["lane-review", "lane-plan"]
                 }
             }),
         )
-        .expect("update_repository should succeed");
-        assert_eq!(
-            updated_repository.get("name").and_then(Value::as_str),
-            Some("Bridge Repo Updated")
-        );
+        .expect("reorder_workflow_lanes should succeed");
+        let reordered_lanes = reordered
+            .get("lanes")
+            .and_then(Value::as_array)
+            .expect("workflow lanes should serialize");
+        assert_eq!(reordered_lanes[0].get("id").and_then(Value::as_str), Some("lane-review"));
+        assert_eq!(reordered_lanes[1].get("id").and_then(Value::as_str), Some("lane-plan"));
 
-        let attached_remote = invoke_bridge_command(
+        let duplicated = invoke_bridge_command(
             &config,
             &connection,
-            "attach_repository_remote",
+            "duplicate_workflow",
             authorization,
             None,
             json!({
-                "repositoryId": repository_id,
-                "input": {
-                    "remoteUrl": "git@example.com:org/repo.git",
-                    "remoteName": "origin"
-                }
+                "workflowId": workflow_id,
+                "newName": "Bridge workflow copy"
             }),
         )
-        .expect("attach_repository_remote should succeed");
-        assert_eq!(
-            attached_remote.get("sourcePath").and_then(Value::as_str),
-            Some("git@example.com:org/repo.git")
-        );
+        .expect("duplicate_workflow should succeed");
+        assert_eq!(duplicated.get("name").and_then(Value::as_str), Some("Bridge workflow copy"));
 
-        let project_with_default_repository = invoke_bridge_command(
+        let workflow_detail = invoke_bridge_command(
             &config,
             &connection,
-            "set_project_default_repository",
+            "get_workflow",
             authorization,
             None,
-            json!({ "projectId": project_id, "repositoryId": repository_id }),
+            json!({ "workflowId": workflow_id }),
         )
-        .expect("set_project_default_repository should succeed");
-        assert_eq!(
-            project_with_default_repository
-                .get("defaultRepositoryId")
-                .and_then(Value::as_str),
-            Some(repository_id.as_str())
-        );
+        .expect("get_workflow should succeed");
+        assert!(workflow_detail.get("lanes").and_then(Value::as_array).is_some());
 
-        let repository_detail = invoke_bridge_command(
+        let deleted_lane = invoke_bridge_command(
             &config,
             &connection,
-            "get_repository",
+            "delete_workflow_lane",
             authorization,
             None,
-            json!({ "repositoryId": repository_id }),
+            json!({
+                "workflowId": workflow_id,
+                "laneId": "lane-review"
+            }),
         )
-        .expect("get_repository should succeed");
+        .expect("delete_workflow_lane should succeed");
         assert_eq!(
-            repository_detail.get("projectId").and_then(Value::as_str),
-            Some(project_id.as_str())
+            deleted_lane
+                .get("lanes")
+                .and_then(Value::as_array)
+                .map(|lanes| lanes.len()),
+            Some(1)
         );
 
-        let deleted_repository = invoke_bridge_command(
+        let archived = invoke_bridge_command(
             &config,
             &connection,
-            "delete_repository",
+            "archive_workflow",
             authorization,
             None,
-            json!({ "repositoryId": repository_id }),
+            json!({ "workflowId": workflow_id }),
         )
-        .expect("delete_repository should succeed");
-        assert_eq!(
-            deleted_repository.get("id").and_then(Value::as_str),
-            Some(repository_id.as_str())
-        );
-
-        let deleted_project = invoke_bridge_command(
-            &config,
-            &connection,
-            "delete_project",
-            authorization,
-            None,
-            json!({ "projectId": project_id }),
-        )
-        .expect("delete_project should succeed");
-        assert_eq!(
-            deleted_project.get("id").and_then(Value::as_str),
-            Some(project_id.as_str())
-        );
+        .expect("archive_workflow should succeed");
+        assert_eq!(archived.get("archived").and_then(Value::as_bool), Some(true));
+        });
     }
 
     #[test]

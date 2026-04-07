@@ -129,6 +129,61 @@ describe("orchestra tools extension bridge tool setup", () => {
         description: "Set the default repository for a project",
         requiredPermission: "projects.update",
       },
+      {
+        name: "list_workflows",
+        description: "List workflows",
+        requiredPermission: "workflows.read",
+      },
+      {
+        name: "get_workflow",
+        description: "Get a workflow",
+        requiredPermission: "workflows.read",
+      },
+      {
+        name: "validate_workflow",
+        description: "Validate a workflow definition",
+        requiredPermission: "workflows.read",
+      },
+      {
+        name: "create_workflow",
+        description: "Create a workflow",
+        requiredPermission: "workflows.create",
+      },
+      {
+        name: "update_workflow",
+        description: "Update a workflow",
+        requiredPermission: "workflows.update",
+      },
+      {
+        name: "add_workflow_lane",
+        description: "Add a lane to a workflow",
+        requiredPermission: "workflows.update",
+      },
+      {
+        name: "update_workflow_lane",
+        description: "Update a workflow lane",
+        requiredPermission: "workflows.update",
+      },
+      {
+        name: "delete_workflow_lane",
+        description: "Delete a workflow lane",
+        requiredPermission: "workflows.update",
+      },
+      {
+        name: "reorder_workflow_lanes",
+        description: "Reorder workflow lanes",
+        requiredPermission: "workflows.update",
+      },
+      {
+        name: "duplicate_workflow",
+        description: "Duplicate a workflow",
+        requiredPermission: "workflows.create",
+      },
+      {
+        name: "archive_workflow",
+        description: "Archive a workflow",
+        requiredPermission: "workflows.archive",
+      },
     ]);
     process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({ actorType: "user", actorId: "tester" });
   });
@@ -192,6 +247,17 @@ describe("orchestra tools extension bridge tool setup", () => {
         "delete_repository",
         "attach_repository_remote",
         "set_project_default_repository",
+        "list_workflows",
+        "get_workflow",
+        "validate_workflow",
+        "create_workflow",
+        "update_workflow",
+        "add_workflow_lane",
+        "update_workflow_lane",
+        "delete_workflow_lane",
+        "reorder_workflow_lanes",
+        "duplicate_workflow",
+        "archive_workflow",
       ]),
     );
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
@@ -496,6 +562,143 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(attachRepositoryRemoteResult.content[0]?.text).toContain("attach_repository_remote");
     expect(setProjectDefaultRepositoryResult.details.command).toBe("set_project_default_repository");
     expect(setProjectDefaultRepositoryResult.content[0]?.text).toContain("set_project_default_repository");
+  });
+
+  test("exposes workflow and lane tools with explicit parameters", async () => {
+    const registeredTools: Array<any> = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            echoedCommand: JSON.parse(String(init?.body)).command,
+            echoedPayload: JSON.parse(String(init?.body)).payload,
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand() {},
+    } as any);
+
+    const validateWorkflowTool = registeredTools.find((tool) => tool.name === "validate_workflow");
+    expect(validateWorkflowTool.parameters.properties.lanes).toBeTruthy();
+    await validateWorkflowTool.execute("tool-call-1", {
+      name: "Validation workflow",
+      description: "Validate me",
+      lanes: [
+        {
+          key: "plan",
+          name: "Plan",
+          assignedEntityType: "agent",
+          assignedEntityId: "agent-planner",
+          successTransitionType: "end",
+          failureTransitionType: "end",
+        },
+      ],
+    });
+
+    const addWorkflowLaneTool = registeredTools.find((tool) => tool.name === "add_workflow_lane");
+    expect(addWorkflowLaneTool.parameters.properties.workflowId).toBeTruthy();
+    await addWorkflowLaneTool.execute("tool-call-2", {
+      workflowId: "workflow-1",
+      input: {
+        key: "review",
+        name: "Review",
+        assignedEntityType: "role",
+        assignedEntityId: "role-reviewer",
+        successTransitionType: "end",
+        failureTransitionType: "lane",
+        failureTargetLaneId: "lane-plan",
+      },
+    });
+
+    const updateWorkflowLaneTool = registeredTools.find((tool) => tool.name === "update_workflow_lane");
+    expect(updateWorkflowLaneTool.parameters.properties.laneId).toBeTruthy();
+    await updateWorkflowLaneTool.execute("tool-call-3", {
+      workflowId: "workflow-1",
+      laneId: "lane-review",
+      input: {
+        name: "Code review",
+        requireUserApprovalOnSuccess: true,
+      },
+    });
+
+    const deleteWorkflowLaneTool = registeredTools.find((tool) => tool.name === "delete_workflow_lane");
+    await deleteWorkflowLaneTool.execute("tool-call-4", {
+      workflowId: "workflow-1",
+      laneId: "lane-old",
+    });
+
+    const reorderWorkflowLanesTool = registeredTools.find((tool) => tool.name === "reorder_workflow_lanes");
+    await reorderWorkflowLanesTool.execute("tool-call-5", {
+      workflowId: "workflow-1",
+      laneIds: ["lane-plan", "lane-review", "lane-done"],
+    });
+
+    const createWorkflowTool = registeredTools.find((tool) => tool.name === "create_workflow");
+    await createWorkflowTool.execute("tool-call-6", {
+      name: "Delivery workflow",
+      lanes: [
+        {
+          key: "implement",
+          name: "Implement",
+          assignedEntityType: "agent",
+          assignedEntityId: "agent-dev",
+          successTransitionType: "end",
+          failureTransitionType: "end",
+        },
+      ],
+    });
+
+    const duplicateWorkflowTool = registeredTools.find((tool) => tool.name === "duplicate_workflow");
+    await duplicateWorkflowTool.execute("tool-call-7", {
+      workflowId: "workflow-1",
+      newName: "Delivery workflow copy",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    const validateRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(validateRequest.command).toBe("validate_workflow");
+    expect(validateRequest.payload.input.name).toBe("Validation workflow");
+    const addLaneRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(addLaneRequest.command).toBe("add_workflow_lane");
+    expect(addLaneRequest.payload.workflowId).toBe("workflow-1");
+    expect(addLaneRequest.payload.input.name).toBe("Review");
+    const updateLaneRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(updateLaneRequest.command).toBe("update_workflow_lane");
+    expect(updateLaneRequest.payload).toEqual({
+      workflowId: "workflow-1",
+      laneId: "lane-review",
+      input: {
+        name: "Code review",
+        requireUserApprovalOnSuccess: true,
+      },
+    });
+    const deleteLaneRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    expect(deleteLaneRequest.command).toBe("delete_workflow_lane");
+    expect(deleteLaneRequest.payload).toEqual({ workflowId: "workflow-1", laneId: "lane-old" });
+    const reorderRequest = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    expect(reorderRequest.command).toBe("reorder_workflow_lanes");
+    expect(reorderRequest.payload).toEqual({
+      workflowId: "workflow-1",
+      input: { laneIds: ["lane-plan", "lane-review", "lane-done"] },
+    });
+    const createWorkflowRequest = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
+    expect(createWorkflowRequest.command).toBe("create_workflow");
+    expect(createWorkflowRequest.payload.input.name).toBe("Delivery workflow");
+    const duplicateWorkflowRequest = JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body));
+    expect(duplicateWorkflowRequest.command).toBe("duplicate_workflow");
+    expect(duplicateWorkflowRequest.payload).toEqual({
+      workflowId: "workflow-1",
+      newName: "Delivery workflow copy",
+    });
   });
 
   test("exposes project-scoped tool parameters and detailed help", async () => {
