@@ -356,6 +356,56 @@ test("sessions UI refreshes an active session after opening even without a local
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("This reply arrived after the session was opened.", { timeout: 4000 });
 });
 
+test("sessions page keeps the viewed session stable during a transient background refresh miss", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-refresh-miss",
+          title: "Refresh miss",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "user-1",
+              kind: "user",
+              message: "Keep this session open while the list refreshes",
+              timestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Refresh miss" }).click();
+
+  await expect.poll(async () => {
+    const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
+    return logs.filter((entry: { target?: string }) => entry.target === "sessions.subscribe").length;
+  }).toBe(1);
+
+  await page.evaluate(() => {
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Refresh miss");
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
+
+  const sessionLogTargets = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]")
+    .map((entry: { target?: string }) => entry.target)
+    .filter((target: string | undefined) => typeof target === "string" && target.startsWith("sessions.")));
+  expect(sessionLogTargets.filter((target: string) => target === "sessions.unsubscribe")).toHaveLength(0);
+  expect(sessionLogTargets.filter((target: string) => target === "sessions.subscribe")).toHaveLength(1);
+});
+
 test("sessions page filters active and closed task sessions", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
