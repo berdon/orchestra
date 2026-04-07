@@ -220,6 +220,76 @@ test("sessions UI shows streamed assistant text when rejoining an active session
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from rejoined stream");
 });
 
+test("sessions composer keeps focus while the viewed session refreshes", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-focus-refresh",
+          title: "Focus refresh",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "user-1",
+              kind: "user",
+              message: "Keep typing while this session updates",
+              timestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Focus refresh" }).click();
+  await page.locator('[data-role="composer-input"]').focus();
+  await page.locator('[data-role="composer-input"]').fill("Draft that should keep focus");
+
+  await page.evaluate(() => {
+    window.setTimeout(() => {
+      const timestamp = new Date().toISOString();
+      window.localStorage.setItem(
+        "orchestra.mock.sessions.orchestra",
+        JSON.stringify([
+          {
+            id: "session-focus-refresh",
+            title: "Focus refresh",
+            status: "idle",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            subscribed: true,
+            events: [
+              {
+                id: "user-1",
+                kind: "user",
+                message: "Keep typing while this session updates",
+                timestamp,
+              },
+              {
+                id: "assistant-1",
+                kind: "assistant",
+                message: "This refresh should not steal focus.",
+                timestamp,
+              },
+            ],
+          },
+        ]),
+      );
+    }, 150);
+  });
+
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("This refresh should not steal focus.", { timeout: 4000 });
+  await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Draft that should keep focus");
+});
+
 test("sessions UI refreshes an active session after opening even without a local send", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

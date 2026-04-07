@@ -1712,7 +1712,7 @@ export function App() {
   const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun ? "streaming" : selectedSession?.status ?? "idle";
   const chatSessionDisplayStatus: SessionStatus = chatSessionPendingRun ? "streaming" : chatSession?.status ?? "idle";
 
-  async function handleModelChange(sessionId: string, value: string) {
+  const handleModelChange = useCallback(async (sessionId: string, value: string) => {
     const session = sessions.find((entry) => entry.id === sessionId);
     if (!session) {
       return;
@@ -1738,7 +1738,7 @@ export function App() {
     } finally {
       setChangingModelSessionId((current) => (current === session.id ? null : current));
     }
-  }
+  }, [sessions]);
 
   function navigateToTask(taskId: string) {
     setActivePage("tasks");
@@ -1891,7 +1891,7 @@ export function App() {
     }
   }
 
-  function handleStopSession(sessionId: string) {
+  const handleStopSession = useCallback((sessionId: string) => {
     const session = sessions.find((entry) => entry.id === sessionId);
     if (!session) {
       return;
@@ -1921,9 +1921,9 @@ export function App() {
       .catch(async (error: unknown) => {
         setSessionActionError(await reportClientError("ui.sessions.stop", error, "Unable to stop session runtime."));
       });
-  }
+  }, [mergeSessionRecord, removePendingRun, sessions]);
 
-  function handleSendMessage(sessionId: string) {
+  const handleSendMessage = useCallback((sessionId: string) => {
     const session = sessions.find((entry) => entry.id === sessionId);
     if (!session) {
       return;
@@ -1972,7 +1972,31 @@ export function App() {
       updateDraftMessage(sessionId, trimmedMessage);
       setSessionActionError(await reportClientError("ui.sessions.message.queue", error, "Unable to queue message."));
     });
-  }
+  }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
+
+  const handleSelectedSessionModelChange = useCallback((value: string) => {
+    if (selectedSession) {
+      void handleModelChange(selectedSession.id, value);
+    }
+  }, [handleModelChange, selectedSession?.id]);
+  const handleSelectedSessionDraftChange = useCallback((value: string) => {
+    if (selectedSession) {
+      updateDraftMessage(selectedSession.id, value);
+    }
+  }, [selectedSession?.id, updateDraftMessage]);
+  const handleSelectedSessionSend = useCallback(() => {
+    if (selectedSession?.terminalAttached) {
+      return;
+    }
+    if (selectedSession) {
+      handleSendMessage(selectedSession.id);
+    }
+  }, [handleSendMessage, selectedSession?.id, selectedSession?.terminalAttached]);
+  const handleSelectedSessionStop = useCallback(() => {
+    if (selectedSession) {
+      handleStopSession(selectedSession.id);
+    }
+  }, [handleStopSession, selectedSession?.id]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -2325,29 +2349,10 @@ export function App() {
             onSelectSession={setSelectedSessionId}
             onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
             onDeleteClosedSessions={() => void handleDeleteClosedSessions()}
-            onModelChange={(value) => {
-              if (selectedSession) {
-                void handleModelChange(selectedSession.id, value);
-              }
-            }}
-            onDraftChange={(value) => {
-              if (selectedSession) {
-                updateDraftMessage(selectedSession.id, value);
-              }
-            }}
-            onSendMessage={() => {
-              if (selectedSession?.terminalAttached) {
-                return;
-              }
-              if (selectedSession) {
-                handleSendMessage(selectedSession.id);
-              }
-            }}
-            onStopSession={() => {
-              if (selectedSession) {
-                handleStopSession(selectedSession.id);
-              }
-            }}
+            onModelChange={handleSelectedSessionModelChange}
+            onDraftChange={handleSelectedSessionDraftChange}
+            onSendMessage={handleSelectedSessionSend}
+            onStopSession={handleSelectedSessionStop}
           />
         ) : (
           <TasksPage
