@@ -562,6 +562,8 @@ export function App() {
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
   const backgroundSessionRefreshInFlightRef = useRef(false);
+  const sessionListRefreshCountRef = useRef(0);
+  const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -865,6 +867,7 @@ export function App() {
   }
 
   async function loadSessions(options?: { background?: boolean }) {
+    sessionListRefreshCountRef.current += 1;
     if (!options?.background) {
       setLoadingSessions(true);
     } else {
@@ -1052,6 +1055,7 @@ export function App() {
 
       if (reduction.refreshFromBackend) {
         const runId = payload.runId ?? undefined;
+        sessionRecordLoadCountsRef.current[payload.sessionId] = (sessionRecordLoadCountsRef.current[payload.sessionId] ?? 0) + 1;
         void getSessionRecord(payload.sessionId)
           .then((record) => {
             applySessionUpdate(record);
@@ -1070,12 +1074,18 @@ export function App() {
     const testWindow = window as typeof window & {
       __orchestraTestInjectSessionStream?: (payload: SessionStreamEnvelope) => void;
       __orchestraTestApplySessionRecord?: (record: SessionRecord) => void;
+      __orchestraTestSessionRefreshStats?: () => { listRefreshCount: number; recordLoadCounts: Record<string, number> };
     };
     testWindow.__orchestraTestInjectSessionStream = handleSessionStreamEvent;
     testWindow.__orchestraTestApplySessionRecord = applySessionUpdate;
+    testWindow.__orchestraTestSessionRefreshStats = () => ({
+      listRefreshCount: sessionListRefreshCountRef.current,
+      recordLoadCounts: { ...sessionRecordLoadCountsRef.current },
+    });
     return () => {
       delete testWindow.__orchestraTestInjectSessionStream;
       delete testWindow.__orchestraTestApplySessionRecord;
+      delete testWindow.__orchestraTestSessionRefreshStats;
     };
   }, [applySessionUpdate, handleSessionStreamEvent]);
 
@@ -1419,6 +1429,7 @@ export function App() {
 
     let cancelled = false;
 
+    sessionRecordLoadCountsRef.current[viewedSession.id] = (sessionRecordLoadCountsRef.current[viewedSession.id] ?? 0) + 1;
     void getSessionRecord(viewedSession.id)
       .then((record) => {
         if (!cancelled) {
@@ -1454,6 +1465,7 @@ export function App() {
         return;
       }
 
+      sessionRecordLoadCountsRef.current[viewedSession.id] = (sessionRecordLoadCountsRef.current[viewedSession.id] ?? 0) + 1;
       void getSessionRecord(viewedSession.id)
         .then((record) => {
           if (!cancelled) {
