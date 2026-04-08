@@ -200,6 +200,10 @@ function asString(value: JsonValue | undefined | null) {
   return typeof value === "string" ? value : "";
 }
 
+function asNumber(value: JsonValue | undefined | null) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function extractRpcMessageBlocks(message: JsonValue | undefined | null, expectedType: string, valueKey: string) {
   if (!isObject(message)) {
     return "";
@@ -374,6 +378,37 @@ function formatToolCallLabel(toolName: string, args: JsonValue | undefined | nul
         ? []
         : [args];
   return `${toolName}(${argValues.map((value) => summarizeToolArgument(value)).join(", ")})`;
+}
+
+function getAssistantToolCallDetails(message: JsonValue | undefined | null, contentIndex?: number) {
+  if (!isObject(message)) {
+    return null;
+  }
+
+  const content = asArray(message.content);
+  const index = typeof contentIndex === "number" ? contentIndex : -1;
+  const candidate = index >= 0 && index < content.length ? content[index] : null;
+  const toolBlock = [candidate, ...content].find((block) => {
+    if (!isObject(block)) {
+      return false;
+    }
+    const type = asString(block.type).replace(/[_-]/g, "").toLowerCase();
+    return type === "toolcall" || type === "tooluse";
+  });
+
+  if (!isObject(toolBlock)) {
+    return null;
+  }
+
+  const toolName = asString(toolBlock.toolName) || asString(toolBlock.name) || "tool";
+  const toolCallId = asString(toolBlock.toolCallId) || asString(toolBlock.id) || `tool-call-${toolName}`;
+  const args = toolBlock.input ?? toolBlock.args ?? toolBlock.arguments ?? toolBlock.parameters ?? null;
+  return {
+    toolName,
+    toolCallId,
+    args,
+    label: formatToolCallLabel(toolName, args),
+  };
 }
 
 function buildToolEventMessage(args: JsonValue | undefined | null, result?: JsonValue | undefined | null, durationMs?: number | null) {
@@ -1203,7 +1238,11 @@ export function App() {
             return;
           case "toolcall_start":
           case "toolcall_delta":
-          case "toolcall_end":
+          case "toolcall_end": {
+            const toolCall = getAssistantToolCallDetails(message, asNumber(delta?.contentIndex));
+            const toolCallId = toolCall?.toolCallId ?? `${runId}-toolcall`;
+            const toolEventId = `tool-execution-${toolCallId}`;
+
             if (pendingRuns[payload.sessionId]) {
               updatePendingRun(payload.sessionId, (current) => ({
                 ...current,
@@ -1211,18 +1250,30 @@ export function App() {
                   ...current.userEvent,
                   pending: false,
                 },
-                assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
+                assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp),
               }));
             } else {
               patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
                 ...event,
-                message: event.message || "Running tools…",
                 pending: true,
                 thinking: false,
                 timestamp: eventTimestamp,
               }));
             }
+
+            if (toolCall) {
+              upsertSystemEvent(
+                payload.sessionId,
+                toolEventId,
+                runId,
+                eventTimestamp,
+                buildToolEventMessage(toolCall.args),
+                true,
+                { label: toolCall.label, presentation: "tool_call" },
+              );
+            }
             return;
+          }
           case "error":
             patchSessionRecord(payload.sessionId, (session) => ({
               ...session,

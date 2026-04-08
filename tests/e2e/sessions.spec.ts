@@ -88,6 +88,76 @@ test("sessions stop button stops an active mock run", async ({ page }) => {
   await expect(page.locator('[data-role="session-transcript"]')).not.toContainText(`Acknowledged: ${longMessage}`);
 });
 
+test("sessions UI shows tool call composition before tool execution starts", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-toolcall",
+          title: "Tool call stream",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Tool call stream" }).click();
+
+  await page.evaluate(() => {
+    const receivedAt = new Date().toISOString();
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-toolcall",
+          runId: "run-toolcall",
+          receivedAt,
+          event: {
+            type: "message_start",
+            message: { role: "assistant" },
+          },
+        },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-toolcall",
+          runId: "run-toolcall",
+          receivedAt,
+          event: {
+            type: "message_update",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  toolCallId: "call-compose-1",
+                  toolName: "write_file",
+                  input: { path: "src/live.ts", content: "const answer = 42;" },
+                },
+              ],
+            },
+            assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, partial: {} },
+          },
+        },
+      }),
+    );
+  });
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  await expect(transcript).toContainText("write_file(");
+  await expect(transcript).toContainText("src/live.ts");
+  await expect(page.locator('[data-role="transcript-event"][data-event-id="tool-execution-call-compose-1"]')).toHaveAttribute("data-event-kind", "system");
+});
+
 test("sessions UI shows tool invocations in the transcript", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
