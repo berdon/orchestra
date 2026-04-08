@@ -14,9 +14,10 @@ use commands::{
         validate_agent,
     },
     app::{
-        cleanup_stale_bridge_instances, clear_logs, export_logs_bundle, get_app_info,
-        get_bridge_diagnostics, get_logs, get_pi_executable_diagnostic, get_session_storage_info,
-        list_pi_models, open_logs_window, report_client_error,
+        cleanup_stale_bridge_instances, clear_logs, debug_seed_idle_task_whip_scenario,
+        export_logs_bundle, get_app_info, get_bridge_diagnostics, get_logs,
+        get_pi_executable_diagnostic, get_session_storage_info, list_pi_models,
+        open_logs_window, report_client_error,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -151,6 +152,7 @@ pub fn run() {
             get_bridge_diagnostics,
             cleanup_stale_bridge_instances,
             open_logs_window,
+            debug_seed_idle_task_whip_scenario,
             list_channels,
             get_channel,
             list_channel_activity,
