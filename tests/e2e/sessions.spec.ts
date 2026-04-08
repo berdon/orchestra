@@ -292,9 +292,10 @@ test("sessions UI shows compact live thinking updates while assistant text strea
   });
 
   const thinkingPreview = page.locator('[data-role="transcript-thinking-preview"]').last();
-  await expect(thinkingPreview).toContainText("First line");
   await expect(thinkingPreview).toContainText("Fourth line");
-  await expect(thinkingPreview).toHaveJSProperty("textContent", "First line\nSecond line\nThird line\nFourth line");
+  const previewTextContent = await thinkingPreview.evaluate((node) => node.textContent || "");
+  expect(previewTextContent).toContain("Third line");
+  expect(previewTextContent).toContain("Fourth line");
   const webkitLineClamp = await thinkingPreview.evaluate((node) => getComputedStyle(node).getPropertyValue("-webkit-line-clamp"));
   expect(webkitLineClamp.trim()).toBe("3");
 

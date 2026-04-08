@@ -31,6 +31,7 @@ import {
 } from "./lib/tauri";
 import { ensureAgentSession, listAgentOperations, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
+import { applyPendingRunToSession, createPendingUserRun, type PendingSessionRun, reduceSessionTranscriptEvent } from "./lib/sessionTranscriptReducer";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
@@ -98,12 +99,6 @@ function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
 
 function supervisorQuickChatStorageKey(projectId: string | null) {
   return `orchestra.quick-chat.supervisor.${projectId ?? "default"}`;
-}
-
-interface PendingSessionRun {
-  runId: string;
-  userEvent: SessionEvent;
-  assistantEvent?: SessionEvent;
 }
 
 function buildPendingAssistantEvent(runId: string, timestamp: string, overrides?: Partial<SessionEvent>): SessionEvent {
@@ -1021,403 +1016,36 @@ export function App() {
 
   const handleSessionStreamEvent = useCallback(
     (payload: SessionStreamEnvelope) => {
-      const eventType = getRpcEventType(payload);
-      const eventTimestamp = payload.receivedAt ?? nowIso();
-      const runId = payload.runId ?? createClientId("run");
+      const currentSession = sessionsRef.current.find((session) => session.id === payload.sessionId);
+      if (!currentSession) {
+        return;
+      }
 
-      if (eventType === "agent_start") {
-        patchSessionRecord(payload.sessionId, (session) => ({
-          ...session,
-          status: "streaming",
-          updatedAt: eventTimestamp,
+      const reduction = reduceSessionTranscriptEvent(
+        currentSession,
+        pendingRuns[payload.sessionId],
+        payload,
+      );
+      if (!reduction) {
+        return;
+      }
+
+      patchSessionRecord(payload.sessionId, () => reduction.session);
+      if (reduction.pendingRun) {
+        setPendingRuns((current) => ({
+          ...current,
+          [payload.sessionId]: reduction.pendingRun!,
         }));
-        return;
+      } else if (pendingRuns[payload.sessionId] && (reduction.refreshFromBackend || reduction.session.status === "failed")) {
+        removePendingRun(payload.sessionId, payload.runId ?? undefined);
       }
 
-      if (eventType === "message_start") {
-        const rpcEvent = isObject(payload.event) ? payload.event : null;
-        const message = rpcEvent?.message;
-        const role = isObject(message) ? asString(message.role) : "";
-
-        if (role === "user") {
-          updatePendingRun(payload.sessionId, (current) => ({
-            ...current,
-            userEvent: {
-              ...current.userEvent,
-              pending: false,
-              timestamp: eventTimestamp,
-            },
-          }));
-          return;
-        }
-
-        if (role === "assistant") {
-          const messageText = extractRpcMessageText(message);
-          const thinkingText = extractRpcThinkingText(message);
-          if (pendingRuns[payload.sessionId]) {
-            updatePendingRun(payload.sessionId, (current) => ({
-              ...current,
-              userEvent: {
-                ...current.userEvent,
-                pending: false,
-              },
-              assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp, {
-                message: messageText,
-                thinkingText,
-                thinking: Boolean(thinkingText.trim()),
-              }),
-            }));
-          } else {
-            patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-              ...event,
-              pending: true,
-              thinking: Boolean(thinkingText.trim()),
-              thinkingText: thinkingText || event.thinkingText,
-              message: messageText || event.message,
-              timestamp: eventTimestamp,
-            }));
-          }
-        }
-        return;
+      if (reduction.sessionActionError) {
+        setSessionActionError(reduction.sessionActionError);
       }
 
-      if (eventType === "message_update") {
-        const deltaType = getRpcAssistantDeltaType(payload);
-        const rpcEvent = isObject(payload.event) ? payload.event : null;
-        const message = rpcEvent?.message;
-        const delta = isObject(rpcEvent?.assistantMessageEvent) ? rpcEvent?.assistantMessageEvent : null;
-        const thinkingText = extractRpcThinkingText(message);
-
-        switch (deltaType) {
-          case "thinking_start":
-            if (pendingRuns[payload.sessionId]) {
-              updatePendingRun(payload.sessionId, (current) => ({
-                ...current,
-                userEvent: {
-                  ...current.userEvent,
-                  pending: false,
-                },
-                assistantEvent: current.assistantEvent
-                  ? {
-                      ...current.assistantEvent,
-                      pending: true,
-                      thinking: true,
-                      thinkingText: current.assistantEvent.thinkingText || thinkingText,
-                      timestamp: eventTimestamp,
-                    }
-                  : buildPendingAssistantEvent(runId, eventTimestamp, {
-                      thinking: true,
-                      thinkingText,
-                    }),
-              }));
-            } else {
-              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-                ...event,
-                pending: true,
-                thinking: true,
-                thinkingText: event.thinkingText || thinkingText,
-                timestamp: eventTimestamp,
-              }));
-            }
-            return;
-          case "thinking_delta": {
-            const chunk = delta ? asString(delta.delta) : "";
-            if (pendingRuns[payload.sessionId]) {
-              updatePendingRun(payload.sessionId, (current) => {
-                const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp, { thinking: true });
-                return {
-                  ...current,
-                  userEvent: {
-                    ...current.userEvent,
-                    pending: false,
-                  },
-                  assistantEvent: {
-                    ...base,
-                    thinking: true,
-                    pending: true,
-                    thinkingText: `${base.thinkingText ?? ""}${chunk}`,
-                    timestamp: eventTimestamp,
-                  },
-                };
-              });
-            } else {
-              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-                ...event,
-                thinking: true,
-                pending: true,
-                thinkingText: `${event.thinkingText ?? ""}${chunk}`,
-                timestamp: eventTimestamp,
-              }));
-            }
-            return;
-          }
-          case "thinking_end":
-            if (pendingRuns[payload.sessionId]) {
-              updatePendingRun(payload.sessionId, (current) => ({
-                ...current,
-                assistantEvent: current.assistantEvent
-                  ? {
-                      ...current.assistantEvent,
-                      thinking: false,
-                      pending: true,
-                      thinkingText: thinkingText || current.assistantEvent.thinkingText,
-                    }
-                  : buildPendingAssistantEvent(runId, eventTimestamp, {
-                      thinking: false,
-                      thinkingText,
-                    }),
-              }));
-            } else {
-              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-                ...event,
-                thinking: false,
-                pending: true,
-                thinkingText: thinkingText || event.thinkingText,
-              }));
-            }
-            return;
-          case "text_start":
-            if (pendingRuns[payload.sessionId]) {
-              updatePendingRun(payload.sessionId, (current) => ({
-                ...current,
-                userEvent: {
-                  ...current.userEvent,
-                  pending: false,
-                },
-                assistantEvent: current.assistantEvent
-                  ? {
-                      ...current.assistantEvent,
-                      pending: true,
-                      thinking: false,
-                      message: hasVisibleAssistantText(current.assistantEvent) ? current.assistantEvent.message : "",
-                    }
-                  : buildPendingAssistantEvent(runId, eventTimestamp, { thinkingText }),
-              }));
-            } else {
-              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-                ...event,
-                pending: true,
-                thinking: false,
-                thinkingText: thinkingText || event.thinkingText,
-                message: hasVisibleAssistantText(event) ? event.message : "",
-              }));
-            }
-            return;
-          case "text_delta":
-            if (pendingRuns[payload.sessionId]) {
-              updatePendingRun(payload.sessionId, (current) => {
-                const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp, { thinkingText });
-                const chunk = delta ? asString(delta.delta) : "";
-                const nextMessage = hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk;
-                return {
-                  ...current,
-                  userEvent: {
-                    ...current.userEvent,
-                    pending: false,
-                  },
-                  assistantEvent: {
-                    ...base,
-                    message: nextMessage,
-                    pending: true,
-                    thinking: false,
-                    timestamp: eventTimestamp,
-                  },
-                };
-              });
-            } else {
-              const chunk = delta ? asString(delta.delta) : "";
-              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-                ...event,
-                message: hasVisibleAssistantText(event) ? `${event.message}${chunk}` : chunk,
-                pending: true,
-                thinking: false,
-                thinkingText: thinkingText || event.thinkingText,
-                timestamp: eventTimestamp,
-              }));
-            }
-            return;
-          case "toolcall_start":
-          case "toolcall_delta":
-          case "toolcall_end": {
-            const toolCall = getAssistantToolCallDetails(message, asNumber(delta?.contentIndex));
-            const toolCallId = toolCall?.toolCallId ?? `${runId}-toolcall`;
-            const toolEventId = `tool-execution-${toolCallId}`;
-
-            if (pendingRuns[payload.sessionId]) {
-              updatePendingRun(payload.sessionId, (current) => ({
-                ...current,
-                userEvent: {
-                  ...current.userEvent,
-                  pending: false,
-                },
-                assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp),
-              }));
-            } else {
-              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-                ...event,
-                pending: true,
-                thinking: false,
-                timestamp: eventTimestamp,
-              }));
-            }
-
-            if (toolCall) {
-              upsertSystemEvent(
-                payload.sessionId,
-                toolEventId,
-                runId,
-                eventTimestamp,
-                buildToolEventMessage(toolCall.args),
-                true,
-                { label: toolCall.label, presentation: "tool_call" },
-              );
-            }
-            return;
-          }
-          case "error":
-            patchSessionRecord(payload.sessionId, (session) => ({
-              ...session,
-              status: "failed",
-              updatedAt: eventTimestamp,
-              events: session.events.filter((event) => event.runId !== runId),
-            }));
-            removePendingRun(payload.sessionId, runId);
-            setSessionActionError(asString(delta?.message) || extractRpcMessageText(message) || "Session action failed.");
-            return;
-          default:
-            return;
-        }
-      }
-
-      if (eventType === "tool_execution_start" || eventType === "tool_execution_update" || eventType === "tool_execution_end") {
-        const rpcEvent = isObject(payload.event) ? payload.event : null;
-        const toolName = asString(rpcEvent?.toolName) || "tool";
-        const toolCallId = asString(rpcEvent?.toolCallId) || `${runId}-${toolName}`;
-        const args = rpcEvent?.args;
-        const toolEventId = `tool-execution-${toolCallId}`;
-
-        if (pendingRuns[payload.sessionId]) {
-          updatePendingRun(payload.sessionId, (current) => ({
-            ...current,
-            userEvent: {
-              ...current.userEvent,
-              pending: false,
-            },
-            assistantEvent: current.assistantEvent ?? buildToolPlaceholder(runId, eventTimestamp),
-          }));
-        } else {
-          patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-            ...event,
-            message: event.message || "Running tools…",
-            pending: true,
-            thinking: false,
-          }));
-        }
-
-        const toolCallLabel = formatToolCallLabel(toolName, args);
-
-        if (eventType === "tool_execution_start") {
-          patchSessionRecord(payload.sessionId, (session) => ({
-            ...session,
-            activityState: "tool_running",
-            activeToolName: toolName,
-            lastActivityAt: eventTimestamp,
-          }));
-          upsertSystemEvent(
-            payload.sessionId,
-            toolEventId,
-            runId,
-            eventTimestamp,
-            buildToolEventMessage(args),
-            true,
-            { label: toolCallLabel, presentation: "tool_call" },
-          );
-        } else if (eventType === "tool_execution_update") {
-          const partialResult = isObject(rpcEvent?.partialResult) ? rpcEvent?.partialResult : null;
-          const partialContent = partialResult?.content;
-          patchSessionRecord(payload.sessionId, (session) => ({
-            ...session,
-            activityState: "tool_running",
-            activeToolName: toolName,
-            lastActivityAt: eventTimestamp,
-          }));
-          upsertSystemEvent(
-            payload.sessionId,
-            toolEventId,
-            runId,
-            eventTimestamp,
-            buildToolEventMessage(args, partialContent ?? partialResult),
-            true,
-            { label: toolCallLabel, presentation: "tool_call" },
-          );
-        } else {
-          const result = rpcEvent?.result;
-          const isError = rpcEvent?.isError === true;
-          const durationMs = Number(rpcEvent?.durationMs ?? 0) || undefined;
-          patchSessionRecord(payload.sessionId, (session) => ({
-            ...session,
-            activityState: isError ? "error" : "idle",
-            activeToolName: null,
-            lastActivityAt: eventTimestamp,
-          }));
-          upsertSystemEvent(
-            payload.sessionId,
-            toolEventId,
-            runId,
-            eventTimestamp,
-            buildToolEventMessage(args, result, durationMs),
-            false,
-            { label: toolCallLabel, presentation: "tool_call" },
-          );
-        }
-        return;
-      }
-
-      if (eventType === "turn_end") {
-        const rpcEvent = isObject(payload.event) ? payload.event : null;
-        const finalMessage = extractRpcMessageText(rpcEvent?.message);
-        const finalThinkingText = extractRpcThinkingText(rpcEvent?.message);
-        if (!finalMessage.trim() && !finalThinkingText.trim()) {
-          return;
-        }
-
-        if (pendingRuns[payload.sessionId]) {
-          updatePendingRun(payload.sessionId, (current) => ({
-            ...current,
-            userEvent: {
-              ...current.userEvent,
-              pending: false,
-            },
-            assistantEvent: current.assistantEvent
-              ? {
-                  ...current.assistantEvent,
-                  message: finalMessage,
-                  thinkingText: finalThinkingText || current.assistantEvent.thinkingText,
-                  pending: false,
-                  thinking: false,
-                  timestamp: eventTimestamp,
-                }
-              : buildPendingAssistantEvent(runId, eventTimestamp, {
-                  message: finalMessage,
-                  thinkingText: finalThinkingText,
-                  pending: false,
-                  thinking: false,
-                }),
-          }));
-        } else {
-          patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
-            ...event,
-            message: finalMessage,
-            thinkingText: finalThinkingText || event.thinkingText,
-            pending: false,
-            thinking: false,
-            timestamp: eventTimestamp,
-          }));
-        }
-        return;
-      }
-
-      if (eventType === "agent_end") {
+      if (reduction.refreshFromBackend) {
+        const runId = payload.runId ?? undefined;
         void getSessionRecord(payload.sessionId)
           .then((record) => {
             applySessionUpdate(record);
@@ -1427,25 +1055,9 @@ export function App() {
             removePendingRun(payload.sessionId, runId);
             setSessionActionError(error instanceof Error ? error.message : "Unable to refresh session.");
           });
-        return;
-      }
-
-      if (eventType === "error") {
-        const rpcEvent = isObject(payload.event) ? payload.event : null;
-        patchSessionRecord(payload.sessionId, (session) => ({
-          ...session,
-          status: "failed",
-          activityState: "error",
-          activeToolName: null,
-          lastActivityAt: eventTimestamp,
-          updatedAt: eventTimestamp,
-          events: session.events.filter((event) => event.runId !== runId),
-        }));
-        removePendingRun(payload.sessionId, runId);
-        setSessionActionError(asString(rpcEvent?.message) || "Session action failed.");
       }
     },
-    [applySessionUpdate, patchSessionRecord, patchStreamingAssistantEvent, pendingRuns, removePendingRun, updatePendingRun, upsertSystemEvent],
+    [applySessionUpdate, patchSessionRecord, pendingRuns, removePendingRun],
   );
 
   useEffect(() => {
@@ -2120,31 +1732,15 @@ export function App() {
 
     const runId = createClientId("run");
     const timestamp = nowIso();
-
-    const pendingUserEvent: SessionEvent = {
-      id: `pending-user-${runId}`,
-      kind: "user",
-      message: trimmedMessage,
-      timestamp,
-      pending: true,
-      runId,
-    };
+    const pendingRun = createPendingUserRun(runId, trimmedMessage, timestamp);
 
     setSessionActionError(null);
     updateDraftMessage(sessionId, "");
     setPendingRuns((current) => ({
       ...current,
-      [sessionId]: {
-        runId,
-        userEvent: pendingUserEvent,
-      },
+      [sessionId]: pendingRun,
     }));
-    patchSessionRecord(sessionId, (record) => ({
-      ...record,
-      status: "streaming",
-      updatedAt: timestamp,
-      events: [...record.events.filter((event) => event.runId !== runId), pendingUserEvent],
-    }));
+    patchSessionRecord(sessionId, (record) => applyPendingRunToSession(record, pendingRun));
 
     void sendSessionMessage(sessionId, trimmedMessage, runId).catch(async (error) => {
       patchSessionRecord(sessionId, (record) => ({
