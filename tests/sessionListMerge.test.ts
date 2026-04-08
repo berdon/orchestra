@@ -22,7 +22,7 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe("sessionListMerge", () => {
-  it("preserves loaded transcript events and debug info when list refresh only returns session summaries", () => {
+  it("preserves loaded transcript events and debug info when a retained viewed session refresh only returns a summary", () => {
     const existing = makeSession({
       events: [
         {
@@ -47,7 +47,9 @@ describe("sessionListMerge", () => {
       debugInfo: null,
     });
 
-    const [merged] = reconcileListedSessions([existing], [listed]);
+    const [merged] = reconcileListedSessions([existing], [listed], {
+      preserveDetailedSessionIds: [existing.id],
+    });
     expect(merged?.events).toEqual(existing.events);
     expect(merged?.debugInfo).toEqual(existing.debugInfo);
     expect(merged?.updatedAt).toBe(listed.updatedAt);
@@ -98,9 +100,38 @@ describe("sessionListMerge", () => {
       updatedAt: "2026-04-08T00:00:05Z",
     });
 
-    const [merged] = reconcileListedSessions([existing], [listed], [existing.id]);
+    const [merged] = reconcileListedSessions([existing], [listed], {
+      pendingSessionIds: [existing.id],
+    });
     expect(merged?.status).toBe("streaming");
     expect(merged?.activityState).toBe("streaming");
     expect(merged?.updatedAt).toBe(existing.updatedAt);
+  });
+
+  it("drops transcript details for non-retained sessions so old history can collapse back to summaries", () => {
+    const existing = makeSession({
+      events: [
+        {
+          id: "assistant-1",
+          kind: "assistant",
+          message: "Visible answer",
+          timestamp: "2026-04-08T00:00:01Z",
+        },
+      ],
+      debugInfo: {
+        projectRoot: "/workspace/orchestra",
+        managedRepositoryPath: "/workspace/orchestra/repository",
+        worktreePath: "/workspace/orchestra/worktrees/agent-02",
+        sessionCwd: "/workspace/orchestra/worktrees/agent-02",
+      },
+    });
+    const listed = makeSession({ events: [], debugInfo: null });
+
+    const [merged] = reconcileListedSessions([existing], [listed], {
+      preserveDetailedSessionIds: [],
+    });
+
+    expect(merged?.events).toEqual([]);
+    expect(merged?.debugInfo).toBeNull();
   });
 });
