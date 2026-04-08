@@ -56,5 +56,6 @@ tail -f /tmp/orchestra-dev.log
   - The script captures the Xvfb-backed desktop run, trims startup time from the beginning, and writes the final `.webm` into `.tmp/demo-videos/`.
   - Use a trim that excludes app spin-up; `--trim-start 12` worked for the task-todos demo flow.
 - Always use PRs for Orchestra changes.
+- Default model for Orchestra subagents and teammate agents is `openai-codex/gpt-5.4` unless a task explicitly needs something else.
 - Before reusing an existing Orchestra branch or PR, always check whether that PR was already merged.
 - If the existing PR was merged, do **not** keep pushing to that old branch or reopen/reuse that PR. Create a fresh branch and open a new PR instead.
