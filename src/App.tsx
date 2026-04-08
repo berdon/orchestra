@@ -561,6 +561,7 @@ export function App() {
   const viewedSessionMissingGraceRef = useRef<{ sessionId: string; graceUntil: number } | null>(null);
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
+  const backgroundSessionRefreshInFlightRef = useRef(false);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -866,6 +867,8 @@ export function App() {
   async function loadSessions(options?: { background?: boolean }) {
     if (!options?.background) {
       setLoadingSessions(true);
+    } else {
+      backgroundSessionRefreshInFlightRef.current = true;
     }
     setSessionActionError(null);
 
@@ -913,6 +916,8 @@ export function App() {
     } finally {
       if (!options?.background) {
         setLoadingSessions(false);
+      } else {
+        backgroundSessionRefreshInFlightRef.current = false;
       }
     }
   }
@@ -1167,6 +1172,17 @@ export function App() {
       return;
     }
 
+    const requestBackgroundSessionRefresh = () => {
+      if (scheduledSessionRefreshRef.current !== null || backgroundSessionRefreshInFlightRef.current) {
+        return;
+      }
+      scheduledSessionRefreshRef.current = window.setTimeout(() => {
+        scheduledSessionRefreshRef.current = null;
+        backgroundSessionRefreshInFlightRef.current = true;
+        void loadSessions({ background: true });
+      }, 200);
+    };
+
     let unlistenStream: (() => void) | undefined;
     let unlistenChanges: (() => void) | undefined;
     let cancelled = false;
@@ -1177,7 +1193,7 @@ export function App() {
         if (current.some((session) => session.id === payload.sessionId)) {
           return current;
         }
-        void loadSessions({ background: true });
+        requestBackgroundSessionRefresh();
         return current;
       });
     }).then((dispose) => {
@@ -1189,13 +1205,7 @@ export function App() {
     });
 
     void listenToSessionChanges(() => {
-      if (scheduledSessionRefreshRef.current !== null) {
-        return;
-      }
-      scheduledSessionRefreshRef.current = window.setTimeout(() => {
-        scheduledSessionRefreshRef.current = null;
-        void loadSessions({ background: true });
-      }, 200);
+      requestBackgroundSessionRefresh();
     }).then((dispose) => {
       if (cancelled) {
         void dispose();
