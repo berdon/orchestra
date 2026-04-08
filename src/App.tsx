@@ -114,6 +114,7 @@ function buildPendingAssistantEvent(runId: string, timestamp: string, overrides?
     timestamp,
     pending: true,
     thinking: false,
+    thinkingText: "",
     runId,
     ...overrides,
   };
@@ -199,29 +200,29 @@ function asString(value: JsonValue | undefined | null) {
   return typeof value === "string" ? value : "";
 }
 
-function extractRpcMessageText(message: JsonValue | undefined | null) {
+function extractRpcMessageBlocks(message: JsonValue | undefined | null, expectedType: string, valueKey: string) {
   if (!isObject(message)) {
     return "";
   }
 
   return asArray(message.content)
     .map((block) => {
-      if (!isObject(block)) {
+      if (!isObject(block) || asString(block.type) !== expectedType) {
         return "";
       }
 
-      if (asString(block.type) === "text") {
-        return asString(block.text);
-      }
-
-      if (asString(block.type) === "thinking") {
-        return asString(block.thinking);
-      }
-
-      return "";
+      return asString(block[valueKey]);
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+function extractRpcMessageText(message: JsonValue | undefined | null) {
+  return extractRpcMessageBlocks(message, "text", "text");
+}
+
+function extractRpcThinkingText(message: JsonValue | undefined | null) {
+  return extractRpcMessageBlocks(message, "thinking", "thinking");
 }
 
 function getRpcEventType(envelope: SessionStreamEnvelope) {
@@ -262,6 +263,7 @@ function buildStreamAssistantEvent(runId: string, timestamp: string, overrides?:
     timestamp,
     pending: true,
     thinking: false,
+    thinkingText: "",
     runId,
     ...overrides,
   };
@@ -432,7 +434,8 @@ function areSessionEventsEqual(left: SessionEvent[], right: SessionEvent[]) {
       && event.thinking === other.thinking
       && event.runId === other.runId
       && event.label === other.label
-      && event.presentation === other.presentation;
+      && event.presentation === other.presentation
+      && event.thinkingText === other.thinkingText;
   });
 }
 
@@ -1014,6 +1017,8 @@ export function App() {
         }
 
         if (role === "assistant") {
+          const messageText = extractRpcMessageText(message);
+          const thinkingText = extractRpcThinkingText(message);
           if (pendingRuns[payload.sessionId]) {
             updatePendingRun(payload.sessionId, (current) => ({
               ...current,
@@ -1021,13 +1026,19 @@ export function App() {
                 ...current.userEvent,
                 pending: false,
               },
-              assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp),
+              assistantEvent: current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp, {
+                message: messageText,
+                thinkingText,
+                thinking: Boolean(thinkingText.trim()),
+              }),
             }));
           } else {
             patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
               ...event,
               pending: true,
-              thinking: false,
+              thinking: Boolean(thinkingText.trim()),
+              thinkingText: thinkingText || event.thinkingText,
+              message: messageText || event.message,
               timestamp: eventTimestamp,
             }));
           }
@@ -1040,6 +1051,7 @@ export function App() {
         const rpcEvent = isObject(payload.event) ? payload.event : null;
         const message = rpcEvent?.message;
         const delta = isObject(rpcEvent?.assistantMessageEvent) ? rpcEvent?.assistantMessageEvent : null;
+        const thinkingText = extractRpcThinkingText(message);
 
         switch (deltaType) {
           case "thinking_start":
@@ -1055,19 +1067,55 @@ export function App() {
                       ...current.assistantEvent,
                       pending: true,
                       thinking: true,
+                      thinkingText: current.assistantEvent.thinkingText || thinkingText,
                       timestamp: eventTimestamp,
                     }
-                  : buildPendingAssistantEvent(runId, eventTimestamp, { thinking: true }),
+                  : buildPendingAssistantEvent(runId, eventTimestamp, {
+                      thinking: true,
+                      thinkingText,
+                    }),
               }));
             } else {
               patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
                 ...event,
                 pending: true,
                 thinking: true,
+                thinkingText: event.thinkingText || thinkingText,
                 timestamp: eventTimestamp,
               }));
             }
             return;
+          case "thinking_delta": {
+            const chunk = delta ? asString(delta.delta) : "";
+            if (pendingRuns[payload.sessionId]) {
+              updatePendingRun(payload.sessionId, (current) => {
+                const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp, { thinking: true });
+                return {
+                  ...current,
+                  userEvent: {
+                    ...current.userEvent,
+                    pending: false,
+                  },
+                  assistantEvent: {
+                    ...base,
+                    thinking: true,
+                    pending: true,
+                    thinkingText: `${base.thinkingText ?? ""}${chunk}`,
+                    timestamp: eventTimestamp,
+                  },
+                };
+              });
+            } else {
+              patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
+                ...event,
+                thinking: true,
+                pending: true,
+                thinkingText: `${event.thinkingText ?? ""}${chunk}`,
+                timestamp: eventTimestamp,
+              }));
+            }
+            return;
+          }
           case "thinking_end":
             if (pendingRuns[payload.sessionId]) {
               updatePendingRun(payload.sessionId, (current) => ({
@@ -1077,14 +1125,19 @@ export function App() {
                       ...current.assistantEvent,
                       thinking: false,
                       pending: true,
+                      thinkingText: thinkingText || current.assistantEvent.thinkingText,
                     }
-                  : buildPendingAssistantEvent(runId, eventTimestamp),
+                  : buildPendingAssistantEvent(runId, eventTimestamp, {
+                      thinking: false,
+                      thinkingText,
+                    }),
               }));
             } else {
               patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
                 ...event,
                 thinking: false,
                 pending: true,
+                thinkingText: thinkingText || event.thinkingText,
               }));
             }
             return;
@@ -1103,13 +1156,14 @@ export function App() {
                       thinking: false,
                       message: hasVisibleAssistantText(current.assistantEvent) ? current.assistantEvent.message : "",
                     }
-                  : buildPendingAssistantEvent(runId, eventTimestamp),
+                  : buildPendingAssistantEvent(runId, eventTimestamp, { thinkingText }),
               }));
             } else {
               patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
                 ...event,
                 pending: true,
                 thinking: false,
+                thinkingText: thinkingText || event.thinkingText,
                 message: hasVisibleAssistantText(event) ? event.message : "",
               }));
             }
@@ -1117,7 +1171,7 @@ export function App() {
           case "text_delta":
             if (pendingRuns[payload.sessionId]) {
               updatePendingRun(payload.sessionId, (current) => {
-                const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp);
+                const base = current.assistantEvent ?? buildPendingAssistantEvent(runId, eventTimestamp, { thinkingText });
                 const chunk = delta ? asString(delta.delta) : "";
                 const nextMessage = hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk;
                 return {
@@ -1131,6 +1185,7 @@ export function App() {
                     message: nextMessage,
                     pending: true,
                     thinking: false,
+                    timestamp: eventTimestamp,
                   },
                 };
               });
@@ -1141,6 +1196,8 @@ export function App() {
                 message: hasVisibleAssistantText(event) ? `${event.message}${chunk}` : chunk,
                 pending: true,
                 thinking: false,
+                thinkingText: thinkingText || event.thinkingText,
+                timestamp: eventTimestamp,
               }));
             }
             return;
@@ -1162,6 +1219,7 @@ export function App() {
                 message: event.message || "Running tools…",
                 pending: true,
                 thinking: false,
+                timestamp: eventTimestamp,
               }));
             }
             return;
@@ -1267,7 +1325,8 @@ export function App() {
       if (eventType === "turn_end") {
         const rpcEvent = isObject(payload.event) ? payload.event : null;
         const finalMessage = extractRpcMessageText(rpcEvent?.message);
-        if (!finalMessage.trim()) {
+        const finalThinkingText = extractRpcThinkingText(rpcEvent?.message);
+        if (!finalMessage.trim() && !finalThinkingText.trim()) {
           return;
         }
 
@@ -1282,12 +1341,14 @@ export function App() {
               ? {
                   ...current.assistantEvent,
                   message: finalMessage,
+                  thinkingText: finalThinkingText || current.assistantEvent.thinkingText,
                   pending: false,
                   thinking: false,
                   timestamp: eventTimestamp,
                 }
               : buildPendingAssistantEvent(runId, eventTimestamp, {
                   message: finalMessage,
+                  thinkingText: finalThinkingText,
                   pending: false,
                   thinking: false,
                 }),
@@ -1296,6 +1357,7 @@ export function App() {
           patchStreamingAssistantEvent(payload.sessionId, runId, eventTimestamp, (event) => ({
             ...event,
             message: finalMessage,
+            thinkingText: finalThinkingText || event.thinkingText,
             pending: false,
             thinking: false,
             timestamp: eventTimestamp,
@@ -1334,6 +1396,19 @@ export function App() {
     },
     [applySessionUpdate, patchSessionRecord, patchStreamingAssistantEvent, pendingRuns, removePendingRun, updatePendingRun, upsertSystemEvent],
   );
+
+  useEffect(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestInjectSessionStream?: (payload: SessionStreamEnvelope) => void;
+      __orchestraTestApplySessionRecord?: (record: SessionRecord) => void;
+    };
+    testWindow.__orchestraTestInjectSessionStream = handleSessionStreamEvent;
+    testWindow.__orchestraTestApplySessionRecord = applySessionUpdate;
+    return () => {
+      delete testWindow.__orchestraTestInjectSessionStream;
+      delete testWindow.__orchestraTestApplySessionRecord;
+    };
+  }, [applySessionUpdate, handleSessionStreamEvent]);
 
   useEffect(() => {
     const loadProjectCatalog = () => {

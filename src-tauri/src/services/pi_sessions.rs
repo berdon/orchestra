@@ -664,6 +664,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 let message_text = extract_message_text(message);
+                let message_thinking = extract_message_thinking(message);
                 let message_timestamp = message_timestamp(message, &entry_timestamp);
                 maybe_update_timestamp(&message_timestamp, &mut updated_at, &mut updated_sort_key);
 
@@ -683,6 +684,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                                 kind: "user".into(),
                                 message: text.to_string(),
                                 timestamp: message_timestamp,
+                                thinking_text: None,
                             });
                         }
                     }
@@ -699,13 +701,19 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                             events.push(tool_event);
                         }
 
-                        if let Some(text) = non_empty_trimmed(&message_text) {
+                        if non_empty_trimmed(&message_text).is_some()
+                            || non_empty_trimmed(&message_thinking).is_some()
+                        {
                             last_visible_role = Some("assistant");
                             events.push(SessionEvent {
                                 id: message_id,
                                 kind: "assistant".into(),
-                                message: text.to_string(),
+                                message: non_empty_trimmed(&message_text)
+                                    .map(ToOwned::to_owned)
+                                    .unwrap_or_default(),
                                 timestamp: message_timestamp,
+                                thinking_text: non_empty_trimmed(&message_thinking)
+                                    .map(ToOwned::to_owned),
                             });
                         }
                     }
@@ -727,6 +735,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                                     text
                                 ),
                                 timestamp: message_timestamp,
+                                thinking_text: None,
                             });
                         }
                     }
@@ -741,6 +750,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                                 kind: "system".into(),
                                 message: format!("Executed bash command: {command}"),
                                 timestamp: message_timestamp,
+                                thinking_text: None,
                             });
                         }
                     }
@@ -757,6 +767,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
             kind: "system".into(),
             message: DEFAULT_EMPTY_SESSION_MESSAGE.into(),
             timestamp: created_at.clone(),
+            thinking_text: None,
         });
     }
 
@@ -1478,12 +1489,22 @@ fn message_timestamp(message: &Value, fallback: &str) -> String {
 }
 
 fn extract_message_text(message: &Value) -> String {
+    extract_message_blocks(message, "text", "text")
+}
+
+fn extract_message_thinking(message: &Value) -> String {
+    extract_message_blocks(message, "thinking", "thinking")
+}
+
+fn extract_message_blocks(message: &Value, expected_type: &str, value_key: &str) -> String {
     let Some(content) = message.get("content") else {
         return String::new();
     };
 
-    if let Some(text) = content.as_str() {
-        return text.trim().to_string();
+    if expected_type == "text" {
+        if let Some(text) = content.as_str() {
+            return text.trim().to_string();
+        }
     }
 
     content
@@ -1491,8 +1512,8 @@ fn extract_message_text(message: &Value) -> String {
         .into_iter()
         .flatten()
         .filter_map(|block| {
-            if block.get("type").and_then(Value::as_str) == Some("text") {
-                block.get("text").and_then(Value::as_str).map(str::trim)
+            if block.get("type").and_then(Value::as_str) == Some(expected_type) {
+                block.get(value_key).and_then(Value::as_str).map(str::trim)
             } else {
                 None
             }
@@ -1542,6 +1563,7 @@ fn extract_tool_use_events(
                 kind: "system".into(),
                 message: format!("Tool call: {tool_name}{args_suffix}"),
                 timestamp: message_timestamp.to_string(),
+                thinking_text: None,
             })
         })
         .collect()
@@ -1954,6 +1976,52 @@ process.stdin.on('end', () => {
         assert_eq!(full_session.events[0].kind, "user");
         assert_eq!(full_session.events[1].kind, "assistant");
         assert_eq!(full_session.events[1].message, "Real pi session reply");
+    }
+
+    #[test]
+    fn preserves_assistant_thinking_text_from_session_jsonl() {
+        let root = unique_temp_dir("orchestra-real-session-thinking");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_id = Uuid::new_v4().to_string();
+        let session_path = session_dir.join("thinking.jsonl");
+        let content = format!(
+            "{}\n{}\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": "2026-03-18T12:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "message",
+                "id": "assistant-1",
+                "timestamp": "2026-03-18T12:01:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "thinking", "thinking": "Line one\nLine two\nLine three\nLine four" },
+                        { "type": "text", "text": "Visible answer" }
+                    ],
+                    "timestamp": 1773835261000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let full_session =
+            get_session(&session_dir, &session_id, true).expect("full session should load");
+        assert_eq!(full_session.events.len(), 1);
+        assert_eq!(full_session.events[0].kind, "assistant");
+        assert_eq!(full_session.events[0].message, "Visible answer");
+        assert_eq!(
+            full_session.events[0].thinking_text.as_deref(),
+            Some("Line one\nLine two\nLine three\nLine four")
+        );
     }
 
     #[test]

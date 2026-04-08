@@ -226,6 +226,8 @@ pub struct SessionEvent {
     pub kind: String,
     pub message: String,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

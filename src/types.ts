@@ -150,6 +150,7 @@ export interface SessionEvent {
   timestamp: string;
   pending?: boolean;
   thinking?: boolean;
+  thinkingText?: string;
   runId?: string;
   label?: string;
   presentation?: "default" | "tool_call";

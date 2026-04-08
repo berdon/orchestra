@@ -134,7 +134,8 @@ function copyTextToClipboard(text: string) {
 export function TranscriptEventCard({ event, formatTimestamp, tone }: TranscriptEventCardProps) {
   const [expanded, setExpanded] = useState(() => !isFoldableTranscriptEvent(event));
   const [copied, setCopied] = useState(false);
-  const message = event.message || (event.kind === "assistant" ? (event.thinking ? "\u00a0" : "…") : "Queued…");
+  const thinkingPreview = (event.thinkingText ?? "").trim() || (event.kind === "assistant" && event.thinking ? "Thinking…" : "");
+  const message = event.message || (event.kind === "assistant" ? (thinkingPreview ? "" : "…") : "Queued…");
   const foldable = isFoldableTranscriptEvent(event);
   const toolCall = isToolCallTranscriptEvent(event);
   const preview = useMemo(() => buildCollapsedPreview(message), [message]);
@@ -190,9 +191,14 @@ export function TranscriptEventCard({ event, formatTimestamp, tone }: Transcript
           </div>
           {event.label ? <code className="transcript-event__label">{event.label}</code> : null}
         </div>
+        {thinkingPreview ? (
+          <div className="transcript-event__thinking-preview" data-role="transcript-thinking-preview">
+            {thinkingPreview}
+          </div>
+        ) : null}
         {foldable && !expanded ? (
           toolCall ? <pre className="transcript-event__preview" data-role="transcript-entry-preview">{event.label ?? preview.text}</pre> : <pre className="transcript-event__preview" data-role="transcript-entry-preview">{preview.text}</pre>
-        ) : descriptor.mode === "markdown" ? (
+        ) : message ? descriptor.mode === "markdown" ? (
           <div className="transcript-render transcript-render--markdown" data-role="transcript-entry-rendered-markdown">
             {renderMarkdown(message)}
           </div>
@@ -200,7 +206,7 @@ export function TranscriptEventCard({ event, formatTimestamp, tone }: Transcript
           <SyntaxHighlightedBlock message={message} language={descriptor.language} />
         ) : (
           <p className="transcript-event__paragraph">{message}</p>
-        )}
+        ) : null}
         <div className="transcript-event__footer">
           <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
         </div>

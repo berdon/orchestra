@@ -13,8 +13,10 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
 
   await page.goto("/");
 
+  const createSessionButton = page.locator('[data-role="create-session"]');
+  await expect(createSessionButton).toBeVisible();
   const previousSessionCount = await page.locator('[data-role="session-link"]').count();
-  await page.locator('[data-role="create-session"]').click();
+  await createSessionButton.click();
 
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(previousSessionCount + 1);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
@@ -32,6 +34,7 @@ test("sessions composer model selector is compact, fixed-width, and unlabeled", 
   });
 
   await page.goto("/");
+  await expect(page.locator('[data-role="create-session"]')).toBeVisible();
   await page.locator('[data-role="create-session"]').click();
 
   const modelSelect = page.locator('select[aria-label="Session model"]');
@@ -148,6 +151,128 @@ test("sessions UI shows tool invocations in the transcript", async ({ page }) =>
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("complete_lane_as_success");
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("task-1");
+});
+
+test("sessions UI shows compact live thinking updates while assistant text streams", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-thinking",
+          title: "Thinking stream",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Thinking stream" }).click();
+
+  await page.evaluate(() => {
+    const receivedAt = new Date().toISOString();
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-thinking",
+          runId: "run-thinking",
+          receivedAt,
+          event: {
+            type: "message_start",
+            message: { role: "assistant" },
+          },
+        },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-thinking",
+          runId: "run-thinking",
+          receivedAt,
+          event: {
+            type: "message_update",
+            message: { role: "assistant", content: [{ type: "thinking", thinking: "First line\nSecond line" }] },
+            assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} },
+          },
+        },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-thinking",
+          runId: "run-thinking",
+          receivedAt,
+          event: {
+            type: "message_update",
+            message: { role: "assistant", content: [{ type: "thinking", thinking: "First line\nSecond line\nThird line\nFourth line" }] },
+            assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "\nThird line\nFourth line", partial: {} },
+          },
+        },
+      }),
+    );
+  });
+
+  const thinkingPreview = page.locator('[data-role="transcript-thinking-preview"]').last();
+  await expect(thinkingPreview).toContainText("First line");
+  await expect(thinkingPreview).toContainText("Fourth line");
+  await expect(thinkingPreview).toHaveJSProperty("textContent", "First line\nSecond line\nThird line\nFourth line");
+  const webkitLineClamp = await thinkingPreview.evaluate((node) => getComputedStyle(node).getPropertyValue("-webkit-line-clamp"));
+  expect(webkitLineClamp.trim()).toBe("3");
+
+  await page.evaluate(() => {
+    const receivedAt = new Date().toISOString();
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-thinking",
+          runId: "run-thinking",
+          receivedAt,
+          event: {
+            type: "message_update",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "First line\nSecond line\nThird line\nFourth line\nFifth line" },
+                { type: "text", text: "Visible answer" },
+              ],
+            },
+            assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Visible answer", partial: {} },
+          },
+        },
+      }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("orchestra:session-stream", {
+        detail: {
+          sessionId: "session-thinking",
+          runId: "run-thinking",
+          receivedAt,
+          event: {
+            type: "turn_end",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "First line\nSecond line\nThird line\nFourth line\nFifth line" },
+                { type: "text", text: "Visible answer" },
+              ],
+            },
+          },
+        },
+      }),
+    );
+  });
+
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Visible answer");
+  await expect(thinkingPreview).toContainText("Fifth line");
 });
 
 test("sessions UI shows streamed assistant text when rejoining an active session", async ({ page }) => {

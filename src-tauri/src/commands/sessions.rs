@@ -584,9 +584,9 @@ pub async fn subscribe_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
-    state
-        .sync_pi_runtime_health()
-        .map_err(|error| format!("Unable to subscribe to session because PI is unavailable: {error}"))?;
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to subscribe to session because PI is unavailable: {error}")
+    })?;
     let result: Result<SessionRecord, String> = async {
         let session_id_for_task = session_id.clone();
         let (project_root, session_dir) =
@@ -942,6 +942,7 @@ mod tests {
                 kind: "system".into(),
                 message: "hello".into(),
                 timestamp: "2026-03-21T00:00:00Z".into(),
+                thinking_text: None,
             }],
             terminal_attached: false,
             debug_info: None,
