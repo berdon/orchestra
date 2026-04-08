@@ -47,6 +47,7 @@ fn ensure_database_initialized() -> Result<PathBuf, String> {
 
     let path = database_path()?;
     let connection = open_configured_connection(&path)?;
+    enable_wal_mode(&connection)?;
     apply_migrations(&connection)?;
     let _ = DATABASE_INIT_PATH.set(path.clone());
     Ok(path)
@@ -70,6 +71,10 @@ fn configure_connection(connection: &Connection) -> Result<(), String> {
     connection
         .pragma_update(None, "foreign_keys", "ON")
         .map_err(|error| format!("Unable to enable Orchestra database foreign keys: {error}"))?;
+    Ok(())
+}
+
+fn enable_wal_mode(connection: &Connection) -> Result<(), String> {
     connection
         .pragma_update(None, "journal_mode", "WAL")
         .map_err(|error| format!("Unable to enable Orchestra database WAL mode: {error}"))?;
@@ -1464,6 +1469,7 @@ pub fn initialize_database_at(path: &std::path::Path) -> Result<(), String> {
     fs::create_dir_all(parent)
         .map_err(|error| format!("Unable to create directory {}: {error}", parent.display()))?;
     let connection = open_configured_connection(path)?;
+    enable_wal_mode(&connection)?;
     apply_migrations(&connection)
 }
 
