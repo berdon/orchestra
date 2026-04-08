@@ -663,6 +663,101 @@ test("task detail opens tracked repo files when clicking @file mentions in comme
   expect((repoFileState.cardTop ?? 0) < repoFileState.viewportHeight).toBe(true);
 });
 
+test("task detail renders markdown descriptions and comments with preserved line breaks", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-markdown-rendering",
+          projectId: "orchestra",
+          number: "ORC-300",
+          title: "Markdown rendering task",
+          description: "First line\nSecond line with **bold** text\n\n- Bullet one\n- Bullet two",
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 1,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [
+            {
+              id: "comment-markdown-1",
+              taskId: "task-markdown-rendering",
+              parentCommentId: null,
+              author: "Reviewer",
+              message: "First review line\nSecond review line with **important** context\n\n- Check API shape\n- Confirm UI",
+              interruptAgent: false,
+              repositoryId: null,
+              relativePath: null,
+              lineStart: null,
+              lineEnd: null,
+              columnStart: null,
+              columnEnd: null,
+              selectedText: null,
+              anchorCommitHash: null,
+              anchorHasUncommittedChanges: null,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+          ],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Markdown rendering task" }).first().click();
+
+  await expect(page.locator('[data-role="task-description-markdown"]')).toContainText("First line");
+  await expect(page.locator('[data-role="task-description-markdown"]')).toContainText("Second line with bold text");
+  await expect(page.locator('[data-role="task-description-markdown"] li')).toHaveCount(2);
+  await expect(page.locator('[data-role="task-description-markdown"] strong')).toContainText("bold");
+  const descriptionHtml = await page.locator('[data-role="task-description-markdown"]').evaluate((node) => node.innerHTML);
+  expect(descriptionHtml).toContain("<br");
+
+  await page.locator('[data-role="task-detail-tab-comments"]').click();
+  const detailedComment = page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"]').first();
+  await expect(detailedComment).toContainText("First review line");
+  await expect(detailedComment).toContainText("Second review line with important context");
+  await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] strong')).toContainText("important");
+  await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] li')).toHaveCount(2);
+  const commentHtml = await detailedComment.evaluate((node) => node.innerHTML);
+  expect(commentHtml).toContain("<br");
+});
+
 test("task detail supports attachments, comments, timeline, and review inbox filtering", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

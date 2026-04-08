@@ -281,6 +281,7 @@ export function CommentableFileViewer({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
+  const [wrapLines, setWrapLines] = useState(true);
 
   const lines = useMemo(
     () => content.replace(/\r\n/g, "\n").split("\n").map((line, index) => ({
@@ -597,7 +598,7 @@ export function CommentableFileViewer({
           </div>
           <div className="file-content-viewer__line-content-wrap">
             <div
-              className="file-content-viewer__line-content"
+              className={wrapLines ? "file-content-viewer__line-content file-content-viewer__line-content--wrapped" : "file-content-viewer__line-content file-content-viewer__line-content--nowrap"}
               data-file-line-content
               dangerouslySetInnerHTML={{ __html: line.html }}
             />
@@ -634,7 +635,7 @@ export function CommentableFileViewer({
         </div>
       );
     }),
-    [commentCountsByLine, commentThreadsByLine, handleLineCommentClick, lines, openThreadPopoverForLine],
+    [commentCountsByLine, commentThreadsByLine, handleLineCommentClick, lines, openThreadPopoverForLine, wrapLines],
   );
 
   return (
@@ -643,6 +644,19 @@ export function CommentableFileViewer({
         <strong>File preview</strong>
         <div className="action-cluster action-cluster--wrap">
           <span className="status-badge status-badge--neutral">Resizable</span>
+          <button
+            className="transcript-wrap-toggle"
+            data-role="default-file-wrap-toggle"
+            data-wrap-mode={wrapLines ? "wrap" : "nowrap"}
+            type="button"
+            aria-pressed={wrapLines}
+            aria-label={wrapLines ? "Disable file line wrapping" : "Enable file line wrapping"}
+            title={wrapLines ? "Disable file line wrapping" : "Enable file line wrapping"}
+            onClick={() => setWrapLines((current) => !current)}
+          >
+            <span aria-hidden="true">{wrapLines ? "↩" : "↔"}</span>
+            <span>{wrapLines ? "Wrap" : "No wrap"}</span>
+          </button>
           <button
             className="secondary-button"
             data-role="default-file-viewer-toggle"
@@ -658,6 +672,7 @@ export function CommentableFileViewer({
         <div
           className={isMinimized ? "file-content-viewer__viewport file-content-viewer__viewport--minimized" : "file-content-viewer__viewport"}
           data-role="default-file-code-viewer"
+          data-wrap-mode={wrapLines ? "wrap" : "nowrap"}
           onMouseUp={handleViewportMouseUp}
           ref={viewportRef}
         >

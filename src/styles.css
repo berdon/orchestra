@@ -2082,9 +2082,22 @@ strong {
   white-space: pre-wrap;
 }
 
+.markdown-content {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.markdown-content a {
+  color: var(--accent);
+}
+
 .task-comment-message {
   margin: 0;
-  white-space: pre-wrap;
+}
+
+.task-detail-markdown {
+  margin: 0;
 }
 
 .task-comment-message__mention-link {
@@ -2640,8 +2653,17 @@ strong {
   position: relative;
   z-index: 1;
   min-width: 0;
-  white-space: pre;
   user-select: text;
+}
+
+.file-content-viewer__line-content--nowrap {
+  white-space: pre;
+}
+
+.file-content-viewer__line-content--wrapped {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .file-content-viewer__selected-comment-anchor {

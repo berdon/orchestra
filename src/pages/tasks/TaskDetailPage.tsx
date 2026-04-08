@@ -5,6 +5,7 @@ import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskC
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
+import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
@@ -1364,7 +1365,15 @@ export function TaskDetailPage({
                   <h4>Task description</h4>
                 </div>
               </div>
-              <p>{task.description?.trim() ? task.description : "No description provided."}</p>
+              {task.description?.trim() ? (
+                <MarkdownContent
+                  className="task-detail-markdown markdown-content"
+                  dataRole="task-description-markdown"
+                  message={task.description}
+                />
+              ) : (
+                <p>No description provided.</p>
+              )}
             </div>
 
             {unfinishedCurrentLaneTodos.length ? (

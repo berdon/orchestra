@@ -84,6 +84,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
           "Alpha line",
           "Beta selected text",
           "Gamma line",
+          "This is a deliberately long file preview line that should exceed the default viewer width and prove that the wrap toggle behaves correctly when enabled and disabled in the task file viewer.",
         ].join("\n"),
       }),
     );
@@ -109,6 +110,37 @@ test("task detail supports quick comments, line comments, replies, and viewer co
 
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file. See @docs/design.md");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
+  const wrapToggle = page.locator('[data-role="default-file-wrap-toggle"]');
+  const fileViewer = page.locator('[data-role="default-file-code-viewer"]');
+  await expect(wrapToggle).toHaveAttribute("data-wrap-mode", "wrap");
+  await expect(fileViewer).toHaveAttribute("data-wrap-mode", "wrap");
+  const wrappedMetrics = await page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    const line = document.querySelector('[data-line-number="4"] [data-file-line-content]') as HTMLElement | null;
+    return {
+      viewerClientWidth: viewer?.clientWidth ?? 0,
+      lineScrollWidth: line?.scrollWidth ?? 0,
+      whiteSpace: line ? getComputedStyle(line).whiteSpace : null,
+    };
+  });
+  expect(wrappedMetrics.whiteSpace).toBe("pre-wrap");
+  expect(wrappedMetrics.lineScrollWidth).toBeLessThanOrEqual(wrappedMetrics.viewerClientWidth + 12);
+  await wrapToggle.click();
+  await expect(wrapToggle).toHaveAttribute("data-wrap-mode", "nowrap");
+  await expect(fileViewer).toHaveAttribute("data-wrap-mode", "nowrap");
+  const nowrapMetrics = await page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    const line = document.querySelector('[data-line-number="4"] [data-file-line-content]') as HTMLElement | null;
+    return {
+      viewerClientWidth: viewer?.clientWidth ?? 0,
+      lineScrollWidth: line?.scrollWidth ?? 0,
+      whiteSpace: line ? getComputedStyle(line).whiteSpace : null,
+    };
+  });
+  expect(nowrapMetrics.whiteSpace).toBe("pre");
+  expect(nowrapMetrics.lineScrollWidth).toBeGreaterThan(nowrapMetrics.viewerClientWidth + 20);
+  await wrapToggle.click();
+  await expect(wrapToggle).toHaveAttribute("data-wrap-mode", "wrap");
   await page.locator('[data-role="task-comment-file-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
 
