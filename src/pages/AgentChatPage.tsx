@@ -26,6 +26,7 @@ interface AgentChatPageProps {
   error: string | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
+  onScrollLockChange: (lockedToBottom: boolean) => void;
   formatDateTime: (timestamp: string) => string;
   formatTimestamp: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
@@ -53,6 +54,7 @@ export function AgentChatPage({
   error,
   transcriptRef,
   scrollState,
+  onScrollLockChange,
   formatDateTime,
   formatTimestamp,
   formatModelOptionLabel,
@@ -94,6 +96,7 @@ export function AgentChatPage({
           draftMessage={draftMessage}
           transcriptRef={transcriptRef}
           scrollState={scrollState}
+          onScrollLockChange={onScrollLockChange}
           formatDateTime={formatDateTime}
           formatTimestamp={formatTimestamp}
           formatModelOptionLabel={formatModelOptionLabel}

@@ -43,18 +43,49 @@ describe("desktop agent chat navigation", () => {
       await clickSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
       await waitForText(sessionId, 'Supervisor chat');
       await waitForSelector(sessionId, '[data-role="session-wrap-toggle"]');
+      await waitForSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
       await waitForSelector(sessionId, '[data-role="composer-input"]');
 
-      const sessionsChrome = await executeScript<{ hasSessionList: boolean; hasFilters: boolean; hasModelPicker: boolean }>(sessionId, `
+      const sessionsChrome = await executeScript<{
+        hasSessionList: boolean;
+        hasFilters: boolean;
+        hasModelPicker: boolean;
+        autoScrollMode: string;
+        scrollLocked: string;
+      }>(sessionId, `
         return {
           hasSessionList: Boolean(document.querySelector('[data-role="session-link"]')),
           hasFilters: Boolean(document.querySelector('[data-role="session-filter-active"]')),
           hasModelPicker: Boolean(document.querySelector('select[aria-label="Session model"]')),
+          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
+          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
         };
       `);
       expect(sessionsChrome.hasSessionList).toBe(false);
       expect(sessionsChrome.hasFilters).toBe(false);
       expect(sessionsChrome.hasModelPicker).toBe(true);
+      expect(sessionsChrome.autoScrollMode).toBe('on');
+      expect(sessionsChrome.scrollLocked).toBe('true');
+
+      await clickSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
+      const pausedAutoScroll = await executeScript<{ autoScrollMode: string; scrollLocked: string }>(sessionId, `
+        return {
+          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
+          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
+        };
+      `);
+      expect(pausedAutoScroll.autoScrollMode).toBe('off');
+      expect(pausedAutoScroll.scrollLocked).toBe('false');
+
+      await clickSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
+      const resumedAutoScroll = await executeScript<{ autoScrollMode: string; scrollLocked: string }>(sessionId, `
+        return {
+          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
+          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
+        };
+      `);
+      expect(resumedAutoScroll.autoScrollMode).toBe('on');
+      expect(resumedAutoScroll.scrollLocked).toBe('true');
 
       const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
       await setInputValue(sessionId, '[data-role="composer-input"]', longLine);

@@ -862,6 +862,18 @@ strong {
   overflow: hidden;
 }
 
+.session-transcript-controls {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: calc(100% - 28px);
+}
+
 .transcript-wrap-toggle {
   border: 1px solid rgba(143, 79, 47, 0.18);
   background: rgba(255, 252, 249, 0.96);

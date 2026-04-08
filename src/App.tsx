@@ -32,6 +32,7 @@ import {
 import { ensureAgentSession, listAgentOperations, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { applyPendingRunToSession, createPendingUserRun, type PendingSessionRun, reduceSessionTranscriptEvent } from "./lib/sessionTranscriptReducer";
+import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
@@ -680,6 +681,10 @@ export function App() {
     }));
   }, []);
 
+  const handleSessionScrollLockChange = useCallback((lockedToBottom: boolean) => {
+    setSessionScrollState((current) => (current.lockedToBottom === lockedToBottom ? current : { lockedToBottom }));
+  }, []);
+
   const patchStreamingAssistantEvent = useCallback(
     (sessionId: string, runId: string, timestamp: string, patch: (event: SessionEvent) => SessionEvent) => {
       patchSessionRecord(sessionId, (session) => {
@@ -877,6 +882,9 @@ export function App() {
 
     try {
       const listedSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
+      const hydratedSessions = sortSessionRecords(
+        reconcileListedSessions(sessionsRef.current, listedSessions, Object.keys(pendingRuns)),
+      );
       const viewedSessionId = options?.background ? viewedSessionIdRef.current : null;
       const preservedViewedSession = viewedSessionId
         ? sessionsRef.current.find((session) => session.id === viewedSessionId) ?? null
@@ -884,10 +892,10 @@ export function App() {
       const isViewedSessionMissing = Boolean(
         viewedSessionId
         && preservedViewedSession
-        && !listedSessions.some((session) => session.id === preservedViewedSession.id),
+        && !hydratedSessions.some((session) => session.id === preservedViewedSession.id),
       );
 
-      let nextSessions = listedSessions;
+      let nextSessions = hydratedSessions;
       if (isViewedSessionMissing && preservedViewedSession && viewedSessionId) {
         const now = Date.now();
         const existingGrace = viewedSessionMissingGraceRef.current;
@@ -899,7 +907,7 @@ export function App() {
 
         viewedSessionMissingGraceRef.current = grace;
         if (now < grace.graceUntil) {
-          nextSessions = sortSessionRecords([preservedViewedSession, ...listedSessions]);
+          nextSessions = sortSessionRecords([preservedViewedSession, ...hydratedSessions]);
         }
       } else {
         viewedSessionMissingGraceRef.current = null;
@@ -1506,36 +1514,23 @@ export function App() {
   }, [viewedSession?.id]);
 
   useEffect(() => {
-    const node = transcriptRef.current;
-    if (!node) {
+    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat")) {
       return;
     }
 
-    const handleScrollLockChange = (event: Event) => {
-      const customEvent = event as CustomEvent<{ lockedToBottom?: boolean }>;
-      const lockedToBottom = customEvent.detail?.lockedToBottom ?? false;
-      setSessionScrollState((current) => (current.lockedToBottom === lockedToBottom ? current : { lockedToBottom }));
-    };
-
-    node.addEventListener("orchestra:session-scroll-lock-change", handleScrollLockChange as EventListener);
-    return () => node.removeEventListener("orchestra:session-scroll-lock-change", handleScrollLockChange as EventListener);
-  }, [viewedSession?.id]);
-
-  useEffect(() => {
     const node = transcriptRef.current;
     if (!node) {
       return;
     }
 
     const syncScrollLockState = () => {
-      const lockedToBottom = isScrolledToBottom(node);
-      setSessionScrollState((current) => (current.lockedToBottom === lockedToBottom ? current : { lockedToBottom }));
+      handleSessionScrollLockChange(isScrolledToBottom(node));
     };
 
     syncScrollLockState();
     window.addEventListener("resize", syncScrollLockState);
     return () => window.removeEventListener("resize", syncScrollLockState);
-  }, [displayedEvents.length, viewedSession?.id]);
+  }, [activePage, displayedEvents.length, handleSessionScrollLockChange, isDetachedWindow, viewedSession?.id]);
 
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
@@ -2113,6 +2108,7 @@ export function App() {
             error={sessionActionError}
             transcriptRef={transcriptRef}
             scrollState={sessionScrollState}
+            onScrollLockChange={handleSessionScrollLockChange}
             formatDateTime={formatDateTime}
             formatTimestamp={formatTimestamp}
             formatModelOptionLabel={formatModelOptionLabel}
@@ -2160,6 +2156,7 @@ export function App() {
             sessionActionError={sessionActionError}
             transcriptRef={transcriptRef}
             scrollState={sessionScrollState}
+            onScrollLockChange={handleSessionScrollLockChange}
             formatDateTime={formatDateTime}
             formatTimestamp={formatTimestamp}
             formatModelOptionLabel={formatModelOptionLabel}

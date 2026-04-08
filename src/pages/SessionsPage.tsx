@@ -49,6 +49,7 @@ interface SessionsPageProps {
   sessionActionError: string | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
+  onScrollLockChange: (lockedToBottom: boolean) => void;
   formatDateTime: (timestamp: string) => string;
   formatTimestamp: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
@@ -80,6 +81,7 @@ export function SessionsPage({
   sessionActionError,
   transcriptRef,
   scrollState,
+  onScrollLockChange,
   formatDateTime,
   formatTimestamp,
   formatModelOptionLabel,
@@ -191,6 +193,7 @@ export function SessionsPage({
             draftMessage={draftMessage}
             transcriptRef={transcriptRef}
             scrollState={scrollState}
+            onScrollLockChange={onScrollLockChange}
             formatDateTime={formatDateTime}
             formatTimestamp={formatTimestamp}
             formatModelOptionLabel={formatModelOptionLabel}
