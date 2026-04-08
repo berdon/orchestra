@@ -552,6 +552,103 @@ test("sessions UI refreshes an active session after opening even without a local
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("This reply arrived after the session was opened.", { timeout: 4000 });
 });
 
+test("subscribed active sessions do not keep polling session records every second", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-subscribed-active",
+          title: "Subscribed active",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: true,
+          events: [
+            {
+              id: "assistant-1",
+              kind: "assistant",
+              message: "Live updates already subscribed",
+              timestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Subscribed active" }).click();
+
+  await expect.poll(async () => {
+    const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
+    return logs.filter((entry: { target?: string; message?: string }) => entry.target === "sessions.record" && String(entry.message ?? "").includes("session-subscribed-active")).length;
+  }).toBeGreaterThan(0);
+
+  const baselineCount = await page.evaluate(() => {
+    const logs = JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]");
+    return logs.filter((entry: { target?: string; message?: string }) => entry.target === "sessions.record" && String(entry.message ?? "").includes("session-subscribed-active")).length;
+  });
+
+  await page.waitForTimeout(2500);
+
+  const finalCount = await page.evaluate(() => {
+    const logs = JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]");
+    return logs.filter((entry: { target?: string; message?: string }) => entry.target === "sessions.record" && String(entry.message ?? "").includes("session-subscribed-active")).length;
+  });
+
+  expect(finalCount).toBe(baselineCount);
+});
+
+test("session-change bursts debounce to one background session list refresh", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-debounce",
+          title: "Debounce me",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Debounce me" }).click();
+
+  await expect.poll(async () => {
+    const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
+    return logs.filter((entry: { target?: string }) => entry.target === "sessions.list").length;
+  }).toBeGreaterThan(0);
+
+  const baselineCount = await page.evaluate(() => {
+    const logs = JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]");
+    return logs.filter((entry: { target?: string }) => entry.target === "sessions.list").length;
+  });
+
+  await page.evaluate(() => {
+    for (let index = 0; index < 5; index += 1) {
+      window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+        detail: { sessionIds: ["session-debounce"], reason: `burst-${index}` },
+      }));
+    }
+  });
+
+  await expect.poll(async () => {
+    const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
+    return logs.filter((entry: { target?: string }) => entry.target === "sessions.list").length;
+  }).toBe(baselineCount + 1);
+});
+
 test("sessions page keeps the viewed session stable during a transient background refresh miss", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
