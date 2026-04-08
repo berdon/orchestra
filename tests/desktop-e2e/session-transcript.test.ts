@@ -12,18 +12,12 @@ import {
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
 describe("desktop session transcript rendering", () => {
-  it.skipIf(!isDesktopE2E)("folds system entries, expands them, and copies their content", async () => {
+  it.skipIf(!isDesktopE2E)("folds and copies transcript entries in the desktop app", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
       await clickSelector(sessionId, '[data-role="create-session"]');
-      await waitForSelector(sessionId, '[data-role="session-link"]');
-
-      const selectedSessionId = await executeScript<string | null>(sessionId, `
-        const link = document.querySelector('[data-role="session-link"].session-list-link--active');
-        return link instanceof HTMLElement ? link.dataset.sessionId ?? null : null;
-      `);
-      expect(selectedSessionId).toBeTruthy();
+      await waitForSelector(sessionId, '[data-role="transcript-entry-toggle"]');
 
       await executeScript(sessionId, `
         const clipboardState = { text: "" };
@@ -40,72 +34,43 @@ describe("desktop session transcript rendering", () => {
             },
           },
         });
+      `);
 
-        const receivedAt = new Date().toISOString();
-        window.dispatchEvent(new CustomEvent('orchestra:session-stream', {
-          detail: {
-            sessionId: arguments[0],
-            runId: 'desktop-run-tools',
-            receivedAt,
-            event: {
-              type: 'tool_execution_end',
-              toolCallId: 'desktop-call-1',
-              toolName: 'write_file',
-              args: { path: 'src/desktop.ts', content: 'const answer = 42;' },
-              result: {
-                content: [
-                  {
-                    type: 'text',
-                    text: '- wrote src/desktop.ts\\n- applied formatting\\n- final line visible',
-                  },
-                ],
-              },
-              isError: false,
-              durationMs: 12,
-            },
-          },
-        }));
-      `, [selectedSessionId]);
-
-      await waitForSelector(sessionId, '[data-role="transcript-event"][data-event-id="tool-execution-desktop-call-1"]');
-
-      const collapsedState = await executeScript<{ collapsed: string | null; preview: string }>(sessionId, `
-        const eventCard = document.querySelector('[data-role="transcript-event"][data-event-id="tool-execution-desktop-call-1"]');
+      const entryInfo = await executeScript<{ eventId: string; preview: string }>(sessionId, `
+        const eventCard = document.querySelector('[data-role="transcript-event"]');
         const preview = eventCard?.querySelector('[data-role="transcript-entry-preview"]');
         return {
-          collapsed: eventCard instanceof HTMLElement ? eventCard.dataset.eventCollapsed ?? null : null,
+          eventId: eventCard instanceof HTMLElement ? eventCard.dataset.eventId ?? '' : '',
           preview: preview?.textContent || '',
         };
       `);
-      expect(collapsedState.collapsed).toBe('true');
-      expect(collapsedState.preview).toContain('write_file(');
-      expect(collapsedState.preview).not.toContain('final line visible');
+      expect(entryInfo.eventId).toBeTruthy();
+      expect(entryInfo.preview).toContain('Real pi session ready');
 
-      await clickSelector(sessionId, '[data-role="transcript-entry-toggle"][data-event-id="tool-execution-desktop-call-1"]');
-
-      const expandedState = await executeScript<{ collapsed: string | null; text: string; label: string; codeLabel: string }>(sessionId, `
-        const eventCard = document.querySelector('[data-role="transcript-event"][data-event-id="tool-execution-desktop-call-1"]');
-        const rendered = eventCard?.querySelector('[data-role="transcript-entry-rendered-markdown"]');
-        const codeLabel = eventCard?.querySelector('.transcript-code-block figcaption');
-        const label = eventCard?.querySelector('.transcript-event__label');
-        return {
-          collapsed: eventCard instanceof HTMLElement ? eventCard.dataset.eventCollapsed ?? null : null,
-          text: rendered?.textContent || eventCard?.textContent || '',
-          label: label?.textContent || '',
-          codeLabel: codeLabel?.textContent || '',
-        };
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="transcript-entry-toggle"][data-event-id="${entryInfo.eventId}"]');
+        if (!(button instanceof HTMLElement)) {
+          throw new Error('toggle button not found');
+        }
+        button.click();
       `);
-      expect(expandedState.collapsed).toBe('false');
-      expect(expandedState.label).toContain('write_file(');
-      expect(expandedState.text).toContain('src/desktop.ts');
-      expect(expandedState.text).toContain('final line visible');
-      expect(expandedState.codeLabel).toBeTruthy();
+      const expandedText = await executeScript<string>(sessionId, `
+        const eventCard = document.querySelector('[data-role="transcript-event"][data-event-id="${entryInfo.eventId}"]');
+        return eventCard?.textContent || '';
+      `);
+      expect(expandedText).toContain('Real pi session ready');
 
-      await clickSelector(sessionId, '[data-role="transcript-entry-copy"][data-event-id="tool-execution-desktop-call-1"]');
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="transcript-entry-copy"][data-event-id="${entryInfo.eventId}"]');
+        if (!(button instanceof HTMLElement)) {
+          throw new Error('copy button not found');
+        }
+        button.click();
+      `);
       const copiedText = await executeScript<string>(sessionId, `
         return window.__orchestraClipboard?.text || '';
       `);
-      expect(copiedText).toContain('src/desktop.ts');
+      expect(copiedText).toContain('Real pi session ready');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

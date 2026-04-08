@@ -172,12 +172,13 @@ function createLogEntry(level: LogLevel, target: string, message: string): LogEn
   };
 }
 
-function createEvent(kind: SessionEvent["kind"], message: string): SessionEvent {
+function createEvent(kind: SessionEvent["kind"], message: string, overrides?: Partial<SessionEvent>): SessionEvent {
   return {
     id: createId("event"),
     kind,
     message,
     timestamp: nowIso(),
+    ...overrides,
   };
 }
 
@@ -1671,6 +1672,8 @@ export async function sendSessionMessage(sessionId: string, message: string, run
 
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);
+    const thinkingReply = `Considering: ${trimmedMessage}`;
+    const thinkingChunks = thinkingReply.split(/(\s+)/).filter(Boolean);
     const userMessage = {
       role: "user",
       content: [{ type: "text", text: trimmedMessage }],
@@ -1690,28 +1693,40 @@ export async function sendSessionMessage(sessionId: string, message: string, run
       emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_start", message: assistantMessageBase }));
       emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
         type: "message_update",
-        message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: "" }] },
+        message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: "" }] as JsonValue[] },
         assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} },
       }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-        type: "message_update",
-        message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: "Thinking…" }] },
-        assistantMessageEvent: { type: "thinking_end", contentIndex: 0, partial: {} },
-      }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-        type: "message_update",
-        message: { ...assistantMessageBase, content: [{ type: "text", text: "" }] },
-        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: {} },
-      }));
+      thinkingChunks.forEach((chunk, index) => {
+        window.setTimeout(() => {
+          emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+            type: "message_update",
+            message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: thinkingReply.slice(0, thinkingReply.indexOf(chunk) >= 0 ? thinkingReply.indexOf(chunk) + chunk.length : thinkingReply.length) }] as JsonValue[] },
+            assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: chunk, partial: {} },
+          }));
+        }, 40 * (index + 1));
+      });
+
+      window.setTimeout(() => {
+        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+          type: "message_update",
+          message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: thinkingReply }] as JsonValue[] },
+          assistantMessageEvent: { type: "thinking_end", contentIndex: 0, partial: {} },
+        }));
+        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
+          type: "message_update",
+          message: { ...assistantMessageBase, content: [{ type: "text", text: "" }, { type: "thinking", thinking: thinkingReply }] as JsonValue[] },
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: {} },
+        }));
+      }, 40 * (thinkingChunks.length + 1));
 
       chunks.forEach((chunk, index) => {
         window.setTimeout(() => {
           emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
             type: "message_update",
-            message: { ...assistantMessageBase, content: [{ type: "text", text: assistantReply.slice(0, assistantReply.indexOf(chunk) >= 0 ? assistantReply.indexOf(chunk) + chunk.length : assistantReply.length) }] },
+            message: { ...assistantMessageBase, content: [{ type: "text", text: assistantReply.slice(0, assistantReply.indexOf(chunk) >= 0 ? assistantReply.indexOf(chunk) + chunk.length : assistantReply.length) }] as JsonValue[] },
             assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: chunk, partial: {} },
           }));
-        }, 80 * (index + 1));
+        }, 40 * (thinkingChunks.length + 1) + 80 * (index + 1));
       });
 
       window.setTimeout(() => {
@@ -1720,7 +1735,7 @@ export async function sendSessionMessage(sessionId: string, message: string, run
         }
         const assistantMessage = {
           ...assistantMessageBase,
-          content: [{ type: "text", text: assistantReply }],
+          content: [{ type: "thinking", thinking: thinkingReply }, { type: "text", text: assistantReply }] as JsonValue[],
         };
         emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
           type: "message_update",
@@ -1743,12 +1758,7 @@ export async function sendSessionMessage(sessionId: string, message: string, run
             events: [
               ...current.events,
               createEvent("user", trimmedMessage),
-              {
-                id: createId("event"),
-                kind: "assistant",
-                message: assistantReply,
-                timestamp,
-              },
+              createEvent("assistant", assistantReply, { thinkingText: thinkingReply, timestamp }),
             ],
           };
         });
