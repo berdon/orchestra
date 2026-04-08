@@ -561,6 +561,9 @@ export function App() {
   const viewedSessionMissingGraceRef = useRef<{ sessionId: string; graceUntil: number } | null>(null);
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
+  const backgroundSessionRefreshInFlightRef = useRef(false);
+  const sessionListRefreshCountRef = useRef(0);
+  const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -864,8 +867,11 @@ export function App() {
   }
 
   async function loadSessions(options?: { background?: boolean }) {
+    sessionListRefreshCountRef.current += 1;
     if (!options?.background) {
       setLoadingSessions(true);
+    } else {
+      backgroundSessionRefreshInFlightRef.current = true;
     }
     setSessionActionError(null);
 
@@ -913,6 +919,8 @@ export function App() {
     } finally {
       if (!options?.background) {
         setLoadingSessions(false);
+      } else {
+        backgroundSessionRefreshInFlightRef.current = false;
       }
     }
   }
@@ -1047,6 +1055,7 @@ export function App() {
 
       if (reduction.refreshFromBackend) {
         const runId = payload.runId ?? undefined;
+        sessionRecordLoadCountsRef.current[payload.sessionId] = (sessionRecordLoadCountsRef.current[payload.sessionId] ?? 0) + 1;
         void getSessionRecord(payload.sessionId)
           .then((record) => {
             applySessionUpdate(record);
@@ -1065,12 +1074,18 @@ export function App() {
     const testWindow = window as typeof window & {
       __orchestraTestInjectSessionStream?: (payload: SessionStreamEnvelope) => void;
       __orchestraTestApplySessionRecord?: (record: SessionRecord) => void;
+      __orchestraTestSessionRefreshStats?: () => { listRefreshCount: number; recordLoadCounts: Record<string, number> };
     };
     testWindow.__orchestraTestInjectSessionStream = handleSessionStreamEvent;
     testWindow.__orchestraTestApplySessionRecord = applySessionUpdate;
+    testWindow.__orchestraTestSessionRefreshStats = () => ({
+      listRefreshCount: sessionListRefreshCountRef.current,
+      recordLoadCounts: { ...sessionRecordLoadCountsRef.current },
+    });
     return () => {
       delete testWindow.__orchestraTestInjectSessionStream;
       delete testWindow.__orchestraTestApplySessionRecord;
+      delete testWindow.__orchestraTestSessionRefreshStats;
     };
   }, [applySessionUpdate, handleSessionStreamEvent]);
 
@@ -1167,6 +1182,17 @@ export function App() {
       return;
     }
 
+    const requestBackgroundSessionRefresh = () => {
+      if (scheduledSessionRefreshRef.current !== null || backgroundSessionRefreshInFlightRef.current) {
+        return;
+      }
+      scheduledSessionRefreshRef.current = window.setTimeout(() => {
+        scheduledSessionRefreshRef.current = null;
+        backgroundSessionRefreshInFlightRef.current = true;
+        void loadSessions({ background: true });
+      }, 200);
+    };
+
     let unlistenStream: (() => void) | undefined;
     let unlistenChanges: (() => void) | undefined;
     let cancelled = false;
@@ -1177,7 +1203,7 @@ export function App() {
         if (current.some((session) => session.id === payload.sessionId)) {
           return current;
         }
-        void loadSessions({ background: true });
+        requestBackgroundSessionRefresh();
         return current;
       });
     }).then((dispose) => {
@@ -1189,13 +1215,7 @@ export function App() {
     });
 
     void listenToSessionChanges(() => {
-      if (scheduledSessionRefreshRef.current !== null) {
-        return;
-      }
-      scheduledSessionRefreshRef.current = window.setTimeout(() => {
-        scheduledSessionRefreshRef.current = null;
-        void loadSessions({ background: true });
-      }, 200);
+      requestBackgroundSessionRefresh();
     }).then((dispose) => {
       if (cancelled) {
         void dispose();
@@ -1409,6 +1429,7 @@ export function App() {
 
     let cancelled = false;
 
+    sessionRecordLoadCountsRef.current[viewedSession.id] = (sessionRecordLoadCountsRef.current[viewedSession.id] ?? 0) + 1;
     void getSessionRecord(viewedSession.id)
       .then((record) => {
         if (!cancelled) {
@@ -1444,6 +1465,7 @@ export function App() {
         return;
       }
 
+      sessionRecordLoadCountsRef.current[viewedSession.id] = (sessionRecordLoadCountsRef.current[viewedSession.id] ?? 0) + 1;
       void getSessionRecord(viewedSession.id)
         .then((record) => {
           if (!cancelled) {
