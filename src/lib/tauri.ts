@@ -1429,7 +1429,9 @@ export async function getCurrentAgentTerminalSessionId(): Promise<string | null>
 export async function listSessions(): Promise<SessionRecord[]> {
   if (!isTauriAvailable()) {
     const dismissed = getDismissedMockSessionIds();
-    return sortSessions(ensureMockSessions().filter((session) => !dismissed.has(session.id)));
+    const sessions = sortSessions(ensureMockSessions().filter((session) => !dismissed.has(session.id)));
+    appendMockLog("info", "sessions.list", `Listed ${sessions.length} sessions`);
+    return sessions;
   }
 
   return invoke<SessionRecord[]>("list_sessions");
@@ -1442,6 +1444,7 @@ export async function getSessionRecord(sessionId: string): Promise<SessionRecord
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
+    appendMockLog("info", "sessions.record", `Loaded session record ${sessionId}`);
     return session;
   }
 

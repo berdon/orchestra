@@ -560,6 +560,7 @@ export function App() {
   const viewedSessionIdRef = useRef<string | null>(null);
   const viewedSessionMissingGraceRef = useRef<{ sessionId: string; graceUntil: number } | null>(null);
   const sessionsRef = useRef<SessionRecord[]>([]);
+  const scheduledSessionRefreshRef = useRef<number | null>(null);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -1188,7 +1189,13 @@ export function App() {
     });
 
     void listenToSessionChanges(() => {
-      void loadSessions({ background: true });
+      if (scheduledSessionRefreshRef.current !== null) {
+        return;
+      }
+      scheduledSessionRefreshRef.current = window.setTimeout(() => {
+        scheduledSessionRefreshRef.current = null;
+        void loadSessions({ background: true });
+      }, 200);
     }).then((dispose) => {
       if (cancelled) {
         void dispose();
@@ -1199,6 +1206,10 @@ export function App() {
 
     return () => {
       cancelled = true;
+      if (scheduledSessionRefreshRef.current !== null) {
+        window.clearTimeout(scheduledSessionRefreshRef.current);
+        scheduledSessionRefreshRef.current = null;
+      }
       unlistenStream?.();
       unlistenChanges?.();
     };
@@ -1416,7 +1427,13 @@ export function App() {
   }, [activePage, isDetachedWindow, mergeSessionRecord, viewedSession?.id]);
 
   useEffect(() => {
-    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat") || !viewedSession?.id || viewedSession.status !== "active") {
+    if (
+      isDetachedWindow
+      || (activePage !== "sessions" && activePage !== "chat")
+      || !viewedSession?.id
+      || viewedSession.status !== "active"
+      || viewedSession.subscribed
+    ) {
       return;
     }
 
