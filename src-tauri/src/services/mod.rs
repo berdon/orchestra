@@ -30,4 +30,5 @@ pub mod task_repositories;
 pub mod task_runtime;
 pub mod tasks;
 pub mod tool_bridge;
+pub mod startup_resume;
 pub mod workflows;

@@ -35,6 +35,14 @@ pub struct StaleTaskAssignmentCandidate {
     pub reason: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct RestartResumeCandidate {
+    pub assignment_id: String,
+    pub task_id: String,
+    pub project_id: String,
+    pub session_id: String,
+}
+
 fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
     let connection = crate::services::database::open_connection()?;
     let task = tasks::get_task_context(&connection, task_id)?;
@@ -306,6 +314,62 @@ pub fn get_assignment_by_id(
         )
         .optional()
         .map_err(|error| format!("Unable to query assignment {assignment_id}: {error}"))
+}
+
+pub fn list_restart_resume_candidates(
+    connection: &Connection,
+) -> Result<Vec<RestartResumeCandidate>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT tla.id, tla.task_id, t.project_id, tla.session_id
+            FROM task_lane_assignments tla
+            INNER JOIN tasks t ON t.id = tla.task_id
+            WHERE tla.status = 'active'
+              AND tla.worker_type IN ('agent', 'role')
+              AND tla.session_id IS NOT NULL
+              AND trim(tla.session_id) != ''
+            ORDER BY tla.updated_at ASC, tla.created_at ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare restart resume candidate query: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(RestartResumeCandidate {
+                assignment_id: row.get(0)?,
+                task_id: row.get(1)?,
+                project_id: row.get(2)?,
+                session_id: row.get(3)?,
+            })
+        })
+        .map_err(|error| format!("Unable to query restart resume candidates: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect restart resume candidates: {error}"))
+}
+
+pub fn build_restart_resume_message(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<String, String> {
+    let task = tasks::get_task_context(connection, &assignment.task_id)?;
+    let workflow = load_task_workflow(connection, &task)?;
+    let lane_name = workflow
+        .lanes
+        .iter()
+        .find(|lane| lane.id == assignment.lane_id)
+        .map(|lane| lane.name.clone())
+        .unwrap_or_else(|| assignment.lane_id.clone());
+
+    Ok(format!(
+        "Orchestra restarted while you were actively working task {} ({}) in lane {}. Resume the active task now from the existing session context. Before continuing, call get_unread_task_comments({}) and get_unread_mail({}) so you pick up anything that arrived while Orchestra was offline, then continue the lane and use the appropriate completion tool when you are done.",
+        task.number,
+        task.title,
+        lane_name,
+        task.id,
+        task.id,
+    ))
 }
 
 pub fn list_current_role_assignments(

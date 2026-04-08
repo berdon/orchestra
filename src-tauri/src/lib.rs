@@ -137,6 +137,7 @@ pub fn run() {
                 );
             }
             services::channels::sync_channel_runtimes(app.handle().clone(), &state)?;
+            services::startup_resume::resume_active_session_work_on_startup(app.handle().clone());
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
             Ok(())
         })
