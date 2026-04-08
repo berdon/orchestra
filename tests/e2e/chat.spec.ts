@@ -37,6 +37,7 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Session model" })).toBeVisible();
   await expect(page.locator('[data-role="session-wrap-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-scroll-lock-toggle"]')).toBeVisible();
 
   const firstSessionId = await page.evaluate(() => {
     const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
@@ -62,6 +63,32 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await expect(toggle).toHaveAttribute("data-wrap-mode", "nowrap");
   await expect(transcript).toHaveAttribute("data-wrap-mode", "nowrap");
   await expect(firstMessage).toHaveCSS("white-space", "pre");
+
+  await page.evaluate((sessionId) => {
+    const storageKey = "orchestra.mock.sessions.orchestra";
+    const sessions = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    const nextSessions = sessions.map((session: { id: string; events: unknown[]; updatedAt: string }) => {
+      if (session.id !== sessionId) {
+        return session;
+      }
+      return {
+        ...session,
+        events: [],
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    window.localStorage.setItem(storageKey, JSON.stringify(nextSessions));
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: [sessionId],
+        reason: "test.chat_summary_refresh",
+      },
+    }));
+    window.dispatchEvent(new Event("focus"));
+  }, firstSessionId);
+
+  await page.waitForTimeout(400);
+  await expect(transcript).toContainText(longLine);
 
   await page.getByRole("button", { name: "Sessions" }).click();
   await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();

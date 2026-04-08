@@ -50,6 +50,7 @@ interface SessionChatPanelProps {
   draftMessage: string;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
+  onScrollLockChange: (lockedToBottom: boolean) => void;
   formatDateTime: (timestamp: string) => string;
   formatTimestamp: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
@@ -208,6 +209,7 @@ export function SessionChatPanel({
   draftMessage,
   transcriptRef,
   scrollState,
+  onScrollLockChange,
   formatDateTime,
   formatTimestamp,
   formatModelOptionLabel,
@@ -263,13 +265,24 @@ export function SessionChatPanel({
     });
 
     if (nextLockedState !== scrollState.lockedToBottom) {
-      node.dispatchEvent(
-        new CustomEvent("orchestra:session-scroll-lock-change", {
-          bubbles: true,
-          detail: { lockedToBottom: nextLockedState },
-        }),
-      );
+      onScrollLockChange(nextLockedState);
     }
+  }
+
+  function handleAutoScrollToggle() {
+    const nextLockedState = !scrollState.lockedToBottom;
+    const node = transcriptRef.current;
+
+    if (nextLockedState && node) {
+      node.scrollTop = node.scrollHeight;
+      setTranscriptScrollMetrics({
+        scrollTop: node.scrollTop,
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight,
+      });
+    }
+
+    onScrollLockChange(nextLockedState);
   }
 
   return (
@@ -295,19 +308,34 @@ export function SessionChatPanel({
           </div>
 
           <div className="session-transcript-wrap">
-            <button
-              type="button"
-              className="transcript-wrap-toggle transcript-wrap-toggle--floating"
-              data-role="session-wrap-toggle"
-              data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
-              aria-pressed={wrapTranscript}
-              aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-              title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-              onClick={() => setWrapTranscript((current) => !current)}
-            >
-              <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
-              <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
-            </button>
+            <div className="session-transcript-controls">
+              <button
+                type="button"
+                className="transcript-wrap-toggle"
+                data-role="session-scroll-lock-toggle"
+                data-auto-scroll-mode={scrollState.lockedToBottom ? "on" : "off"}
+                aria-pressed={scrollState.lockedToBottom}
+                aria-label={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
+                title={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
+                onClick={handleAutoScrollToggle}
+              >
+                <span aria-hidden="true">{scrollState.lockedToBottom ? "↓" : "⏸"}</span>
+                <span>{scrollState.lockedToBottom ? "Auto-scroll on" : "Auto-scroll off"}</span>
+              </button>
+              <button
+                type="button"
+                className="transcript-wrap-toggle"
+                data-role="session-wrap-toggle"
+                data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
+                aria-pressed={wrapTranscript}
+                aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+                title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+                onClick={() => setWrapTranscript((current) => !current)}
+              >
+                <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
+                <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
+              </button>
+            </div>
             <div
               className={wrapTranscript ? "session-transcript session-transcript--wrapped" : "session-transcript session-transcript--nowrap"}
               data-role="session-transcript"

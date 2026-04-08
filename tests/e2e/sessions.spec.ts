@@ -981,6 +981,121 @@ test("sessions transcript wraps long lines by default and can toggle to no-wrap"
   expect(nowrapMetrics.scrollWidth).toBeGreaterThan(nowrapMetrics.clientWidth + 20);
 });
 
+test("sessions transcript exposes an auto-scroll toggle that pauses and resumes following live updates", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const events = Array.from({ length: 40 }, (_, index) => ({
+      id: `event-${index}`,
+      kind: index % 2 === 0 ? "assistant" : "user",
+      message: `Transcript event ${index}`,
+      timestamp,
+    }));
+
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-auto-scroll-toggle",
+          title: "Auto-scroll toggle",
+          status: "idle",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Auto-scroll toggle" }).click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const toggle = page.locator('[data-role="session-scroll-lock-toggle"]');
+
+  await transcript.waitFor();
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute("data-auto-scroll-mode", "on");
+  await expect(transcript).toHaveAttribute("data-scroll-locked", "true");
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-auto-scroll-mode", "off");
+  await expect(transcript).toHaveAttribute("data-scroll-locked", "false");
+
+  const baselineRefreshCount = await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestSessionRefreshStats?: () => { listRefreshCount: number };
+    };
+    return testWindow.__orchestraTestSessionRefreshStats ? testWindow.__orchestraTestSessionRefreshStats().listRefreshCount : 0;
+  });
+
+  await page.evaluate(() => {
+    const storageKey = "orchestra.mock.sessions.orchestra";
+    const sessions = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    const nextSessions = sessions.map((session: { id: string; events: unknown[]; updatedAt: string }) => {
+      if (session.id !== "session-auto-scroll-toggle") {
+        return session;
+      }
+      return {
+        ...session,
+        updatedAt: new Date().toISOString(),
+        events: [
+          ...session.events,
+          {
+            id: "event-new",
+            kind: "assistant",
+            message: "Newest transcript event",
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      };
+    });
+    window.localStorage.setItem(storageKey, JSON.stringify(nextSessions));
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: ["session-auto-scroll-toggle"],
+        reason: "test.auto_scroll_toggle",
+      },
+    }));
+  });
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const testWindow = window as typeof window & {
+        __orchestraTestSessionRefreshStats?: () => { listRefreshCount: number };
+      };
+      return testWindow.__orchestraTestSessionRefreshStats ? testWindow.__orchestraTestSessionRefreshStats().listRefreshCount : 0;
+    });
+  }).toBe(baselineRefreshCount + 1);
+
+  await expect(transcript).toContainText("Newest transcript event");
+  await expect.poll(async () =>
+    transcript.evaluate((node) => {
+      const metrics = {
+        top: node.scrollTop,
+        clientHeight: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+      };
+      return metrics.top + metrics.clientHeight < metrics.scrollHeight - 24;
+    })
+  ).toBe(true);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-auto-scroll-mode", "on");
+  await expect(transcript).toHaveAttribute("data-scroll-locked", "true");
+  await expect.poll(async () =>
+    transcript.evaluate((node) => {
+      const metrics = {
+        top: node.scrollTop,
+        clientHeight: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+      };
+      return metrics.top + metrics.clientHeight >= metrics.scrollHeight - 24;
+    })
+  ).toBe(true);
+});
+
 test("sessions transcript unlocks on manual scroll and relocks at bottom", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
