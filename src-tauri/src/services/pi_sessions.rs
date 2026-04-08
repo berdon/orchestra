@@ -569,8 +569,13 @@ fn list_stored_session_summaries(
         };
         let subscribed = subscribed_ids.contains(&session_id);
 
-        if let Ok(session) = parse_session_file_summary(&path, subscribed) {
-            sessions.push(session);
+        match parse_session_file_summary(&path, subscribed) {
+            Ok(session) => sessions.push(session),
+            Err(_) => {
+                if let Ok(session) = fallback_session_file_summary(&path, &session_id, subscribed) {
+                    sessions.push(session);
+                }
+            }
         }
     }
 
@@ -612,16 +617,60 @@ fn resolve_session(
     Err(format!("Unable to find session {session_id}"))
 }
 
-fn parse_session_header_id(path: &Path) -> Result<String, String> {
-    let lines = read_jsonl(path)?;
-    let header = lines
-        .first()
+fn parse_session_header(path: &Path) -> Result<Value, String> {
+    // List views only need the header. Reading and parsing the full JSONL body here
+    // makes active sessions disappear from the list whenever the body is temporarily
+    // mid-write or otherwise unreadable.
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("Unable to read session file {}: {error}", path.display()))?;
+    let header_line = content
+        .lines()
+        .find(|line| !line.trim().is_empty())
         .ok_or_else(|| format!("Session file {} is empty", path.display()))?;
+    serde_json::from_str::<Value>(header_line.trim()).map_err(|error| {
+        format!(
+            "Unable to parse session header {} as JSON: {error}",
+            path.display()
+        )
+    })
+}
+
+fn parse_session_header_id(path: &Path) -> Result<String, String> {
+    let header = parse_session_header(path)?;
     header
         .get("id")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| format!("Session file {} is missing a header id", path.display()))
+}
+
+fn fallback_session_file_summary(
+    path: &Path,
+    session_id: &str,
+    subscribed: bool,
+) -> Result<StoredSession, String> {
+    let header = parse_session_header(path)?;
+    let (parsed_session_id, created_at, _title, updated_at, _updated_sort_key) =
+        parse_session_header_metadata(path, &header)?;
+    let resolved_session_id = if parsed_session_id.is_empty() {
+        session_id.to_string()
+    } else {
+        parsed_session_id
+    };
+    Ok(StoredSession {
+        path: path.to_path_buf(),
+        record: SessionRecord {
+            id: resolved_session_id.clone(),
+            title: format!("Session {}", &resolved_session_id[..resolved_session_id.len().min(8)]),
+            status: "idle".into(),
+            created_at,
+            updated_at,
+            subscribed,
+            events: Vec::new(),
+            terminal_attached: false,
+            debug_info: None,
+        },
+    })
 }
 
 fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, String> {
@@ -631,7 +680,7 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
         .ok_or_else(|| format!("Session file {} is empty", path.display()))?;
 
     let (session_id, created_at, mut title, mut updated_at, mut updated_sort_key) =
-        parse_session_header(path, header)?;
+        parse_session_header_metadata(path, header)?;
     let mut first_user_message = None;
     let mut last_visible_role = None;
     let mut events = Vec::new();
@@ -814,7 +863,7 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
         )
     })?;
     let (session_id, created_at, mut title, mut updated_at, mut updated_sort_key) =
-        parse_session_header(path, &header)?;
+        parse_session_header_metadata(path, &header)?;
     let mut first_user_message = None;
     let mut last_visible_role = None;
 
@@ -826,6 +875,13 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
                     && error.classify() == serde_json::error::Category::Eof
                     && !content_ends_with_newline =>
             {
+                break;
+            }
+            Err(_error) if Some(index) == last_non_empty_index => {
+                // Session summaries are best-effort for the tail of the file. If a live
+                // session body is temporarily unreadable while pi is writing the latest line,
+                // keep the session visible in list views using whatever metadata we already
+                // parsed instead of dropping it entirely.
                 break;
             }
             Err(error) => {
@@ -916,7 +972,7 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
     })
 }
 
-fn parse_session_header(
+fn parse_session_header_metadata(
     path: &Path,
     header: &Value,
 ) -> Result<(String, String, Option<String>, String, i64), String> {
@@ -2078,6 +2134,124 @@ process.stdin.on('end', () => {
             parsed.record.events[0].message,
             "Visible before tail write finishes"
         );
+    }
+
+    #[test]
+    fn lists_session_summaries_while_trailing_json_is_still_incomplete() {
+        let root = unique_temp_dir("orchestra-real-session-partial-tail-summary");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_path = session_dir.join("partial-summary.jsonl");
+        let content = format!(
+            "{}\n{}\n{}\n{{\"type\":\"message\",\"id\":\"msg-2\"",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "session-partial-summary",
+                "timestamp": "2026-03-20T10:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "session_info",
+                "id": "info-1",
+                "parentId": Value::Null,
+                "timestamp": "2026-03-20T10:00:00Z",
+                "name": "Partially written summary session",
+            }),
+            json!({
+                "type": "message",
+                "id": "msg-1",
+                "timestamp": "2026-03-20T10:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Still visible in the list" }],
+                    "timestamp": 1774000801000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let sessions = list_sessions(&session_dir, &HashSet::new())
+            .expect("session summaries should list despite partial tail");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "session-partial-summary");
+        assert_eq!(sessions[0].title, "Partially written summary session");
+    }
+
+    #[test]
+    fn lists_session_summaries_even_if_live_body_tail_is_temporarily_unparseable() {
+        let root = unique_temp_dir("orchestra-real-session-malformed-summary");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_path = session_dir.join("malformed-summary.jsonl");
+        let content = format!(
+            "{}\n{}\n{{\"type\":\"message\",\"id\":\"bad\"\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "session-malformed-summary",
+                "timestamp": "2026-03-20T10:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "session_info",
+                "id": "info-1",
+                "parentId": Value::Null,
+                "timestamp": "2026-03-20T10:00:00Z",
+                "name": "Malformed summary session",
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let sessions = list_sessions(&session_dir, &HashSet::new())
+            .expect("session summaries should still list despite temporary tail parse failure");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "session-malformed-summary");
+        assert_eq!(sessions[0].title, "Malformed summary session");
+    }
+
+    #[test]
+    fn falls_back_to_a_header_only_summary_when_a_non_tail_line_is_corrupted() {
+        let root = unique_temp_dir("orchestra-real-session-bad-middle-summary");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_path = session_dir.join("bad-middle-summary.jsonl");
+        let content = format!(
+            "{}\n{{\"type\":\"session_info\"\n{}\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "session-bad-middle-summary",
+                "timestamp": "2026-03-20T10:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "message",
+                "id": "msg-1",
+                "timestamp": "2026-03-20T10:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Visible after corrupted middle" }],
+                    "timestamp": 1774000801000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let sessions = list_sessions(&session_dir, &HashSet::new())
+            .expect("list view should fall back to the header instead of dropping the session");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "session-bad-middle-summary");
+        assert_eq!(sessions[0].title, "Session session-");
     }
 
     #[test]
