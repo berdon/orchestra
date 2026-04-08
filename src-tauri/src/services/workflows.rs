@@ -5,8 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::{
-    WorkflowDefinition, WorkflowLane, WorkflowLaneInput, WorkflowSummary, WorkflowUpsertInput,
-    WorkflowValidationError, WorkflowValidationResult,
+    WorkflowDefinition, WorkflowLane, WorkflowLaneInput, WorkflowLanePatchInput,
+    WorkflowLaneReorderInput, WorkflowSummary, WorkflowUpsertInput, WorkflowValidationError,
+    WorkflowValidationResult,
 };
 
 pub fn list_workflows(
@@ -255,6 +256,186 @@ pub fn archive_workflow(
     }
 
     get_workflow(connection, workflow_id)
+}
+
+pub fn add_workflow_lane(
+    connection: &mut Connection,
+    workflow_id: &str,
+    mut lane: WorkflowLaneInput,
+) -> Result<WorkflowDefinition, String> {
+    let workflow = get_workflow(connection, workflow_id)?;
+    let mut input = workflow_to_input(workflow);
+    if lane.order.is_none() {
+        let next_order = input
+            .lanes
+            .iter()
+            .filter_map(|existing| existing.order)
+            .max()
+            .map(|order| order + 1)
+            .unwrap_or(0);
+        lane.order = Some(next_order);
+    }
+    input.lanes.push(lane);
+    renumber_lane_orders(&mut input.lanes);
+    update_workflow(connection, workflow_id, input)
+}
+
+pub fn update_workflow_lane(
+    connection: &mut Connection,
+    workflow_id: &str,
+    lane_id: &str,
+    patch: WorkflowLanePatchInput,
+) -> Result<WorkflowDefinition, String> {
+    let workflow = get_workflow(connection, workflow_id)?;
+    let mut input = workflow_to_input(workflow);
+    let mut found = false;
+
+    for lane in &mut input.lanes {
+        if lane.id.as_deref() != Some(lane_id) {
+            continue;
+        }
+        found = true;
+        if let Some(key) = patch.key.clone() {
+            lane.key = key;
+        }
+        if let Some(name) = patch.name.clone() {
+            lane.name = name;
+        }
+        if patch.description.is_some() {
+            lane.description = patch.description.clone();
+        }
+        if let Some(order) = patch.order {
+            lane.order = Some(order);
+        }
+        if let Some(assigned_entity_type) = patch.assigned_entity_type.clone() {
+            lane.assigned_entity_type = assigned_entity_type.clone();
+            if assigned_entity_type.trim().eq_ignore_ascii_case("user") {
+                lane.assigned_entity_id = None;
+            }
+        }
+        if patch.assigned_entity_id.is_some() {
+            lane.assigned_entity_id = patch.assigned_entity_id.clone();
+        }
+        if patch.entry_prompt_template.is_some() {
+            lane.entry_prompt_template = patch.entry_prompt_template.clone();
+        }
+        if let Some(use_separate_worktree) = patch.use_separate_worktree {
+            lane.use_separate_worktree = use_separate_worktree;
+        }
+        if let Some(require_user_approval_on_success) = patch.require_user_approval_on_success {
+            lane.require_user_approval_on_success = require_user_approval_on_success;
+        }
+        if let Some(success_transition_type) = patch.success_transition_type.clone() {
+            lane.success_transition_type = success_transition_type.clone();
+            if !success_transition_type.trim().eq_ignore_ascii_case("lane") {
+                lane.success_target_lane_id = None;
+            }
+        }
+        if patch.success_target_lane_id.is_some() {
+            lane.success_target_lane_id = patch.success_target_lane_id.clone();
+        }
+        if let Some(failure_transition_type) = patch.failure_transition_type.clone() {
+            lane.failure_transition_type = failure_transition_type.clone();
+            if !failure_transition_type.trim().eq_ignore_ascii_case("lane") {
+                lane.failure_target_lane_id = None;
+            }
+        }
+        if patch.failure_target_lane_id.is_some() {
+            lane.failure_target_lane_id = patch.failure_target_lane_id.clone();
+        }
+    }
+
+    if !found {
+        return Err(format!("Workflow lane {lane_id} was not found in workflow {workflow_id}"));
+    }
+
+    renumber_lane_orders(&mut input.lanes);
+    update_workflow(connection, workflow_id, input)
+}
+
+pub fn delete_workflow_lane(
+    connection: &mut Connection,
+    workflow_id: &str,
+    lane_id: &str,
+) -> Result<WorkflowDefinition, String> {
+    let workflow = get_workflow(connection, workflow_id)?;
+    let mut input = workflow_to_input(workflow);
+    let initial_count = input.lanes.len();
+    input.lanes.retain(|lane| lane.id.as_deref() != Some(lane_id));
+    if input.lanes.len() == initial_count {
+        return Err(format!("Workflow lane {lane_id} was not found in workflow {workflow_id}"));
+    }
+    renumber_lane_orders(&mut input.lanes);
+    update_workflow(connection, workflow_id, input)
+}
+
+pub fn reorder_workflow_lanes(
+    connection: &mut Connection,
+    workflow_id: &str,
+    input: WorkflowLaneReorderInput,
+) -> Result<WorkflowDefinition, String> {
+    let workflow = get_workflow(connection, workflow_id)?;
+    let mut workflow_input = workflow_to_input(workflow);
+    if workflow_input.lanes.len() != input.lane_ids.len() {
+        return Err("Lane reorder must include every existing workflow lane exactly once.".into());
+    }
+
+    let existing_lane_ids = workflow_input
+        .lanes
+        .iter()
+        .filter_map(|lane| lane.id.clone())
+        .collect::<HashSet<_>>();
+    let requested_lane_ids = input.lane_ids.iter().cloned().collect::<HashSet<_>>();
+    if existing_lane_ids != requested_lane_ids {
+        return Err("Lane reorder must reference every existing workflow lane exactly once.".into());
+    }
+
+    workflow_input.lanes.sort_by_key(|lane| {
+        lane.id
+            .as_deref()
+            .and_then(|id| input.lane_ids.iter().position(|candidate| candidate == id))
+            .unwrap_or(usize::MAX)
+    });
+    assign_lane_orders_in_current_sequence(&mut workflow_input.lanes);
+    update_workflow(connection, workflow_id, workflow_input)
+}
+
+fn workflow_to_input(workflow: WorkflowDefinition) -> WorkflowUpsertInput {
+    WorkflowUpsertInput {
+        name: workflow.name,
+        description: workflow.description,
+        lanes: workflow
+            .lanes
+            .into_iter()
+            .map(|lane| WorkflowLaneInput {
+                id: Some(lane.id),
+                key: lane.key,
+                name: lane.name,
+                description: lane.description,
+                order: Some(lane.order),
+                assigned_entity_type: lane.assigned_entity_type,
+                assigned_entity_id: lane.assigned_entity_id,
+                entry_prompt_template: lane.entry_prompt_template,
+                use_separate_worktree: lane.use_separate_worktree,
+                require_user_approval_on_success: lane.require_user_approval_on_success,
+                success_transition_type: lane.success_transition_type,
+                success_target_lane_id: lane.success_target_lane_id,
+                failure_transition_type: lane.failure_transition_type,
+                failure_target_lane_id: lane.failure_target_lane_id,
+            })
+            .collect(),
+    }
+}
+
+fn renumber_lane_orders(lanes: &mut [WorkflowLaneInput]) {
+    lanes.sort_by_key(|lane| lane.order.unwrap_or(i64::MAX));
+    assign_lane_orders_in_current_sequence(lanes);
+}
+
+fn assign_lane_orders_in_current_sequence(lanes: &mut [WorkflowLaneInput]) {
+    for (index, lane) in lanes.iter_mut().enumerate() {
+        lane.order = Some(index as i64);
+    }
 }
 
 pub fn validate_workflow(
