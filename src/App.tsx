@@ -883,7 +883,15 @@ export function App() {
     try {
       const listedSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
       const hydratedSessions = sortSessionRecords(
-        reconcileListedSessions(sessionsRef.current, listedSessions, Object.keys(pendingRuns)),
+        reconcileListedSessions(sessionsRef.current, listedSessions, {
+          preserveDetailedSessionIds: [
+            viewedSessionIdRef.current,
+            selectedSessionId,
+            chatSessionId,
+            supervisorSessionId,
+          ].filter((value): value is string => Boolean(value)),
+          pendingSessionIds: Object.keys(pendingRuns),
+        }),
       );
       const viewedSessionId = options?.background ? viewedSessionIdRef.current : null;
       const preservedViewedSession = viewedSessionId

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js";
 import { marked } from "marked";
 
@@ -131,7 +131,7 @@ function copyTextToClipboard(text: string) {
   return Promise.resolve();
 }
 
-export function TranscriptEventCard({ event, formatTimestamp, tone }: TranscriptEventCardProps) {
+export const TranscriptEventCard = memo(function TranscriptEventCard({ event, formatTimestamp, tone }: TranscriptEventCardProps) {
   const [expanded, setExpanded] = useState(() => !isFoldableTranscriptEvent(event));
   const [copied, setCopied] = useState(false);
   const thinkingPreview = (event.thinkingText ?? "").trim() || (event.kind === "assistant" && event.thinking ? "Thinking…" : "");
@@ -213,7 +213,7 @@ export function TranscriptEventCard({ event, formatTimestamp, tone }: Transcript
       </div>
     </article>
   );
-}
+});
 
 function SyntaxHighlightedBlock({ message, language }: { message: string; language?: string }) {
   const { html, detectedLanguage } = useMemo(() => highlightText(message, language), [language, message]);

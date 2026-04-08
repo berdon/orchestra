@@ -81,6 +81,16 @@ interface SessionComposerProps {
   onStopSession: () => void;
 }
 
+interface SessionTranscriptProps {
+  sessionId: string;
+  displayedEvents: SessionEvent[];
+  transcriptRef: RefObject<HTMLDivElement | null>;
+  scrollState: SessionScrollState;
+  onScrollLockChange: (lockedToBottom: boolean) => void;
+  formatTimestamp: (timestamp: string) => string;
+  getEventTone: (kind: SessionEvent["kind"]) => string;
+}
+
 const SessionComposer = memo(function SessionComposer({
   session,
   sessionPending,
@@ -196,33 +206,15 @@ const SessionComposer = memo(function SessionComposer({
   );
 });
 
-export function SessionChatPanel({
-  session,
-  title,
+const SessionTranscript = memo(function SessionTranscript({
+  sessionId,
   displayedEvents,
-  sessionPending,
-  sessionDisplayStatus,
-  selectedModelState,
-  sessionReadOnly = false,
-  loadingModelSessionId,
-  changingModelSessionId,
-  draftMessage,
   transcriptRef,
   scrollState,
   onScrollLockChange,
-  formatDateTime,
   formatTimestamp,
-  formatModelOptionLabel,
-  getStatusTone,
   getEventTone,
-  onModelChange,
-  onDraftChange,
-  onSendMessage,
-  onStopSession,
-  emptyStateEyebrow = "No session selected",
-  emptyStateTitle = "Create or select a session",
-  emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
-}: SessionChatPanelProps) {
+}: SessionTranscriptProps) {
   const [wrapTranscript, setWrapTranscript] = useState(true);
   const [transcriptScrollMetrics, setTranscriptScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
 
@@ -251,7 +243,7 @@ export function SessionChatPanel({
       scrollHeight: node.scrollHeight,
       clientHeight: node.clientHeight,
     });
-  }, [displayedEvents, session?.id, transcriptRef, wrapTranscript]);
+  }, [displayedEvents, sessionId, transcriptRef, wrapTranscript]);
 
   function handleTranscriptScroll(event: UIEvent<HTMLDivElement>) {
     const node = event.currentTarget;
@@ -286,6 +278,96 @@ export function SessionChatPanel({
   }
 
   return (
+    <div className="session-transcript-wrap">
+      <div className="session-transcript-controls">
+        <button
+          type="button"
+          className="transcript-wrap-toggle"
+          data-role="session-scroll-lock-toggle"
+          data-auto-scroll-mode={scrollState.lockedToBottom ? "on" : "off"}
+          aria-pressed={scrollState.lockedToBottom}
+          aria-label={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
+          title={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
+          onClick={handleAutoScrollToggle}
+        >
+          <span aria-hidden="true">{scrollState.lockedToBottom ? "↓" : "⏸"}</span>
+          <span>{scrollState.lockedToBottom ? "Auto-scroll on" : "Auto-scroll off"}</span>
+        </button>
+        <button
+          type="button"
+          className="transcript-wrap-toggle"
+          data-role="session-wrap-toggle"
+          data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
+          aria-pressed={wrapTranscript}
+          aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+          title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+          onClick={() => setWrapTranscript((current) => !current)}
+        >
+          <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
+          <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
+        </button>
+      </div>
+      <div
+        className={wrapTranscript ? "session-transcript session-transcript--wrapped" : "session-transcript session-transcript--nowrap"}
+        data-role="session-transcript"
+        data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
+        data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
+        ref={transcriptRef}
+        role="log"
+        aria-live="polite"
+        onScroll={handleTranscriptScroll}
+      >
+        {displayedEvents.map((event) => (
+          <TranscriptEventCard
+            key={event.id}
+            event={event}
+            formatTimestamp={formatTimestamp}
+            tone={getEventTone(event.kind)}
+          />
+        ))}
+      </div>
+      {transcriptScrollIndicator.visible ? (
+        <div
+          className="session-transcript-scroll-indicator"
+          aria-hidden="true"
+          style={{
+            height: `${transcriptScrollIndicator.heightPercent}%`,
+            transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
+          }}
+        />
+      ) : null}
+    </div>
+  );
+});
+
+export function SessionChatPanel({
+  session,
+  title,
+  displayedEvents,
+  sessionPending,
+  sessionDisplayStatus,
+  selectedModelState,
+  sessionReadOnly = false,
+  loadingModelSessionId,
+  changingModelSessionId,
+  draftMessage,
+  transcriptRef,
+  scrollState,
+  onScrollLockChange,
+  formatDateTime,
+  formatTimestamp,
+  formatModelOptionLabel,
+  getStatusTone,
+  getEventTone,
+  onModelChange,
+  onDraftChange,
+  onSendMessage,
+  onStopSession,
+  emptyStateEyebrow = "No session selected",
+  emptyStateTitle = "Create or select a session",
+  emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
+}: SessionChatPanelProps) {
+  return (
     <section
       className={sessionReadOnly ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
       data-role="session-chat-panel"
@@ -307,65 +389,15 @@ export function SessionChatPanel({
             </div>
           </div>
 
-          <div className="session-transcript-wrap">
-            <div className="session-transcript-controls">
-              <button
-                type="button"
-                className="transcript-wrap-toggle"
-                data-role="session-scroll-lock-toggle"
-                data-auto-scroll-mode={scrollState.lockedToBottom ? "on" : "off"}
-                aria-pressed={scrollState.lockedToBottom}
-                aria-label={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
-                title={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
-                onClick={handleAutoScrollToggle}
-              >
-                <span aria-hidden="true">{scrollState.lockedToBottom ? "↓" : "⏸"}</span>
-                <span>{scrollState.lockedToBottom ? "Auto-scroll on" : "Auto-scroll off"}</span>
-              </button>
-              <button
-                type="button"
-                className="transcript-wrap-toggle"
-                data-role="session-wrap-toggle"
-                data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
-                aria-pressed={wrapTranscript}
-                aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-                title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-                onClick={() => setWrapTranscript((current) => !current)}
-              >
-                <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
-                <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
-              </button>
-            </div>
-            <div
-              className={wrapTranscript ? "session-transcript session-transcript--wrapped" : "session-transcript session-transcript--nowrap"}
-              data-role="session-transcript"
-              data-scroll-locked={scrollState.lockedToBottom ? "true" : "false"}
-              data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
-              ref={transcriptRef}
-              role="log"
-              aria-live="polite"
-              onScroll={handleTranscriptScroll}
-            >
-              {displayedEvents.map((event) => (
-                <TranscriptEventCard
-                  key={event.id}
-                  event={event}
-                  formatTimestamp={formatTimestamp}
-                  tone={getEventTone(event.kind)}
-                />
-              ))}
-            </div>
-            {transcriptScrollIndicator.visible ? (
-              <div
-                className="session-transcript-scroll-indicator"
-                aria-hidden="true"
-                style={{
-                  height: `${transcriptScrollIndicator.heightPercent}%`,
-                  transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
-                }}
-              />
-            ) : null}
-          </div>
+          <SessionTranscript
+            sessionId={session.id}
+            displayedEvents={displayedEvents}
+            transcriptRef={transcriptRef}
+            scrollState={scrollState}
+            onScrollLockChange={onScrollLockChange}
+            formatTimestamp={formatTimestamp}
+            getEventTone={getEventTone}
+          />
 
           <SessionComposer
             session={session}
