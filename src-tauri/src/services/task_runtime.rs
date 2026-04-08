@@ -1276,8 +1276,7 @@ fn load_task_whip_candidates(
                   tla.worker_type = 'role'
                   AND tla.role_instance_id IS NOT NULL
                   AND tla.runtime_cwd IS NOT NULL
-                  AND ri.status = 'idle'
-                  AND ri.current_queue_entry_id IS NULL
+                  AND ri.status IN ('running', 'idle')
                 )
               )
             ORDER BY tla.updated_at ASC, tla.created_at ASC, tla.id ASC
@@ -5337,6 +5336,80 @@ mod tests {
             Some("/tmp/runtime-role-whip")
         );
         assert_eq!(candidates[0].whip_max_attempts, 4);
+    }
+
+    #[test]
+    fn finds_running_role_whip_candidates_when_assignment_session_is_idle() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Running Whip Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Running role needs a whip".into(),
+                description: Some("Role should keep working after its session goes idle.".into()),
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "role".into(),
+                assignee_id: Some(role.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: Some(4),
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-running-whip', ?1, 'Running Whip Role 1', 'running', 'queue-role-whip', 'session-running-role-whip', '/tmp/runtime-running-role-whip', NULL, NULL, ?2, ?2)",
+                params![role.id.as_str(), now.as_str()],
+            )
+            .expect("role instance should insert");
+        connection
+            .execute(
+                "INSERT INTO role_queue_entries (id, role_id, status, source_type, source_task_id, source_workflow_id, source_lane_id, title, summary, entry_prompt, assigned_instance_id, created_at, updated_at, started_at, completed_at) VALUES ('queue-role-whip', ?1, 'assigned', 'workflow_lane', ?2, 'workflow-whip', 'lane-role', 'Running whip', NULL, 'Prompt', 'instance-running-whip', ?3, ?3, ?3, NULL)",
+                params![role.id.as_str(), task.id.as_str(), now.as_str()],
+            )
+            .expect("role queue entry should insert");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-running-role-whip', ?1, 'workflow-whip', 'lane-role', 'role', ?2, 'active', 'session-running-role-whip', '/tmp/runtime-running-role-whip', 'queue-role-whip', 'instance-running-whip', 'Prompt', 0, NULL, ?3, NULL, ?3, ?3)",
+                params![task.id.as_str(), role.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        let candidates = find_task_whip_candidates(&connection)
+            .expect("running role whip candidates should resolve");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].worker_type, "role");
+        assert_eq!(candidates[0].worker_id, role.id);
+        assert_eq!(candidates[0].role_instance_id.as_deref(), Some("instance-running-whip"));
+        assert_eq!(candidates[0].session_id, "session-running-role-whip");
     }
 
     #[test]

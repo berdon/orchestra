@@ -313,6 +313,18 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             continue;
         };
 
+        if state.is_session_running(&candidate.session_id)? {
+            state.log(
+                "info",
+                "task.whip.skipped",
+                &format!(
+                    "Skipped whip for task {} because session {} is still actively running",
+                    candidate.task_id, candidate.session_id
+                ),
+            );
+            continue;
+        }
+
         if candidate.whip_count >= candidate.whip_max_attempts {
             let task = task_runtime::escalate_task_whip_limit_exceeded(
                 &mut connection,

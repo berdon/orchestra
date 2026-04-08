@@ -14,7 +14,8 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::{
     models::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
-        SessionModel, SessionStorageInfo,
+        ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo, TaskUpsertInput,
+        WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
         database,
@@ -23,6 +24,7 @@ use crate::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
         },
+        projects, roles, tasks, workflows,
     },
     state::AppState,
 };
@@ -255,6 +257,128 @@ pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableD
             }
         }
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugTaskWhipScenario {
+    pub project_id: String,
+    pub project_name: String,
+    pub role_id: String,
+    pub task_id: String,
+    pub session_id: String,
+}
+
+#[tauri::command]
+pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, String> {
+    let mut connection = database::open_connection()?;
+    let project = projects::create_project(
+        &mut connection,
+        ProjectUpsertInput {
+            name: format!("Whip Debug Project {}", uuid::Uuid::new_v4().simple()),
+            description: Some("Seeded idle task whip debug scenario.".into()),
+        },
+    )?;
+    let role = roles::create_role(
+        &mut connection,
+        RoleUpsertInput {
+            name: format!("Whip Worker {}", uuid::Uuid::new_v4().simple()),
+            description: Some("Seeded role for automatic whip testing.".into()),
+            system_prompt: Some("You are a seeded test worker. Do not complete tasks automatically.".into()),
+            provider: None,
+            model: None,
+            thinking_level: Some("medium".into()),
+            capacity: 1,
+            policy_ids: Vec::new(),
+            direct_permissions: Vec::new(),
+        },
+    )?;
+    let lane_id = format!("lane-{}", uuid::Uuid::new_v4().simple());
+    let workflow = workflows::create_workflow(
+        &mut connection,
+        WorkflowUpsertInput {
+            name: format!("Whip Debug Flow {}", uuid::Uuid::new_v4().simple()),
+            description: Some("Single role lane for automatic whip testing.".into()),
+            lanes: vec![WorkflowLaneInput {
+                id: Some(lane_id.clone()),
+                key: "implement".into(),
+                name: "Implement".into(),
+                description: None,
+                order: Some(0),
+                assigned_entity_type: "role".into(),
+                assigned_entity_id: Some(role.slug.clone()),
+                entry_prompt_template: Some("Stay assigned and wait for follow-up instructions.".into()),
+                use_separate_worktree: false,
+                require_user_approval_on_success: false,
+                success_transition_type: "end".into(),
+                success_target_lane_id: None,
+                failure_transition_type: "end".into(),
+                failure_target_lane_id: None,
+            }],
+        },
+    )?;
+    let task = tasks::create_task(
+        &mut connection,
+        Some(&project.id),
+        TaskUpsertInput {
+            title: "Seeded automatic whip task".into(),
+            description: Some("Task with an assigned idle role session that should be whipped automatically.".into()),
+            task_type: "task".into(),
+            status: "in_progress".into(),
+            priority: "P1".into(),
+            workflow_id: Some(workflow.id.clone()),
+            current_lane_id: Some(lane_id.clone()),
+            assignee_type: "role".into(),
+            assignee_id: Some(role.slug.clone()),
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            whip_max_attempts: Some(10),
+            archived: None,
+        },
+    )?;
+
+    let context = crate::services::pi_sessions::session_context_for_project_id(&project.id)?;
+    let runtime_cwd = context.project_root.join("seeded-whip-runtime");
+    std::fs::create_dir_all(&runtime_cwd).map_err(|error| {
+        format!("Unable to create seeded whip runtime directory {}: {error}", runtime_cwd.display())
+    })?;
+    let created_session = crate::services::pi_sessions::create_session_file(
+        &runtime_cwd,
+        &context.session_dir,
+        Some("Seeded whip idle session"),
+        false,
+    )?;
+    let session_id = created_session.record.id.clone();
+    let now = crate::state::now_iso();
+    let queue_entry_id = format!("queue-{}", uuid::Uuid::new_v4().simple());
+    let role_instance_id = format!("instance-{}", uuid::Uuid::new_v4().simple());
+    let assignment_id = format!("task-assignment-{}", uuid::Uuid::new_v4().simple());
+
+    connection.execute(
+        "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, NULL, NULL, ?7, ?7)",
+        rusqlite::params![role_instance_id, role.id, role.name, queue_entry_id, session_id, runtime_cwd.display().to_string(), now.as_str()],
+    ).map_err(|error| format!("Unable to seed role instance for task whip scenario: {error}"))?;
+    connection.execute(
+        "INSERT INTO role_queue_entries (id, role_id, status, source_type, source_task_id, source_workflow_id, source_lane_id, title, summary, entry_prompt, assigned_instance_id, created_at, updated_at, started_at, completed_at) VALUES (?1, ?2, 'assigned', 'workflow_lane', ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?9, ?9, NULL)",
+        rusqlite::params![queue_entry_id, role.id, task.id, workflow.id, lane_id, format!("{} · {}", task.number, task.title), "Seeded whip prompt", role_instance_id, now.as_str()],
+    ).map_err(|error| format!("Unable to seed role queue entry for task whip scenario: {error}"))?;
+    connection.execute(
+        "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'role', ?5, 'active', ?6, ?7, ?8, ?9, ?10, 0, NULL, ?11, NULL, ?11, ?11)",
+        rusqlite::params![assignment_id, task.id, workflow.id, lane_id, role.id, session_id, runtime_cwd.display().to_string(), queue_entry_id, role_instance_id, "Seeded idle assignment prompt", now.as_str()],
+    ).map_err(|error| format!("Unable to seed task lane assignment for task whip scenario: {error}"))?;
+    connection.execute(
+        "INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at) VALUES (?1, ?2, ?3, ?4, 'needs_user', NULL, ?5, NULL)",
+        rusqlite::params![format!("lane-run-{}", uuid::Uuid::new_v4().simple()), task.id, lane_id, session_id, now.as_str()],
+    ).map_err(|error| format!("Unable to seed lane run for task whip scenario: {error}"))?;
+
+    Ok(DebugTaskWhipScenario {
+        project_id: project.id,
+        project_name: project.name,
+        role_id: role.id,
+        task_id: task.id,
+        session_id,
+    })
 }
 
 #[tauri::command]
