@@ -5,13 +5,13 @@ const THEME_CASES = [
     id: "orchestra-light",
     kind: "light",
     colorScheme: "light",
-    appBackground: "#f5f1ec",
+    appBackground: "#f6f8fc",
   },
   {
     id: "orchestra-dark",
     kind: "dark",
     colorScheme: "dark",
-    appBackground: "#1b1b1d",
+    appBackground: "#1e1e1e",
   },
   {
     id: "orchestra-high-contrast",

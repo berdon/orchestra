@@ -9,7 +9,7 @@ export interface OrchestraThemeDefinition {
 }
 
 export const ORCHESTRA_THEME_STORAGE_KEY = "orchestra.preferences.theme";
-export const DEFAULT_ORCHESTRA_THEME_ID: OrchestraThemeId = "orchestra-light";
+export const DEFAULT_ORCHESTRA_THEME_ID: OrchestraThemeId = "orchestra-dark";
 
 export const BUILT_IN_ORCHESTRA_THEMES: OrchestraThemeDefinition[] = [
   {
