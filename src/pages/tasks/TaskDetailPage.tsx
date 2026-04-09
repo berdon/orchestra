@@ -1479,6 +1479,14 @@ export function TaskDetailPage({
                           onOpenFileReference={handleOpenCommentFileReference}
                         />
                         {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
+                        <div className="task-comment-thread__actions">
+                          <button className="secondary-button" data-role="reply-task-comment-summary" data-comment-id={comment.id} type="button" onClick={() => {
+                            setActiveTab("comments");
+                            openReplyComposer(comment);
+                          }}>
+                            Reply
+                          </button>
+                        </div>
                       </article>
                       {replies.length ? (
                         <div className="task-comment-thread__replies task-comment-thread__replies--summary">

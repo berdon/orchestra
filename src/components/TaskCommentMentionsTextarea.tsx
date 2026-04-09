@@ -17,6 +17,7 @@ interface TaskCommentMentionsTextareaProps {
   listDataRole: string;
   optionDataRole: string;
   onChange: (value: string) => void;
+  onSubmitShortcut?: () => void;
 }
 
 function isMentionBoundary(character: string) {
@@ -67,6 +68,7 @@ export function TaskCommentMentionsTextarea({
   listDataRole,
   optionDataRole,
   onChange,
+  onSubmitShortcut,
 }: TaskCommentMentionsTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [mentionRange, setMentionRange] = useState<MentionRange | null>(null);
@@ -158,6 +160,11 @@ export function TaskCommentMentionsTextarea({
           }, 120);
         }}
         onKeyDown={(event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+            event.preventDefault();
+            onSubmitShortcut?.();
+            return;
+          }
           if (!candidates.length) {
             return;
           }
