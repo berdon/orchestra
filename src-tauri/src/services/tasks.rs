@@ -87,6 +87,45 @@ pub fn list_tasks(
         .map_err(|error| format!("Unable to read task rows: {error}"))
 }
 
+pub fn list_tasks_materialized_from_schedule(
+    connection: &Connection,
+    schedule_id: &str,
+    limit: usize,
+) -> Result<Vec<TaskSummary>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            r#"
+            SELECT
+                {summary_columns}
+            FROM tasks t
+            WHERE t.source_schedule_id = ?1
+            ORDER BY t.created_at DESC, t.id DESC
+            LIMIT ?2
+            "#,
+            summary_columns = task_summary_columns("t"),
+        ))
+        .map_err(|error| {
+            format!(
+                "Unable to prepare schedule materialized tasks query for {schedule_id}: {error}"
+            )
+        })?;
+
+    let rows = statement
+        .query_map(params![schedule_id, limit as i64], map_task_summary_row)
+        .map_err(|error| {
+            format!(
+                "Unable to query materialized tasks for schedule {schedule_id}: {error}"
+            )
+        })?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "Unable to read materialized tasks for schedule {schedule_id}: {error}"
+            )
+        })
+}
+
 pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
     let mut task = connection
         .query_row(
@@ -283,14 +322,19 @@ pub fn create_task(
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let project_id = project_id.unwrap_or(DEFAULT_PROJECT_ID).to_string();
-    projects::ensure_project_exists(connection, &project_id)?;
-    let normalized = apply_default_task_repositories(
-        connection,
-        &project_id,
-        apply_default_lane_if_needed(connection, normalize_input(input))?,
-    )?;
-    validate_task_input(connection, &project_id, &normalized, None)?;
-    let sequence_number = next_task_sequence_number(connection, &project_id)?;
+    create_task_from_blueprint(connection, &project_id, input, None, None)
+}
+
+pub fn create_task_from_blueprint(
+    connection: &mut Connection,
+    project_id: &str,
+    input: TaskUpsertInput,
+    source_schedule_id: Option<&str>,
+    source_schedule_occurrence_id: Option<&str>,
+) -> Result<TaskDetail, String> {
+    projects::ensure_project_exists(connection, project_id)?;
+    let normalized = prepare_task_input_for_project(connection, project_id, input, None)?;
+    let sequence_number = next_task_sequence_number(connection, project_id)?;
     let number = format!("ORC-{sequence_number}");
     let task_id = task_id();
     let now = now_iso();
@@ -318,10 +362,12 @@ pub fn create_task(
             parent_task_id,
             whip_max_attempts,
             archived,
+            source_schedule_id,
+            source_schedule_occurrence_id,
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20)
         "#,
         params![
             task_id,
@@ -341,12 +387,14 @@ pub fn create_task(
             normalized.parent_task_id,
             normalized.whip_max_attempts.unwrap_or(10),
             if normalized.archived.unwrap_or(false) { 1 } else { 0 },
+            source_schedule_id,
+            source_schedule_occurrence_id,
             now,
         ],
     )
     .map_err(|error| format!("Unable to create task: {error}"))?;
 
-    sync_task_repository_links(&tx, &task_id, &project_id, &normalized.repository_ids, &now)?;
+    sync_task_repository_links(&tx, &task_id, project_id, &normalized.repository_ids, &now)?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit task creation: {error}"))?;
@@ -370,14 +418,33 @@ pub fn create_subtask(
     create_task(connection, Some(&project_id), input)
 }
 
+pub fn prepare_task_input_for_project(
+    connection: &Connection,
+    project_id: &str,
+    input: TaskUpsertInput,
+    existing_task_id: Option<&str>,
+) -> Result<TaskUpsertInput, String> {
+    let normalized = apply_default_task_repositories(
+        connection,
+        project_id,
+        apply_default_lane_if_needed(connection, normalize_input(input))?,
+    )?;
+    validate_task_input(connection, project_id, &normalized, existing_task_id)?;
+    Ok(normalized)
+}
+
 pub fn update_task(
     connection: &mut Connection,
     task_id: &str,
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
-    let normalized = apply_default_lane_if_needed(connection, normalize_input(input))?;
     let existing = get_task(connection, task_id)?;
-    validate_task_input(connection, &existing.project_id, &normalized, Some(task_id))?;
+    let normalized = prepare_task_input_for_project(
+        connection,
+        &existing.project_id,
+        input,
+        Some(task_id),
+    )?;
     let now = now_iso();
 
     let tx = connection

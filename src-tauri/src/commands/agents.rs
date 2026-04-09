@@ -1,3 +1,4 @@
+use serde_json::json;
 use tauri::State;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
         AgentDefinition, AgentMemoryInfo, AgentSummary, AgentUpsertInput, AgentValidationResult,
         AuthorizationContext,
     },
-    services::{agents, command_authorization, database},
+    services::{agents, command_authorization, database, domain_events},
     state::AppState,
 };
 
@@ -57,6 +58,16 @@ pub fn create_agent(
         &agent.id,
         "success",
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: agent.project_id.clone(),
+            topic: "agent.created".into(),
+            entity_type: "agent".into(),
+            entity_id: Some(agent.id.clone()),
+            payload: json!({ "agentId": agent.id.clone(), "name": agent.name.clone(), "scope": agent.scope.clone(), "projectId": agent.project_id.clone() }),
+        },
+    );
     Ok(agent)
 }
 
@@ -78,6 +89,16 @@ pub fn update_agent(
         &agent_id,
         "success",
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: agent.project_id.clone(),
+            topic: "agent.updated".into(),
+            entity_type: "agent".into(),
+            entity_id: Some(agent.id.clone()),
+            payload: json!({ "agentId": agent.id.clone(), "name": agent.name.clone(), "scope": agent.scope.clone(), "projectId": agent.project_id.clone() }),
+        },
+    );
     Ok(agent)
 }
 
@@ -97,6 +118,16 @@ pub fn archive_agent(
         Some("agents.archive"),
         &agent_id,
         "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: agent.project_id.clone(),
+            topic: "agent.archived".into(),
+            entity_type: "agent".into(),
+            entity_id: Some(agent.id.clone()),
+            payload: json!({ "agentId": agent.id.clone(), "name": agent.name.clone(), "scope": agent.scope.clone(), "projectId": agent.project_id.clone() }),
+        },
     );
     Ok(agent)
 }

@@ -327,6 +327,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 parent_task_id TEXT,
                 whip_max_attempts INTEGER NOT NULL DEFAULT 10,
                 archived INTEGER NOT NULL DEFAULT 0,
+                source_schedule_id TEXT,
+                source_schedule_occurrence_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
@@ -344,6 +346,9 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_tasks_parent
                 ON tasks(parent_task_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_source_schedule_id
+                ON tasks(source_schedule_id, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS task_comments (
                 id TEXT PRIMARY KEY,
@@ -673,6 +678,73 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_lanes_workflow_order
                 ON workflow_lanes(workflow_id, lane_order);
+
+            CREATE TABLE IF NOT EXISTS domain_events (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                project_id TEXT,
+                topic TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_domain_events_project_topic
+                ON domain_events(project_id, topic, sequence ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_domain_events_topic
+                ON domain_events(topic, sequence ASC);
+
+            CREATE TABLE IF NOT EXISTS task_schedules (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                task_type TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                workflow_id TEXT,
+                task_blueprint_json TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                trigger_json TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                one_shot INTEGER NOT NULL DEFAULT 0,
+                overlap_policy TEXT NOT NULL DEFAULT 'skip',
+                next_fire_at TEXT,
+                last_fired_at TEXT,
+                last_materialized_task_id TEXT,
+                last_error TEXT,
+                consumed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_schedules_project_updated
+                ON task_schedules(project_id, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_task_schedules_due
+                ON task_schedules(trigger_type, enabled, consumed_at, next_fire_at ASC);
+
+            CREATE TABLE IF NOT EXISTS task_schedule_occurrences (
+                id TEXT PRIMARY KEY,
+                schedule_id TEXT NOT NULL,
+                occurrence_key TEXT NOT NULL,
+                scheduled_at TEXT,
+                event_id TEXT,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(schedule_id) REFERENCES task_schedules(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_task_schedule_occurrences_unique
+                ON task_schedule_occurrences(schedule_id, occurrence_key);
+
+            CREATE INDEX IF NOT EXISTS idx_task_schedule_occurrences_schedule_created
+                ON task_schedule_occurrences(schedule_id, created_at DESC);
             "#,
         )
         .map_err(|error| format!("Unable to initialize Orchestra database schema: {error}"))?;
@@ -690,6 +762,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_mailbox_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
     ensure_task_file_references_table_columns(connection)?;
+    ensure_domain_events_tables(connection)?;
+    ensure_task_schedule_tables(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
@@ -1020,6 +1094,123 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_max_attempts for tasks: {error}"))?;
+
+    if !columns.contains("source_schedule_id") {
+        connection
+            .execute("ALTER TABLE tasks ADD COLUMN source_schedule_id TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add source_schedule_id column to tasks table: {error}")
+            })?;
+    }
+
+    if !columns.contains("source_schedule_occurrence_id") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN source_schedule_occurrence_id TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add source_schedule_occurrence_id column to tasks table: {error}"
+                )
+            })?;
+    }
+
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_source_schedule_id ON tasks(source_schedule_id, created_at DESC)",
+            [],
+        )
+        .map_err(|error| {
+            format!("Unable to create tasks source_schedule_id index: {error}")
+        })?;
+
+    Ok(())
+}
+
+fn ensure_domain_events_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS domain_events (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                project_id TEXT,
+                topic TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_domain_events_project_topic
+                ON domain_events(project_id, topic, sequence ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_domain_events_topic
+                ON domain_events(topic, sequence ASC);
+            "#,
+        )
+        .map_err(|error| format!("Unable to ensure domain_events tables: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_task_schedule_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS task_schedules (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                task_type TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                workflow_id TEXT,
+                task_blueprint_json TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                trigger_json TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                one_shot INTEGER NOT NULL DEFAULT 0,
+                overlap_policy TEXT NOT NULL DEFAULT 'skip',
+                next_fire_at TEXT,
+                last_fired_at TEXT,
+                last_materialized_task_id TEXT,
+                last_error TEXT,
+                consumed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_schedules_project_updated
+                ON task_schedules(project_id, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_task_schedules_due
+                ON task_schedules(trigger_type, enabled, consumed_at, next_fire_at ASC);
+
+            CREATE TABLE IF NOT EXISTS task_schedule_occurrences (
+                id TEXT PRIMARY KEY,
+                schedule_id TEXT NOT NULL,
+                occurrence_key TEXT NOT NULL,
+                scheduled_at TEXT,
+                event_id TEXT,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(schedule_id) REFERENCES task_schedules(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_task_schedule_occurrences_unique
+                ON task_schedule_occurrences(schedule_id, occurrence_key);
+
+            CREATE INDEX IF NOT EXISTS idx_task_schedule_occurrences_schedule_created
+                ON task_schedule_occurrences(schedule_id, created_at DESC);
+            "#,
+        )
+        .map_err(|error| format!("Unable to ensure task schedule tables: {error}"))?;
 
     Ok(())
 }

@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     services::{
         agent_dispatch, app_events, database, pi_sessions, reminders, role_dispatch, role_runtime,
-        task_runtime,
+        task_runtime, task_schedules,
     },
     state::AppState,
 };
@@ -126,6 +126,7 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
         }
     }
 
+    let schedule_results = process_task_schedules(app.clone())?;
     let auto_dispatched_tasks = auto_dispatch_work_ready_tasks(app.clone(), state)?;
     let whip_results = process_task_whips(app.clone(), state)?;
     let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
@@ -133,6 +134,7 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
     let total_actions = stale_assignment_recoveries
         + agent_dispatches
         + activated_roles
+        + schedule_results
         + auto_dispatched_tasks
         + whip_results
         + reminder_results;
@@ -141,8 +143,8 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} stale assignment recoveries, {} agent dispatches, {} activated role assignments, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
-            stale_assignment_recoveries, agent_dispatches, activated_roles, auto_dispatched_tasks, whip_results, reminder_results, total_actions
+            "Completed dispatcher tick with {} stale assignment recoveries, {} agent dispatches, {} activated role assignments, {} schedule actions, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
+            stale_assignment_recoveries, agent_dispatches, activated_roles, schedule_results, auto_dispatched_tasks, whip_results, reminder_results, total_actions
         ),
     );
     Ok(total_actions)
@@ -235,6 +237,18 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
     }
 
     Ok(recovered)
+}
+
+fn process_task_schedules(app: AppHandle) -> Result<usize, String> {
+    let mut connection = database::open_connection()?;
+    let result = task_schedules::process_due_task_schedules(&mut connection)?;
+    for task_id in &result.materialized_task_ids {
+        let _ = app_events::emit_task_change(&app, "task.schedule.materialized", [task_id.clone()]);
+    }
+    if !result.touched_schedule_ids.is_empty() {
+        let _ = app_events::emit_task_change(&app, "task.schedule.updated", Vec::<String>::new());
+    }
+    Ok(result.materialized_task_ids.len())
 }
 
 fn auto_dispatch_work_ready_tasks(app: AppHandle, state: &AppState) -> Result<usize, String> {

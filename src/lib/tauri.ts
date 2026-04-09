@@ -7,6 +7,7 @@ import type {
   BridgeCleanupEvent,
   PiExecutableDiagnostic,
   BridgeDiagnostics,
+  DomainEvent,
   InboxChangeEvent,
   JsonValue,
   LogEntry,
@@ -35,6 +36,11 @@ import type {
   TaskDetail,
   TaskLaneAssignment,
   TaskLaneRun,
+  TaskScheduleDetail,
+  TaskScheduleOccurrence,
+  TaskScheduleSummary,
+  TaskScheduleTrigger,
+  TaskScheduleUpsertInput,
   TaskSummary,
   TaskTodo,
   TaskTodoInput,
@@ -64,6 +70,8 @@ const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
 const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
 const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
+const TASK_SCHEDULE_STORAGE_KEY = "orchestra.mock.task-schedules";
+const DOMAIN_EVENT_STORAGE_KEY = "orchestra.mock.domain-events";
 const CURRENT_PROJECT_ID = "orchestra";
 
 type OrchestraWindowGlobals = Window & {
@@ -768,6 +776,516 @@ function ensureMockTaskDependencies() {
 
 function saveMockTaskDependencies(dependencies: TaskDependency[]) {
   setStoredValue(TASK_DEPENDENCY_STORAGE_KEY, dependencies);
+}
+
+interface StoredTaskScheduleRecord {
+  id: string;
+  projectId: string;
+  taskBlueprint: TaskUpsertInput;
+  enabled: boolean;
+  oneShot: boolean;
+  overlapPolicy: string;
+  trigger: TaskScheduleTrigger;
+  nextFireAt?: string | null;
+  lastFiredAt?: string | null;
+  lastMaterializedTaskId?: string | null;
+  lastError?: string | null;
+  occurrences: TaskScheduleOccurrence[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+function ensureMockDomainEvents() {
+  return getStoredValue<DomainEvent[]>(DOMAIN_EVENT_STORAGE_KEY) ?? [];
+}
+
+function saveMockDomainEvents(events: DomainEvent[]) {
+  setStoredValue(DOMAIN_EVENT_STORAGE_KEY, events);
+}
+
+function appendMockDomainEvent(
+  topic: DomainEvent["topic"],
+  entityType: string,
+  entityId: string,
+  payload: JsonValue,
+  projectId?: string | null,
+) {
+  const events = ensureMockDomainEvents();
+  const event: DomainEvent = {
+    sequence: ((events.length > 0 ? events[events.length - 1]?.sequence : 0) ?? 0) + 1,
+    id: createId("domain-event"),
+    projectId: projectId ?? null,
+    topic,
+    entityType,
+    entityId,
+    payload,
+    createdAt: nowIso(),
+  };
+  saveMockDomainEvents([...events, event]);
+  return event;
+}
+
+function ensureMockTaskSchedules() {
+  return getStoredValue<StoredTaskScheduleRecord[]>(TASK_SCHEDULE_STORAGE_KEY) ?? [];
+}
+
+function saveMockTaskSchedules(schedules: StoredTaskScheduleRecord[]) {
+  setStoredValue(TASK_SCHEDULE_STORAGE_KEY, schedules);
+}
+
+function normalizeScheduleBlueprint(task: TaskUpsertInput): TaskUpsertInput {
+  return {
+    ...task,
+    status: "ready",
+    archived: false,
+    currentLaneId: null,
+  };
+}
+
+function parseTimeOfDayParts(value: string) {
+  const match = value.trim().match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return { hours, minutes };
+}
+
+function getTimeZoneDateParts(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+  };
+}
+
+function addDaysToLocalDate(year: number, month: number, day: number, dayOffset: number) {
+  const date = new Date(Date.UTC(year, month - 1, day + dayOffset));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function daysInMonthUtc(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function addMonthsToLocalDate(year: number, month: number, day: number, monthsToAdd: number) {
+  const base = new Date(Date.UTC(year, month - 1 + monthsToAdd, 1));
+  const nextYear = base.getUTCFullYear();
+  const nextMonth = base.getUTCMonth() + 1;
+  return {
+    year: nextYear,
+    month: nextMonth,
+    day: Math.min(day, daysInMonthUtc(nextYear, nextMonth)),
+  };
+}
+
+function zonedLocalDateTimeToUtcDate(year: number, month: number, day: number, hours: number, minutes: number, timeZone: string) {
+  let utcMillis = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
+  const desiredUtc = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const observed = getTimeZoneDateParts(new Date(utcMillis), timeZone);
+    const observedUtc = Date.UTC(observed.year, observed.month - 1, observed.day, observed.hour, observed.minute, 0, 0);
+    const diff = desiredUtc - observedUtc;
+    if (diff === 0) {
+      break;
+    }
+    utcMillis += diff;
+  }
+
+  return new Date(utcMillis);
+}
+
+function nextMockTimeFireAt(trigger: TaskScheduleTrigger, referenceIso: string) {
+  if (trigger.type !== "time") {
+    return null;
+  }
+
+  const reference = new Date(referenceIso);
+  if (Number.isNaN(reference.getTime())) {
+    throw new Error("trigger: Unable to parse schedule time trigger reference.");
+  }
+
+  switch (trigger.kind) {
+    case "once":
+      return trigger.at;
+    case "everyMinutes":
+      return new Date(reference.getTime() + Math.max(1, trigger.everyMinutes) * 60_000).toISOString();
+    case "daily": {
+      const parts = parseTimeOfDayParts(trigger.timeOfDay);
+      if (!parts) {
+        throw new Error("trigger.timeOfDay: Expected HH:MM in 24 hour time.");
+      }
+      const localReference = getTimeZoneDateParts(reference, trigger.timezone);
+      for (let offset = 0; offset <= 7; offset += 1) {
+        const localDate = addDaysToLocalDate(localReference.year, localReference.month, localReference.day, offset);
+        const candidate = zonedLocalDateTimeToUtcDate(localDate.year, localDate.month, localDate.day, parts.hours, parts.minutes, trigger.timezone);
+        if (candidate.getTime() > reference.getTime()) {
+          return candidate.toISOString();
+        }
+      }
+      throw new Error("trigger.timeOfDay: Unable to compute next daily fire time.");
+    }
+    case "weekly": {
+      const parts = parseTimeOfDayParts(trigger.timeOfDay);
+      if (!parts) {
+        throw new Error("trigger.timeOfDay: Expected HH:MM in 24 hour time.");
+      }
+      if (!trigger.daysOfWeek.length) {
+        throw new Error("trigger.daysOfWeek: Select at least one weekday.");
+      }
+      const localReference = getTimeZoneDateParts(reference, trigger.timezone);
+      const sortedDays = [...trigger.daysOfWeek].sort((left, right) => left - right);
+      for (let offset = 0; offset <= 14; offset += 1) {
+        const localDate = addDaysToLocalDate(localReference.year, localReference.month, localReference.day, offset);
+        const weekday = new Date(Date.UTC(localDate.year, localDate.month - 1, localDate.day)).getUTCDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+        if (!sortedDays.includes(weekday)) {
+          continue;
+        }
+        const candidate = zonedLocalDateTimeToUtcDate(localDate.year, localDate.month, localDate.day, parts.hours, parts.minutes, trigger.timezone);
+        if (candidate.getTime() > reference.getTime()) {
+          return candidate.toISOString();
+        }
+      }
+      throw new Error("trigger.daysOfWeek: Unable to compute next weekly fire time.");
+    }
+    case "monthly": {
+      const parts = parseTimeOfDayParts(trigger.timeOfDay);
+      if (!parts) {
+        throw new Error("trigger.timeOfDay: Expected HH:MM in 24 hour time.");
+      }
+      const localReference = getTimeZoneDateParts(reference, trigger.timezone);
+      const targetDay = Math.min(Math.max(1, trigger.dayOfMonth), 31);
+      for (let offset = 0; offset < 24; offset += 1) {
+        const localDate = addMonthsToLocalDate(localReference.year, localReference.month, targetDay, offset);
+        const candidate = zonedLocalDateTimeToUtcDate(localDate.year, localDate.month, localDate.day, parts.hours, parts.minutes, trigger.timezone);
+        if (candidate.getTime() > reference.getTime()) {
+          return candidate.toISOString();
+        }
+      }
+      throw new Error("trigger.dayOfMonth: Unable to compute next monthly fire time.");
+    }
+    default:
+      return null;
+  }
+}
+
+function createScheduleOccurrence(scheduleId: string, occurrenceKey: string, scheduledAt?: string | null, eventId?: string | null): TaskScheduleOccurrence {
+  const timestamp = nowIso();
+  return {
+    id: createId("task-schedule-occurrence"),
+    scheduleId,
+    occurrenceKey,
+    scheduledAt: scheduledAt ?? null,
+    eventId: eventId ?? null,
+    status: "pending",
+    taskId: null,
+    error: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function scheduleOpenMaterializedTaskCount(schedule: StoredTaskScheduleRecord, tasks: TaskDetail[]) {
+  const materializedTaskIds = new Set(
+    schedule.occurrences
+      .filter((occurrence) => occurrence.status === "materialized" && occurrence.taskId)
+      .map((occurrence) => occurrence.taskId as string),
+  );
+  return tasks.filter((task) => materializedTaskIds.has(task.id) && !["completed", "canceled"].includes(task.status)).length;
+}
+
+function summarizeTaskSchedule(schedule: StoredTaskScheduleRecord, tasks: TaskDetail[]): TaskScheduleSummary {
+  const recentMaterializedTaskIds = schedule.occurrences
+    .filter((occurrence) => occurrence.status === "materialized" && occurrence.taskId)
+    .map((occurrence) => occurrence.taskId as string);
+  return {
+    id: schedule.id,
+    projectId: schedule.projectId,
+    title: schedule.taskBlueprint.title,
+    description: schedule.taskBlueprint.description ?? null,
+    type: schedule.taskBlueprint.type,
+    priority: schedule.taskBlueprint.priority,
+    workflowId: schedule.taskBlueprint.workflowId ?? null,
+    repositoryIds: schedule.taskBlueprint.repositoryIds ?? [],
+    enabled: schedule.enabled,
+    oneShot: schedule.oneShot,
+    overlapPolicy: schedule.overlapPolicy,
+    trigger: schedule.trigger,
+    nextFireAt: schedule.nextFireAt ?? null,
+    lastFiredAt: schedule.lastFiredAt ?? null,
+    lastMaterializedTaskId: schedule.lastMaterializedTaskId ?? recentMaterializedTaskIds[0] ?? null,
+    lastError: schedule.lastError ?? null,
+    materializedTaskCount: recentMaterializedTaskIds.length,
+    openMaterializedTaskCount: scheduleOpenMaterializedTaskCount(schedule, tasks),
+    createdAt: schedule.createdAt,
+    updatedAt: schedule.updatedAt,
+  };
+}
+
+function hydrateTaskScheduleDetail(schedule: StoredTaskScheduleRecord, tasks: TaskDetail[]): TaskScheduleDetail {
+  const summary = summarizeTaskSchedule(schedule, tasks);
+  const recentMaterializedTasks = schedule.occurrences
+    .filter((occurrence) => occurrence.status === "materialized" && occurrence.taskId)
+    .slice()
+    .reverse()
+    .map((occurrence) => tasks.find((task) => task.id === occurrence.taskId) ?? null)
+    .filter((task): task is TaskDetail => Boolean(task))
+    .map((task) => summarizeTask(task))
+    .slice(0, 10);
+
+  return {
+    ...summary,
+    taskBlueprint: { ...schedule.taskBlueprint },
+    recentMaterializedTasks,
+    recentOccurrences: schedule.occurrences.slice(-20).reverse(),
+  };
+}
+
+function isValidTimeZone(value: string) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validateMockTaskScheduleInput(input: TaskScheduleUpsertInput, scheduleId?: string) {
+  const errors: Array<{ path: string; message: string }> = [];
+  const taskValidation = validateMockTaskInput(normalizeScheduleBlueprint(input.task), scheduleId);
+  errors.push(...taskValidation);
+
+  if (!["skip", "create_another"].includes(input.overlapPolicy)) {
+    errors.push({ path: "overlapPolicy", message: "Expected skip or create_another." });
+  }
+
+  if (input.trigger.type === "event") {
+    if (!input.trigger.eventKey.trim()) {
+      errors.push({ path: "trigger.eventKey", message: "Event trigger key is required." });
+    }
+  } else if (input.trigger.kind === "once") {
+    if (!input.trigger.timezone.trim()) {
+      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+    } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
+      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+    }
+    if (Number.isNaN(Date.parse(input.trigger.at))) {
+      errors.push({ path: "trigger.at", message: "Expected an RFC3339 datetime." });
+    }
+  } else if (input.trigger.kind === "everyMinutes") {
+    if (input.trigger.everyMinutes < 1) {
+      errors.push({ path: "trigger.everyMinutes", message: "Must be at least 1 minute." });
+    }
+  } else if (input.trigger.kind === "daily") {
+    if (!parseTimeOfDayParts(input.trigger.timeOfDay)) {
+      errors.push({ path: "trigger.timeOfDay", message: "Expected HH:MM in 24 hour time." });
+    }
+    if (!input.trigger.timezone.trim()) {
+      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+    } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
+      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+    }
+  } else if (input.trigger.kind === "weekly") {
+    if (!parseTimeOfDayParts(input.trigger.timeOfDay)) {
+      errors.push({ path: "trigger.timeOfDay", message: "Expected HH:MM in 24 hour time." });
+    }
+    if (!input.trigger.timezone.trim()) {
+      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+    } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
+      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+    }
+    if (!input.trigger.daysOfWeek.length || input.trigger.daysOfWeek.some((day) => day < 0 || day > 6)) {
+      errors.push({ path: "trigger.daysOfWeek", message: "Select one or more weekdays between Sunday and Saturday." });
+    }
+  } else if (input.trigger.kind === "monthly") {
+    if (!parseTimeOfDayParts(input.trigger.timeOfDay)) {
+      errors.push({ path: "trigger.timeOfDay", message: "Expected HH:MM in 24 hour time." });
+    }
+    if (!input.trigger.timezone.trim()) {
+      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+    } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
+      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+    }
+    if (input.trigger.dayOfMonth < 1 || input.trigger.dayOfMonth > 31) {
+      errors.push({ path: "trigger.dayOfMonth", message: "Expected a day between 1 and 31." });
+    }
+  }
+
+  return errors;
+}
+
+function normalizeMockTaskScheduleInput(input: TaskScheduleUpsertInput, existing?: StoredTaskScheduleRecord, projectId?: string | null): StoredTaskScheduleRecord {
+  const timestamp = nowIso();
+  const taskBlueprint = normalizeScheduleBlueprint(input.task);
+  const nextFireAt = input.trigger.type === "time"
+    ? existing?.nextFireAt ?? nextMockTimeFireAt(input.trigger, timestamp)
+    : null;
+
+  return {
+    id: existing?.id ?? createId("task-schedule"),
+    projectId: existing?.projectId ?? projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID,
+    taskBlueprint,
+    enabled: input.enabled ?? existing?.enabled ?? true,
+    oneShot: input.oneShot,
+    overlapPolicy: input.overlapPolicy,
+    trigger: input.trigger,
+    nextFireAt,
+    lastFiredAt: existing?.lastFiredAt ?? null,
+    lastMaterializedTaskId: existing?.lastMaterializedTaskId ?? null,
+    lastError: existing?.lastError ?? null,
+    occurrences: existing?.occurrences ?? [],
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function processMockTaskSchedules(projectId?: string | null) {
+  const targetProjectId = projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID;
+  const schedules = ensureMockTaskSchedules();
+  const domainEvents = ensureMockDomainEvents();
+  let tasks = ensureMockTasks();
+  let schedulesChanged = false;
+  let tasksChanged = false;
+
+  const materializeScheduleTask = (schedule: StoredTaskScheduleRecord) => {
+    const task = normalizeMockTaskInput({ ...schedule.taskBlueprint, status: "ready", archived: false }, undefined, schedule.projectId);
+    tasks = [task, ...tasks].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    tasksChanged = true;
+    return task;
+  };
+
+  for (const schedule of schedules) {
+    if (schedule.projectId !== targetProjectId || !schedule.enabled) {
+      continue;
+    }
+
+    if (schedule.trigger.type === "time") {
+      if (schedule.enabled && schedule.nextFireAt && Date.parse(schedule.nextFireAt) <= Date.now()) {
+        const occurrence = createScheduleOccurrence(schedule.id, schedule.nextFireAt, schedule.nextFireAt, null);
+        const openCount = scheduleOpenMaterializedTaskCount(schedule, tasks);
+        if (schedule.overlapPolicy === "skip" && openCount > 0) {
+          occurrence.status = "skipped";
+          occurrence.error = "Skipped because an open materialized task already exists.";
+          occurrence.updatedAt = nowIso();
+          schedule.lastError = occurrence.error;
+        } else {
+          const task = materializeScheduleTask(schedule);
+          occurrence.status = "materialized";
+          occurrence.taskId = task.id;
+          occurrence.updatedAt = nowIso();
+          schedule.lastMaterializedTaskId = task.id;
+          schedule.lastError = null;
+          appendMockDomainEvent("task.created", "task", task.id, {
+            taskId: task.id,
+            taskNumber: task.number,
+            status: task.status,
+            workflowId: task.workflowId ?? null,
+            laneId: task.currentLaneId ?? null,
+            sourceScheduleId: schedule.id,
+            sourceScheduleOccurrenceId: occurrence.id,
+          }, schedule.projectId);
+          appendMockLog("info", "task.schedule.materialized", `Materialized task ${task.id} from schedule ${schedule.id}`);
+        }
+        schedule.lastFiredAt = occurrence.scheduledAt ?? occurrence.updatedAt;
+        schedule.occurrences = [...schedule.occurrences, occurrence];
+        schedule.updatedAt = nowIso();
+        schedule.nextFireAt = schedule.oneShot || schedule.trigger.kind === "once"
+          ? null
+          : nextMockTimeFireAt(schedule.trigger, occurrence.scheduledAt ?? occurrence.updatedAt);
+        if (schedule.oneShot || schedule.trigger.kind === "once") {
+          schedule.enabled = false;
+        }
+        schedulesChanged = true;
+      }
+      continue;
+    }
+
+    const processedEventIds = new Set(schedule.occurrences.map((occurrence) => occurrence.eventId).filter((value): value is string => Boolean(value)));
+    for (const event of domainEvents) {
+      if (!schedule.enabled) {
+        break;
+      }
+      if (processedEventIds.has(event.id) || event.topic !== schedule.trigger.eventKey) {
+        continue;
+      }
+      if (event.projectId && event.projectId !== schedule.projectId) {
+        continue;
+      }
+      if (Date.parse(event.createdAt) <= Date.parse(schedule.updatedAt)) {
+        continue;
+      }
+      if (typeof (event.payload as { sourceScheduleId?: string | null }).sourceScheduleId === "string") {
+        continue;
+      }
+
+      const occurrence = createScheduleOccurrence(schedule.id, event.id, null, event.id);
+      const openCount = scheduleOpenMaterializedTaskCount(schedule, tasks);
+      if (schedule.overlapPolicy === "skip" && openCount > 0) {
+        occurrence.status = "skipped";
+        occurrence.error = `Skipped ${event.topic} because an open materialized task already exists.`;
+        schedule.lastError = occurrence.error;
+      } else {
+        const task = materializeScheduleTask(schedule);
+        occurrence.status = "materialized";
+        occurrence.taskId = task.id;
+        schedule.lastMaterializedTaskId = task.id;
+        schedule.lastError = null;
+        appendMockDomainEvent("task.created", "task", task.id, {
+          taskId: task.id,
+          taskNumber: task.number,
+          status: task.status,
+          workflowId: task.workflowId ?? null,
+          laneId: task.currentLaneId ?? null,
+          sourceScheduleId: schedule.id,
+          sourceScheduleOccurrenceId: occurrence.id,
+        }, schedule.projectId);
+        appendMockLog("info", "task.schedule.materialized", `Materialized task ${task.id} from schedule ${schedule.id}`);
+      }
+      occurrence.updatedAt = nowIso();
+      schedule.lastFiredAt = event.createdAt;
+      schedule.occurrences = [...schedule.occurrences, occurrence];
+      schedule.updatedAt = nowIso();
+      if (schedule.oneShot) {
+        schedule.enabled = false;
+      }
+      schedulesChanged = true;
+      processedEventIds.add(event.id);
+    }
+  }
+
+  if (tasksChanged) {
+    saveMockTasks(tasks);
+  }
+  if (schedulesChanged) {
+    saveMockTaskSchedules(schedules);
+  }
+
+  return {
+    tasks: tasksChanged ? ensureMockTasks() : tasks,
+    schedules: schedulesChanged ? ensureMockTaskSchedules() : schedules,
+    changed: tasksChanged || schedulesChanged,
+  };
 }
 
 function ensureMockTasks() {
@@ -1807,7 +2325,7 @@ async function resolveTauriProjectId(projectId?: string | null) {
 export async function listTasks(includeArchived = false, projectId?: string | null): Promise<TaskSummary[]> {
   const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
-    return ensureMockTasks()
+    return processMockTaskSchedules(activeProjectId).tasks
       .filter((task) => task.projectId === activeProjectId)
       .filter((task) => includeArchived || !task.archived)
       .map(summarizeTask);
@@ -1819,7 +2337,7 @@ export async function listTasks(includeArchived = false, projectId?: string | nu
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    const task = ensureMockTasks().find((entry) => entry.id === taskId);
+    const task = processMockTaskSchedules().tasks.find((entry) => entry.id === taskId);
     if (!task) {
       throw new Error(`Task ${taskId} was not found`);
     }
@@ -1966,6 +2484,7 @@ export async function createTask(input: TaskUpsertInput, projectId?: string | nu
     const task = normalizeMockTaskInput(input, undefined, activeProjectId ?? undefined);
     saveMockTasks([task, ...ensureMockTasks()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
     appendMockLog("info", "task.created", `Created task ${task.id}`);
+    appendMockDomainEvent("task.created", "task", task.id, { taskId: task.id, taskNumber: task.number, status: task.status }, task.projectId);
     emitMockTaskChange({ taskIds: [task.id], reason: "task.created" });
     return task;
   }
@@ -1995,8 +2514,10 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
     );
     appendMockLog("info", "task.updated", `Updated task ${taskId}`);
+    const updatedTask = await getTask(taskId);
+    appendMockDomainEvent("task.updated", "task", taskId, { taskId, taskNumber: updatedTask.number, status: updatedTask.status }, updatedTask.projectId);
     emitMockTaskChange({ taskIds: [taskId], reason: "task.updated" });
-    return getTask(taskId);
+    return updatedTask;
   }
 
   return invoke<TaskDetail>("update_task", { taskId, input });
@@ -2004,7 +2525,7 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
 
 export async function deleteTask(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    const tasks = ensureMockTasks();
+    const tasks = processMockTaskSchedules().tasks;
     const existing = tasks.find((task) => task.id === taskId);
     if (!existing) {
       throw new Error(`Task ${taskId} was not found`);
@@ -2021,6 +2542,7 @@ export async function deleteTask(taskId: string): Promise<TaskDetail> {
         .map((task) => (task.parentTaskId === taskId ? { ...task, parentTaskId: null } : task)),
     );
     appendMockLog("info", "task.deleted", `Deleted task ${taskId}`);
+    appendMockDomainEvent("task.deleted", "task", taskId, { taskId, taskNumber: existing.number, status: existing.status }, existing.projectId);
     emitMockTaskChange({ taskIds: [taskId], reason: "task.deleted" });
     return existing;
   }
@@ -2154,6 +2676,7 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
     );
     saveMockTasks(nextTasks);
     appendMockLog("info", "task.dispatch", `Dispatched task ${taskId} into ${lane.assignedEntityType}:${lane.assignedEntityId ?? "user"}`);
+    appendMockDomainEvent("task.dispatched", "task", taskId, { taskId, assignmentId: assignment.id, laneId: lane.id, sessionId: assignment.sessionId ?? null }, task.projectId);
     if (assignment.sessionId) {
       emitMockSessionChange({ sessionIds: [assignment.sessionId], reason: "task.dispatch" });
     }
@@ -2516,8 +3039,22 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
     : [];
 
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
+  const updatedTask = await getTask(taskId);
+  appendMockDomainEvent(
+    outcome === "success" && updatedTask.status === "completed"
+      ? "task.completed"
+      : outcome === "success"
+        ? "task.transition_success"
+        : outcome === "failure"
+          ? "task.failed"
+          : "task.user_intervention_requested",
+    "task",
+    taskId,
+    { taskId, status: updatedTask.status, outcome, workflowId: updatedTask.workflowId ?? null, laneId: updatedTask.currentLaneId ?? null },
+    updatedTask.projectId,
+  );
   emitMockTaskChange({ taskIds: [taskId, ...autoDispatchedDependentTaskIds], reason: `task.transition.${outcome}` });
-  return getTask(taskId);
+  return updatedTask;
 }
 
 async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
@@ -2926,6 +3463,7 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
       input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
       `Added comment ${comment.id} to task ${taskId}`,
     );
+    appendMockDomainEvent("task.comment_added", "task", taskId, { taskId, commentId: comment.id, interrupt: input.interruptAgent }, task.projectId);
     emitMockTaskChange({
       taskIds: [taskId],
       reason: input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
@@ -3105,7 +3643,9 @@ export async function updateTaskComment(commentId: string, input: TaskCommentUpd
     if (!updated) {
       throw new Error(`Task comment ${commentId} was not found`);
     }
-    return updated;
+    const updatedComment = updated as TaskComment;
+    appendMockDomainEvent("task.comment_updated", "task", updatedComment.taskId, { taskId: updatedComment.taskId, commentId: updatedComment.id }, ensureMockTasks().find((task) => task.id === updatedComment.taskId)?.projectId ?? null);
+    return updatedComment;
   }
 
   return invoke<TaskComment>("update_task_comment", { commentId, input });
@@ -3130,7 +3670,9 @@ export async function deleteTaskComment(commentId: string): Promise<TaskComment>
     if (!removed) {
       throw new Error(`Task comment ${commentId} was not found`);
     }
-    return removed;
+    const removedComment = removed as TaskComment;
+    appendMockDomainEvent("task.comment_deleted", "task", removedComment.taskId, { taskId: removedComment.taskId, commentId: removedComment.id }, ensureMockTasks().find((task) => task.id === removedComment.taskId)?.projectId ?? null);
+    return removedComment;
   }
 
   return invoke<TaskComment>("delete_task_comment", { commentId });
@@ -3177,6 +3719,7 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
       ),
     );
     appendMockLog("info", "task.file_reference.added", `Added file reference ${reference.id} to task ${taskId}`);
+    appendMockDomainEvent("task.file_reference_added", "task", taskId, { taskId, referenceId: reference.id, relativePath: reference.relativePath }, task.projectId);
     emitMockTaskChange({ taskIds: [taskId], reason: "task.file_reference.added" });
     return reference;
   }
@@ -3260,6 +3803,7 @@ export async function removeTaskFileReference(referenceId: string): Promise<Task
     const removedReference = removed as TaskFileReference;
     saveMockTasks(updated);
     appendMockLog("info", "task.file_reference.removed", `Removed file reference ${referenceId}`);
+    appendMockDomainEvent("task.file_reference_removed", "task", removedReference.taskId, { taskId: removedReference.taskId, referenceId: removedReference.id, relativePath: removedReference.relativePath }, ensureMockTasks().find((task) => task.id === removedReference.taskId)?.projectId ?? null);
     emitMockTaskChange({ taskIds: [removedReference.taskId], reason: "task.file_reference.removed" });
     return removedReference;
   }
@@ -3293,6 +3837,7 @@ export async function addTaskAttachment(taskId: string, input: TaskAttachmentInp
 
     saveMockTasks(tasks.map((entry) => (entry.id === taskId ? { ...entry, attachments: [...entry.attachments, attachment] } : entry)));
     appendMockLog("info", "task.attachment.added", `Added attachment ${attachment.id} to task ${taskId}`);
+    appendMockDomainEvent("task.attachment_added", "task", taskId, { taskId, attachmentId: attachment.id, fileName: attachment.fileName }, task.projectId);
     emitMockTaskChange({ taskIds: [taskId], reason: "task.attachment.added" });
     return attachment;
   }
@@ -3323,11 +3868,122 @@ export async function removeTaskAttachment(attachmentId: string): Promise<TaskAt
     const removedAttachment = removed as TaskAttachment;
     saveMockTasks(updated);
     appendMockLog("info", "task.attachment.removed", `Removed attachment ${attachmentId}`);
+    appendMockDomainEvent("task.attachment_removed", "task", removedAttachment.taskId, { taskId: removedAttachment.taskId, attachmentId: removedAttachment.id, fileName: removedAttachment.fileName }, ensureMockTasks().find((task) => task.id === removedAttachment.taskId)?.projectId ?? null);
     emitMockTaskChange({ taskIds: [removedAttachment.taskId], reason: "task.attachment.removed" });
     return removedAttachment;
   }
 
   return invoke<TaskAttachment>("remove_task_attachment", { attachmentId });
+}
+
+export async function listTaskSchedules(projectId?: string | null): Promise<TaskScheduleSummary[]> {
+  const activeProjectId = projectId ?? getActiveProjectId();
+  if (!isTauriAvailable()) {
+    return processMockTaskSchedules(activeProjectId).schedules
+      .filter((schedule) => schedule.projectId === activeProjectId)
+      .map((schedule) => summarizeTaskSchedule(schedule, ensureMockTasks()));
+  }
+
+  const resolvedProjectId = await resolveTauriProjectId(projectId);
+  return invoke<TaskScheduleSummary[]>("list_task_schedules", { projectId: resolvedProjectId });
+}
+
+export async function getTaskSchedule(scheduleId: string): Promise<TaskScheduleDetail> {
+  if (!isTauriAvailable()) {
+    const processed = processMockTaskSchedules();
+    const schedule = processed.schedules.find((entry) => entry.id === scheduleId);
+    if (!schedule) {
+      throw new Error(`Task schedule ${scheduleId} was not found`);
+    }
+    return hydrateTaskScheduleDetail(schedule, processed.tasks);
+  }
+
+  return invoke<TaskScheduleDetail>("get_task_schedule", { scheduleId });
+}
+
+export async function createTaskSchedule(input: TaskScheduleUpsertInput, projectId?: string | null): Promise<TaskScheduleDetail> {
+  const activeProjectId = projectId ?? getActiveProjectId();
+  if (!isTauriAvailable()) {
+    const validation = validateMockTaskScheduleInput(input);
+    if (validation.length > 0) {
+      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+    }
+
+    const schedule = normalizeMockTaskScheduleInput(input, undefined, activeProjectId ?? undefined);
+    saveMockTaskSchedules([schedule, ...ensureMockTaskSchedules()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+    const processed = processMockTaskSchedules(activeProjectId);
+    appendMockLog("info", "task.schedule.created", `Created task schedule ${schedule.id}`);
+    appendMockDomainEvent("task.schedule.created", "task_schedule", schedule.id, { scheduleId: schedule.id, title: schedule.taskBlueprint.title, enabled: schedule.enabled, triggerType: schedule.trigger.type }, schedule.projectId);
+    emitMockTaskChange({ taskIds: [], reason: "task.schedule.created" });
+    const created = processed.schedules.find((entry) => entry.id === schedule.id);
+    if (!created) {
+      throw new Error(`Task schedule ${schedule.id} was not found after creation`);
+    }
+    return hydrateTaskScheduleDetail(created, processed.tasks);
+  }
+
+  const resolvedProjectId = await resolveTauriProjectId(projectId);
+  return invoke<TaskScheduleDetail>("create_task_schedule", { projectId: resolvedProjectId, input });
+}
+
+export async function updateTaskSchedule(scheduleId: string, input: TaskScheduleUpsertInput): Promise<TaskScheduleDetail> {
+  if (!isTauriAvailable()) {
+    const validation = validateMockTaskScheduleInput(input);
+    if (validation.length > 0) {
+      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+    }
+
+    const schedules = ensureMockTaskSchedules();
+    const existing = schedules.find((schedule) => schedule.id === scheduleId);
+    if (!existing) {
+      throw new Error(`Task schedule ${scheduleId} was not found`);
+    }
+
+    const updated = normalizeMockTaskScheduleInput(input, {
+      ...existing,
+      trigger: input.trigger,
+      nextFireAt: input.trigger.type === "time" ? nextMockTimeFireAt(input.trigger, nowIso()) : null,
+    });
+    updated.occurrences = existing.occurrences;
+    updated.lastFiredAt = existing.lastFiredAt ?? null;
+    updated.lastMaterializedTaskId = existing.lastMaterializedTaskId ?? null;
+    updated.lastError = existing.lastError ?? null;
+    saveMockTaskSchedules(
+      schedules
+        .map((schedule) => (schedule.id === scheduleId ? updated : schedule))
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+    );
+    const processed = processMockTaskSchedules(existing.projectId);
+    appendMockLog("info", "task.schedule.updated", `Updated task schedule ${scheduleId}`);
+    appendMockDomainEvent("task.schedule.updated", "task_schedule", scheduleId, { scheduleId, title: updated.taskBlueprint.title, enabled: updated.enabled, triggerType: updated.trigger.type }, updated.projectId);
+    emitMockTaskChange({ taskIds: [], reason: "task.schedule.updated" });
+    const refreshed = processed.schedules.find((schedule) => schedule.id === scheduleId);
+    if (!refreshed) {
+      throw new Error(`Task schedule ${scheduleId} was not found after update`);
+    }
+    return hydrateTaskScheduleDetail(refreshed, processed.tasks);
+  }
+
+  return invoke<TaskScheduleDetail>("update_task_schedule", { scheduleId, input });
+}
+
+export async function deleteTaskSchedule(scheduleId: string): Promise<TaskScheduleDetail> {
+  if (!isTauriAvailable()) {
+    const processed = processMockTaskSchedules();
+    const schedules = processed.schedules;
+    const existing = schedules.find((schedule) => schedule.id === scheduleId);
+    if (!existing) {
+      throw new Error(`Task schedule ${scheduleId} was not found`);
+    }
+
+    saveMockTaskSchedules(schedules.filter((schedule) => schedule.id !== scheduleId));
+    appendMockLog("info", "task.schedule.deleted", `Deleted task schedule ${scheduleId}`);
+    appendMockDomainEvent("task.schedule.deleted", "task_schedule", scheduleId, { scheduleId, title: existing.taskBlueprint.title }, existing.projectId);
+    emitMockTaskChange({ taskIds: [], reason: "task.schedule.deleted" });
+    return hydrateTaskScheduleDetail(existing, processed.tasks);
+  }
+
+  return invoke<TaskScheduleDetail>("delete_task_schedule", { scheduleId });
 }
 
 export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {

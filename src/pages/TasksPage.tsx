@@ -15,10 +15,14 @@ import {
   completeLaneAsFailure,
   completeLaneAsSuccess,
   createTask,
+  createTaskSchedule,
   deleteTask,
+  deleteTaskSchedule,
   dispatchTaskLane,
   getTask,
+  getTaskSchedule,
   getWorkflow,
+  listTaskSchedules,
   listTasks,
   listWorkflows,
   listenToSessionStream,
@@ -40,6 +44,7 @@ import {
   deleteTaskTodo,
   sendMailboxMessage,
   updateTask,
+  updateTaskSchedule,
 } from "../lib/tauri";
 import type {
   AgentSummary,
@@ -50,6 +55,9 @@ import type {
   TaskCommentInput,
   TaskDetail,
   TaskFileReferenceInput,
+  TaskScheduleDetail,
+  TaskScheduleSummary,
+  TaskScheduleUpsertInput,
   TaskSummary,
   TaskUpsertInput,
   WorkflowDefinition,
@@ -57,13 +65,15 @@ import type {
 } from "../types";
 import { TaskCreatePage } from "./tasks/TaskCreatePage";
 import { TaskDetailPage } from "./tasks/TaskDetailPage";
+import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
 import { buildTaskBoardModel, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
 import { TasksOverviewPage, type TaskBoardFilter, type TaskBoardViewMode } from "./tasks/TasksOverviewPage";
 
 type TasksRoute =
   | { kind: "overview" }
-  | { kind: "create"; parentTaskId?: string | null; workflowId?: string | null }
-  | { kind: "detail"; taskId: string };
+  | { kind: "create"; parentTaskId?: string | null; workflowId?: string | null; scheduled?: boolean }
+  | { kind: "detail"; taskId: string }
+  | { kind: "schedule"; scheduleId: string };
 
 function createBlankTaskDraft(): TaskUpsertInput {
   return {
@@ -81,6 +91,31 @@ function createBlankTaskDraft(): TaskUpsertInput {
     parentTaskId: null,
     whipMaxAttempts: 10,
     archived: false,
+  };
+}
+
+function createBlankTaskScheduleDraft(taskDraft = createBlankTaskDraft()): TaskScheduleUpsertInput {
+  return {
+    task: { ...taskDraft, status: "ready", archived: false },
+    enabled: true,
+    oneShot: false,
+    overlapPolicy: "skip",
+    trigger: {
+      type: "time",
+      kind: "daily",
+      timeOfDay: "09:00",
+      timezone: "UTC",
+    },
+  };
+}
+
+function taskScheduleToDraft(schedule: TaskScheduleDetail): TaskScheduleUpsertInput {
+  return {
+    task: { ...schedule.taskBlueprint },
+    enabled: schedule.enabled,
+    oneShot: schedule.oneShot,
+    overlapPolicy: schedule.overlapPolicy,
+    trigger: schedule.trigger,
   };
 }
 
@@ -192,6 +227,7 @@ export function TasksPage({
 }: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [taskSchedules, setTaskSchedules] = useState<TaskScheduleSummary[]>([]);
   const [workflowSummaries, setWorkflowSummaries] = useState<WorkflowSummary[]>([]);
   const [workflowDefinitions, setWorkflowDefinitions] = useState<Record<string, WorkflowDefinition>>({});
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -199,7 +235,11 @@ export function TasksPage({
   const [repositories, setRepositories] = useState<RepositoryRecord[]>([]);
   const [defaultRepositoryId, setDefaultRepositoryId] = useState<string | null>(null);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
+  const [taskScheduleDetail, setTaskScheduleDetail] = useState<TaskScheduleDetail | null>(null);
   const [taskDraft, setTaskDraft] = useState<TaskUpsertInput>(createBlankTaskDraft);
+  const [taskScheduleDraft, setTaskScheduleDraft] = useState<TaskScheduleUpsertInput>(createBlankTaskScheduleDraft);
+  const [taskScheduleDraftDirty, setTaskScheduleDraftDirty] = useState(false);
+  const [creatingScheduledTask, setCreatingScheduledTask] = useState(false);
   const [commentDraft, setCommentDraft] = useState<TaskCommentInput>(createBlankCommentDraft);
   const [fileReferenceDraft, setFileReferenceDraft] = useState<TaskFileReferenceInput>(createBlankFileReferenceDraft);
   const [taskMessages, setTaskMessages] = useState<MailboxMessage[]>([]);
@@ -341,14 +381,16 @@ export function TasksPage({
       setTaskActionError(null);
     }
     try {
-      const [nextTasks, nextWorkflows, nextAgents, nextRoles, nextProject] = await Promise.all([
+      const [nextTasks, nextSchedules, nextWorkflows, nextAgents, nextRoles, nextProject] = await Promise.all([
         listTasks(false, projectId),
+        listTaskSchedules(projectId),
         listWorkflows(false),
         listAgents(false),
         listRoles(false),
         projectId ? getProject(projectId) : Promise.resolve(null),
       ]);
       setTasks((current) => (sameData(current, nextTasks) ? current : nextTasks));
+      setTaskSchedules((current) => (sameData(current, nextSchedules) ? current : nextSchedules));
       setWorkflowSummaries((current) => (sameData(current, nextWorkflows) ? current : nextWorkflows));
       setAgents((current) => (sameData(current, nextAgents) ? current : nextAgents));
       setRoles((current) => (sameData(current, nextRoles) ? current : nextRoles));
@@ -404,6 +446,28 @@ export function TasksPage({
     }
   }
 
+  async function loadTaskScheduleDetail(scheduleId: string, options?: { preserveDraft?: boolean; silent?: boolean }) {
+    if (!options?.silent) {
+      setLoadingTaskDetail(true);
+      setTaskActionError(null);
+    }
+    try {
+      const schedule = await getTaskSchedule(scheduleId);
+      setTaskScheduleDetail((current) => (sameData(current, schedule) ? current : schedule));
+      if (!options?.preserveDraft) {
+        const nextDraft = taskScheduleToDraft(schedule);
+        setTaskScheduleDraft((current) => (sameData(current, nextDraft) ? current : nextDraft));
+        setTaskScheduleDraftDirty(false);
+      }
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to load task schedule.");
+    } finally {
+      if (!options?.silent) {
+        setLoadingTaskDetail(false);
+      }
+    }
+  }
+
   useEffect(() => {
     void loadTasksData();
   }, [projectId]);
@@ -412,7 +476,10 @@ export function TasksPage({
     if (route.kind === "detail") {
       void loadTaskDetail(route.taskId, { preserveDraft: taskDraftDirty });
     }
-  }, [route.kind === "detail" ? route.taskId : null]);
+    if (route.kind === "schedule") {
+      void loadTaskScheduleDetail(route.scheduleId, { preserveDraft: taskScheduleDraftDirty });
+    }
+  }, [route.kind === "detail" ? route.taskId : null, route.kind === "schedule" ? route.scheduleId : null]);
 
   useEffect(() => {
     if (route.kind === "create") {
@@ -429,6 +496,9 @@ export function TasksPage({
       void loadTasksData({ silent: true });
       if (route.kind === "detail" && !taskDraftDirty) {
         void loadTaskDetail(route.taskId, { silent: true });
+      }
+      if (route.kind === "schedule" && !taskScheduleDraftDirty) {
+        void loadTaskScheduleDetail(route.scheduleId, { silent: true });
       }
     };
 
@@ -478,7 +548,7 @@ export function TasksPage({
       disposeTaskChanges?.();
       disposeSessionStream?.();
     };
-  }, [route, taskDraftDirty, projectId]);
+  }, [route, taskDraftDirty, taskScheduleDraftDirty, projectId]);
 
   useEffect(() => {
     if (createTaskProjectId !== projectId || createTaskToken === createTaskTokenRef.current) {
@@ -506,9 +576,13 @@ export function TasksPage({
     tasksOverviewTokenRef.current = tasksOverviewToken;
     setRoute({ kind: "overview" });
     setTaskDetail(null);
+    setTaskScheduleDetail(null);
     setTaskDraft(createBlankTaskDraft());
+    setTaskScheduleDraft(createBlankTaskScheduleDraft());
+    setCreatingScheduledTask(false);
     setCommentDraft(createBlankCommentDraft());
     setTaskDraftDirty(false);
+    setTaskScheduleDraftDirty(false);
     setSelectedBlockerTaskId("");
     setTaskActionError(null);
     setPublishingTask(false);
@@ -518,27 +592,37 @@ export function TasksPage({
   useEffect(() => {
     setRoute({ kind: "overview" });
     setTaskDetail(null);
+    setTaskScheduleDetail(null);
     setTaskDraft(createBlankTaskDraft());
+    setTaskScheduleDraft(createBlankTaskScheduleDraft());
+    setCreatingScheduledTask(false);
     setCommentDraft(createBlankCommentDraft());
     setTaskDraftDirty(false);
+    setTaskScheduleDraftDirty(false);
     setSelectedBlockerTaskId("");
     setTaskActionError(null);
     setPublishingTask(false);
     setDeletingTask(false);
   }, [projectId]);
 
-  function openCreateTask(parentTaskId?: string | null, workflowId?: string | null) {
-    setTaskDraft({
+  function openCreateTask(parentTaskId?: string | null, workflowId?: string | null, scheduled = false) {
+    const nextTaskDraft = {
       ...createBlankTaskDraft(),
       parentTaskId: parentTaskId ?? null,
       workflowId: workflowId ?? null,
       repositoryIds: defaultRepositoryId ? [defaultRepositoryId] : [],
       repositoryId: defaultRepositoryId,
-    });
+    };
+    setTaskDetail(null);
+    setTaskScheduleDetail(null);
+    setTaskDraft(nextTaskDraft);
+    setTaskScheduleDraft(createBlankTaskScheduleDraft(nextTaskDraft));
+    setCreatingScheduledTask(scheduled);
     setCommentDraft(createBlankCommentDraft());
     setFileReferenceDraft({ repositoryId: repositories[0]?.id ?? "", relativePath: "" });
     setTaskDraftDirty(false);
-    setRoute({ kind: "create", parentTaskId: parentTaskId ?? null, workflowId: workflowId ?? null });
+    setTaskScheduleDraftDirty(false);
+    setRoute({ kind: "create", parentTaskId: parentTaskId ?? null, workflowId: workflowId ?? null, scheduled });
   }
 
   function handleTaskBoardViewModeChange(viewMode: TaskBoardViewMode) {
@@ -546,7 +630,31 @@ export function TasksPage({
   }
 
   function openTaskDetail(taskId: string) {
+    setTaskScheduleDetail(null);
     setRoute({ kind: "detail", taskId });
+  }
+
+  function openTaskScheduleDetail(scheduleId: string) {
+    setTaskDetail(null);
+    setRoute({ kind: "schedule", scheduleId });
+  }
+
+  function handleScheduledModeChange(scheduled: boolean) {
+    setCreatingScheduledTask(scheduled);
+    if (scheduled) {
+      setTaskScheduleDraft((current) => ({
+        ...current,
+        task: {
+          ...taskDraft,
+          status: "ready",
+          archived: false,
+        },
+      }));
+      setTaskScheduleDraftDirty(true);
+    } else {
+      setTaskDraft(taskScheduleDraft.task);
+      setTaskDraftDirty(true);
+    }
   }
 
   async function maybeDispatchPublishedTask(taskId: string) {
@@ -560,14 +668,22 @@ export function TasksPage({
     setSavingTask(true);
     setTaskActionError(null);
     try {
-      const saved = await createTask({ ...taskDraft, status: "draft" }, projectId);
-      await loadTasksData();
-      setRoute({ kind: "detail", taskId: saved.id });
-      await loadTaskDetail(saved.id);
-      setTaskDraftDirty(false);
-      setSelectedBlockerTaskId("");
+      if (creatingScheduledTask) {
+        const saved = await createTaskSchedule({ ...taskScheduleDraft, enabled: false }, projectId);
+        await loadTasksData();
+        setRoute({ kind: "schedule", scheduleId: saved.id });
+        await loadTaskScheduleDetail(saved.id);
+        setTaskScheduleDraftDirty(false);
+      } else {
+        const saved = await createTask({ ...taskDraft, status: "draft" }, projectId);
+        await loadTasksData();
+        setRoute({ kind: "detail", taskId: saved.id });
+        await loadTaskDetail(saved.id);
+        setTaskDraftDirty(false);
+        setSelectedBlockerTaskId("");
+      }
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to create task.");
+      setTaskActionError(error instanceof Error ? error.message : creatingScheduledTask ? "Unable to save task schedule." : "Unable to create task.");
     } finally {
       setSavingTask(false);
     }
@@ -577,15 +693,23 @@ export function TasksPage({
     setPublishingTask(true);
     setTaskActionError(null);
     try {
-      const saved = await createTask({ ...taskDraft, status: "ready" }, projectId);
-      await maybeDispatchPublishedTask(saved.id);
-      await loadTasksData();
-      setRoute({ kind: "detail", taskId: saved.id });
-      await loadTaskDetail(saved.id);
-      setTaskDraftDirty(false);
-      setSelectedBlockerTaskId("");
+      if (creatingScheduledTask) {
+        const saved = await createTaskSchedule({ ...taskScheduleDraft, enabled: true }, projectId);
+        await loadTasksData();
+        setRoute({ kind: "schedule", scheduleId: saved.id });
+        await loadTaskScheduleDetail(saved.id);
+        setTaskScheduleDraftDirty(false);
+      } else {
+        const saved = await createTask({ ...taskDraft, status: "ready" }, projectId);
+        await maybeDispatchPublishedTask(saved.id);
+        await loadTasksData();
+        setRoute({ kind: "detail", taskId: saved.id });
+        await loadTaskDetail(saved.id);
+        setTaskDraftDirty(false);
+        setSelectedBlockerTaskId("");
+      }
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to publish task.");
+      setTaskActionError(error instanceof Error ? error.message : creatingScheduledTask ? "Unable to create task schedule." : "Unable to publish task.");
     } finally {
       setPublishingTask(false);
     }
@@ -602,6 +726,20 @@ export function TasksPage({
       await loadTaskDetail(saved.id);
       setTaskDraftDirty(false);
     }, "Unable to save task.");
+    setSavingTask(false);
+  }
+
+  async function handleSaveTaskScheduleDetail() {
+    if (route.kind !== "schedule") {
+      return;
+    }
+    setSavingTask(true);
+    await runDetailAction("save_schedule", async () => {
+      const saved = await updateTaskSchedule(route.scheduleId, taskScheduleDraft);
+      await loadTasksData();
+      await loadTaskScheduleDetail(saved.id);
+      setTaskScheduleDraftDirty(false);
+    }, "Unable to save task schedule.");
     setSavingTask(false);
   }
 
@@ -636,6 +774,22 @@ export function TasksPage({
       setTaskDraftDirty(false);
       setSelectedBlockerTaskId("");
     }, "Unable to delete task.");
+    setDeletingTask(false);
+  }
+
+  async function handleDeleteTaskScheduleDetail() {
+    if (route.kind !== "schedule") {
+      return;
+    }
+    setDeletingTask(true);
+    await runDetailAction("delete_schedule", async () => {
+      await deleteTaskSchedule(route.scheduleId);
+      await loadTasksData();
+      setRoute({ kind: "overview" });
+      setTaskScheduleDetail(null);
+      setTaskScheduleDraft(createBlankTaskScheduleDraft());
+      setTaskScheduleDraftDirty(false);
+    }, "Unable to delete task schedule.");
     setDeletingTask(false);
   }
 
@@ -1019,19 +1173,32 @@ export function TasksPage({
           filter={taskFilter}
           onFilterChange={setTaskFilter}
           onOpenTask={openTaskDetail}
+          onOpenSchedule={openTaskScheduleDetail}
           onViewModeChange={handleTaskBoardViewModeChange}
           roles={roles}
+          schedules={taskSchedules}
           viewMode={taskBoardViewMode}
         />
       ) : route.kind === "create" ? (
         <TaskCreatePage
           agents={agents}
           draft={taskDraft}
+          scheduleDraft={taskScheduleDraft}
+          scheduledMode={creatingScheduledTask}
           onBack={() => setRoute({ kind: "overview" })}
           onChange={(draft) => {
             setTaskDraft(draft);
             setTaskDraftDirty(true);
+            if (creatingScheduledTask) {
+              setTaskScheduleDraft((current) => ({ ...current, task: { ...draft, status: "ready", archived: false } }));
+              setTaskScheduleDraftDirty(true);
+            }
           }}
+          onScheduleChange={(draft) => {
+            setTaskScheduleDraft(draft);
+            setTaskScheduleDraftDirty(true);
+          }}
+          onScheduledModeChange={handleScheduledModeChange}
           onPublish={() => void handlePublishCreateTask()}
           onSave={() => void handleSaveCreateTask()}
           repositories={repositories}
@@ -1039,7 +1206,26 @@ export function TasksPage({
           saving={savingTask || publishingTask}
           workflows={workflowSummaries}
         />
-      ) : taskDetail ? (
+      ) : route.kind === "schedule" && taskScheduleDetail ? (
+        <TaskScheduleDetailPage
+          agents={agents}
+          deleting={deletingTask}
+          draft={taskScheduleDraft}
+          loading={loadingTaskDetail}
+          onDelete={() => void handleDeleteTaskScheduleDetail()}
+          onDraftChange={(draft) => {
+            setTaskScheduleDraft(draft);
+            setTaskScheduleDraftDirty(true);
+          }}
+          onOpenTask={openTaskDetail}
+          onSave={() => void handleSaveTaskScheduleDetail()}
+          repositories={repositories}
+          roles={roles}
+          saving={savingTask}
+          schedule={taskScheduleDetail}
+          workflows={workflowSummaries}
+        />
+      ) : route.kind === "detail" && taskDetail ? (
         <TaskDetailPage
           agents={agents}
           commentDraft={commentDraft}

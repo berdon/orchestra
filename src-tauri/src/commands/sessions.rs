@@ -2,12 +2,13 @@ use std::{collections::HashSet, path::PathBuf};
 
 use chrono::{Duration, Utc};
 use rusqlite::{params, OptionalExtension};
+use serde_json::json;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord},
     services::{
-        app_events, database,
+        app_events, database, domain_events,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
@@ -18,6 +19,38 @@ use crate::{
     },
     state::AppState,
 };
+
+fn record_session_domain_event(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+    topic: &str,
+    project_id: Option<String>,
+    payload: serde_json::Value,
+) {
+    let _ = domain_events::record_event(
+        connection,
+        domain_events::DomainEventInput {
+            project_id,
+            topic: topic.to_string(),
+            entity_type: "session".to_string(),
+            entity_id: Some(session_id.to_string()),
+            payload,
+        },
+    );
+}
+
+fn session_project_id(connection: &rusqlite::Connection, session_id: &str) -> Option<String> {
+    let context = find_session_context_for_session(session_id).ok()?;
+    connection
+        .query_row(
+            "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
+            [context.project_slug],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+}
 
 fn load_session_debug_info(
     connection: &rusqlite::Connection,
@@ -488,6 +521,31 @@ pub async fn create_session(
             created.path.display()
         ),
     );
+    if let Ok(connection) = database::open_connection() {
+        let project_id = project_slug
+            .as_deref()
+            .and_then(|slug| {
+                connection
+                    .query_row(
+                        "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
+                        [slug],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .ok()
+                    .flatten()
+            });
+        record_session_domain_event(
+            &connection,
+            &created.record.id,
+            "session.created",
+            project_id,
+            json!({
+                "sessionId": created.record.id.clone(),
+                "title": created.record.title.clone(),
+            }),
+        );
+    }
     let _ = app_events::emit_session_change(&app, "sessions.create", [created.record.id.clone()]);
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
@@ -527,6 +585,16 @@ pub async fn delete_session(
         "sessions.dismiss",
         &format!("Dismissed pi session {} from the session list", session_id),
     );
+    if let Ok(connection) = database::open_connection() {
+        let project_id = session_project_id(&connection, &session_id);
+        record_session_domain_event(
+            &connection,
+            &session_id,
+            "session.dismissed",
+            project_id,
+            json!({ "sessionId": session_id.clone() }),
+        );
+    }
     let _ = app_events::emit_session_change(&app, "sessions.dismiss", [session_id]);
     Ok(())
 }
@@ -575,6 +643,16 @@ pub async fn resume_session(
         "sessions.resume",
         &format!("Resumed pi session {}", record.id),
     );
+    if let Ok(connection) = database::open_connection() {
+        let project_id = session_project_id(&connection, &record.id);
+        record_session_domain_event(
+            &connection,
+            &record.id,
+            "session.resumed",
+            project_id,
+            json!({ "sessionId": record.id.clone() }),
+        );
+    }
     Ok(record)
 }
 
@@ -815,6 +893,19 @@ pub async fn stop_session_runtime(
         "sessions.stop",
         &format!("Stopped session runtime {}", session_id),
     );
+    if let Ok(connection) = database::open_connection() {
+        let project_id = session_project_id(&connection, &session_id);
+        record_session_domain_event(
+            &connection,
+            &session_id,
+            "session.closed",
+            project_id,
+            json!({
+                "sessionId": session_id.clone(),
+                "status": record.status.clone(),
+            }),
+        );
+    }
     let _ = app_events::emit_session_change(&app, "sessions.stop", [session_id.clone()]);
     Ok(record)
 }

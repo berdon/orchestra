@@ -1148,6 +1148,140 @@ pub struct TaskUpsertInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskScheduleOccurrence {
+    pub id: String,
+    pub schedule_id: String,
+    pub occurrence_key: String,
+    pub scheduled_at: Option<String>,
+    pub event_id: Option<String>,
+    pub status: String,
+    pub task_id: Option<String>,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TaskScheduleTrigger {
+    Time(TaskScheduleTimeTrigger),
+    Event(TaskScheduleEventTrigger),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TaskScheduleTimeTrigger {
+    Once {
+        at: String,
+        timezone: String,
+    },
+    EveryMinutes {
+        every_minutes: i64,
+    },
+    Daily {
+        time_of_day: String,
+        timezone: String,
+    },
+    Weekly {
+        time_of_day: String,
+        timezone: String,
+        days_of_week: Vec<u32>,
+    },
+    Monthly {
+        time_of_day: String,
+        timezone: String,
+        day_of_month: u32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskScheduleEventTrigger {
+    pub event_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskScheduleUpsertInput {
+    pub task: TaskUpsertInput,
+    pub enabled: Option<bool>,
+    pub one_shot: bool,
+    pub overlap_policy: String,
+    pub trigger: TaskScheduleTrigger,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskScheduleSummary {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub priority: String,
+    pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub repository_ids: Vec<String>,
+    pub enabled: bool,
+    pub one_shot: bool,
+    pub overlap_policy: String,
+    pub trigger: TaskScheduleTrigger,
+    pub next_fire_at: Option<String>,
+    pub last_fired_at: Option<String>,
+    pub last_materialized_task_id: Option<String>,
+    pub last_error: Option<String>,
+    pub materialized_task_count: i64,
+    pub open_materialized_task_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskScheduleDetail {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub priority: String,
+    pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub repository_ids: Vec<String>,
+    pub enabled: bool,
+    pub one_shot: bool,
+    pub overlap_policy: String,
+    pub trigger: TaskScheduleTrigger,
+    pub next_fire_at: Option<String>,
+    pub last_fired_at: Option<String>,
+    pub last_materialized_task_id: Option<String>,
+    pub last_error: Option<String>,
+    pub materialized_task_count: i64,
+    pub open_materialized_task_count: i64,
+    pub task_blueprint: TaskUpsertInput,
+    pub recent_materialized_tasks: Vec<TaskSummary>,
+    pub recent_occurrences: Vec<TaskScheduleOccurrence>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvent {
+    pub id: String,
+    pub sequence: i64,
+    pub project_id: Option<String>,
+    pub topic: String,
+    pub entity_type: String,
+    pub entity_id: Option<String>,
+    pub payload: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowDefinition {
     pub id: String,
     pub slug: String,
