@@ -706,7 +706,7 @@ test("streaming updates for a newly discovered session debounce into one backgro
   }).toBe(baselineCount + 1);
 });
 
-test("sessions page keeps the viewed session stable during a transient background refresh miss", async ({ page }) => {
+test("sessions page keeps the viewed session stable during a prolonged background refresh miss", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -735,6 +735,8 @@ test("sessions page keeps the viewed session stable during a transient backgroun
 
   await page.goto("/");
   await page.getByRole("link", { name: "Refresh miss" }).click();
+  await page.locator('[data-role="composer-input"]').focus();
+  await page.locator('[data-role="composer-input"]').fill("Keep typing through the refresh miss");
 
   await expect.poll(async () => {
     const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
@@ -742,12 +744,28 @@ test("sessions page keeps the viewed session stable during a transient backgroun
   }).toBe(1);
 
   await page.evaluate(() => {
+    const testWindow = window as Window & { __orchestraTestNow?: number };
+    testWindow.__orchestraTestNow = Date.now();
+    Date.now = () => testWindow.__orchestraTestNow ?? 0;
     window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
     window.dispatchEvent(new Event("focus"));
   });
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Refresh miss");
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep typing through the refresh miss");
+  await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
+
+  await page.evaluate(() => {
+    const testWindow = window as Window & { __orchestraTestNow?: number };
+    testWindow.__orchestraTestNow = (testWindow.__orchestraTestNow ?? Date.now()) + 30_000;
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Refresh miss");
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(1);
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep typing through the refresh miss");
+  await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
 
   const sessionLogTargets = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]")
     .map((entry: { target?: string }) => entry.target)

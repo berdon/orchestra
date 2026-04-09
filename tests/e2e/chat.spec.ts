@@ -115,9 +115,8 @@ test("chat page recovers the active agent session after a prolonged background r
   expect(initialSessionId).toBeTruthy();
 
   await page.evaluate(() => {
-    const testWindow = window as Window & { __orchestraTestNow?: number; __savedChatSessions?: string | null };
+    const testWindow = window as Window & { __orchestraTestNow?: number };
     testWindow.__orchestraTestNow = Date.now();
-    testWindow.__savedChatSessions = window.localStorage.getItem("orchestra.mock.sessions.orchestra");
     Date.now = () => testWindow.__orchestraTestNow ?? 0;
     window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
     window.dispatchEvent(new Event("focus"));
@@ -128,11 +127,8 @@ test("chat page recovers the active agent session after a prolonged background r
   await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
 
   await page.evaluate(() => {
-    const testWindow = window as Window & { __orchestraTestNow?: number; __savedChatSessions?: string | null };
+    const testWindow = window as Window & { __orchestraTestNow?: number };
     testWindow.__orchestraTestNow = (testWindow.__orchestraTestNow ?? Date.now()) + 30_000;
-    if (typeof testWindow.__savedChatSessions === "string") {
-      window.localStorage.setItem("orchestra.mock.sessions.orchestra", testWindow.__savedChatSessions);
-    }
     window.dispatchEvent(new Event("focus"));
   });
 
