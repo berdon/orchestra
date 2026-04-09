@@ -683,7 +683,13 @@ export function TasksPage({
         setSelectedBlockerTaskId("");
       }
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : creatingScheduledTask ? "Unable to save task schedule." : "Unable to create task.");
+      setTaskActionError(
+        await reportClientError(
+          creatingScheduledTask ? "ui.task_schedule.create.save.failed" : "ui.task.create.save.failed",
+          error,
+          creatingScheduledTask ? "Unable to save task schedule." : "Unable to create task.",
+        ),
+      );
     } finally {
       setSavingTask(false);
     }
@@ -709,7 +715,13 @@ export function TasksPage({
         setSelectedBlockerTaskId("");
       }
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : creatingScheduledTask ? "Unable to create task schedule." : "Unable to publish task.");
+      setTaskActionError(
+        await reportClientError(
+          creatingScheduledTask ? "ui.task_schedule.create.publish.failed" : "ui.task.create.publish.failed",
+          error,
+          creatingScheduledTask ? "Unable to create task schedule." : "Unable to publish task.",
+        ),
+      );
     } finally {
       setPublishingTask(false);
     }
