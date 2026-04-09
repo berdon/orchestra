@@ -5,7 +5,7 @@ import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
 import type { BridgeDiagnostics, LogEntry, ProjectSessionPromptSettings } from "../types";
 
 interface GeneralPanelProps {
-  availableThemes: OrchestraThemeDefinition[];
+  availableThemes: readonly OrchestraThemeDefinition[];
   selectedThemeId: OrchestraThemeId;
   bridgeDiagnostics: BridgeDiagnostics | null;
   sessionPromptSettings: ProjectSessionPromptSettings | null;
@@ -74,7 +74,7 @@ export function GeneralPanel({
             <div>
               <p className="eyebrow">Appearance</p>
               <h3>Theme</h3>
-              <p className="muted-copy">Choose the default Orchestra workbench theme. This first pass ships built-in Light, Dark, and High Contrast variants.</p>
+              <p className="muted-copy">Choose the default Orchestra workbench theme from a larger built-in catalog inspired by popular VS Code and Ghostty palettes.</p>
             </div>
           </div>
           <label className="field-group field-group--compact">

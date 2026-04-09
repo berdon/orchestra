@@ -129,7 +129,7 @@ export function TasksOverviewPage({
           {schedules.length ? (
             <div className="task-draft-grid" data-role="task-schedule-grid">
               {schedules.map((schedule) => (
-                <button key={schedule.id} className="task-list-link" data-role="task-schedule-card" type="button" onClick={() => onOpenSchedule(schedule.id)}>
+                <button key={schedule.id} className="task-list-link task-overview-card task-overview-card--schedule" data-role="task-schedule-card" type="button" onClick={() => onOpenSchedule(schedule.id)}>
                   <div className="task-compact-card__header">
                     <span className="task-list-link__eyebrow">{formatScheduleTrigger(schedule)}</span>
                     <span className={`status-badge status-badge--${schedule.enabled ? "success" : "neutral"}`}>

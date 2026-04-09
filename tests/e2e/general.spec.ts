@@ -77,10 +77,14 @@ test("settings general renders bridge diagnostics and session prompt controls", 
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-dark");
-  await page.locator('[data-role="theme-select"]').selectOption("orchestra-light");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-light");
+  await page.locator('[data-role="theme-select"]').selectOption("catppuccin-latte");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "catppuccin-latte");
   await expect(page.locator('[data-role="theme-current-kind"]')).toContainText("light");
-  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.theme"))).toBe("orchestra-light");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.theme"))).toBe("catppuccin-latte");
+  await page.locator('[data-role="theme-select"]').selectOption("dracula");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dracula");
+  await expect(page.locator('[data-role="theme-current-kind"]')).toContainText("dark");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.theme"))).toBe("dracula");
 
   await expect(page.getByRole("heading", { name: "Session prompt" })).toBeVisible();
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
