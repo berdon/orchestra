@@ -461,6 +461,73 @@ pub fn get_active_assignment_for_session(
         .map_err(|error| format!("Unable to query assignment for session {session_id}: {error}"))
 }
 
+pub fn cancel_dispatch_for_dependency_block(
+    connection: &mut Connection,
+    task_id: &str,
+) -> Result<Option<TaskLaneAssignment>, String> {
+    let task = tasks::get_task_context(connection, task_id)?;
+    if !task.dependency_blocked {
+        return Ok(None);
+    }
+
+    let assignment = get_active_lane_assignment(connection, task_id)?;
+    let Some(active_assignment) = assignment.clone() else {
+        return Ok(None);
+    };
+
+    let now = now_iso();
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start dependency block reset transaction: {error}"))?;
+
+    tx.execute(
+        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = NULL, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active')",
+        params![task_id, ASSIGNMENT_STATUS_CANCELED, now],
+    )
+    .map_err(|error| format!("Unable to clear open task lane assignments for dependency-blocked task {task_id}: {error}"))?;
+
+    tx.execute(
+        "UPDATE tasks SET status = 'ready', updated_at = ?2 WHERE id = ?1 AND status IN ('in_progress', 'blocked')",
+        params![task_id, now],
+    )
+    .map_err(|error| format!("Unable to reset dependency-blocked task status for {task_id}: {error}"))?;
+
+    tx.execute(
+        "UPDATE agent_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched')",
+        params![task_id, now],
+    )
+    .map_err(|error| format!("Unable to clear agent queue entries for dependency-blocked task {task_id}: {error}"))?;
+
+    tx.execute(
+        "UPDATE role_queue_entries SET status = 'canceled', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'assigned')",
+        params![task_id, now],
+    )
+    .map_err(|error| format!("Unable to clear role queue entries for dependency-blocked task {task_id}: {error}"))?;
+
+    if let Some(worker_id) = active_assignment.worker_id.as_deref() {
+        if active_assignment.worker_type == "agent" {
+            tx.execute(
+                "UPDATE agent_runtime_states SET status = 'idle', current_queue_entry_id = NULL, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
+                params![task.project_id, worker_id, now],
+            )
+            .map_err(|error| format!("Unable to reset agent runtime state for dependency-blocked task {task_id}: {error}"))?;
+        }
+    }
+
+    if let Some(role_instance_id) = active_assignment.role_instance_id.as_deref() {
+        tx.execute(
+            "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, last_error = NULL, updated_at = ?2 WHERE id = ?1",
+            params![role_instance_id, now],
+        )
+        .map_err(|error| format!("Unable to reset role instance for dependency-blocked task {task_id}: {error}"))?;
+    }
+
+    tx.commit()
+        .map_err(|error| format!("Unable to commit dependency block reset for {task_id}: {error}"))?;
+
+    Ok(Some(active_assignment))
+}
+
 pub fn reset_task_runtime(
     connection: &mut Connection,
     task_id: &str,

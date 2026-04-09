@@ -37,6 +37,160 @@ async function waitForCondition<T>(
 }
 
 describe("desktop auto dispatch on blocker completion", () => {
+  it.skipIf(!isDesktopE2E)("cancels an already dispatched task when a new dependency blocks it", async () => {
+    expect(testHome).toBeTruthy();
+
+    const repoPath = join(testHome!, "workspace", "dependency-blocks-active-task", "repository");
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(join(repoPath, "README.md"), "dependency blocks active task repo\n", "utf8");
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "desktop-e2e@example.invalid"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Desktop E2E"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["add", "."], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repoPath, stdio: "ignore" });
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
+        input: {
+          name: "Dependency Blocks Active Task",
+          description: "Ensure blocked tasks cannot keep running after a dependency is added.",
+        },
+      });
+      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Dependency Blocks Repo",
+          repositoryPath: repoPath,
+          defaultBranch: "main",
+        },
+      });
+      const developerRole = await invokeCommand<{ id: string; slug: string }>(sessionId, "create_role", {
+        input: {
+          name: "Dependency Block Role",
+          description: "Role used to dispatch the blocked task.",
+          systemPrompt: "Work the task.",
+          capacity: 1,
+        },
+      });
+      const roleWorkflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: "Dependency Block Workflow",
+          description: "Role-owned workflow for dependency blocking coverage.",
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: developerRole.slug,
+              entryPromptTemplate: "Implement the task.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+      const blockerWorkflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: "Dependency Blocker Workflow",
+          description: "User-owned blocker workflow.",
+          lanes: [
+            {
+              id: "lane-review",
+              key: "review",
+              name: "Review",
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Review blocker.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+
+      const activeTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Task that should stop when blocked",
+          description: "Dispatch first, then block it.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: roleWorkflow.id,
+          currentLaneId: "lane-implement",
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: "unassigned",
+          assigneeId: null,
+        },
+      });
+      const blockerTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "New blocker",
+          description: "This should block the already dispatched task.",
+          type: "task",
+          status: "in_review",
+          priority: "P1",
+          workflowId: blockerWorkflow.id,
+          currentLaneId: "lane-review",
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: "user",
+          assigneeId: null,
+        },
+      });
+
+      const dispatchedTask = await waitForCondition(
+        async () => {
+          const currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: activeTask.id });
+          if (!currentTask.activeLaneAssignment?.sessionId) {
+            await invokeCommand(sessionId, "dispatch_task_lane", { taskId: activeTask.id }).catch(() => undefined);
+            await invokeCommand(sessionId, "run_dispatcher_tick").catch(() => undefined);
+            await invokeCommand(sessionId, "dispatch_role_queue", { roleId: developerRole.id }).catch(() => undefined);
+            return invokeCommand<any>(sessionId, "get_task", { taskId: activeTask.id });
+          }
+          return currentTask;
+        },
+        (task) => Boolean(task.activeLaneAssignment?.sessionId) && ["queued", "active"].includes(task.activeLaneAssignment?.status),
+        90_000,
+      );
+      expect(dispatchedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+
+      await invokeCommand(sessionId, "add_task_dependency", {
+        blockerTaskId: blockerTask.id,
+        blockedTaskId: activeTask.id,
+      });
+
+      const blockedTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: activeTask.id }),
+        (task) => task.dependencyBlocked === true && task.activeLaneAssignment == null,
+        30_000,
+      );
+      expect(blockedTask.readyForDispatch).toBe(false);
+
+      await expect(
+        invokeCommand(sessionId, "dispatch_task_lane", { taskId: activeTask.id }),
+      ).rejects.toThrow(/blocked by unresolved dependencies|unfinished subtasks/);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
+
   it.skipIf(!isDesktopE2E)("auto-dispatches newly unblocked tasks when the project setting is enabled", async () => {
     expect(testHome).toBeTruthy();
 
