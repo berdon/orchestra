@@ -6,6 +6,8 @@ Agent orchestration framework focused on getting project work done.
 
 - [Product north star](docs/north-star.md)
 - [UX north star](docs/ux-north-star.md)
+- [UX design guidelines](docs/ux-design-guidelines.md)
+- [UX first-pass implementation plan](docs/ux-first-pass-implementation-plan.md)
 - [Design draft](docs/design.md)
 - [Authorization model](docs/authorization-model.md)
 - [Frontend permission management design](docs/permission-management-fe.md)
