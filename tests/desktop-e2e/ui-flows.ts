@@ -259,6 +259,70 @@ export async function createTaskViaTasks(
   await waitForText(sessionId, options.title);
 }
 
+export async function createScheduledTaskViaTasks(
+  sessionId: string,
+  options: {
+    title: string;
+    description: string;
+    repositoryName?: string;
+    workflowName?: string;
+    enabled?: boolean;
+    oneShot?: boolean;
+    overlapPolicy?: "skip" | "create_another";
+    trigger:
+      | { type: "time"; kind: "once"; at: string; timezone?: string }
+      | { type: "time"; kind: "everyMinutes"; everyMinutes: number }
+      | { type: "time"; kind: "daily"; timeOfDay: string; timezone?: string }
+      | { type: "event"; eventKey: string };
+  },
+) {
+  await clickByText(sessionId, 'button', 'Tasks');
+  await clickSelector(sessionId, '[data-role="new-task"]');
+  await waitForText(sessionId, 'New task');
+  await clickSelector(sessionId, '[data-role="task-create-scheduled-toggle"]');
+  await waitForText(sessionId, 'New scheduled task');
+  await setInputValue(sessionId, '[data-role="task-title"]', options.title);
+  await setInputValue(sessionId, '[data-role="task-description"]', options.description);
+  if (options.repositoryName) {
+    await selectByLabel(sessionId, '[data-role="task-repositories"]', options.repositoryName);
+  }
+  if (options.workflowName) {
+    await waitForSelectOption(sessionId, '[data-role="task-workflow"]', { label: options.workflowName });
+    await selectByLabel(sessionId, '[data-role="task-workflow"]', options.workflowName);
+  }
+  if (options.enabled === false) {
+    await clickSelector(sessionId, '[data-role="task-schedule-enabled"]');
+  }
+  if (options.oneShot === true) {
+    await clickSelector(sessionId, '[data-role="task-schedule-one-shot"]');
+  }
+  if (options.overlapPolicy) {
+    await selectValue(sessionId, '[data-role="task-schedule-overlap-policy"]', options.overlapPolicy);
+  }
+  if (options.trigger.type === 'event') {
+    await selectValue(sessionId, '[data-role="task-schedule-trigger-type"]', 'event');
+    await setInputValue(sessionId, '[data-role="task-schedule-trigger-event-key"]', options.trigger.eventKey);
+  } else {
+    await selectValue(sessionId, '[data-role="task-schedule-trigger-type"]', 'time');
+    await selectValue(sessionId, '[data-role="task-schedule-trigger-kind"]', options.trigger.kind);
+    if (options.trigger.kind === 'once') {
+      await setInputValue(sessionId, '[data-role="task-schedule-trigger-at"]', options.trigger.at);
+      if (options.trigger.timezone) {
+        await setInputValue(sessionId, '[data-role="task-schedule-trigger-timezone"]', options.trigger.timezone);
+      }
+    } else if (options.trigger.kind === 'everyMinutes') {
+      await setInputValue(sessionId, '[data-role="task-schedule-trigger-every-minutes"]', String(options.trigger.everyMinutes));
+    } else if (options.trigger.kind === 'daily') {
+      await setInputValue(sessionId, '[data-role="task-schedule-trigger-time-of-day"]', options.trigger.timeOfDay);
+      if (options.trigger.timezone) {
+        await setInputValue(sessionId, '[data-role="task-schedule-trigger-timezone"]', options.trigger.timezone);
+      }
+    }
+  }
+  await clickSelector(sessionId, options.enabled === false ? '[data-role="save-task-schedule"]' : '[data-role="create-task-schedule"]');
+  await waitForText(sessionId, options.title);
+}
+
 export async function openTaskCard(sessionId: string, title: string) {
   await clickByText(sessionId, 'button', 'Tasks');
   await waitForText(sessionId, title);

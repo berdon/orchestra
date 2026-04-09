@@ -1,3 +1,4 @@
+use serde_json::json;
 use tauri::State;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
         ProjectDetail, ProjectSummary, ProjectUpsertInput, RepositoryRecord, RepositoryRemoteInput,
         RepositoryUpsertInput,
     },
-    services::{database, pi_sessions, projects},
+    services::{database, domain_events, pi_sessions, projects},
     state::AppState,
 };
 
@@ -33,6 +34,16 @@ pub fn create_project(
         "project.created",
         &format!("Created project {}", project.id),
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(project.id.clone()),
+            topic: "project.created".into(),
+            entity_type: "project".into(),
+            entity_id: Some(project.id.clone()),
+            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone() }),
+        },
+    );
     Ok(project)
 }
 
@@ -48,6 +59,16 @@ pub fn update_project(
         "info",
         "project.updated",
         &format!("Updated project {}", project.id),
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(project.id.clone()),
+            topic: "project.updated".into(),
+            entity_type: "project".into(),
+            entity_id: Some(project.id.clone()),
+            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone() }),
+        },
     );
     Ok(project)
 }
@@ -77,6 +98,16 @@ pub fn delete_project(
         "project.deleted",
         &format!("Deleted project {}", deleted.id),
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(deleted.id.clone()),
+            topic: "project.deleted".into(),
+            entity_type: "project".into(),
+            entity_id: Some(deleted.id.clone()),
+            payload: json!({ "projectId": deleted.id.clone(), "slug": deleted.slug.clone(), "name": deleted.name.clone() }),
+        },
+    );
     Ok(deleted)
 }
 
@@ -105,6 +136,16 @@ pub fn create_repository(
         "repository.created",
         &format!("Created repository {}", repository.id),
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(repository.project_id.clone()),
+            topic: "repository.created".into(),
+            entity_type: "repository".into(),
+            entity_id: Some(repository.id.clone()),
+            payload: json!({ "repositoryId": repository.id.clone(), "projectId": repository.project_id.clone(), "name": repository.name.clone() }),
+        },
+    );
     Ok(repository)
 }
 
@@ -121,6 +162,16 @@ pub fn update_repository(
         "repository.updated",
         &format!("Updated repository {}", repository.id),
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(repository.project_id.clone()),
+            topic: "repository.updated".into(),
+            entity_type: "repository".into(),
+            entity_id: Some(repository.id.clone()),
+            payload: json!({ "repositoryId": repository.id.clone(), "projectId": repository.project_id.clone(), "name": repository.name.clone() }),
+        },
+    );
     Ok(repository)
 }
 
@@ -135,6 +186,16 @@ pub fn delete_repository(
         "info",
         "repository.deleted",
         &format!("Deleted repository {}", repository.id),
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(repository.project_id.clone()),
+            topic: "repository.deleted".into(),
+            entity_type: "repository".into(),
+            entity_id: Some(repository.id.clone()),
+            payload: json!({ "repositoryId": repository.id.clone(), "projectId": repository.project_id.clone(), "name": repository.name.clone() }),
+        },
     );
     Ok(repository)
 }
@@ -151,6 +212,16 @@ pub fn attach_repository_remote(
         "info",
         "repository.updated",
         &format!("Attached remote for repository {}", repository.id),
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(repository.project_id.clone()),
+            topic: "repository.updated".into(),
+            entity_type: "repository".into(),
+            entity_id: Some(repository.id.clone()),
+            payload: json!({ "repositoryId": repository.id.clone(), "projectId": repository.project_id.clone(), "name": repository.name.clone() }),
+        },
     );
     Ok(repository)
 }
@@ -171,6 +242,16 @@ pub fn set_project_default_repository(
         "info",
         "project.updated",
         &format!("Updated default repository for project {}", project.id),
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: Some(project.id.clone()),
+            topic: "project.updated".into(),
+            entity_type: "project".into(),
+            entity_id: Some(project.id.clone()),
+            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone() }),
+        },
     );
     Ok(project)
 }

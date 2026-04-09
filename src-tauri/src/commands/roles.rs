@@ -1,10 +1,11 @@
+use serde_json::json;
 use tauri::State;
 
 use crate::{
     models::{
         AuthorizationContext, RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationResult,
     },
-    services::{command_authorization, database, roles},
+    services::{command_authorization, database, domain_events, roles},
     state::AppState,
 };
 
@@ -48,6 +49,16 @@ pub fn create_role(
     command_authorization::require_permission(&connection, authorization.as_ref(), "roles.create")?;
     let role = roles::create_role(&mut connection, input)?;
     state.log("info", "role.created", &format!("Created role {}", role.id));
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "role.created".into(),
+            entity_type: "role".into(),
+            entity_id: Some(role.id.clone()),
+            payload: json!({ "roleId": role.id.clone(), "name": role.name.clone(), "slug": role.slug.clone() }),
+        },
+    );
     Ok(role)
 }
 
@@ -62,6 +73,16 @@ pub fn update_role(
     command_authorization::require_permission(&connection, authorization.as_ref(), "roles.update")?;
     let role = roles::update_role(&mut connection, &role_id, input)?;
     state.log("info", "role.updated", &format!("Updated role {}", role.id));
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "role.updated".into(),
+            entity_type: "role".into(),
+            entity_id: Some(role.id.clone()),
+            payload: json!({ "roleId": role.id.clone(), "name": role.name.clone(), "slug": role.slug.clone() }),
+        },
+    );
     Ok(role)
 }
 
@@ -90,6 +111,16 @@ pub fn archive_role(
         Some("roles.archive"),
         &role_id,
         "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "role.archived".into(),
+            entity_type: "role".into(),
+            entity_id: Some(role.id.clone()),
+            payload: json!({ "roleId": role.id.clone(), "name": role.name.clone(), "slug": role.slug.clone() }),
+        },
     );
     Ok(role)
 }

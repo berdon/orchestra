@@ -1,3 +1,4 @@
+use serde_json::json;
 use tauri::State;
 
 use crate::{
@@ -6,7 +7,7 @@ use crate::{
         WorkflowLaneReorderInput, WorkflowSummary, WorkflowUpsertInput,
         WorkflowValidationResult,
     },
-    services::{database, workflows},
+    services::{database, domain_events, workflows},
     state::AppState,
 };
 
@@ -48,6 +49,16 @@ pub fn create_workflow(
         &workflow.id,
         "success",
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.created".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone() }),
+        },
+    );
     Ok(workflow)
 }
 
@@ -71,6 +82,16 @@ pub fn update_workflow(
         None,
         &workflow_id,
         "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.updated".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone() }),
+        },
     );
     Ok(workflow)
 }
@@ -96,6 +117,16 @@ pub fn duplicate_workflow(
         &workflow_id,
         "success",
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.created".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone() }),
+        },
+    );
     Ok(workflow)
 }
 
@@ -119,6 +150,16 @@ pub fn add_workflow_lane(
         None,
         &workflow_id,
         "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.updated".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone() }),
+        },
     );
     Ok(workflow)
 }
@@ -145,6 +186,16 @@ pub fn update_workflow_lane(
         &lane_id,
         "success",
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.updated".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone(), "laneId": lane_id }),
+        },
+    );
     Ok(workflow)
 }
 
@@ -168,6 +219,16 @@ pub fn delete_workflow_lane(
         None,
         &lane_id,
         "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.updated".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone(), "laneId": lane_id }),
+        },
     );
     Ok(workflow)
 }
@@ -193,6 +254,16 @@ pub fn reorder_workflow_lanes(
         &workflow_id,
         "success",
     );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.updated".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone() }),
+        },
+    );
     Ok(workflow)
 }
 
@@ -215,6 +286,16 @@ pub fn archive_workflow(
         None,
         &workflow_id,
         "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.archived".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(workflow.id.clone()),
+            payload: json!({ "workflowId": workflow.id.clone(), "name": workflow.name.clone(), "slug": workflow.slug.clone() }),
+        },
     );
     Ok(workflow)
 }

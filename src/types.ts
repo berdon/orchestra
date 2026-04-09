@@ -917,6 +917,150 @@ export interface TaskUpsertInput {
   archived?: boolean;
 }
 
+export type DomainEventTopic =
+  | "task.created"
+  | "task.updated"
+  | "task.deleted"
+  | "task.comment_added"
+  | "task.comment_updated"
+  | "task.comment_deleted"
+  | "task.file_reference_added"
+  | "task.file_reference_removed"
+  | "task.attachment_added"
+  | "task.attachment_removed"
+  | "task.dispatched"
+  | "task.completed"
+  | "task.transition_success"
+  | "task.failed"
+  | "task.user_intervention_requested"
+  | "session.created"
+  | "session.resumed"
+  | "session.closed"
+  | "session.dismissed"
+  | "project.created"
+  | "project.updated"
+  | "project.deleted"
+  | "repository.created"
+  | "repository.updated"
+  | "repository.deleted"
+  | "agent.created"
+  | "agent.updated"
+  | "agent.archived"
+  | "role.created"
+  | "role.updated"
+  | "role.archived"
+  | "workflow.created"
+  | "workflow.updated"
+  | "workflow.archived"
+  | "task.schedule.created"
+  | "task.schedule.updated"
+  | "task.schedule.deleted";
+
+export interface DomainEvent {
+  sequence: number;
+  id: string;
+  projectId?: string | null;
+  topic: DomainEventTopic | string;
+  entityType: string;
+  entityId?: string | null;
+  payload: JsonValue;
+  createdAt: string;
+}
+
+export type TaskScheduleOverlapPolicy = "skip" | "create_another";
+export type TaskScheduleOccurrenceStatus = "pending" | "materialized" | "skipped" | "failed";
+export type TaskScheduleDayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type TaskScheduleTimeTrigger =
+  | {
+      kind: "once";
+      at: string;
+      timezone: string;
+    }
+  | {
+      kind: "everyMinutes";
+      everyMinutes: number;
+    }
+  | {
+      kind: "daily";
+      timeOfDay: string;
+      timezone: string;
+    }
+  | {
+      kind: "weekly";
+      timeOfDay: string;
+      timezone: string;
+      daysOfWeek: TaskScheduleDayOfWeek[];
+    }
+  | {
+      kind: "monthly";
+      timeOfDay: string;
+      timezone: string;
+      dayOfMonth: number;
+    };
+
+export interface TaskScheduleEventTrigger {
+  eventKey: DomainEventTopic | string;
+}
+
+export type TaskScheduleTrigger =
+  | ({
+      type: "time";
+    } & TaskScheduleTimeTrigger)
+  | ({
+      type: "event";
+    } & TaskScheduleEventTrigger);
+
+export interface TaskScheduleOccurrence {
+  id: string;
+  scheduleId: string;
+  occurrenceKey: string;
+  scheduledAt?: string | null;
+  eventId?: string | null;
+  status: TaskScheduleOccurrenceStatus | string;
+  taskId?: string | null;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskScheduleUpsertInput {
+  task: TaskUpsertInput;
+  enabled?: boolean | null;
+  oneShot: boolean;
+  overlapPolicy: TaskScheduleOverlapPolicy | string;
+  trigger: TaskScheduleTrigger;
+}
+
+export interface TaskScheduleSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  description?: string | null;
+  type: TaskType | string;
+  priority: TaskPriority | string;
+  workflowId?: string | null;
+  repositoryIds: string[];
+  enabled: boolean;
+  oneShot: boolean;
+  overlapPolicy: TaskScheduleOverlapPolicy | string;
+  trigger: TaskScheduleTrigger;
+  nextFireAt?: string | null;
+  lastFiredAt?: string | null;
+  lastMaterializedTaskId?: string | null;
+  lastError?: string | null;
+  materializedTaskCount: number;
+  openMaterializedTaskCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskScheduleDetail extends TaskScheduleSummary {
+  taskBlueprint: TaskUpsertInput;
+  recentMaterializedTasks: TaskSummary[];
+  recentOccurrences: TaskScheduleOccurrence[];
+}
+
 export interface WorkflowDefinition {
   id: string;
   slug: string;

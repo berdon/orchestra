@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use serde_json::json;
 use tauri::{AppHandle, State};
 
 use crate::{
@@ -10,8 +11,8 @@ use crate::{
         TaskUpsertInput,
     },
     services::{
-        app_events, database, pi_sessions, task_attachments, task_comment_file_mentions,
-        task_file_references, task_repositories, task_runtime, tasks,
+        app_events, database, domain_events, pi_sessions, task_attachments,
+        task_comment_file_mentions, task_file_references, task_repositories, task_runtime, tasks,
     },
     state::AppState,
 };
@@ -39,6 +40,24 @@ fn log_task_command_failure(state: &AppState, target: &str, task_id: &str, error
         "error",
         target,
         &format!("Task {} failed: {}", task_id, error),
+    );
+}
+
+fn record_task_domain_event(
+    connection: &rusqlite::Connection,
+    topic: &str,
+    task: &TaskDetail,
+    payload: serde_json::Value,
+) {
+    let _ = domain_events::record_event(
+        connection,
+        domain_events::DomainEventInput {
+            project_id: Some(task.project_id.clone()),
+            topic: topic.to_string(),
+            entity_type: "task".to_string(),
+            entity_id: Some(task.id.clone()),
+            payload,
+        },
     );
 }
 
@@ -271,6 +290,18 @@ pub fn create_task(
     let task = tasks::create_task(&mut connection, project_id.as_deref(), input)?;
     state.log("info", "task.created", &format!("Created task {}", task.id));
     state.log_authorized_action("auth.audit", "create_task", None, None, &task.id, "success");
+    record_task_domain_event(
+        &connection,
+        "task.created",
+        &task,
+        json!({
+            "taskId": task.id.clone(),
+            "taskNumber": task.number.clone(),
+            "status": task.status.clone(),
+            "workflowId": task.workflow_id.clone(),
+            "laneId": task.current_lane_id.clone(),
+        }),
+    );
     emit_task_change(&app, "task.created", [task.id.clone()]);
     Ok(task)
 }
@@ -297,6 +328,19 @@ pub fn create_subtask(
         &task.id,
         "success",
     );
+    record_task_domain_event(
+        &connection,
+        "task.created",
+        &task,
+        json!({
+            "taskId": task.id.clone(),
+            "taskNumber": task.number.clone(),
+            "status": task.status.clone(),
+            "workflowId": task.workflow_id.clone(),
+            "laneId": task.current_lane_id.clone(),
+            "parentTaskId": task.parent_task_id.clone(),
+        }),
+    );
     emit_task_change(&app, "task.created", [task.id.clone(), parent_task_id]);
     Ok(task)
 }
@@ -312,6 +356,18 @@ pub fn update_task(
     let task = tasks::update_task(&mut connection, &task_id, input)?;
     state.log("info", "task.updated", &format!("Updated task {}", task.id));
     state.log_authorized_action("auth.audit", "update_task", None, None, &task_id, "success");
+    record_task_domain_event(
+        &connection,
+        "task.updated",
+        &task,
+        json!({
+            "taskId": task.id.clone(),
+            "taskNumber": task.number.clone(),
+            "status": task.status.clone(),
+            "workflowId": task.workflow_id.clone(),
+            "laneId": task.current_lane_id.clone(),
+        }),
+    );
     emit_task_change(&app, "task.updated", [task.id.clone()]);
     Ok(task)
 }
@@ -326,6 +382,18 @@ pub fn delete_task(
     let task = tasks::delete_task(&mut connection, &task_id)?;
     state.log("info", "task.deleted", &format!("Deleted task {}", task.id));
     state.log_authorized_action("auth.audit", "delete_task", None, None, &task_id, "success");
+    record_task_domain_event(
+        &connection,
+        "task.deleted",
+        &task,
+        json!({
+            "taskId": task.id.clone(),
+            "taskNumber": task.number.clone(),
+            "status": task.status.clone(),
+            "workflowId": task.workflow_id.clone(),
+            "laneId": task.current_lane_id.clone(),
+        }),
+    );
     emit_task_change(&app, "task.deleted", [task.id.clone()]);
     Ok(task)
 }
@@ -388,6 +456,18 @@ pub async fn comment_on_task(
         &comment.id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.comment_added",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "commentId": comment.id.clone(),
+                "interrupt": comment.interrupt_agent,
+            }),
+        );
+    }
     emit_task_change(
         &app,
         if comment.interrupt_agent {
@@ -422,6 +502,17 @@ pub fn update_task_comment(
         &comment.id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &comment.task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.comment_updated",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "commentId": comment.id.clone(),
+            }),
+        );
+    }
     emit_task_change(&app, "task.comment.updated", [comment.task_id.clone()]);
     Ok(comment)
 }
@@ -447,6 +538,17 @@ pub fn delete_task_comment(
         &comment.id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &comment.task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.comment_deleted",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "commentId": comment.id.clone(),
+            }),
+        );
+    }
     emit_task_change(&app, "task.comment.deleted", [comment.task_id.clone()]);
     Ok(comment)
 }
@@ -540,6 +642,18 @@ pub fn add_task_file_reference(
         &reference.id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.file_reference_added",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "referenceId": reference.id.clone(),
+                "relativePath": reference.relative_path.clone(),
+            }),
+        );
+    }
     emit_task_change(&app, "task.file_reference.added", [task_id]);
     Ok(reference)
 }
@@ -565,6 +679,18 @@ pub fn remove_task_file_reference(
         &reference_id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &reference.task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.file_reference_removed",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "referenceId": reference.id.clone(),
+                "relativePath": reference.relative_path.clone(),
+            }),
+        );
+    }
     emit_task_change(
         &app,
         "task.file_reference.removed",
@@ -595,6 +721,18 @@ pub fn add_task_attachment(
         &attachment.id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.attachment_added",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "attachmentId": attachment.id.clone(),
+                "fileName": attachment.file_name.clone(),
+            }),
+        );
+    }
     emit_task_change(&app, "task.attachment.added", [task_id]);
     Ok(attachment)
 }
@@ -620,6 +758,18 @@ pub fn remove_task_attachment(
         &attachment_id,
         "success",
     );
+    if let Ok(task) = tasks::get_task_context(&connection, &attachment.task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.attachment_removed",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "attachmentId": attachment.id.clone(),
+                "fileName": attachment.file_name.clone(),
+            }),
+        );
+    }
     emit_task_change(
         &app,
         "task.attachment.removed",
@@ -664,6 +814,17 @@ pub async fn dispatch_task_lane(
         "info",
         "task.dispatch",
         &format!("Dispatched task lane for task {}", task_id),
+    );
+    record_task_domain_event(
+        &connection,
+        "task.dispatched",
+        &task,
+        json!({
+            "taskId": task.id.clone(),
+            "assignmentId": assignment.id.clone(),
+            "laneId": assignment.lane_id.clone(),
+            "sessionId": assignment.session_id.clone(),
+        }),
     );
     emit_task_change(&app, "task.dispatch", [task.id.clone()]);
     Ok(task)
@@ -946,6 +1107,25 @@ async fn complete_lane_command(
         let retired_session_id = task_runtime::transitioned_assignment_session_to_retire(
             previous_assignment.as_ref(),
             &task,
+        );
+
+        let domain_topic = match outcome {
+            "success" if task.status == "completed" => "task.completed",
+            "success" => "task.transition_success",
+            "failure" => "task.failed",
+            _ => "task.user_intervention_requested",
+        };
+        record_task_domain_event(
+            &connection,
+            domain_topic,
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "status": task.status.clone(),
+                "workflowId": task.workflow_id.clone(),
+                "laneId": task.current_lane_id.clone(),
+                "outcome": outcome,
+            }),
         );
 
         Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
