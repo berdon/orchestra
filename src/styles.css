@@ -1133,10 +1133,9 @@ strong {
 }
 
 .transcript-event__thinking-preview {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(143, 79, 47, 0.08);
+  margin: 2px 0 0;
+  padding: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 0.82rem;
   line-height: 1.45;
