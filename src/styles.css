@@ -660,11 +660,11 @@ strong {
 .status-pill,
 .metric-card {
   min-width: 132px;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  border-radius: 14px;
+  border: 0;
+  background: color-mix(in srgb, var(--bg-subtle) 82%, transparent);
+  border-radius: 8px;
   padding: 10px 12px;
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
 
 .metric-card {
@@ -720,10 +720,10 @@ strong {
 }
 
 .transcript-event {
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  border: 0;
+  border-radius: 8px;
   padding: 14px 16px;
-  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-subtle) 76%, transparent);
 }
 
 .transcript-event {
@@ -874,6 +874,20 @@ strong {
   height: clamp(560px, 68vh, 780px);
   resize: vertical;
   overflow: hidden;
+  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+}
+
+.session-chat-panel > .panel__header {
+  margin: 0 18px;
+  padding: 16px 0 10px;
+}
+
+.session-chat-panel .session-transcript {
+  padding: 52px 18px 18px;
+}
+
+.session-chat-panel .composer {
+  padding: 0 18px 18px;
 }
 
 .session-chat-panel--readonly {
@@ -935,9 +949,9 @@ strong {
   display: grid;
   gap: 6px;
   padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-subtle) 64%, transparent);
 }
 
 .session-debug-value {
@@ -1770,23 +1784,23 @@ strong {
   min-width: 0;
   text-align: left;
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border: 0;
+  background: color-mix(in srgb, var(--bg-subtle) 78%, transparent);
   color: var(--text);
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: var(--shadow);
-  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: none;
+  transition: background 120ms ease, transform 120ms ease;
 }
 
 .workflow-board-lane:hover {
-  border-color: var(--border-strong);
   transform: translateY(-1px);
+  background: color-mix(in srgb, var(--bg-subtle) 88%, transparent);
 }
 
 .workflow-board-lane--active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--color-list-row-selected);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .workflow-board-lane__header,
@@ -2121,10 +2135,10 @@ strong {
 .task-section,
 .workflow-section,
 .workflow-lane-card {
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .task-section-list {
@@ -2142,6 +2156,17 @@ strong {
 .task-detail-tabs-panel {
   display: grid;
   gap: 18px;
+  padding: 0;
+  background: transparent;
+}
+
+.task-page.task-detail-page.panel {
+  padding: 0;
+  background: transparent;
+}
+
+.task-detail-summary {
+  padding-top: 16px;
 }
 
 .task-detail-tabs {
@@ -2349,10 +2374,10 @@ strong {
 .task-lineage__crumb,
 .task-child-card {
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border: 0;
+  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
   color: var(--text);
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .task-lineage__crumb {
@@ -2384,10 +2409,10 @@ strong {
 .status-card {
   display: grid;
   gap: 6px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-subtle) 90%, transparent);
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .status-card__label {
@@ -2402,19 +2427,19 @@ strong {
   gap: 10px;
   padding: 14px 16px;
   text-align: left;
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
 
 .task-child-card:hover,
 .task-lineage__crumb:hover {
-  border-color: var(--accent);
+  background: var(--color-list-row-selected);
 }
 
 .task-history-card,
 .task-attachment-card {
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-subtle) 90%, transparent);
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
 }
 
 .task-attachment-grid,
@@ -2428,9 +2453,9 @@ strong {
   display: grid;
   gap: 8px;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-subtle) 90%, transparent);
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
 }
 
 .task-comment-composer,
@@ -2707,10 +2732,10 @@ strong {
 }
 
 .access-summary {
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-subtle) 90%, transparent);
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
 }
 
 .access-summary__badges,
@@ -2740,9 +2765,9 @@ strong {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border-radius: 6px;
+  border: 0;
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
   color: var(--text);
   font-size: 0.84rem;
 }
@@ -2768,13 +2793,13 @@ strong {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated) 66%, transparent);
 }
 
 .permission-row--toggle {
-  background: color-mix(in srgb, var(--warning-soft) 42%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--warning-soft) 42%, transparent);
 }
 
 .permission-row__copy {
@@ -2784,9 +2809,9 @@ strong {
 
 .permission-group {
   padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated) 54%, transparent);
 }
 
 .permission-group__header h4 {
