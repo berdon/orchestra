@@ -36,7 +36,7 @@ import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
-import { applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
+import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
@@ -533,7 +533,7 @@ export function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
-  const [themeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
+  const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [loadingChatAgents, setLoadingChatAgents] = useState(false);
   const [loadingChatSessionAgentId, setLoadingChatSessionAgentId] = useState<string | null>(null);
@@ -1655,6 +1655,11 @@ export function App() {
 
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
+
+  const handleThemeChange = useCallback((nextThemeId: OrchestraThemeId) => {
+    setThemeId(nextThemeId);
+    storeOrchestraTheme(nextThemeId);
+  }, []);
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
   const selectedSessionDraftMessage = selectedSession ? draftMessages[selectedSession.id] ?? "" : "";
@@ -2187,6 +2192,8 @@ export function App() {
             <ChannelsPanel />
           ) : (
             <GeneralPanel
+              availableThemes={BUILT_IN_ORCHESTRA_THEMES}
+              selectedThemeId={themeId}
               bridgeDiagnostics={bridgeDiagnostics}
               sessionPromptSettings={sessionPromptSettings}
               loadingBridgeDiagnostics={loadingBridgeDiagnostics}
@@ -2198,6 +2205,7 @@ export function App() {
               logExportMessage={logExportMessage}
               logExportError={logExportError}
               includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
+              onThemeChange={handleThemeChange}
               onRefreshBridgeDiagnostics={() => void loadBridgeDiagnostics({ background: true })}
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}

@@ -6,6 +6,7 @@ import {
   applyOrchestraTheme,
   getOrchestraThemeDefinition,
   loadStoredOrchestraTheme,
+  storeOrchestraTheme,
   type OrchestraThemeId,
 } from "../src/lib/theme";
 
@@ -32,6 +33,19 @@ describe("theme helpers", () => {
     } satisfies Pick<Storage, "getItem">;
 
     expect(loadStoredOrchestraTheme(storage)).toBe("orchestra-dark");
+  });
+
+  it("stores the selected theme id", () => {
+    const calls: Array<[string, string]> = [];
+    const storage = {
+      setItem: (key: string, value: string) => {
+        calls.push([key, value]);
+      },
+    } satisfies Pick<Storage, "setItem">;
+
+    storeOrchestraTheme("orchestra-light", storage);
+
+    expect(calls).toEqual([["orchestra.preferences.theme", "orchestra-light"]]);
   });
 
   it("applies theme metadata to the document root", () => {
