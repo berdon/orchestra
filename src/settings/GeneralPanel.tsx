@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
+import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
 import type { BridgeDiagnostics, LogEntry, ProjectSessionPromptSettings } from "../types";
 
 interface GeneralPanelProps {
+  availableThemes: OrchestraThemeDefinition[];
+  selectedThemeId: OrchestraThemeId;
   bridgeDiagnostics: BridgeDiagnostics | null;
   sessionPromptSettings: ProjectSessionPromptSettings | null;
   loadingBridgeDiagnostics: boolean;
@@ -15,6 +18,7 @@ interface GeneralPanelProps {
   logExportMessage: string | null;
   logExportError: string | null;
   includeRelatedSessionSnapshot: boolean;
+  onThemeChange: (themeId: OrchestraThemeId) => void;
   onRefreshBridgeDiagnostics: () => void;
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
@@ -33,6 +37,8 @@ function formatDateTime(value?: string | null) {
 }
 
 export function GeneralPanel({
+  availableThemes,
+  selectedThemeId,
   bridgeDiagnostics,
   sessionPromptSettings,
   loadingBridgeDiagnostics,
@@ -44,6 +50,7 @@ export function GeneralPanel({
   logExportMessage,
   logExportError,
   includeRelatedSessionSnapshot,
+  onThemeChange,
   onRefreshBridgeDiagnostics,
   onCleanupStaleBridges,
   onOpenLogsWindow,
@@ -54,6 +61,7 @@ export function GeneralPanel({
   onClearLogs,
 }: GeneralPanelProps) {
   const [templateDraft, setTemplateDraft] = useState("");
+  const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
 
   useEffect(() => {
     setTemplateDraft(sessionPromptSettings?.template ?? "");
@@ -61,6 +69,32 @@ export function GeneralPanel({
   return (
     <section className="panel-stack">
       <section className="panel general-panel">
+        <section className="task-section task-section--compact" data-role="theme-selection-panel">
+          <div className="task-section__header">
+            <div>
+              <p className="eyebrow">Appearance</p>
+              <h3>Theme</h3>
+              <p className="muted-copy">Choose the default Orchestra workbench theme. This first pass ships built-in Light, Dark, and High Contrast variants.</p>
+            </div>
+          </div>
+          <label className="field-group field-group--compact">
+            <span className="field-group__label">Current theme</span>
+            <select
+              className="select-input"
+              data-role="theme-select"
+              value={selectedThemeId}
+              onChange={(event) => onThemeChange(event.target.value as OrchestraThemeId)}
+            >
+              {availableThemes.map((theme) => (
+                <option key={theme.id} value={theme.id}>{theme.label}</option>
+              ))}
+            </select>
+          </label>
+          {selectedTheme ? (
+            <p className="muted-copy" data-role="theme-current-kind">Mode: {selectedTheme.kind.replace(/-/g, " ")}</p>
+          ) : null}
+        </section>
+
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">General</p>
