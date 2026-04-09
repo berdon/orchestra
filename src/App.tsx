@@ -2011,6 +2011,14 @@ export function App() {
     <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind}>
       <aside className="sidebar">
         <div className="sidebar__top">
+          <div className="sidebar__brand" data-role="app-brand">
+            <div className="sidebar__brand-mark" aria-hidden="true">O</div>
+            <div className="sidebar__brand-copy">
+              <strong>Orchestra</strong>
+              <span>Operator workbench</span>
+            </div>
+          </div>
+
           <div className="project-switcher">
             <span className="project-switcher__label">Project</span>
             <select
@@ -2154,7 +2162,8 @@ export function App() {
           </div>
         </header>
 
-        {appInfo?.dispatchBlockedReason ? (
+        <div className="content__body">
+          {appInfo?.dispatchBlockedReason ? (
           <div className="session-readonly-banner app-status-banner" data-role="dispatch-blocked-banner">
             <div>
               <strong>Dispatching disabled.</strong> {appInfo.dispatchBlockedReason}
@@ -2304,6 +2313,7 @@ export function App() {
             onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
           />
         )}
+        </div>
       </main>
 
       <CommandPalette
