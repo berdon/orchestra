@@ -593,9 +593,14 @@ export function App() {
     [filteredSessions, selectedSessionId],
   );
 
-  const selectedChatAgent = useMemo(
-    () => chatAgents.find((agent) => agent.agent.id === selectedChatAgentId)?.agent ?? null,
+  const selectedChatAgentSnapshot = useMemo(
+    () => chatAgents.find((agent) => agent.agent.id === selectedChatAgentId) ?? null,
     [chatAgents, selectedChatAgentId],
+  );
+
+  const selectedChatAgent = useMemo(
+    () => selectedChatAgentSnapshot?.agent ?? null,
+    [selectedChatAgentSnapshot],
   );
 
   const liveChatSession = useMemo(
@@ -667,8 +672,19 @@ export function App() {
   }
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
-    const normalizedSession = normalizeSessionRecord(updatedSession);
     setSessions((current) => {
+      const existingSession = current.find((session) => session.id === updatedSession.id);
+      const normalizedSession = normalizeSessionRecord(
+        existingSession
+        && updatedSession.events.length === 0
+        && existingSession.events.length > 0
+          ? {
+              ...updatedSession,
+              events: existingSession.events,
+              debugInfo: updatedSession.debugInfo ?? existingSession.debugInfo,
+            }
+          : updatedSession,
+      );
       const nextSessions = sortSessionRecords([
         normalizedSession,
         ...current.filter((session) => session.id !== normalizedSession.id),
@@ -677,7 +693,7 @@ export function App() {
     });
 
     if (options?.select !== false) {
-      setSelectedSessionId((current) => (current === normalizedSession.id ? current : normalizedSession.id));
+      setSelectedSessionId((current) => (current === updatedSession.id ? current : updatedSession.id));
     }
   }, []);
 
@@ -1346,6 +1362,20 @@ export function App() {
       return;
     }
 
+    const cachedMainSessionId = selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null;
+    const cachedMainSession = cachedMainSessionId
+      ? sessions.find((session) => session.id === cachedMainSessionId) ?? null
+      : null;
+
+    if (!chatSessionId && cachedMainSession) {
+      setChatSessionId(cachedMainSession.id);
+      chatSessionAgentIdRef.current = selectedChatAgentId;
+      lastKnownChatSessionIdRef.current = cachedMainSession.id;
+      lastKnownChatSessionAgentIdRef.current = selectedChatAgentId;
+      chatSessionRecoveryMissRef.current = null;
+      return;
+    }
+
     const hasLiveChatSessionInState = Boolean(
       chatSessionId
       && chatSessionAgentIdRef.current === selectedChatAgentId
@@ -1356,7 +1386,7 @@ export function App() {
       return;
     }
 
-    const missingChatSessionId = chatSessionId ?? lastKnownChatSessionIdRef.current;
+    const missingChatSessionId = chatSessionId ?? cachedMainSessionId ?? lastKnownChatSessionIdRef.current;
     const missingChatSessionAgentId = chatSessionAgentIdRef.current ?? lastKnownChatSessionAgentIdRef.current;
     const missingChatDraft = missingChatSessionId
       ? draftMessages[missingChatSessionId] ?? lastKnownChatSessionDraftRef.current
@@ -1420,7 +1450,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, activeProject?.id, chatSessionId, draftMessages, isDetachedWindow, liveChatSession?.id, mergeSessionRecord, selectedChatAgentId, sessions]);
+  }, [activePage, activeProject?.id, chatSessionId, draftMessages, isDetachedWindow, liveChatSession?.id, mergeSessionRecord, selectedChatAgentId, selectedChatAgentSnapshot?.runtimeState.mainSessionId, sessions]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
