@@ -143,7 +143,7 @@ pub async fn ensure_agent_session(
     )?;
     runtime.set_subscribed(true);
 
-    let record = get_session(&session_context.session_dir, &session_id, true)?;
+    let record = get_session(&session_context.session_dir, &session_id, false)?;
     let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
     Ok(record)
 }
