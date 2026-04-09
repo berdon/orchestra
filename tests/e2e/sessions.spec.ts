@@ -38,13 +38,40 @@ test("sessions composer model selector is compact, fixed-width, and unlabeled", 
   await page.locator('[data-role="create-session"]').click();
 
   const modelSelect = page.locator('select[aria-label="Session model"]');
+  const cogButton = page.locator('[data-role="session-actions-trigger"]');
+  const sendButton = page.locator('[data-role="send-message"]');
   await expect(modelSelect).toBeVisible();
+  await expect(cogButton).toBeVisible();
   await expect(page.locator('.session-model-field .field-group__label')).toHaveCount(0);
-  await expect(page.locator('[data-role="session-actions-trigger"]')).toBeVisible();
 
   const modelWidth = await modelSelect.evaluate((node) => node.getBoundingClientRect().width);
   expect(modelWidth).toBeGreaterThanOrEqual(140);
   expect(modelWidth).toBeLessThanOrEqual(190);
+
+  const layout = await page.evaluate(() => {
+    const footer = document.querySelector('.composer__footer') as HTMLDivElement | null;
+    const actions = document.querySelector('.composer__actions') as HTMLDivElement | null;
+    const cog = document.querySelector('[data-role="session-actions-trigger"]') as HTMLButtonElement | null;
+    const send = document.querySelector('[data-role="send-message"]') as HTMLButtonElement | null;
+    if (!footer || !actions || !cog || !send) {
+      return null;
+    }
+    const footerRect = footer.getBoundingClientRect();
+    const actionsRect = actions.getBoundingClientRect();
+    const cogRect = cog.getBoundingClientRect();
+    const sendRect = send.getBoundingClientRect();
+    return {
+      actionsRightGap: Math.abs(footerRect.right - actionsRect.right),
+      cogWidth: Math.round(cogRect.width),
+      cogHeight: Math.round(cogRect.height),
+      sendHeight: Math.round(sendRect.height),
+    };
+  });
+
+  expect(layout).not.toBeNull();
+  expect(layout?.actionsRightGap ?? 999).toBeLessThanOrEqual(2);
+  expect(layout?.cogWidth).toBe(layout?.cogHeight);
+  expect(layout?.cogHeight).toBe(layout?.sendHeight);
 });
 
 test("sessions composer session actions can compact the current session and create a new one", async ({ page }) => {
