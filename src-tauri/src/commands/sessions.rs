@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use chrono::{Duration, Utc};
 use rusqlite::{params, OptionalExtension};
-use serde_json::json;
+use serde_json::{Value, json};
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
@@ -799,7 +799,7 @@ pub async fn get_session_model_state(
 
 #[tauri::command]
 pub async fn set_session_model(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     provider: String,
@@ -854,6 +854,72 @@ pub async fn set_session_model(
     );
 
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn compact_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    custom_instructions: Option<String>,
+) -> Result<SessionRecord, String> {
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) =
+        spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+            .await
+            .map_err(|error| format!("Unable to join compact_session context task: {error}"))??;
+
+    state.set_session_subscription(&session_id, true)?;
+    let runtime = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+        runtime
+    } else {
+        ensure_runtime(
+            &state.session_runtimes,
+            app.clone(),
+            project_root,
+            session_dir.clone(),
+            &session_id,
+        )?
+    };
+    runtime.set_subscribed(true);
+
+    let custom_instructions_for_task = custom_instructions.clone();
+    let compact_result: Result<Value, String> =
+        spawn_blocking(move || runtime.compact(custom_instructions_for_task.as_deref()))
+            .await
+            .map_err(|error| format!("Unable to join compact_session runtime task: {error}"))?;
+
+    if let Err(error) = &compact_result {
+        log_session_command_failure(
+            &state,
+            "sessions.compact.failed",
+            &session_id,
+            "compact the session",
+            error,
+        );
+        return Err(error.clone());
+    }
+
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let session_id_for_task = session_id.clone();
+    let record = spawn_blocking(move || {
+        load_decorated_session_record(
+            &session_dir,
+            &session_id_for_task,
+            true,
+            &terminal_attached_session_ids,
+        )
+    })
+    .await
+    .map_err(|error| format!("Unable to join compact_session record task: {error}"))??;
+
+    state.log(
+        "info",
+        "sessions.compact",
+        &format!("Compacted session {}", session_id),
+    );
+    let _ = app_events::emit_session_change(&app, "sessions.compact", [session_id.clone()]);
+    Ok(record)
 }
 
 #[tauri::command]

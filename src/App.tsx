@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cleanupStaleBridgeInstances,
   clearLogs,
+  compactSession,
   createSession,
   deleteSession,
   getAppInfo,
@@ -1880,6 +1881,18 @@ export function App() {
     });
   }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
 
+  function handleCreateFreshSession() {
+    setActivePage("sessions");
+    void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null));
+  }
+
+  function handleCompactExistingSession(sessionId?: string | null) {
+    if (!sessionId) {
+      return;
+    }
+    void runSessionAction(async () => compactSession(sessionId));
+  }
+
   const handleSelectedSessionModelChange = useCallback((value: string) => {
     if (selectedSession) {
       void handleModelChange(selectedSession.id, value);
@@ -1903,6 +1916,12 @@ export function App() {
       handleStopSession(selectedSession.id);
     }
   }, [handleStopSession, selectedSession?.id]);
+  const handleSelectedSessionCompact = useCallback(() => {
+    if (selectedSession?.terminalAttached) {
+      return;
+    }
+    handleCompactExistingSession(selectedSession?.id);
+  }, [selectedSession?.id, selectedSession?.terminalAttached]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -2241,6 +2260,8 @@ export function App() {
                 handleStopSession(chatSession.id);
               }
             }}
+            onCreateNewSession={handleCreateFreshSession}
+            onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
         ) : activePage === "sessions" ? (
           <SessionsPage
@@ -2273,6 +2294,8 @@ export function App() {
             onDraftChange={handleSelectedSessionDraftChange}
             onSendMessage={handleSelectedSessionSend}
             onStopSession={handleSelectedSessionStop}
+            onCreateNewSession={handleCreateFreshSession}
+            onCompactSession={handleSelectedSessionCompact}
           />
         ) : (
           <TasksPage

@@ -40,10 +40,32 @@ test("sessions composer model selector is compact, fixed-width, and unlabeled", 
   const modelSelect = page.locator('select[aria-label="Session model"]');
   await expect(modelSelect).toBeVisible();
   await expect(page.locator('.session-model-field .field-group__label')).toHaveCount(0);
+  await expect(page.locator('[data-role="session-actions-trigger"]')).toBeVisible();
 
   const modelWidth = await modelSelect.evaluate((node) => node.getBoundingClientRect().width);
   expect(modelWidth).toBeGreaterThanOrEqual(140);
   expect(modelWidth).toBeLessThanOrEqual(190);
+});
+
+test("sessions composer session actions can compact the current session and create a new one", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+  const initialCount = await page.locator('[data-role="session-link"]').count();
+
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await expect(page.locator('[data-role="session-actions-menu"]')).toBeVisible();
+  await page.locator('[data-role="session-action-compact"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session compacted.");
+
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await page.locator('[data-role="session-action-new"]').click();
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(initialCount + 1);
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session is active. Send a message to begin the interaction loop.");
+  await expect(page.locator('[data-role="session-transcript"]')).not.toContainText("Session compacted.");
 });
 
 test("sessions composer stays enabled while earlier messages are still pending", async ({ page }) => {

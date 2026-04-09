@@ -2197,10 +2197,12 @@ mod tests {
             let connection = crate::services::database::open_connection()
                 .expect("database should open in the temp Orchestra home");
             let now = "2026-03-22T00:00:00Z";
+            let project_id = format!("project-{}", Uuid::new_v4().simple());
+            let project_slug = project_id.clone();
             connection
                 .execute(
-                    "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-2', 'project-2', 'Project 2', NULL, NULL, ?1, ?1)",
-                    [now],
+                    "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, ?2, 'Project 2', NULL, NULL, ?3, ?3)",
+                    rusqlite::params![project_id, project_slug, now],
                 )
                 .expect("project should seed");
 
@@ -2215,7 +2217,7 @@ mod tests {
                 }),
                 None,
                 json!({
-                    "projectId": "project-2",
+                    "projectId": project_id,
                     "title": "Scoped bridge task",
                     "description": "Should not fall back to orchestra",
                     "type": "task",
@@ -2228,7 +2230,7 @@ mod tests {
 
             assert_eq!(
                 created.get("projectId").and_then(Value::as_str),
-                Some("project-2")
+                Some(project_id.as_str())
             );
 
             let scoped_tasks = invoke_bridge_command(
@@ -2240,7 +2242,7 @@ mod tests {
                     actor_id: "tester".into(),
                 }),
                 None,
-                json!({ "projectId": "project-2", "includeArchived": false }),
+                json!({ "projectId": project_id, "includeArchived": false }),
             )
             .expect("list_tasks should respect the provided project id")
             .as_array()
@@ -2249,7 +2251,7 @@ mod tests {
             assert_eq!(scoped_tasks.len(), 1);
             assert_eq!(
                 scoped_tasks[0].get("projectId").and_then(Value::as_str),
-                Some("project-2")
+                Some(project_id.as_str())
             );
 
             let orchestra_tasks = invoke_bridge_command(

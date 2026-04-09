@@ -49,9 +49,9 @@ use commands::{
     },
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
-        create_session, delete_session, get_session_model_state, get_session_record, list_sessions,
-        resume_session, send_session_message, set_session_model, stop_session_runtime,
-        subscribe_session, unsubscribe_session,
+        compact_session, create_session, delete_session, get_session_model_state,
+        get_session_record, list_sessions, resume_session, send_session_message,
+        set_session_model, stop_session_runtime, subscribe_session, unsubscribe_session,
     },
     task_schedules::{
         create_task_schedule, delete_task_schedule, get_task_schedule, list_task_schedules,
@@ -225,6 +225,7 @@ pub fn run() {
             stop_session_runtime,
             get_session_model_state,
             set_session_model,
+            compact_session,
             send_session_message,
             list_tasks,
             list_task_schedules,

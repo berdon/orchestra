@@ -661,6 +661,26 @@ impl SessionRuntime {
         self.get_model_state()
     }
 
+    pub fn compact(&self, custom_instructions: Option<&str>) -> Result<Value, String> {
+        if self.current_run_id().is_some() {
+            return Err("Wait for the current response to finish before compacting this session".into());
+        }
+
+        let mut command = json!({
+            "id": format!("compact-{}", Uuid::new_v4()),
+            "type": "compact",
+        });
+
+        if let Some(instructions) = custom_instructions.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        }) {
+            command["customInstructions"] = Value::String(instructions.to_string());
+        }
+
+        self.send_command(command)
+    }
+
     fn is_subscribed(&self) -> bool {
         self.subscribed.lock().map(|value| *value).unwrap_or(false)
     }
