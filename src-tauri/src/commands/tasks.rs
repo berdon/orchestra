@@ -461,6 +461,10 @@ pub fn add_task_dependency(
     let mut connection = database::open_connection()?;
     let dependency =
         tasks::add_task_dependency(&mut connection, &blocker_task_id, &blocked_task_id)?;
+    let canceled_assignment = task_runtime::cancel_dispatch_for_dependency_block(
+        &mut connection,
+        &blocked_task_id,
+    )?;
     state.log(
         "info",
         "task.dependency.added",
@@ -469,6 +473,32 @@ pub fn add_task_dependency(
             blocker_task_id, blocked_task_id
         ),
     );
+    let canceled_assignment_present = canceled_assignment.is_some();
+    if let Some(assignment) = canceled_assignment {
+        if let Some(session_id) = assignment.session_id.clone() {
+            if let Some(runtime) = state.remove_session_runtime(&session_id)? {
+                runtime.abort_active_run();
+            }
+            let _ = state.clear_active_session_run(&session_id);
+            emit_session_change(&app, "task.dependency.blocked", [session_id.clone()]);
+            if assignment.worker_type == "role" {
+                crate::services::live_sessions::schedule_session_retirement(
+                    app.clone(),
+                    session_id,
+                    Duration::ZERO,
+                    "task.dependency.blocked",
+                );
+            }
+        }
+        state.log(
+            "info",
+            "task.dependency.blocked",
+            &format!(
+                "Canceled open assignment {} because task {} became dependency blocked",
+                assignment.id, blocked_task_id
+            ),
+        );
+    }
     state.log_authorized_action(
         "auth.audit",
         "add_task_dependency",
@@ -480,8 +510,11 @@ pub fn add_task_dependency(
     emit_task_change(
         &app,
         "task.dependency.added",
-        [blocker_task_id, blocked_task_id],
+        [blocker_task_id, blocked_task_id.clone()],
     );
+    if canceled_assignment_present {
+        emit_task_change(&app, "task.dependency.blocked", [blocked_task_id]);
+    }
     Ok(dependency)
 }
 
