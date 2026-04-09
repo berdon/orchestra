@@ -206,10 +206,15 @@ function renderMarkdown(
         return <blockquote key={key} className="transcript-markdown-blockquote">{renderInlineTokens(token.tokens, key, mentionResolver, mentionLinkDataRole)}</blockquote>;
       case "list": {
         const ListTag = token.ordered ? "ol" : "ul";
+        const listClassName = token.ordered
+          ? "transcript-markdown-list transcript-markdown-list--ordered"
+          : "transcript-markdown-list transcript-markdown-list--unordered";
         return (
-          <ListTag key={key} className="transcript-markdown-list">
+          <ListTag key={key} className={listClassName}>
             {token.items?.map((item, itemIndex) => (
-              <li key={`${key}-item-${itemIndex}`}>{renderInlineTokens(item.tokens, `${key}-item-${itemIndex}`, mentionResolver, mentionLinkDataRole)}</li>
+              <li key={`${key}-item-${itemIndex}`} value={token.ordered ? itemIndex + 1 : undefined}>
+                {renderInlineTokens(item.tokens, `${key}-item-${itemIndex}`, mentionResolver, mentionLinkDataRole)}
+              </li>
             ))}
           </ListTag>
         );

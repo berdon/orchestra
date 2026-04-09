@@ -675,7 +675,7 @@ test("task detail renders markdown descriptions and comments with preserved line
           projectId: "orchestra",
           number: "ORC-300",
           title: "Markdown rendering task",
-          description: "First line\nSecond line with **bold** text\n\n- Bullet one\n- Bullet two",
+          description: "First line\nSecond line with **bold** text\n\n1. Step one\n2. Step two",
           type: "task",
           status: "in_progress",
           priority: "P1",
@@ -712,7 +712,7 @@ test("task detail renders markdown descriptions and comments with preserved line
               taskId: "task-markdown-rendering",
               parentCommentId: null,
               author: "Reviewer",
-              message: "First review line\nSecond review line with **important** context\n\n- Check API shape\n- Confirm UI",
+              message: "First review line\nSecond review line with **important** context\n\n1. Check API shape\n2. Confirm UI",
               interruptAgent: false,
               repositoryId: null,
               relativePath: null,
@@ -745,8 +745,10 @@ test("task detail renders markdown descriptions and comments with preserved line
   await expect(page.locator('[data-role="task-description-markdown"]')).toContainText("Second line with bold text");
   await expect(page.locator('[data-role="task-description-markdown"] li')).toHaveCount(2);
   await expect(page.locator('[data-role="task-description-markdown"] strong')).toContainText("bold");
+  await expect(page.locator('[data-role="task-description-markdown"] ol li').nth(1)).toHaveAttribute("value", "2");
   const descriptionHtml = await page.locator('[data-role="task-description-markdown"]').evaluate((node) => node.innerHTML);
   expect(descriptionHtml).toContain("<br");
+  expect(descriptionHtml).toContain("<ol");
 
   await page.locator('[data-role="task-detail-tab-comments"]').click();
   const detailedComment = page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"]').first();
@@ -754,8 +756,10 @@ test("task detail renders markdown descriptions and comments with preserved line
   await expect(detailedComment).toContainText("Second review line with important context");
   await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] strong')).toContainText("important");
   await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] li')).toHaveCount(2);
+  await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] ol li').nth(1)).toHaveAttribute("value", "2");
   const commentHtml = await detailedComment.evaluate((node) => node.innerHTML);
   expect(commentHtml).toContain("<br");
+  expect(commentHtml).toContain("<ol");
 });
 
 test("task detail supports attachments, comments, timeline, and review inbox filtering", async ({ page }) => {

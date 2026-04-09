@@ -1465,16 +1465,42 @@ fn invoke_bridge_command(
                         &active_assignment,
                         Some(&comment_ids),
                     )?;
-                } else if let Some(app) = config.clone_app_handle() {
-                    let context = session_context_for_task_id(&task_id)?;
-                    let state = app.state::<crate::state::AppState>();
-                    crate::services::task_runtime::notify_active_assignment_of_unread_comments(
-                        app.clone(),
-                        &state,
-                        context.session_dir,
-                        &active_assignment,
-                        &comment,
-                    )?;
+                } else {
+                    let warning = if let Some(app) = config.clone_app_handle() {
+                        let context = session_context_for_task_id(&task_id)?;
+                        let state = app.state::<crate::state::AppState>();
+                        crate::services::task_runtime::notify_or_queue_unread_comment_delivery(
+                            &writable,
+                            &active_assignment,
+                            &comment,
+                            || {
+                                crate::services::task_runtime::notify_active_assignment_of_unread_comments(
+                                    app.clone(),
+                                    &state,
+                                    context.session_dir.clone(),
+                                    &active_assignment,
+                                    &comment,
+                                )
+                            },
+                        )
+                    } else {
+                        crate::services::task_runtime::notify_or_queue_unread_comment_delivery(
+                            &writable,
+                            &active_assignment,
+                            &comment,
+                            || Err("No app handle available for live comment delivery".into()),
+                        )
+                    };
+                    if let Some(warning) = warning {
+                        config.log_bridge_event(
+                            "warn",
+                            "task.comment.notification_failed",
+                            &format!(
+                                "Comment {} on task {} was saved, but unread notification delivery degraded: {}",
+                                comment.id, task_id, warning
+                            ),
+                        );
+                    }
                 }
             }
             serde_json::to_value(comment)

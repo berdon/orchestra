@@ -1926,6 +1926,28 @@ pub fn queue_comment_delivery(
     }
 }
 
+pub fn notify_or_queue_unread_comment_delivery<F>(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+    comment: &TaskComment,
+    notify: F,
+) -> Option<String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    match notify() {
+        Ok(()) => None,
+        Err(notify_error) => match queue_comment_delivery(connection, assignment, comment) {
+            Ok(()) => Some(format!(
+                "Live comment delivery failed and Orchestra queued a fallback delivery instead: {notify_error}"
+            )),
+            Err(queue_error) => Some(format!(
+                "Live comment delivery failed after the comment was already saved: {notify_error}. Fallback queueing also failed: {queue_error}"
+            )),
+        },
+    }
+}
+
 fn notify_active_assignment_delivery(
     app: AppHandle,
     state: &AppState,
@@ -4815,6 +4837,117 @@ mod tests {
     }
 
     #[test]
+    fn notify_or_queue_unread_comment_delivery_falls_back_to_queue_without_failing() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Deliverer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let project = crate::services::projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: "Comment Queue Project".into(),
+                description: None,
+            },
+        )
+        .expect("project should create");
+        let task = tasks::create_task(
+            &mut connection,
+            Some(&project.id),
+            TaskUpsertInput {
+                title: "Queued comment task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.id.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let assignment = TaskLaneAssignment {
+            id: "assignment-1".into(),
+            task_id: task.id.clone(),
+            workflow_id: "workflow-1".into(),
+            lane_id: "lane-1".into(),
+            worker_type: "agent".into(),
+            worker_id: Some(agent.id.clone()),
+            status: ASSIGNMENT_STATUS_ACTIVE.into(),
+            session_id: Some("session-1".into()),
+            runtime_cwd: Some("/tmp/runtime".into()),
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: Some("Prompt".into()),
+            pending_outcome: None,
+            completion_notes: None,
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: now_iso(),
+            completed_at: None,
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+        let comment = crate::models::TaskComment {
+            id: "comment-1".into(),
+            task_id: task.id.clone(),
+            parent_comment_id: None,
+            author: "User".into(),
+            message: "Please follow up later.".into(),
+            interrupt_agent: false,
+            repository_id: None,
+            relative_path: None,
+            line_start: None,
+            line_end: None,
+            column_start: None,
+            column_end: None,
+            selected_text: None,
+            anchor_commit_hash: None,
+            anchor_has_uncommitted_changes: None,
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let warning =
+            notify_or_queue_unread_comment_delivery(&connection, &assignment, &comment, || {
+                Err("runtime unavailable".into())
+            });
+
+        assert!(warning
+            .as_deref()
+            .is_some_and(|message| message.contains("runtime unavailable")));
+        let queue_entries = crate::services::agent_runtime::list_agent_queue_entries_for_project(
+            &connection,
+            &project.id,
+            Some(agent.id.as_str()),
+            true,
+        )
+        .expect("agent queue entries");
+        assert_eq!(queue_entries.len(), 1);
+        assert_eq!(queue_entries[0].delivery_mode, "follow_up");
+        assert_eq!(queue_entries[0].source_type, "task_comment");
+    }
+
+    #[test]
     fn completion_requires_unread_comments_to_be_acknowledged() {
         let mut connection = in_memory_connection();
         let _role = roles::create_role(
@@ -5408,7 +5541,10 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].worker_type, "role");
         assert_eq!(candidates[0].worker_id, role.id);
-        assert_eq!(candidates[0].role_instance_id.as_deref(), Some("instance-running-whip"));
+        assert_eq!(
+            candidates[0].role_instance_id.as_deref(),
+            Some("instance-running-whip")
+        );
         assert_eq!(candidates[0].session_id, "session-running-role-whip");
     }
 
