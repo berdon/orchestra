@@ -1645,6 +1645,36 @@ strong {
   flex-wrap: wrap;
 }
 
+.session-actions-menu {
+  position: relative;
+}
+
+.session-actions-menu__trigger {
+  min-width: 34px;
+  width: 34px;
+  padding: 0;
+  font-size: 0.95rem;
+}
+
+.session-actions-menu__dropdown {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 148px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-overlay-background) 96%, transparent);
+  box-shadow: var(--shadow-overlay);
+  z-index: 25;
+}
+
+.session-actions-menu__item {
+  justify-content: flex-start;
+}
+
 .session-detail__meta--footer {
   gap: 10px;
   letter-spacing: 0;

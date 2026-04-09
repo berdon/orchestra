@@ -2134,6 +2134,36 @@ export async function setSessionModel(sessionId: string, provider: string, model
   return invoke<SessionModelState>("set_session_model", { sessionId, provider, modelId });
 }
 
+export async function compactSession(sessionId: string, customInstructions?: string | null): Promise<SessionRecord> {
+  if (!isTauriAvailable()) {
+    const timestamp = nowIso();
+    const session = updateMockSession(sessionId, (current) => ({
+      ...current,
+      updatedAt: timestamp,
+      events: [
+        ...current.events,
+        createEvent(
+          "system",
+          customInstructions?.trim()
+            ? `Session compacted. ${customInstructions.trim()}`
+            : "Session compacted.",
+          { id: `compact-${sessionId}-${timestamp}` },
+        ),
+      ],
+    }));
+
+    if (!session) {
+      throw new Error(`Unable to find session ${sessionId}`);
+    }
+
+    appendMockLog("info", "sessions.compact", `Compacted session ${sessionId}`);
+    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.compact" });
+    return session;
+  }
+
+  return invoke<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null });
+}
+
 export async function sendSessionMessage(sessionId: string, message: string, runId: string): Promise<QueuedSessionMessage> {
   const trimmedMessage = message.trim();
   if (!trimmedMessage) {

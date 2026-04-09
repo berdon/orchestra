@@ -60,6 +60,8 @@ interface SessionChatPanelProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onCreateNewSession?: () => void;
+  onCompactSession?: () => void;
   emptyStateEyebrow?: string;
   emptyStateTitle?: string;
   emptyStateDescription?: string;
@@ -79,6 +81,8 @@ interface SessionComposerProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onCreateNewSession?: () => void;
+  onCompactSession?: () => void;
 }
 
 interface SessionTranscriptProps {
@@ -105,7 +109,17 @@ const SessionComposer = memo(function SessionComposer({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onCreateNewSession,
+  onCompactSession,
 }: SessionComposerProps) {
+  const [showSessionActions, setShowSessionActions] = useState(false);
+  const canCreateNewSession = Boolean(onCreateNewSession);
+  const canCompactSession = Boolean(onCompactSession) && !sessionReadOnly && !sessionPending;
+
+  useEffect(() => {
+    setShowSessionActions(false);
+  }, [session.id, sessionPending, sessionReadOnly]);
+
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onSendMessage();
@@ -159,6 +173,53 @@ const SessionComposer = memo(function SessionComposer({
             </div>
           </div>
           <div className="composer__actions">
+            {canCreateNewSession || onCompactSession ? (
+              <div className="session-actions-menu">
+                <button
+                  className="secondary-button session-actions-menu__trigger"
+                  data-role="session-actions-trigger"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={showSessionActions}
+                  onClick={() => setShowSessionActions((current) => !current)}
+                >
+                  ⚙
+                </button>
+                {showSessionActions ? (
+                  <div className="session-actions-menu__dropdown" data-role="session-actions-menu" role="menu">
+                    {canCreateNewSession ? (
+                      <button
+                        className="secondary-button session-actions-menu__item"
+                        data-role="session-action-new"
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setShowSessionActions(false);
+                          onCreateNewSession?.();
+                        }}
+                      >
+                        New session
+                      </button>
+                    ) : null}
+                    {onCompactSession ? (
+                      <button
+                        className="secondary-button session-actions-menu__item"
+                        data-role="session-action-compact"
+                        type="button"
+                        role="menuitem"
+                        disabled={!canCompactSession}
+                        onClick={() => {
+                          setShowSessionActions(false);
+                          onCompactSession();
+                        }}
+                      >
+                        Compact
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="session-model-field session-model-field--composer">
               <select
                 className="select-input"
@@ -363,6 +424,8 @@ export function SessionChatPanel({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onCreateNewSession,
+  onCompactSession,
   emptyStateEyebrow = "No session selected",
   emptyStateTitle = "Create or select a session",
   emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
@@ -414,6 +477,8 @@ export function SessionChatPanel({
             onDraftChange={onDraftChange}
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
+            onCreateNewSession={onCreateNewSession}
+            onCompactSession={onCompactSession}
           />
         </>
       ) : (

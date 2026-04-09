@@ -36,6 +36,8 @@ interface AgentChatPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onCreateNewSession: () => void;
+  onCompactSession: () => void;
 }
 
 export function AgentChatPage({
@@ -64,6 +66,8 @@ export function AgentChatPage({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onCreateNewSession,
+  onCompactSession,
 }: AgentChatPageProps) {
   let emptyStateTitle = "Choose an agent chat";
   let emptyStateDescription = "Select a named agent from the Chat sidebar to open or resume its main session.";
@@ -106,6 +110,8 @@ export function AgentChatPage({
           onDraftChange={onDraftChange}
           onSendMessage={onSendMessage}
           onStopSession={onStopSession}
+          onCreateNewSession={onCreateNewSession}
+          onCompactSession={onCompactSession}
           emptyStateEyebrow="Agent chat"
           emptyStateTitle={emptyStateTitle}
           emptyStateDescription={emptyStateDescription}

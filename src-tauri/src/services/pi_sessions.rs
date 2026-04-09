@@ -704,6 +704,30 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                     title = Some(name.to_string());
                 }
             }
+            "compaction" => {
+                let summary = line
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .and_then(non_empty_trimmed)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| "Session context compacted.".to_string());
+                let tokens_before = line
+                    .get("tokensBefore")
+                    .and_then(Value::as_i64)
+                    .map(|value| format!(" ({value} tokens before)"))
+                    .unwrap_or_default();
+                events.push(SessionEvent {
+                    id: line
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("compaction")
+                        .to_string(),
+                    kind: "system".into(),
+                    message: format!("Session compacted{tokens_before}.\n{summary}"),
+                    timestamp: entry_timestamp.clone(),
+                    thinking_text: None,
+                });
+            }
             "message" => {
                 let Some(message) = line.get("message") else {
                     continue;
@@ -2032,6 +2056,47 @@ process.stdin.on('end', () => {
         assert_eq!(full_session.events[0].kind, "user");
         assert_eq!(full_session.events[1].kind, "assistant");
         assert_eq!(full_session.events[1].message, "Real pi session reply");
+    }
+
+    #[test]
+    fn surfaces_compaction_entries_as_system_events() {
+        let root = unique_temp_dir("orchestra-real-session-compaction");
+        let project_root = root.join("project");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let session_id = Uuid::new_v4().to_string();
+        let session_path = session_dir.join("compaction.jsonl");
+        let content = format!(
+            "{}\n{}\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": "2026-03-18T12:00:00Z",
+                "cwd": project_root.display().to_string(),
+            }),
+            json!({
+                "type": "compaction",
+                "id": "compact-1",
+                "parentId": Value::Null,
+                "timestamp": "2026-03-18T12:01:00Z",
+                "summary": "Earlier discussion summarized to keep the active task in context.",
+                "firstKeptEntryId": "msg-2",
+                "tokensBefore": 50000,
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+
+        let full_session =
+            get_session(&session_dir, &session_id, true).expect("full session should load");
+        assert_eq!(full_session.events.len(), 1);
+        assert_eq!(full_session.events[0].kind, "system");
+        assert!(full_session.events[0].message.contains("Session compacted"));
+        assert!(full_session.events[0]
+            .message
+            .contains("Earlier discussion summarized"));
     }
 
     #[test]

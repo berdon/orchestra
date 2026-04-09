@@ -62,6 +62,8 @@ interface SessionsPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onCreateNewSession: () => void;
+  onCompactSession: () => void;
 }
 
 export function SessionsPage({
@@ -94,6 +96,8 @@ export function SessionsPage({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onCreateNewSession,
+  onCompactSession,
 }: SessionsPageProps) {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
@@ -203,6 +207,8 @@ export function SessionsPage({
             onDraftChange={onDraftChange}
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
+            onCreateNewSession={onCreateNewSession}
+            onCompactSession={onCompactSession}
           />
 
           {canShowDebugInfo && !showDebugInfo ? (
