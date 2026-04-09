@@ -92,6 +92,7 @@ const SETTINGS_TABS = [
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
 const VIEWED_SESSION_REFRESH_GRACE_MS = 20_000;
+const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
 
 function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
   const stored = window.localStorage.getItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY);
@@ -560,6 +561,8 @@ export function App() {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
   const chatSessionAgentIdRef = useRef<string | null>(null);
+  const chatSessionRecoveryMissRef = useRef<{ sessionId: string; startedAt: number } | null>(null);
+  const lastKnownChatSessionRef = useRef<SessionRecord | null>(null);
   const lastKnownChatSessionIdRef = useRef<string | null>(null);
   const lastKnownChatSessionAgentIdRef = useRef<string | null>(null);
   const lastKnownChatSessionDraftRef = useRef("");
@@ -590,10 +593,22 @@ export function App() {
     [chatAgents, selectedChatAgentId],
   );
 
-  const chatSession = useMemo(
+  const liveChatSession = useMemo(
     () => sessions.find((session) => session.id === chatSessionId) ?? null,
     [chatSessionId, sessions],
   );
+
+  const chatSession = useMemo(() => {
+    if (liveChatSession) {
+      return liveChatSession;
+    }
+
+    if (chatSessionId && chatSessionAgentIdRef.current === selectedChatAgentId) {
+      return lastKnownChatSessionRef.current;
+    }
+
+    return null;
+  }, [chatSessionId, liveChatSession, selectedChatAgentId]);
 
   const viewedSession = activePage === "chat" ? chatSession : selectedSession;
   const viewedSessionPendingRun = viewedSession ? pendingRuns[viewedSession.id] : undefined;
@@ -611,6 +626,12 @@ export function App() {
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
+
+  useEffect(() => {
+    if (liveChatSession && chatSessionAgentIdRef.current === selectedChatAgentId) {
+      lastKnownChatSessionRef.current = liveChatSession;
+    }
+  }, [liveChatSession, selectedChatAgentId]);
 
   useEffect(() => {
     const rememberedSessionId = chatSessionId ?? lastKnownChatSessionIdRef.current;
@@ -922,12 +943,18 @@ export function App() {
 
       let nextSessions = hydratedSessions;
       if (isViewedSessionMissing && preservedViewedSession && viewedSessionId) {
+        const shouldUseExtendedAgentChatGrace = Boolean(
+          activePage === "chat"
+          && chatSessionId === viewedSessionId
+          && chatSessionAgentIdRef.current === selectedChatAgentId,
+        );
+
         const now = Date.now();
         const existingGrace = viewedSessionMissingGraceRef.current;
         const matchingGrace = existingGrace?.sessionId === viewedSessionId ? existingGrace : null;
         const grace = matchingGrace ?? {
           sessionId: viewedSessionId,
-          graceUntil: now + VIEWED_SESSION_REFRESH_GRACE_MS,
+          graceUntil: now + (shouldUseExtendedAgentChatGrace ? CHAT_SESSION_RECOVERY_GRACE_MS : VIEWED_SESSION_REFRESH_GRACE_MS),
         };
 
         viewedSessionMissingGraceRef.current = grace;
@@ -1165,6 +1192,7 @@ export function App() {
     }
     setChatSessionId(null);
     chatSessionAgentIdRef.current = null;
+    chatSessionRecoveryMissRef.current = null;
     lastKnownChatSessionIdRef.current = null;
     lastKnownChatSessionAgentIdRef.current = null;
     lastKnownChatSessionDraftRef.current = "";
@@ -1333,12 +1361,13 @@ export function App() {
       return;
     }
 
-    const hasVisibleChatSession = Boolean(
+    const hasLiveChatSessionInState = Boolean(
       chatSessionId
       && chatSessionAgentIdRef.current === selectedChatAgentId
-      && chatSession?.id === chatSessionId,
+      && liveChatSession?.id === chatSessionId,
     );
-    if (hasVisibleChatSession) {
+    if (hasLiveChatSessionInState) {
+      chatSessionRecoveryMissRef.current = null;
       return;
     }
 
@@ -1356,7 +1385,17 @@ export function App() {
         try {
           return await getSessionRecord(missingChatSessionId);
         } catch {
-          // Fall through to ensure the selected agent session exists.
+          if (lastKnownChatSessionRef.current?.id === missingChatSessionId) {
+            const now = Date.now();
+            const existingMiss = chatSessionRecoveryMissRef.current;
+            if (!existingMiss || existingMiss.sessionId !== missingChatSessionId) {
+              chatSessionRecoveryMissRef.current = { sessionId: missingChatSessionId, startedAt: now };
+              return null;
+            }
+            if (now - existingMiss.startedAt < CHAT_SESSION_RECOVERY_GRACE_MS) {
+              return null;
+            }
+          }
         }
       }
 
@@ -1365,9 +1404,10 @@ export function App() {
 
     void recoverChatSession()
       .then((session) => {
-        if (cancelled) {
+        if (cancelled || !session) {
           return;
         }
+        chatSessionRecoveryMissRef.current = null;
         mergeSessionRecord(session, { select: false });
         setChatSessionId(session.id);
         chatSessionAgentIdRef.current = selectedChatAgentId;
@@ -1395,7 +1435,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, activeProject?.id, chatSession?.id, chatSessionId, draftMessages, isDetachedWindow, mergeSessionRecord, selectedChatAgentId, sessions]);
+  }, [activePage, activeProject?.id, chatSessionId, draftMessages, isDetachedWindow, liveChatSession?.id, mergeSessionRecord, selectedChatAgentId, sessions]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {

@@ -108,14 +108,16 @@ test("chat page recovers the active agent session after a prolonged background r
   await page.locator('[data-role="chat-agent-nav-supervisor"]').click();
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await page.locator('[data-role="composer-input"]').focus();
   await page.locator('[data-role="composer-input"]').fill("Keep this chat session visible");
 
   const initialSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
   expect(initialSessionId).toBeTruthy();
 
   await page.evaluate(() => {
-    const testWindow = window as Window & { __orchestraTestNow?: number };
+    const testWindow = window as Window & { __orchestraTestNow?: number; __savedChatSessions?: string | null };
     testWindow.__orchestraTestNow = Date.now();
+    testWindow.__savedChatSessions = window.localStorage.getItem("orchestra.mock.sessions.orchestra");
     Date.now = () => testWindow.__orchestraTestNow ?? 0;
     window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
     window.dispatchEvent(new Event("focus"));
@@ -123,15 +125,20 @@ test("chat page recovers the active agent session after a prolonged background r
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
   await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep this chat session visible");
+  await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
 
   await page.evaluate(() => {
-    const testWindow = window as Window & { __orchestraTestNow?: number };
+    const testWindow = window as Window & { __orchestraTestNow?: number; __savedChatSessions?: string | null };
     testWindow.__orchestraTestNow = (testWindow.__orchestraTestNow ?? Date.now()) + 30_000;
+    if (typeof testWindow.__savedChatSessions === "string") {
+      window.localStorage.setItem("orchestra.mock.sessions.orchestra", testWindow.__savedChatSessions);
+    }
     window.dispatchEvent(new Event("focus"));
   });
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
-  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", /.+/);
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", initialSessionId ?? "");
   await expect(page.locator('[data-role="composer-input"]')).toBeVisible();
   await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep this chat session visible");
+  await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
 });
