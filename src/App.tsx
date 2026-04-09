@@ -92,7 +92,6 @@ const SETTINGS_TABS = [
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
-const VIEWED_SESSION_REFRESH_GRACE_MS = 20_000;
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
 
 function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
@@ -568,7 +567,6 @@ export function App() {
   const lastKnownChatSessionIdRef = useRef<string | null>(null);
   const lastKnownChatSessionAgentIdRef = useRef<string | null>(null);
   const lastKnownChatSessionDraftRef = useRef("");
-  const viewedSessionMissingGraceRef = useRef<{ sessionId: string; graceUntil: number } | null>(null);
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
   const backgroundSessionRefreshInFlightRef = useRef(false);
@@ -947,29 +945,9 @@ export function App() {
         && !hydratedSessions.some((session) => session.id === preservedViewedSession.id),
       );
 
-      let nextSessions = hydratedSessions;
-      if (isViewedSessionMissing && preservedViewedSession && viewedSessionId) {
-        const shouldUseExtendedAgentChatGrace = Boolean(
-          activePage === "chat"
-          && chatSessionId === viewedSessionId
-          && chatSessionAgentIdRef.current === selectedChatAgentId,
-        );
-
-        const now = Date.now();
-        const existingGrace = viewedSessionMissingGraceRef.current;
-        const matchingGrace = existingGrace?.sessionId === viewedSessionId ? existingGrace : null;
-        const grace = matchingGrace ?? {
-          sessionId: viewedSessionId,
-          graceUntil: now + (shouldUseExtendedAgentChatGrace ? CHAT_SESSION_RECOVERY_GRACE_MS : VIEWED_SESSION_REFRESH_GRACE_MS),
-        };
-
-        viewedSessionMissingGraceRef.current = grace;
-        if (now < grace.graceUntil) {
-          nextSessions = sortSessionRecords([preservedViewedSession, ...hydratedSessions]);
-        }
-      } else {
-        viewedSessionMissingGraceRef.current = null;
-      }
+      const nextSessions = isViewedSessionMissing && preservedViewedSession && viewedSessionId
+        ? sortSessionRecords([preservedViewedSession, ...hydratedSessions])
+        : hydratedSessions;
 
       sessionsRef.current = nextSessions;
       setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
@@ -1467,22 +1445,9 @@ export function App() {
 
     const sessionSurfaceActive = activePage === "sessions" || activePage === "chat";
     const previousViewedSessionId = viewedSessionIdRef.current;
-    const canGracefullyHoldViewedSession = Boolean(
-      sessionSurfaceActive
-      && !viewedSession?.id
-      && previousViewedSessionId
-      && viewedSessionMissingGraceRef.current?.sessionId === previousViewedSessionId
-      && Date.now() < viewedSessionMissingGraceRef.current.graceUntil,
-    );
-    const nextViewedSessionId = sessionSurfaceActive
-      ? viewedSession?.id ?? (canGracefullyHoldViewedSession ? previousViewedSessionId : null)
-      : null;
+    const nextViewedSessionId = sessionSurfaceActive ? viewedSession?.id ?? null : null;
 
     viewedSessionIdRef.current = nextViewedSessionId;
-
-    if (!sessionSurfaceActive || viewedSession?.id) {
-      viewedSessionMissingGraceRef.current = null;
-    }
 
     if (
       previousViewedSessionId
