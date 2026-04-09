@@ -36,6 +36,7 @@ import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
+import { applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
@@ -532,6 +533,7 @@ export function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
+  const [themeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [loadingChatAgents, setLoadingChatAgents] = useState(false);
   const [loadingChatSessionAgentId, setLoadingChatSessionAgentId] = useState<string | null>(null);
@@ -572,6 +574,10 @@ export function App() {
   const backgroundSessionRefreshInFlightRef = useRef(false);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    applyOrchestraTheme(themeId);
+  }, [themeId]);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -1647,6 +1653,7 @@ export function App() {
     return () => window.removeEventListener("resize", syncScrollLockState);
   }, [activePage, displayedEvents.length, handleSessionScrollLockChange, isDetachedWindow, viewedSession?.id]);
 
+  const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
@@ -1970,7 +1977,7 @@ export function App() {
 
   if (isLogsWindow) {
     return (
-      <main className="logs-window-shell">
+      <main className="logs-window-shell" data-theme={themeId} data-theme-kind={activeTheme.kind}>
         <header className="logs-window-header">
           <div>
             <p className="eyebrow">Orchestra diagnostics</p>
@@ -2001,7 +2008,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind}>
       <aside className="sidebar">
         <div className="sidebar__top">
           <div className="project-switcher">
