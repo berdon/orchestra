@@ -91,9 +91,14 @@ function renderMarkdown(message: string) {
         return <blockquote key={key} className="transcript-markdown-blockquote">{token.text}</blockquote>;
       case "list": {
         const ListTag = token.ordered ? "ol" : "ul";
+        const listClassName = token.ordered
+          ? "transcript-markdown-list transcript-markdown-list--ordered"
+          : "transcript-markdown-list transcript-markdown-list--unordered";
         return (
-          <ListTag key={key} className="transcript-markdown-list">
-            {token.items.map((item: { text: string }, itemIndex: number) => <li key={`${key}-item-${itemIndex}`}>{item.text}</li>)}
+          <ListTag key={key} className={listClassName}>
+            {token.items.map((item: { text: string }, itemIndex: number) => (
+              <li key={`${key}-item-${itemIndex}`} value={token.ordered ? itemIndex + 1 : undefined}>{item.text}</li>
+            ))}
           </ListTag>
         );
       }

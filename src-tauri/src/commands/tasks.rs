@@ -348,13 +348,29 @@ pub async fn comment_on_task(
     if let Some(active_assignment) =
         task_runtime::get_active_lane_assignment(&connection, &task_id)?
     {
-        task_runtime::notify_active_assignment_of_unread_comments(
-            app.clone(),
-            &state,
-            context.session_dir.clone(),
+        if let Some(warning) = task_runtime::notify_or_queue_unread_comment_delivery(
+            &connection,
             &active_assignment,
             &comment,
-        )?;
+            || {
+                task_runtime::notify_active_assignment_of_unread_comments(
+                    app.clone(),
+                    &state,
+                    context.session_dir.clone(),
+                    &active_assignment,
+                    &comment,
+                )
+            },
+        ) {
+            state.log(
+                "warn",
+                "task.comment.notification_failed",
+                &format!(
+                    "Comment {} on task {} was saved, but unread notification delivery degraded: {}",
+                    comment.id, task_id, warning
+                ),
+            );
+        }
         if let Some(session_id) = active_assignment.session_id.clone() {
             emit_session_change(&app, "task.comment.unread", [session_id]);
         }
@@ -618,9 +634,9 @@ pub async fn dispatch_task_lane(
     state: State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDetail, String> {
-    state
-        .sync_pi_runtime_health()
-        .map_err(|error| format!("Unable to dispatch task lane because PI is unavailable: {error}"))?;
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to dispatch task lane because PI is unavailable: {error}")
+    })?;
     let task_id_for_context = task_id.clone();
     let context = tauri::async_runtime::spawn_blocking(move || {
         session_context_for_task_id(&task_id_for_context)
@@ -710,7 +726,10 @@ pub async fn approve_lane_completion(
         state.log(
             "warn",
             "task.transition.auto_dispatch.blocked",
-            &format!("Skipped auto-dispatch after approving task {} because PI is unavailable", task_id),
+            &format!(
+                "Skipped auto-dispatch after approving task {} because PI is unavailable",
+                task_id
+            ),
         );
         Vec::new()
     };
@@ -902,7 +921,10 @@ async fn complete_lane_command(
             state.log(
                 "warn",
                 "task.transition.auto_dispatch.blocked",
-                &format!("Skipped auto-dispatch after transitioning task {} because PI is unavailable", task_id),
+                &format!(
+                    "Skipped auto-dispatch after transitioning task {} because PI is unavailable",
+                    task_id
+                ),
             );
             Vec::new()
         };
