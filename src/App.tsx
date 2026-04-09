@@ -559,6 +559,10 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
+  const chatSessionAgentIdRef = useRef<string | null>(null);
+  const lastKnownChatSessionIdRef = useRef<string | null>(null);
+  const lastKnownChatSessionAgentIdRef = useRef<string | null>(null);
+  const lastKnownChatSessionDraftRef = useRef("");
   const viewedSessionMissingGraceRef = useRef<{ sessionId: string; graceUntil: number } | null>(null);
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
@@ -607,6 +611,19 @@ export function App() {
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
+
+  useEffect(() => {
+    const rememberedSessionId = chatSessionId ?? lastKnownChatSessionIdRef.current;
+    if (chatSessionId) {
+      lastKnownChatSessionIdRef.current = chatSessionId;
+    }
+    if (chatSessionAgentIdRef.current) {
+      lastKnownChatSessionAgentIdRef.current = chatSessionAgentIdRef.current;
+    }
+    if (rememberedSessionId) {
+      lastKnownChatSessionDraftRef.current = draftMessages[rememberedSessionId] ?? lastKnownChatSessionDraftRef.current;
+    }
+  }, [chatSessionId, draftMessages]);
 
   useEffect(() => {
     window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, taskBoardViewMode);
@@ -929,7 +946,11 @@ export function App() {
           : nextSessions[0]?.id ?? null;
         return current === nextSelectedSessionId ? current : nextSelectedSessionId;
       });
+      const hasCurrentChatSession = Boolean(chatSessionId && nextSessions.some((session) => session.id === chatSessionId));
       setChatSessionId((current) => (current && nextSessions.some((session) => session.id === current) ? current : null));
+      if (!hasCurrentChatSession) {
+        chatSessionAgentIdRef.current = null;
+      }
     } catch (error) {
       setSessionActionError(await reportClientError("ui.sessions.load", error, "Unable to load sessions."));
     } finally {
@@ -987,6 +1008,9 @@ export function App() {
       setSessions((current) => current.filter((session) => session.id !== sessionId));
       setSelectedSessionId((current) => (current === sessionId ? null : current));
       setChatSessionId((current) => (current === sessionId ? null : current));
+      if (chatSessionId === sessionId) {
+        chatSessionAgentIdRef.current = null;
+      }
       setPendingRuns((current) => {
         const next = { ...current };
         delete next[sessionId];
@@ -1017,6 +1041,9 @@ export function App() {
       setSessions((current) => current.filter((session) => !closedSessionIds.has(session.id)));
       setSelectedSessionId((current) => (current && closedSessionIds.has(current) ? null : current));
       setChatSessionId((current) => (current && closedSessionIds.has(current) ? null : current));
+      if (chatSessionId && closedSessionIds.has(chatSessionId)) {
+        chatSessionAgentIdRef.current = null;
+      }
       setPendingRuns((current) => {
         const next = { ...current };
         for (const session of closedSessions) {
@@ -1137,6 +1164,10 @@ export function App() {
       setActiveProjectId(activeProjectId);
     }
     setChatSessionId(null);
+    chatSessionAgentIdRef.current = null;
+    lastKnownChatSessionIdRef.current = null;
+    lastKnownChatSessionAgentIdRef.current = null;
+    lastKnownChatSessionDraftRef.current = "";
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -1302,17 +1333,53 @@ export function App() {
       return;
     }
 
+    const hasVisibleChatSession = Boolean(
+      chatSessionId
+      && chatSessionAgentIdRef.current === selectedChatAgentId
+      && chatSession?.id === chatSessionId,
+    );
+    if (hasVisibleChatSession) {
+      return;
+    }
+
+    const missingChatSessionId = chatSessionId ?? lastKnownChatSessionIdRef.current;
+    const missingChatSessionAgentId = chatSessionAgentIdRef.current ?? lastKnownChatSessionAgentIdRef.current;
+    const missingChatDraft = missingChatSessionId
+      ? draftMessages[missingChatSessionId] ?? lastKnownChatSessionDraftRef.current
+      : lastKnownChatSessionDraftRef.current;
     let cancelled = false;
     setLoadingChatSessionAgentId(selectedChatAgentId);
     setSessionActionError(null);
 
-    void ensureAgentSession(selectedChatAgentId, activeProject?.id ?? null)
+    const recoverChatSession = async () => {
+      if (missingChatSessionId && missingChatSessionAgentId === selectedChatAgentId) {
+        try {
+          return await getSessionRecord(missingChatSessionId);
+        } catch {
+          // Fall through to ensure the selected agent session exists.
+        }
+      }
+
+      return ensureAgentSession(selectedChatAgentId, activeProject?.id ?? null);
+    };
+
+    void recoverChatSession()
       .then((session) => {
         if (cancelled) {
           return;
         }
         mergeSessionRecord(session, { select: false });
         setChatSessionId(session.id);
+        chatSessionAgentIdRef.current = selectedChatAgentId;
+        lastKnownChatSessionIdRef.current = session.id;
+        lastKnownChatSessionAgentIdRef.current = selectedChatAgentId;
+        if (missingChatDraft.trim()) {
+          setDraftMessages((current) => ({
+            ...current,
+            [session.id]: current[session.id]?.trim() ? current[session.id] : missingChatDraft,
+          }));
+        }
+        lastKnownChatSessionDraftRef.current = missingChatDraft;
       })
       .catch((error) => {
         if (!cancelled) {
@@ -1328,7 +1395,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, activeProject?.id, isDetachedWindow, mergeSessionRecord, selectedChatAgentId]);
+  }, [activePage, activeProject?.id, chatSession?.id, chatSessionId, draftMessages, isDetachedWindow, mergeSessionRecord, selectedChatAgentId, sessions]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {

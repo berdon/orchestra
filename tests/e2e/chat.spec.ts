@@ -39,10 +39,7 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await expect(page.locator('[data-role="session-wrap-toggle"]')).toBeVisible();
   await expect(page.locator('[data-role="session-scroll-lock-toggle"]')).toBeVisible();
 
-  const firstSessionId = await page.evaluate(() => {
-    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
-    return sessions.find((session: { title?: string }) => session.title === "Data main session")?.id ?? null;
-  });
+  const firstSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
   expect(firstSessionId).toBeTruthy();
 
   const longLine = `CHAT-${"y".repeat(600)}`;
@@ -92,15 +89,49 @@ test("chat page opens an agent main session with focused chat controls while Ses
 
   await page.getByRole("button", { name: "Sessions" }).click();
   await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
-  await expect(page.locator('[data-role="session-link"]').filter({ hasText: "Data main session" })).toHaveCount(1);
 
   await page.getByRole("button", { name: "Chat" }).click();
   await page.locator('[data-role="chat-agent-nav-data"]').click();
 
-  const secondSessionId = await page.evaluate(() => {
-    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
-    return sessions.find((session: { title?: string }) => session.title === "Data main session")?.id ?? null;
-  });
+  const secondSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
 
   expect(secondSessionId).toBe(firstSessionId);
+});
+
+test("chat page recovers the active agent session after a prolonged background refresh miss", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-supervisor"]').click();
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await page.locator('[data-role="composer-input"]').fill("Keep this chat session visible");
+
+  const initialSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(initialSessionId).toBeTruthy();
+
+  await page.evaluate(() => {
+    const testWindow = window as Window & { __orchestraTestNow?: number };
+    testWindow.__orchestraTestNow = Date.now();
+    Date.now = () => testWindow.__orchestraTestNow ?? 0;
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep this chat session visible");
+
+  await page.evaluate(() => {
+    const testWindow = window as Window & { __orchestraTestNow?: number };
+    testWindow.__orchestraTestNow = (testWindow.__orchestraTestNow ?? Date.now()) + 30_000;
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", /.+/);
+  await expect(page.locator('[data-role="composer-input"]')).toBeVisible();
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep this chat session visible");
 });

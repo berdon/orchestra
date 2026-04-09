@@ -371,6 +371,7 @@ export function SessionChatPanel({
     <section
       className={sessionReadOnly ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
       data-role="session-chat-panel"
+      data-session-id={session?.id ?? ""}
       data-terminal-attached={sessionReadOnly ? "true" : "false"}
     >
       {session ? (
