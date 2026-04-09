@@ -1,17 +1,15 @@
-export type OrchestraThemeId = "orchestra-light" | "orchestra-dark" | "orchestra-high-contrast";
 export type OrchestraThemeKind = "light" | "dark" | "high-contrast";
 
 export interface OrchestraThemeDefinition {
-  id: OrchestraThemeId;
+  id: string;
   label: string;
   kind: OrchestraThemeKind;
   colorScheme: "light" | "dark";
 }
 
 export const ORCHESTRA_THEME_STORAGE_KEY = "orchestra.preferences.theme";
-export const DEFAULT_ORCHESTRA_THEME_ID: OrchestraThemeId = "orchestra-dark";
 
-export const BUILT_IN_ORCHESTRA_THEMES: OrchestraThemeDefinition[] = [
+export const BUILT_IN_ORCHESTRA_THEMES = [
   {
     id: "orchestra-light",
     label: "Orchestra Light",
@@ -30,14 +28,100 @@ export const BUILT_IN_ORCHESTRA_THEMES: OrchestraThemeDefinition[] = [
     kind: "high-contrast",
     colorScheme: "dark",
   },
-];
+  {
+    id: "vscode-light-plus",
+    label: "VS Code Light+",
+    kind: "light",
+    colorScheme: "light",
+  },
+  {
+    id: "vscode-dark-plus",
+    label: "VS Code Dark+",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "one-dark-pro",
+    label: "One Dark Pro",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "dracula",
+    label: "Dracula",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "gruvbox-dark",
+    label: "Gruvbox Dark",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "gruvbox-light",
+    label: "Gruvbox Light",
+    kind: "light",
+    colorScheme: "light",
+  },
+  {
+    id: "solarized-dark",
+    label: "Solarized Dark",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "solarized-light",
+    label: "Solarized Light",
+    kind: "light",
+    colorScheme: "light",
+  },
+  {
+    id: "nord",
+    label: "Nord",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "tokyo-night",
+    label: "Tokyo Night",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "catppuccin-mocha",
+    label: "Catppuccin Mocha",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+  {
+    id: "catppuccin-latte",
+    label: "Catppuccin Latte",
+    kind: "light",
+    colorScheme: "light",
+  },
+  {
+    id: "monokai",
+    label: "Monokai",
+    kind: "dark",
+    colorScheme: "dark",
+  },
+] as const satisfies readonly OrchestraThemeDefinition[];
+
+export type OrchestraThemeId = (typeof BUILT_IN_ORCHESTRA_THEMES)[number]["id"];
+
+export const DEFAULT_ORCHESTRA_THEME_ID: OrchestraThemeId = "orchestra-dark";
 
 const BUILT_IN_ORCHESTRA_THEME_MAP = new Map<OrchestraThemeId, OrchestraThemeDefinition>(
   BUILT_IN_ORCHESTRA_THEMES.map((theme) => [theme.id, theme]),
 );
 
+const BUILT_IN_ORCHESTRA_THEME_IDS = new Set<OrchestraThemeId>(
+  BUILT_IN_ORCHESTRA_THEMES.map((theme) => theme.id),
+);
+
 export function isOrchestraThemeId(value: string | null | undefined): value is OrchestraThemeId {
-  return value === "orchestra-light" || value === "orchestra-dark" || value === "orchestra-high-contrast";
+  return Boolean(value && BUILT_IN_ORCHESTRA_THEME_IDS.has(value as OrchestraThemeId));
 }
 
 export function getOrchestraThemeDefinition(themeId: OrchestraThemeId): OrchestraThemeDefinition {

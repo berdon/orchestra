@@ -28,7 +28,7 @@ function getStatusTone(status: string) {
 export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCardProps) {
   return (
     <button
-      className="task-compact-card"
+      className="task-compact-card task-overview-card"
       data-role="task-card"
       data-task-id={task.id}
       type="button"

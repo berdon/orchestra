@@ -16,6 +16,19 @@ describe("theme helpers", () => {
       "orchestra-light",
       "orchestra-dark",
       "orchestra-high-contrast",
+      "vscode-light-plus",
+      "vscode-dark-plus",
+      "one-dark-pro",
+      "dracula",
+      "gruvbox-dark",
+      "gruvbox-light",
+      "solarized-dark",
+      "solarized-light",
+      "nord",
+      "tokyo-night",
+      "catppuccin-mocha",
+      "catppuccin-latte",
+      "monokai",
     ]);
   });
 
@@ -76,6 +89,16 @@ describe("theme helpers", () => {
     });
     expect(getOrchestraThemeDefinition("orchestra-dark")).toMatchObject({
       id: "orchestra-dark",
+      kind: "dark",
+      colorScheme: "dark",
+    });
+    expect(getOrchestraThemeDefinition("catppuccin-latte")).toMatchObject({
+      id: "catppuccin-latte",
+      kind: "light",
+      colorScheme: "light",
+    });
+    expect(getOrchestraThemeDefinition("tokyo-night")).toMatchObject({
+      id: "tokyo-night",
       kind: "dark",
       colorScheme: "dark",
     });
