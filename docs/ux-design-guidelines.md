@@ -13,6 +13,7 @@ Use it when:
 
 This is a companion to:
 - [UX north star](./ux-north-star.md) for product/experience intent
+- [UX first-pass implementation plan](./ux-first-pass-implementation-plan.md) for rollout sequencing
 - [Design draft](./design.md) for domain and information architecture
 
 ## Desired product feel
