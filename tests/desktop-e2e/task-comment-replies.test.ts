@@ -6,6 +6,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   setInputValue,
   waitForText,
@@ -44,13 +45,24 @@ describe("desktop task comment replies", () => {
 
       await setInputValue(sessionId, '[data-role="task-comment-author"]', 'Reviewer');
       await setInputValue(sessionId, '[data-role="task-comment-message"]', 'Please split this into smaller steps.');
-      await clickSelector(sessionId, '[data-role="add-task-comment"]');
+      await executeScript(sessionId, `
+        const textarea = document.querySelector('[data-role="task-comment-message"]');
+        if (!(textarea instanceof HTMLTextAreaElement)) return false;
+        textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+        return true;
+      `);
       await waitForText(sessionId, 'Please split this into smaller steps.');
 
-      await clickSelector(sessionId, '[data-role="reply-task-comment"]');
+      await clickByText(sessionId, '[role="tab"]', 'Repo files');
+      await clickSelector(sessionId, '[data-role="reply-task-comment-summary"]');
       await setInputValue(sessionId, '[data-role="task-reply-author"]', 'Worker');
       await setInputValue(sessionId, '[data-role="task-reply-message"]', 'Split complete; follow-up tasks are queued.');
-      await clickSelector(sessionId, '[data-role="add-task-reply"]');
+      await executeScript(sessionId, `
+        const textarea = document.querySelector('[data-role="task-reply-message"]');
+        if (!(textarea instanceof HTMLTextAreaElement)) return false;
+        textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+        return true;
+      `);
 
       await waitForText(sessionId, 'Worker');
       await waitForText(sessionId, 'Split complete; follow-up tasks are queued.');

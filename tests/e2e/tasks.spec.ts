@@ -794,15 +794,17 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("Pause and re-check the task context before you continue.");
   await page.locator('[data-role="task-comment-interrupt"]').check();
-  await page.locator('[data-role="add-task-comment"]').click();
+  await page.locator('[data-role="task-comment-message"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Reviewer");
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Interrupt requested");
 
-  await page.locator('[data-role="reply-task-comment"]').first().click();
+  await page.locator('[data-role="task-detail-tab-repo-files"]').click();
+  await page.locator('[data-role="reply-task-comment-summary"]').first().click();
+  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute("aria-selected", "true");
   await page.locator('[data-role="task-reply-author"]').fill("Worker");
   await page.locator('[data-role="task-reply-message"]').fill("I checked the task context and updated the plan.");
-  await page.locator('[data-role="add-task-reply"]').click();
+  await page.locator('[data-role="task-reply-message"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Worker");
   await expect(page.locator('[data-role="task-comment-reply"]')).toContainText("I checked the task context and updated the plan.");

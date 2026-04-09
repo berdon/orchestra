@@ -5,6 +5,7 @@ interface TaskCommentComposerProps {
   message: string;
   onMessageChange: (message: string) => void;
   onSubmit: () => void;
+  submitShortcutHint?: string;
   submitLabel: string;
   submitDataRole: string;
   messageLabel: string;
@@ -32,6 +33,7 @@ export function TaskCommentComposer({
   message,
   onMessageChange,
   onSubmit,
+  submitShortcutHint = "Press Ctrl+Enter or ⌘+Enter to send.",
   submitLabel,
   submitDataRole,
   messageLabel,
@@ -84,7 +86,9 @@ export function TaskCommentComposer({
           listDataRole={mentionListDataRole}
           optionDataRole={mentionOptionDataRole}
           onChange={onMessageChange}
+          onSubmitShortcut={onSubmit}
         />
+        <span className="field-group__hint muted-copy">{submitShortcutHint}</span>
       </label>
 
       <div className="task-comment-composer__actions">
