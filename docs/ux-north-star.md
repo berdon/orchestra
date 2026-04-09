@@ -1,5 +1,7 @@
 # Orchestra UX North Star
 
+Companion doc: [UX design guidelines](./ux-design-guidelines.md)
+
 ## UX objective
 
 Orchestra should make multi-agent project execution feel clear, calm, and steerable.
