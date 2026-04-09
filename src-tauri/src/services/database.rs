@@ -347,9 +347,6 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_tasks_parent
                 ON tasks(parent_task_id);
 
-            CREATE INDEX IF NOT EXISTS idx_tasks_source_schedule_id
-                ON tasks(source_schedule_id, created_at DESC);
-
             CREATE TABLE IF NOT EXISTS task_comments (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -1995,6 +1992,75 @@ mod tests {
                 ("role".into(), Some("reviewer".into())),
             ]
         );
+    }
+
+    #[test]
+    fn migrates_legacy_tasks_table_and_adds_schedule_source_columns() {
+        let path = unique_temp_db("tasks-schedule-migration");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL,
+                    number TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    workflow_id TEXT,
+                    current_lane_id TEXT,
+                    assignee_type TEXT NOT NULL,
+                    assignee_id TEXT,
+                    repository_id TEXT,
+                    parent_task_id TEXT,
+                    whip_max_attempts INTEGER NOT NULL DEFAULT 10,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status, priority,
+                    workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id,
+                    whip_max_attempts, archived, created_at, updated_at
+                ) VALUES (
+                    'task-1', 'orchestra', 1, 'ORC-1', 'Legacy task', NULL, 'task', 'ready', 'P2',
+                    NULL, NULL, 'user', NULL, NULL, NULL,
+                    10, 0, '2026-03-18T00:00:00Z', '2026-03-18T00:00:00Z'
+                );
+                "#,
+            )
+            .expect("legacy tasks table should seed");
+        drop(connection);
+
+        initialize_database_at(&path).expect("database migration should succeed");
+        let connection = Connection::open(&path).expect("migrated database should open");
+
+        let columns = table_columns(&connection, "tasks").expect("tasks columns should load");
+        for expected in ["source_schedule_id", "source_schedule_occurrence_id"] {
+            assert!(
+                columns.contains(expected),
+                "missing expected tasks column: {expected}"
+            );
+        }
+
+        let indexes = connection
+            .prepare("PRAGMA index_list('tasks')")
+            .expect("index query should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("index query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("indexes should collect");
+        assert!(indexes
+            .iter()
+            .any(|name| name == "idx_tasks_source_schedule_id"));
     }
 
     #[test]
