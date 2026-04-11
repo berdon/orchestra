@@ -1011,6 +1011,10 @@ strong {
   min-height: 0;
 }
 
+.log-panel__filter {
+  min-width: 180px;
+}
+
 .settings-log-actions {
   display: flex;
   align-items: flex-start;

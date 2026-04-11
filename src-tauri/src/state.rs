@@ -7,10 +7,8 @@ use std::{
 use crate::{
     models::{AuthorizationContext, LogEntry},
     services::{
-        agent_terminal::AgentTerminalSession,
-        channels::ChannelRuntimeHandle,
-        live_sessions::SessionRuntime,
-        tool_bridge::ToolBridgeConfig,
+        agent_terminal::AgentTerminalSession, channels::ChannelRuntimeHandle,
+        live_sessions::SessionRuntime, tool_bridge::ToolBridgeConfig,
     },
 };
 
@@ -35,10 +33,18 @@ pub fn generate_id(prefix: &str) -> String {
     format!("{}-{}", prefix, chrono::Utc::now().timestamp_micros())
 }
 
+fn normalize_log_level(_level: &str, target: &str) -> &'static str {
+    if target == "sessions.rpc.event" {
+        "debug"
+    } else {
+        "info"
+    }
+}
+
 fn create_log(level: &str, target: &str, message: &str) -> LogEntry {
     LogEntry {
         id: generate_id("log"),
-        level: level.into(),
+        level: normalize_log_level(level, target).into(),
         target: target.into(),
         message: message.into(),
         timestamp: now_iso(),
@@ -104,7 +110,11 @@ impl AppState {
         );
     }
 
-    pub fn set_session_subscription(&self, session_id: &str, subscribed: bool) -> Result<(), String> {
+    pub fn set_session_subscription(
+        &self,
+        session_id: &str,
+        subscribed: bool,
+    ) -> Result<(), String> {
         let mut sessions = self
             .subscribed_sessions
             .lock()
@@ -146,7 +156,10 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access active session run state".to_string())?;
 
-        if active_runs.get(session_id).is_some_and(|current| current == run_id) {
+        if active_runs
+            .get(session_id)
+            .is_some_and(|current| current == run_id)
+        {
             active_runs.remove(session_id);
         }
 
@@ -205,7 +218,11 @@ impl AppState {
             .map(|windows| windows.keys().cloned().collect())
     }
 
-    pub fn insert_terminal_session(&self, session_id: &str, session: Arc<AgentTerminalSession>) -> Result<(), String> {
+    pub fn insert_terminal_session(
+        &self,
+        session_id: &str,
+        session: Arc<AgentTerminalSession>,
+    ) -> Result<(), String> {
         self.terminal_sessions
             .lock()
             .map_err(|_| "Unable to access terminal session state".to_string())?
@@ -213,14 +230,20 @@ impl AppState {
         Ok(())
     }
 
-    pub fn get_terminal_session(&self, session_id: &str) -> Result<Option<Arc<AgentTerminalSession>>, String> {
+    pub fn get_terminal_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<AgentTerminalSession>>, String> {
         self.terminal_sessions
             .lock()
             .map_err(|_| "Unable to access terminal session state".to_string())
             .map(|sessions| sessions.get(session_id).cloned())
     }
 
-    pub fn remove_terminal_session(&self, session_id: &str) -> Result<Option<Arc<AgentTerminalSession>>, String> {
+    pub fn remove_terminal_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<AgentTerminalSession>>, String> {
         self.terminal_sessions
             .lock()
             .map_err(|_| "Unable to access terminal session state".to_string())
@@ -288,7 +311,10 @@ impl AppState {
         Ok(())
     }
 
-    pub fn remove_session_runtime(&self, session_id: &str) -> Result<Option<Arc<SessionRuntime>>, String> {
+    pub fn remove_session_runtime(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<SessionRuntime>>, String> {
         self.session_runtimes
             .lock()
             .map_err(|_| "Unable to access session runtime state".to_string())

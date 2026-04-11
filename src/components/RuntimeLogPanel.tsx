@@ -1,3 +1,5 @@
+import { useMemo, useState } from "react";
+
 import type { LogEntry, LogLevel } from "../types";
 
 interface RuntimeLogPanelProps {
@@ -14,6 +16,13 @@ interface RuntimeLogPanelProps {
   onExport?: () => void;
 }
 
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+};
+
 function formatLogLevelCode(level: LogLevel) {
   switch (level) {
     case "debug":
@@ -24,6 +33,19 @@ function formatLogLevelCode(level: LogLevel) {
       return "E";
     default:
       return "I";
+  }
+}
+
+function formatLogLevelLabel(level: LogLevel) {
+  switch (level) {
+    case "debug":
+      return "Debug and above";
+    case "warn":
+      return "Warn and above";
+    case "error":
+      return "Error only";
+    default:
+      return "Info and above";
   }
 }
 
@@ -55,6 +77,13 @@ export function RuntimeLogPanel({
   onToggleIncludeRelatedSessionSnapshot,
   onExport,
 }: RuntimeLogPanelProps) {
+  const [minimumLevel, setMinimumLevel] = useState<LogLevel>("info");
+
+  const filteredLogs = useMemo(
+    () => logs.filter((entry) => LOG_LEVEL_PRIORITY[entry.level] >= LOG_LEVEL_PRIORITY[minimumLevel]),
+    [logs, minimumLevel],
+  );
+
   return (
     <section className="panel log-panel">
       <div className="panel__header">
@@ -64,6 +93,21 @@ export function RuntimeLogPanel({
         </div>
 
         <div className="action-cluster">
+          <label className="field-group field-group--compact log-panel__filter">
+            <span className="field-group__label">Log level</span>
+            <select
+              className="select-input"
+              data-role="runtime-log-level-filter"
+              value={minimumLevel}
+              onChange={(event) => setMinimumLevel(event.target.value as LogLevel)}
+              disabled={loadingLogs || clearingLogs || exportingLogs}
+            >
+              <option value="debug">Debug and above</option>
+              <option value="info">Info and above</option>
+              <option value="warn">Warn and above</option>
+              <option value="error">Error only</option>
+            </select>
+          </label>
           <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingLogs || clearingLogs || exportingLogs}>
             Refresh
           </button>
@@ -77,6 +121,8 @@ export function RuntimeLogPanel({
           </button>
         </div>
       </div>
+
+      <p className="muted-copy">Showing {formatLogLevelLabel(minimumLevel)}.</p>
 
       {onToggleIncludeRelatedSessionSnapshot ? (
         <label className="checkbox-row" data-role="runtime-log-export-include-related">
@@ -93,9 +139,10 @@ export function RuntimeLogPanel({
       {exportErrorMessage ? <p className="error-copy" data-role="runtime-log-export-error">{exportErrorMessage}</p> : null}
       {loadingLogs ? <p className="muted-copy">Loading logs…</p> : null}
       {!loadingLogs && logs.length === 0 ? <p className="muted-copy">No logs yet.</p> : null}
+      {!loadingLogs && logs.length > 0 && filteredLogs.length === 0 ? <p className="muted-copy">No logs match the selected level.</p> : null}
 
       <div className="log-list" role="log" aria-live="polite" data-role="runtime-log-list">
-        {logs.map((entry) => (
+        {filteredLogs.map((entry) => (
           <div className={`log-line log-line--${entry.level}`} key={entry.id} data-role="runtime-log-line">
             <span className="log-line__level">[{formatLogLevelCode(entry.level)}]</span>{" "}
             <time dateTime={entry.timestamp}>{formatLogTimestamp(entry.timestamp)}</time>{" "}
