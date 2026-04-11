@@ -723,6 +723,12 @@ export function TaskDetailPage({
     loadFileContent(reference);
   }
 
+  function handleScrollToTaskDetails() {
+    window.requestAnimationFrame(() => {
+      primaryHeaderRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+
   function handleTabSelect(tabId: TaskDetailTab) {
     setActiveTab(tabId);
     window.requestAnimationFrame(() => {
@@ -1791,6 +1797,14 @@ export function TaskDetailPage({
       {stickyChromeStyle ? (
         <div className="task-detail-tab-dock" data-role="task-detail-tab-dock" style={stickyChromeStyle}>
           <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Task detail panels">
+            <button
+              className="task-detail-tab task-detail-tab--jump"
+              data-role="task-detail-tab-summary"
+              type="button"
+              onClick={handleScrollToTaskDetails}
+            >
+              Task details
+            </button>
             {TAB_OPTIONS.map((tab) => (
               <button
                 key={tab.id}
