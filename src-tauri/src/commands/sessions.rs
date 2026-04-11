@@ -1,21 +1,25 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::{Duration, Utc};
 use rusqlite::{params, OptionalExtension};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord},
     services::{
-        app_events, database, domain_events,
+        agent_runtime, agents, app_events, database, domain_events,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
             list_sessions as list_real_sessions, set_session_model as apply_session_model,
         },
-        task_runtime,
+        role_dispatch, role_runtime, roles, task_runtime,
     },
     state::AppState,
 };
@@ -50,6 +54,36 @@ fn session_project_id(connection: &rusqlite::Connection, session_id: &str) -> Op
         .optional()
         .ok()
         .flatten()
+}
+
+fn project_id_for_slug(connection: &rusqlite::Connection, project_slug: &str) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
+            [project_slug],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+}
+
+struct ContextualSessionCreation {
+    project_root: PathBuf,
+    session_dir: PathBuf,
+    new_session_id: String,
+    rotated_from_session_id: Option<String>,
+    affected_task_id: Option<String>,
+    project_id: Option<String>,
+}
+
+fn ensure_session_runtime_root(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|error| {
+        format!(
+            "Unable to create session runtime root {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn load_session_debug_info(
@@ -522,19 +556,17 @@ pub async fn create_session(
         ),
     );
     if let Ok(connection) = database::open_connection() {
-        let project_id = project_slug
-            .as_deref()
-            .and_then(|slug| {
-                connection
-                    .query_row(
-                        "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
-                        [slug],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()
-                    .ok()
-                    .flatten()
-            });
+        let project_id = project_slug.as_deref().and_then(|slug| {
+            connection
+                .query_row(
+                    "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
+                    [slug],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .ok()
+                .flatten()
+        });
         record_session_domain_event(
             &connection,
             &created.record.id,
@@ -559,6 +591,477 @@ pub async fn create_session(
     })
     .await
     .map_err(|error| format!("Unable to join create_session record task: {error}"))??;
+
+    Ok(decorated_record)
+}
+
+#[tauri::command]
+pub async fn create_contextual_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    project_slug: Option<String>,
+) -> Result<SessionRecord, String> {
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to create a new session because PI is unavailable: {error}")
+    })?;
+
+    if state.get_terminal_window_label(&session_id)?.is_some() {
+        return Err(
+            "Close the embedded terminal window before creating a new worker session here.".into(),
+        );
+    }
+
+    let session_id_for_task = session_id.clone();
+    let project_slug_for_task = project_slug.clone();
+    let prepared = spawn_blocking(move || {
+        let mut connection = database::open_connection()?;
+        let old_context = find_session_context_for_session(&session_id_for_task)?;
+        let old_record = get_session(&old_context.session_dir, &session_id_for_task, false)?;
+        let now = crate::state::now_iso();
+
+        if let Some(assignment) =
+            task_runtime::get_active_assignment_for_session(&connection, &session_id_for_task)?
+        {
+            let runtime_root = assignment
+                .runtime_cwd
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| old_context.project_root.clone());
+            ensure_session_runtime_root(&runtime_root)?;
+            let created = create_session_file(
+                &runtime_root,
+                &old_context.session_dir,
+                Some(old_record.title.as_str()),
+                false,
+            )?;
+
+            let assignment_result = match assignment.worker_type.as_str() {
+                "agent" => {
+                    let agent_id = assignment.worker_id.as_deref().ok_or_else(|| {
+                        format!("Assignment {} is missing an agent id", assignment.id)
+                    })?;
+                    let task = crate::services::tasks::get_task_context(
+                        &connection,
+                        &assignment.task_id,
+                    )?;
+                    let agent = agents::get_agent(&connection, agent_id)?;
+                    task_runtime::apply_agent_session_defaults(
+                        &runtime_root,
+                        &old_context.session_dir,
+                        &created.record.id,
+                        &agent,
+                    )?;
+
+                    let tx = connection.transaction().map_err(|error| {
+                        format!(
+                            "Unable to start contextual agent session rotation transaction: {error}"
+                        )
+                    })?;
+                    let runtime_state = agent_runtime::get_agent_runtime_state_for_project(
+                        &tx,
+                        &task.project_id,
+                        agent_id,
+                    )?
+                    .ok_or_else(|| {
+                        format!(
+                            "Agent runtime state for {} in project {} was not found",
+                            agent_id, task.project_id
+                        )
+                    })?;
+                    let runtime_cwd = runtime_state
+                        .runtime_cwd
+                        .clone()
+                        .unwrap_or_else(|| runtime_root.display().to_string());
+                    let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
+                        &tx,
+                        &task.project_id,
+                        agent_id,
+                        Some(&created.record.id),
+                        Some(runtime_cwd.as_str()),
+                        runtime_state.current_queue_entry_id.as_deref(),
+                        &runtime_state.status,
+                        runtime_state.last_error.as_deref(),
+                    )?;
+                    task_runtime::rotate_open_assignment_session(
+                        &tx,
+                        &assignment,
+                        &created.record.id,
+                        &now,
+                    )?;
+                    tx.commit().map_err(|error| {
+                        format!(
+                            "Unable to commit contextual agent session rotation for task {}: {error}",
+                            assignment.task_id
+                        )
+                    })?;
+                    Ok::<_, String>(task.project_id)
+                }
+                "role" => {
+                    let role_instance_id = assignment.role_instance_id.as_deref().ok_or_else(|| {
+                        format!(
+                            "Assignment {} is missing a role instance id",
+                            assignment.id
+                        )
+                    })?;
+                    let role_instance =
+                        role_runtime::get_role_instance(&connection, role_instance_id)?;
+                    let role = roles::get_role(&connection, &role_instance.role_id)?;
+                    role_dispatch::apply_role_session_defaults(
+                        &runtime_root,
+                        &old_context.session_dir,
+                        &created.record.id,
+                        &role,
+                    )?;
+
+                    let task = crate::services::tasks::get_task_context(
+                        &connection,
+                        &assignment.task_id,
+                    )?;
+                    let tx = connection.transaction().map_err(|error| {
+                        format!(
+                            "Unable to start contextual role session rotation transaction: {error}"
+                        )
+                    })?;
+                    tx.execute(
+                        "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
+                        params![role_instance.id, created.record.id, now],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Unable to rotate role instance session {}: {error}",
+                            role_instance.id
+                        )
+                    })?;
+                    task_runtime::rotate_open_assignment_session(
+                        &tx,
+                        &assignment,
+                        &created.record.id,
+                        &now,
+                    )?;
+                    tx.commit().map_err(|error| {
+                        format!(
+                            "Unable to commit contextual role session rotation for task {}: {error}",
+                            assignment.task_id
+                        )
+                    })?;
+                    Ok::<_, String>(task.project_id)
+                }
+                other => Err(format!(
+                    "Unsupported assignment worker type {other} for session rotation"
+                )),
+            };
+
+            let project_id = match assignment_result {
+                Ok(project_id) => project_id,
+                Err(error) => {
+                    let _ = delete_session_file(&old_context.session_dir, &created.record.id);
+                    return Err(error);
+                }
+            };
+
+            return Ok::<_, String>(ContextualSessionCreation {
+                project_root: runtime_root,
+                session_dir: old_context.session_dir,
+                new_session_id: created.record.id,
+                rotated_from_session_id: Some(session_id_for_task),
+                affected_task_id: Some(assignment.task_id),
+                project_id: Some(project_id),
+            });
+        }
+
+        let scoped_project_id = project_slug_for_task
+            .as_deref()
+            .and_then(|slug| project_id_for_slug(&connection, slug))
+            .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
+        let agent_runtime_row = if let Some(project_id) = scoped_project_id.as_deref() {
+            connection
+                .query_row(
+                    r#"
+                    SELECT project_id, agent_id
+                    FROM agent_runtime_states
+                    WHERE main_session_id = ?1 AND project_id = ?2
+                    LIMIT 1
+                    "#,
+                    params![session_id_for_task.as_str(), project_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to resolve scoped agent runtime for session {}: {error}",
+                        session_id_for_task
+                    )
+                })?
+        } else {
+            connection
+                .query_row(
+                    r#"
+                    SELECT project_id, agent_id
+                    FROM agent_runtime_states
+                    WHERE main_session_id = ?1
+                    LIMIT 1
+                    "#,
+                    [session_id_for_task.as_str()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to resolve agent runtime for session {}: {error}",
+                        session_id_for_task
+                    )
+                })?
+        };
+
+        if let Some((project_id, agent_id)) = agent_runtime_row {
+            let runtime_state = agent_runtime::get_agent_runtime_state_for_project(
+                &connection,
+                &project_id,
+                &agent_id,
+            )?
+            .ok_or_else(|| {
+                format!(
+                    "Agent runtime state for {} in project {} was not found",
+                    agent_id, project_id
+                )
+            })?;
+            let agent = agents::get_agent(&connection, &agent_id)?;
+            let runtime_root = runtime_state
+                .runtime_cwd
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| old_context.project_root.clone());
+            ensure_session_runtime_root(&runtime_root)?;
+            let created = create_session_file(
+                &runtime_root,
+                &old_context.session_dir,
+                Some(old_record.title.as_str()),
+                false,
+            )?;
+            let runtime_cwd = runtime_state
+                .runtime_cwd
+                .clone()
+                .unwrap_or_else(|| runtime_root.display().to_string());
+            let update_result = (|| {
+                task_runtime::apply_agent_session_defaults(
+                    &runtime_root,
+                    &old_context.session_dir,
+                    &created.record.id,
+                    &agent,
+                )?;
+                let tx = connection.transaction().map_err(|error| {
+                    format!(
+                        "Unable to start contextual agent main-session rotation transaction: {error}"
+                    )
+                })?;
+                let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
+                    &tx,
+                    &project_id,
+                    &agent_id,
+                    Some(&created.record.id),
+                    Some(runtime_cwd.as_str()),
+                    runtime_state.current_queue_entry_id.as_deref(),
+                    &runtime_state.status,
+                    runtime_state.last_error.as_deref(),
+                )?;
+                tx.commit().map_err(|error| {
+                    format!(
+                        "Unable to commit contextual agent main-session rotation for project {}: {error}",
+                        project_id
+                    )
+                })?;
+                Ok::<_, String>(())
+            })();
+            if let Err(error) = update_result {
+                let _ = delete_session_file(&old_context.session_dir, &created.record.id);
+                return Err(error);
+            }
+
+            return Ok(ContextualSessionCreation {
+                project_root: runtime_root,
+                session_dir: old_context.session_dir,
+                new_session_id: created.record.id,
+                rotated_from_session_id: Some(session_id_for_task),
+                affected_task_id: None,
+                project_id: Some(project_id),
+            });
+        }
+
+        let role_instance_row = connection
+            .query_row(
+                r#"
+                SELECT id, role_id, worktree_path
+                FROM role_instances
+                WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle')
+                LIMIT 1
+                "#,
+                [session_id_for_task.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to resolve role instance for session {}: {error}",
+                    session_id_for_task
+                )
+            })?;
+
+        if let Some((role_instance_id, role_id, worktree_path)) = role_instance_row {
+            let role = roles::get_role(&connection, &role_id)?;
+            let runtime_root = worktree_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| old_context.project_root.clone());
+            ensure_session_runtime_root(&runtime_root)?;
+            let created = create_session_file(
+                &runtime_root,
+                &old_context.session_dir,
+                Some(old_record.title.as_str()),
+                false,
+            )?;
+            let role_project_id = session_project_id(&connection, &session_id_for_task);
+            let update_result = (|| {
+                role_dispatch::apply_role_session_defaults(
+                    &runtime_root,
+                    &old_context.session_dir,
+                    &created.record.id,
+                    &role,
+                )?;
+                let tx = connection.transaction().map_err(|error| {
+                    format!(
+                        "Unable to start contextual role-session rotation transaction: {error}"
+                    )
+                })?;
+                tx.execute(
+                    "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![role_instance_id, created.record.id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to update role instance {} to the rotated session: {error}",
+                        role_instance_id
+                    )
+                })?;
+                tx.commit().map_err(|error| {
+                    format!(
+                        "Unable to commit contextual role-session rotation for instance {}: {error}",
+                        role_instance_id
+                    )
+                })?;
+                Ok::<_, String>(())
+            })();
+            if let Err(error) = update_result {
+                let _ = delete_session_file(&old_context.session_dir, &created.record.id);
+                return Err(error);
+            }
+
+            let prior_session_id = session_id_for_task.clone();
+            return Ok(ContextualSessionCreation {
+                project_root: runtime_root,
+                session_dir: old_context.session_dir,
+                new_session_id: created.record.id,
+                rotated_from_session_id: Some(prior_session_id),
+                affected_task_id: None,
+                project_id: role_project_id,
+            });
+        }
+
+        let context = if let Some(project_slug) = project_slug_for_task.as_deref() {
+            detect_session_context(Some(project_slug))?
+        } else {
+            old_context
+        };
+        let created = create_session_file(
+            &context.project_root,
+            &context.session_dir,
+            None,
+            false,
+        )?;
+
+        Ok(ContextualSessionCreation {
+            project_root: context.project_root,
+            session_dir: context.session_dir,
+            new_session_id: created.record.id,
+            rotated_from_session_id: None,
+            affected_task_id: None,
+            project_id: project_id_for_slug(&connection, &context.project_slug),
+        })
+    })
+    .await
+    .map_err(|error| format!("Unable to join create_contextual_session task: {error}"))??;
+
+    if let Some(previous_session_id) = prepared.rotated_from_session_id.as_deref() {
+        if let Some(runtime) = state.remove_session_runtime(previous_session_id)? {
+            runtime.shutdown();
+        }
+        state.clear_active_session_run(previous_session_id)?;
+        state.set_session_subscription(previous_session_id, false)?;
+    }
+
+    state.set_session_subscription(&prepared.new_session_id, true)?;
+    let runtime = ensure_runtime(
+        &state.session_runtimes,
+        app.clone(),
+        prepared.project_root,
+        prepared.session_dir.clone(),
+        &prepared.new_session_id,
+    )?;
+    runtime.set_subscribed(true);
+
+    let project_id = prepared.project_id.clone();
+    let rotated_from_session_id = prepared.rotated_from_session_id.clone();
+    let affected_task_id = prepared.affected_task_id.clone();
+    let session_dir = prepared.session_dir.clone();
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let new_session_id_for_task = prepared.new_session_id.clone();
+    let decorated_record = spawn_blocking(move || {
+        load_decorated_session_record(
+            &session_dir,
+            &new_session_id_for_task,
+            true,
+            &terminal_attached_session_ids,
+        )
+    })
+    .await
+    .map_err(|error| format!("Unable to join create_contextual_session record task: {error}"))??;
+
+    state.log(
+        "info",
+        "sessions.create_contextual",
+        &format!(
+            "Created contextual successor session {} from {}",
+            decorated_record.id, session_id
+        ),
+    );
+    if let Ok(connection) = database::open_connection() {
+        record_session_domain_event(
+            &connection,
+            &decorated_record.id,
+            "session.created",
+            project_id,
+            json!({
+                "sessionId": decorated_record.id.clone(),
+                "title": decorated_record.title.clone(),
+                "replacedSessionId": rotated_from_session_id.clone(),
+            }),
+        );
+    }
+
+    let changed_session_ids = rotated_from_session_id
+        .into_iter()
+        .chain(std::iter::once(decorated_record.id.clone()))
+        .collect::<Vec<_>>();
+    let _ =
+        app_events::emit_session_change(&app, "sessions.create_contextual", changed_session_ids);
+    if let Some(task_id) = affected_task_id {
+        let _ = app_events::emit_task_change(&app, "task.assignment.session_rotated", [task_id]);
+    }
 
     Ok(decorated_record)
 }
@@ -1271,7 +1774,7 @@ mod tests {
     }
 
     #[test]
-    fn closes_sessions_waiting_on_user_approval() {
+    fn keeps_sessions_waiting_on_user_approval_open() {
         let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
 
@@ -1337,7 +1840,7 @@ mod tests {
         )
         .expect("session decoration should succeed");
 
-        assert_eq!(decorated.status, "closed");
+        assert_eq!(decorated.status, "active");
     }
 
     #[test]

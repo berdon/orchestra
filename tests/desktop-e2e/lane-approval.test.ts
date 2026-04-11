@@ -144,7 +144,7 @@ describe("desktop approval-gated workflow lanes", () => {
       const waitingRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
       expect(waitingRoleOps.activeInstanceCount).toBe(0);
       const waitingSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
-      expect(waitingSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('closed');
+      expect(waitingSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('active');
       await clickSelector(sessionId, '[data-role="send-task-back-for-work"]');
 
       const reworkedTask = await waitForCondition(

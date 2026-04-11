@@ -8,12 +8,26 @@ import {
   ensureReactReady,
   executeScript,
   setInputValue,
+  sleep,
   waitForSelector,
   waitForText,
 } from "./driver";
 import { createRoleViaSettings } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
+
+async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | undefined;
+  while (Date.now() < deadline) {
+    lastValue = await callback();
+    if (predicate(lastValue)) {
+      return lastValue;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue)}`);
+}
 
 describe("desktop agent chat navigation", () => {
   it.skipIf(!isDesktopE2E)("opens focused agent chat from Chat nav and keeps Sessions available for debugging", async () => {
@@ -87,6 +101,25 @@ describe("desktop agent chat navigation", () => {
       expect(resumedAutoScroll.autoScrollMode).toBe('on');
       expect(resumedAutoScroll.scrollLocked).toBe('true');
 
+      const firstChatSessionId = await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
+      `);
+      expect(firstChatSessionId).toBeTruthy();
+
+      await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
+      await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
+      await clickSelector(sessionId, '[data-role="session-action-new"]');
+      await waitForText(sessionId, 'Supervisor chat');
+
+      const secondChatSessionId = await waitForCondition(
+        () => executeScript<string>(sessionId, `
+          return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
+        `),
+        (value) => Boolean(value) && value !== firstChatSessionId,
+      );
+      expect(secondChatSessionId).toBeTruthy();
+      expect(secondChatSessionId).not.toBe(firstChatSessionId);
+
       const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
       await setInputValue(sessionId, '[data-role="composer-input"]', longLine);
       await clickSelector(sessionId, '[data-role="send-message"]');
@@ -100,20 +133,21 @@ describe("desktop agent chat navigation", () => {
         return Array.from(document.querySelectorAll('[data-role="session-link"]'))
           .filter((entry) => (entry.textContent || '').includes('Supervisor main session')).length;
       `);
-      expect(firstSessionCount).toBe(1);
+      expect(firstSessionCount).toBe(2);
+
+      const selectedSessionId = await executeScript<string>(sessionId, `
+        return document.querySelector('.session-list-link--active[data-role="session-link"]')?.getAttribute('data-session-id') || '';
+      `);
+      expect(selectedSessionId).toBe(secondChatSessionId);
 
       await clickByText(sessionId, 'button', 'Chat');
       await clickSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
       await waitForText(sessionId, 'Supervisor chat');
 
-      await clickByText(sessionId, 'button', 'Sessions');
-      await waitForText(sessionId, 'Supervisor main session');
-
-      const secondSessionCount = await executeScript<number>(sessionId, `
-        return Array.from(document.querySelectorAll('[data-role="session-link"]'))
-          .filter((entry) => (entry.textContent || '').includes('Supervisor main session')).length;
+      const restoredChatSessionId = await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
       `);
-      expect(secondSessionCount).toBe(1);
+      expect(restoredChatSessionId).toBe(secondChatSessionId);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

@@ -1987,6 +1987,173 @@ export async function getSessionRecord(sessionId: string): Promise<SessionRecord
   return invoke<SessionRecord>("get_session_record", { sessionId });
 }
 
+function cloneMockSessionModel(sourceSessionId: string, targetSessionId: string) {
+  const models = getMockSessionModels();
+  if (models[sourceSessionId]) {
+    models[targetSessionId] = models[sourceSessionId]!;
+    setMockSessionModels(models);
+    return;
+  }
+  ensureMockSessionModel(targetSessionId);
+}
+
+function createMockContextualSessionRecord(title: string): SessionRecord {
+  const session = createMockSessionRecord(title, "Fresh session is active. Continue here while the prior session remains in history.");
+  return {
+    ...session,
+    subscribed: true,
+  };
+}
+
+function createMockContextualSession(sessionId: string, projectSlug?: string | null): SessionRecord {
+  const sessions = ensureMockSessions();
+  const currentSession = sessions.find((entry) => entry.id === sessionId);
+  if (!currentSession) {
+    throw new Error(`Unable to find session ${sessionId}`);
+  }
+
+  const timestamp = nowIso();
+  const tasks = ensureMockTasks();
+  const task = tasks.find((entry) => {
+    const assignment = entry.activeLaneAssignment;
+    return assignment?.sessionId === sessionId && ["queued", "active", "awaiting_user_approval"].includes(assignment.status);
+  }) ?? null;
+
+  if (task?.activeLaneAssignment) {
+    const currentAssignment = task.activeLaneAssignment;
+    const nextSession = createMockContextualSessionRecord(currentSession.title);
+    cloneMockSessionModel(sessionId, nextSession.id);
+    upsertMockSession(nextSession);
+
+    const nextAssignment: TaskLaneAssignment = {
+      ...currentAssignment,
+      id: createId("task-assignment"),
+      sessionId: nextSession.id,
+      startedAt: timestamp,
+      completedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    saveMockTasks(tasks.map((entry) =>
+      entry.id === task.id
+        ? {
+            ...entry,
+            activeLaneAssignment: nextAssignment,
+            laneRuns: [
+              ...entry.laneRuns.map((run) =>
+                run.sessionId === sessionId && run.completedAt == null
+                  ? { ...run, result: "canceled" as const, notes: "Session rotated by operator.", completedAt: timestamp }
+                  : run,
+              ),
+              {
+                id: createId("lane-run"),
+                taskId: entry.id,
+                laneId: nextAssignment.laneId,
+                sessionId: nextSession.id,
+                result: "needs_user" as const,
+                notes: null,
+                startedAt: timestamp,
+                completedAt: null,
+              },
+            ],
+            updatedAt: timestamp,
+          }
+        : entry,
+    ));
+
+    if (currentAssignment.workerType === "agent" && currentAssignment.workerId) {
+      saveStoredMockAgentRuntimes(
+        getStoredMockAgentRuntimes().map((runtime) =>
+          runtime.agentId === currentAssignment.workerId && runtime.projectId === task.projectId
+            ? {
+                ...runtime,
+                mainSessionId: nextSession.id,
+                runtimeCwd: currentAssignment.runtimeCwd,
+                updatedAt: timestamp,
+              }
+            : runtime,
+        ),
+      );
+    }
+
+    if (currentAssignment.workerType === "role" && currentAssignment.roleInstanceId) {
+      saveStoredMockRoleInstances(
+        getStoredMockRoleInstances().map((instance) =>
+          instance.id === currentAssignment.roleInstanceId
+            ? { ...instance, sessionId: nextSession.id, updatedAt: timestamp }
+            : instance,
+        ),
+      );
+    }
+
+    updateMockSession(sessionId, (current) => ({
+      ...current,
+      status: "closed",
+      subscribed: false,
+      updatedAt: timestamp,
+      events: [...current.events, createEvent("system", "Session replaced by a newer worker session.")],
+    }));
+    appendMockLog("info", "sessions.create_contextual", `Rotated worker session ${sessionId} to ${nextSession.id}`);
+    emitMockSessionChange({ sessionIds: [sessionId, nextSession.id], reason: "sessions.create_contextual" });
+    emitMockTaskChange({ taskIds: [task.id], reason: "task.assignment.session_rotated" });
+    return nextSession;
+  }
+
+  const agentRuntime = getStoredMockAgentRuntimes().find((entry) => entry.mainSessionId === sessionId) ?? null;
+  if (agentRuntime) {
+    const nextSession = createMockContextualSessionRecord(currentSession.title);
+    cloneMockSessionModel(sessionId, nextSession.id);
+    upsertMockSession(nextSession);
+    saveStoredMockAgentRuntimes(
+      getStoredMockAgentRuntimes().map((entry) =>
+        entry.mainSessionId === sessionId
+          ? { ...entry, mainSessionId: nextSession.id, updatedAt: timestamp }
+          : entry,
+      ),
+    );
+    appendMockLog("info", "sessions.create_contextual", `Rotated agent main session ${sessionId} to ${nextSession.id}`);
+    emitMockSessionChange({ sessionIds: [sessionId, nextSession.id], reason: "sessions.create_contextual" });
+    return nextSession;
+  }
+
+  const roleInstance = getStoredMockRoleInstances().find((entry) => entry.sessionId === sessionId && typeof entry.status === "string" && ["running", "waiting", "idle"].includes(entry.status)) ?? null;
+  if (roleInstance) {
+    const nextSession = createMockContextualSessionRecord(currentSession.title);
+    cloneMockSessionModel(sessionId, nextSession.id);
+    upsertMockSession(nextSession);
+    saveStoredMockRoleInstances(
+      getStoredMockRoleInstances().map((entry) =>
+        entry.id === roleInstance.id
+          ? { ...entry, sessionId: nextSession.id, updatedAt: timestamp }
+          : entry,
+      ),
+    );
+    appendMockLog("info", "sessions.create_contextual", `Rotated role session ${sessionId} to ${nextSession.id}`);
+    emitMockSessionChange({ sessionIds: [sessionId, nextSession.id], reason: "sessions.create_contextual" });
+    return nextSession;
+  }
+
+  const nextSession: SessionRecord = {
+    id: createId("session"),
+    title: `New session ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+    status: "active",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    subscribed: true,
+    events: [
+      createEvent("system", "Session created from the Orchestra Sessions page."),
+      createEvent("assistant", "Session is active. Send a message to begin the interaction loop."),
+    ],
+  };
+
+  ensureMockSessionModel(nextSession.id);
+  saveMockSessions(sortSessions([nextSession, ...sessions]));
+  appendMockLog("info", "sessions.create_contextual", `Created generic successor session ${nextSession.id} in ${projectSlug ?? CURRENT_PROJECT_ID}`);
+  emitMockSessionChange({ sessionIds: [nextSession.id], reason: "sessions.create_contextual" });
+  return nextSession;
+}
+
 export async function createSession(title?: string, projectSlug?: string | null): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const timestamp = nowIso();
@@ -2012,6 +2179,14 @@ export async function createSession(title?: string, projectSlug?: string | null)
   }
 
   return invoke<SessionRecord>("create_session", { title, projectSlug });
+}
+
+export async function createContextualSession(sessionId: string, projectSlug?: string | null): Promise<SessionRecord> {
+  if (!isTauriAvailable()) {
+    return createMockContextualSession(sessionId, projectSlug);
+  }
+
+  return invoke<SessionRecord>("create_contextual_session", { sessionId, projectSlug });
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

@@ -3,6 +3,7 @@ import {
   cleanupStaleBridgeInstances,
   clearLogs,
   compactSession,
+  createContextualSession,
   createSession,
   deleteSession,
   getAppInfo,
@@ -1911,9 +1912,29 @@ export function App() {
     });
   }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
 
-  function handleCreateFreshSession() {
-    setActivePage("sessions");
-    void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null));
+  async function handleCreateFreshSession(sessionId?: string | null, options?: { chatAgentId?: string | null }) {
+    setIsSubmitting(true);
+    setSessionActionError(null);
+
+    try {
+      const nextSession = sessionId
+        ? await createContextualSession(sessionId, activeProject?.slug ?? null)
+        : await createSession(undefined, activeProject?.slug ?? null);
+      mergeSessionRecord(nextSession, { select: false });
+      setSelectedSessionId(nextSession.id);
+
+      if (options?.chatAgentId) {
+        setChatSessionId(nextSession.id);
+        chatSessionAgentIdRef.current = options.chatAgentId;
+        lastKnownChatSessionIdRef.current = nextSession.id;
+        lastKnownChatSessionAgentIdRef.current = options.chatAgentId;
+        void loadChatAgents({ background: true });
+      }
+    } catch (error) {
+      setSessionActionError(await reportClientError("ui.sessions.create_contextual", error, "Unable to create a new session."));
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function handleCompactExistingSession(sessionId?: string | null) {
@@ -2290,7 +2311,7 @@ export function App() {
                 handleStopSession(chatSession.id);
               }
             }}
-            onCreateNewSession={handleCreateFreshSession}
+            onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
         ) : activePage === "sessions" ? (
@@ -2324,7 +2345,7 @@ export function App() {
             onDraftChange={handleSelectedSessionDraftChange}
             onSendMessage={handleSelectedSessionSend}
             onStopSession={handleSelectedSessionStop}
-            onCreateNewSession={handleCreateFreshSession}
+            onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
             onCompactSession={handleSelectedSessionCompact}
           />
         ) : (

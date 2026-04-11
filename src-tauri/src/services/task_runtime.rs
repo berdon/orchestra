@@ -450,8 +450,14 @@ pub fn get_active_assignment_for_session(
                 created_at,
                 updated_at
             FROM task_lane_assignments
-            WHERE session_id = ?1 AND status IN ('queued', 'active')
-            ORDER BY updated_at DESC, created_at DESC
+            WHERE session_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')
+            ORDER BY CASE status
+                       WHEN 'active' THEN 0
+                       WHEN 'awaiting_user_approval' THEN 1
+                       ELSE 2
+                     END,
+                     updated_at DESC,
+                     created_at DESC
             LIMIT 1
             "#,
             [session_id],
@@ -459,6 +465,73 @@ pub fn get_active_assignment_for_session(
         )
         .optional()
         .map_err(|error| format!("Unable to query assignment for session {session_id}: {error}"))
+}
+
+pub fn rotate_open_assignment_session(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+    new_session_id: &str,
+    now: &str,
+) -> Result<TaskLaneAssignment, String> {
+    if !matches!(
+        assignment.status.as_str(),
+        ASSIGNMENT_STATUS_QUEUED
+            | ASSIGNMENT_STATUS_ACTIVE
+            | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+    ) {
+        return Err(format!(
+            "Assignment {} is not open and cannot rotate sessions",
+            assignment.id
+        ));
+    }
+
+    if let Some(session_id) = assignment.session_id.as_deref() {
+        update_open_lane_run(
+            connection,
+            &assignment.task_id,
+            &assignment.lane_id,
+            Some(session_id),
+            ASSIGNMENT_STATUS_CANCELED,
+            Some("Session rotated by operator.".into()),
+            now,
+        )?;
+    }
+
+    complete_assignment(connection, &assignment.id, ASSIGNMENT_STATUS_CANCELED, now)?;
+
+    let replacement = TaskLaneAssignment {
+        id: generate_id("assignment"),
+        task_id: assignment.task_id.clone(),
+        workflow_id: assignment.workflow_id.clone(),
+        lane_id: assignment.lane_id.clone(),
+        worker_type: assignment.worker_type.clone(),
+        worker_id: assignment.worker_id.clone(),
+        status: assignment.status.clone(),
+        session_id: Some(new_session_id.to_string()),
+        runtime_cwd: assignment.runtime_cwd.clone(),
+        role_queue_entry_id: assignment.role_queue_entry_id.clone(),
+        role_instance_id: assignment.role_instance_id.clone(),
+        prompt: assignment.prompt.clone(),
+        pending_outcome: assignment.pending_outcome.clone(),
+        completion_notes: assignment.completion_notes.clone(),
+        whip_count: assignment.whip_count,
+        last_whip_at: assignment.last_whip_at.clone(),
+        started_at: now.to_string(),
+        completed_at: None,
+        created_at: now.to_string(),
+        updated_at: now.to_string(),
+    };
+
+    insert_assignment(connection, &replacement)?;
+    ensure_lane_run(
+        connection,
+        &replacement.task_id,
+        &replacement.lane_id,
+        new_session_id,
+        now,
+    )?;
+
+    Ok(replacement)
 }
 
 pub fn cancel_dispatch_for_dependency_block(
@@ -522,8 +595,9 @@ pub fn cancel_dispatch_for_dependency_block(
         .map_err(|error| format!("Unable to reset role instance for dependency-blocked task {task_id}: {error}"))?;
     }
 
-    tx.commit()
-        .map_err(|error| format!("Unable to commit dependency block reset for {task_id}: {error}"))?;
+    tx.commit().map_err(|error| {
+        format!("Unable to commit dependency block reset for {task_id}: {error}")
+    })?;
 
     Ok(Some(active_assignment))
 }
@@ -3572,7 +3646,7 @@ pub fn preferred_lane_session_id(
         .map_err(|error| format!("Unable to query preferred lane session: {error}"))
 }
 
-fn apply_agent_session_defaults(
+pub(crate) fn apply_agent_session_defaults(
     project_root: &Path,
     session_dir: &Path,
     session_id: &str,

@@ -863,7 +863,7 @@ fn ensure_instance_session(
     Ok(created.record.id)
 }
 
-fn apply_role_session_defaults(
+pub(crate) fn apply_role_session_defaults(
     project_root: &Path,
     session_dir: &Path,
     session_id: &str,
