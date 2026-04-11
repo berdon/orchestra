@@ -112,16 +112,16 @@ export function getInitialAgentTerminalSessionId() {
   return new URLSearchParams(window.location.search).get("sessionId");
 }
 
-function sessionStorageKey() {
-  return `${SESSION_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+function sessionStorageKey(projectId?: string | null) {
+  return `${SESSION_STORAGE_KEY}.${projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
 }
 
-function sessionModelStorageKey() {
-  return `${SESSION_MODEL_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+function sessionModelStorageKey(projectId?: string | null) {
+  return `${SESSION_MODEL_STORAGE_KEY}.${projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
 }
 
-function dismissedSessionStorageKey() {
-  return `${DISMISSED_SESSION_STORAGE_KEY}.${getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+function dismissedSessionStorageKey(projectId?: string | null) {
+  return `${DISMISSED_SESSION_STORAGE_KEY}.${projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
 }
 
 const MOCK_MODELS: SessionModel[] = [
@@ -352,14 +352,19 @@ function ensureMockLogs() {
   return seeded;
 }
 
-function ensureMockSessions() {
-  const existing = getStoredValue<SessionRecord[]>(sessionStorageKey());
+function ensureMockSessions(projectId?: string | null) {
+  const existing = getStoredValue<SessionRecord[]>(sessionStorageKey(projectId));
   if (existing) {
     return existing;
   }
 
+  const resolvedProjectId = projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID;
+  if (projectId && projectId !== (getActiveProjectId() ?? CURRENT_PROJECT_ID)) {
+    return [];
+  }
+
   const seeded = seedMockSessions();
-  setStoredValue(sessionStorageKey(), seeded);
+  setStoredValue(sessionStorageKey(resolvedProjectId), seeded);
   return seeded;
 }
 
@@ -509,16 +514,16 @@ function appendMockLog(level: LogLevel, target: string, message: string) {
   setStoredValue(LOG_STORAGE_KEY, updated);
 }
 
-function getDismissedMockSessionIds() {
-  return new Set(getStoredValue<string[]>(dismissedSessionStorageKey()) ?? []);
+function getDismissedMockSessionIds(projectId?: string | null) {
+  return new Set(getStoredValue<string[]>(dismissedSessionStorageKey(projectId)) ?? []);
 }
 
-function saveDismissedMockSessionIds(ids: Iterable<string>) {
-  setStoredValue(dismissedSessionStorageKey(), Array.from(new Set(ids)).sort());
+function saveDismissedMockSessionIds(ids: Iterable<string>, projectId?: string | null) {
+  setStoredValue(dismissedSessionStorageKey(projectId), Array.from(new Set(ids)).sort());
 }
 
-function saveMockSessions(sessions: SessionRecord[]) {
-  setStoredValue(sessionStorageKey(), sessions);
+function saveMockSessions(sessions: SessionRecord[], projectId?: string | null) {
+  setStoredValue(sessionStorageKey(projectId), sessions);
 }
 
 export function upsertMockSession(session: SessionRecord) {
@@ -1962,15 +1967,15 @@ export async function getCurrentAgentTerminalSessionId(): Promise<string | null>
   return label.startsWith("agent-terminal-") ? label.slice("agent-terminal-".length) : null;
 }
 
-export async function listSessions(): Promise<SessionRecord[]> {
+export async function listSessions(projectId?: string | null): Promise<SessionRecord[]> {
   if (!isTauriAvailable()) {
-    const dismissed = getDismissedMockSessionIds();
-    const sessions = sortSessions(ensureMockSessions().filter((session) => !dismissed.has(session.id)));
+    const dismissed = getDismissedMockSessionIds(projectId);
+    const sessions = sortSessions(ensureMockSessions(projectId).filter((session) => !dismissed.has(session.id)));
     appendMockLog("info", "sessions.list", `Listed ${sessions.length} sessions`);
     return sessions;
   }
 
-  return invoke<SessionRecord[]>("list_sessions");
+  return invoke<SessionRecord[]>("list_sessions", { projectId: projectId ?? null });
 }
 
 export async function getSessionRecord(sessionId: string): Promise<SessionRecord> {
