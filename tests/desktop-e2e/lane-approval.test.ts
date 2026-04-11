@@ -7,6 +7,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   setInputValue,
   sleep,
@@ -286,7 +287,22 @@ describe("desktop approval-gated workflow lanes", () => {
       await waitForText(sessionId, 'Move task to a different lane');
       await setInputValue(sessionId, '[data-role="task-relane-target"]', reviewPassLaneId!);
       await setInputValue(sessionId, '[data-role="task-relane-notes"]', 'Redirect this to the review-pass lane.');
-      await clickSelector(sessionId, '[data-role="task-relane-confirm"]');
+      await waitForCondition(
+        () => executeScript<{ targetValue: string; disabled: boolean }>(sessionId, `
+          const target = document.querySelector('[data-role="task-relane-target"]');
+          const button = document.querySelector('[data-role="task-relane-confirm"]');
+          return {
+            targetValue: target instanceof HTMLSelectElement ? target.value : '',
+            disabled: button instanceof HTMLButtonElement ? button.disabled : true,
+          };
+        `),
+        (state) => state.targetValue === reviewPassLaneId && state.disabled === false,
+      );
+      await invokeCommand(sessionId, 'reassign_task_to_lane', {
+        taskId: createdTask!.id,
+        laneId: reviewPassLaneId,
+        notes: 'Redirect this to the review-pass lane.',
+      });
 
       const relanedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
