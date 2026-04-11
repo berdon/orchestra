@@ -1544,6 +1544,13 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
   });
 
   await expect(page.locator('.task-detail-floating-header')).toBeVisible();
+  await tabDock.getByRole('button', { name: 'Task details' }).click();
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    return Boolean((content && content.scrollTop < 220) || window.scrollY < 220);
+  });
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText('Implement task foundation shell');
+
   await tabDock.getByRole('tab', { name: 'Comments' }).click();
   await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();

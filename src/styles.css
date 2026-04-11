@@ -2723,6 +2723,10 @@ strong {
   padding-bottom: 4px;
 }
 
+.task-detail-tab--jump {
+  flex-shrink: 0;
+}
+
 .task-detail-tab {
   border: 0;
   background: transparent;
