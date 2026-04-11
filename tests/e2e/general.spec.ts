@@ -62,9 +62,16 @@ test("settings general renders bridge diagnostics and session prompt controls", 
       JSON.stringify([
         {
           id: "log-1",
-          level: "warn",
+          level: "debug",
+          target: "sessions.rpc.event",
+          message: "Session session-1 received turn_start",
+          timestamp,
+        },
+        {
+          id: "log-2",
+          level: "info",
           target: "tool.bridge",
-          message: "Bridge   warning\n details",
+          message: "Bridge   status\n updated",
           timestamp,
         },
       ]),
@@ -103,6 +110,12 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await expect(page.locator('[data-role="bridge-cleanup-table"]')).toContainText("cleanup_requested");
 
   await expect(page.locator('[data-role="runtime-log-list"]')).toBeVisible();
-  await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(tool.bridge): Bridge warning details");
-  await expect(page.locator('[data-role="runtime-log-line"]', { hasText: "(tool.bridge): Bridge warning details" })).toHaveText(/^\[W\]\s.+\s\(tool\.bridge\):\sBridge warning details$/);
+  await expect(page.locator('[data-role="runtime-log-level-filter"]')).toHaveValue("info");
+  await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(tool.bridge): Bridge status updated");
+  await expect(page.locator('[data-role="runtime-log-list"]')).not.toContainText("(sessions.rpc.event): Session session-1 received turn_start");
+  await expect(page.locator('[data-role="runtime-log-line"]', { hasText: "(tool.bridge): Bridge status updated" })).toHaveText(/^\[I\]\s.+\s\(tool\.bridge\):\sBridge status updated$/);
+
+  await page.locator('[data-role="runtime-log-level-filter"]').selectOption("debug");
+  await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(sessions.rpc.event): Session session-1 received turn_start");
+  await expect(page.locator('[data-role="runtime-log-line"]', { hasText: "(sessions.rpc.event): Session session-1 received turn_start" })).toHaveText(/^\[D\]\s.+\s\(sessions\.rpc\.event\):\sSession session-1 received turn_start$/);
 });

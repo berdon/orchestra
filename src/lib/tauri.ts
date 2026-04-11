@@ -170,10 +170,23 @@ function slugify(value: string) {
   return normalized || "workflow";
 }
 
+function normalizeLogLevel(_level: LogLevel, target: string): LogLevel {
+  if (target === "sessions.rpc.event") {
+    return "debug";
+  }
+
+  return "info";
+}
+
+function normalizeLogEntry(entry: LogEntry): LogEntry {
+  const normalizedLevel = normalizeLogLevel(entry.level, entry.target);
+  return normalizedLevel === entry.level ? entry : { ...entry, level: normalizedLevel };
+}
+
 function createLogEntry(level: LogLevel, target: string, message: string): LogEntry {
   return {
     id: createId("log"),
-    level,
+    level: normalizeLogLevel(level, target),
     target,
     message,
     timestamp: nowIso(),
@@ -326,7 +339,12 @@ function seedMockWorkflows(): WorkflowDefinition[] {
 function ensureMockLogs() {
   const existing = getStoredValue<LogEntry[]>(LOG_STORAGE_KEY);
   if (existing) {
-    return existing;
+    const normalized = existing.map(normalizeLogEntry);
+    const changed = normalized.some((entry, index) => entry.level !== existing[index]?.level);
+    if (changed) {
+      setStoredValue(LOG_STORAGE_KEY, normalized);
+    }
+    return normalized;
   }
 
   const seeded = seedMockLogs();

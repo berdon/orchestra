@@ -7,6 +7,8 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  invokeCommand,
+  selectValue,
   waitForSelector,
   waitForText,
 } from "./driver";
@@ -18,6 +20,16 @@ describe("desktop bridge diagnostics", () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
+
+      const createdSession = await invokeCommand<{ id: string }>(sessionId, "create_session", {
+        title: "Bridge diagnostics log filter probe",
+      });
+      expect(createdSession.id).toBeTruthy();
+      await invokeCommand(sessionId, "send_session_message", {
+        sessionId: createdSession.id,
+        message: "Reply with a short greeting.",
+        runId: `bridge-log-filter-${Date.now()}`,
+      });
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
@@ -59,6 +71,23 @@ describe("desktop bridge diagnostics", () => {
       await clickByText(sessionId, "button", "General");
       await clickSelector(sessionId, '[data-role="cleanup-stale-bridges"]');
       await waitForText(sessionId, "Recent stale-bridge cleanup events");
+
+      await waitForSelector(sessionId, '[data-role="runtime-log-level-filter"]');
+      await waitForText(sessionId, 'sessions.message.start');
+      const infoLogText = await executeScript<string>(sessionId, `
+        const element = document.querySelector('[data-role="runtime-log-list"]');
+        return element ? element.textContent || '' : '';
+      `);
+      expect(infoLogText).toContain('(sessions.message.start):');
+      expect(infoLogText).not.toContain('(sessions.rpc.event):');
+
+      await selectValue(sessionId, '[data-role="runtime-log-level-filter"]', 'debug');
+      await waitForText(sessionId, 'sessions.rpc.event');
+      const debugLogText = await executeScript<string>(sessionId, `
+        const element = document.querySelector('[data-role="runtime-log-list"]');
+        return element ? element.textContent || '' : '';
+      `);
+      expect(debugLogText).toContain('(sessions.rpc.event):');
     } finally {
       await deleteWebdriverSession(sessionId);
     }
