@@ -18,6 +18,7 @@ use crate::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
             list_sessions as list_real_sessions, set_session_model as apply_session_model,
+            session_context_for_project_id,
         },
         role_dispatch, role_runtime, roles, task_runtime,
     },
@@ -467,18 +468,28 @@ fn cleanup_dismissed_sessions(connection: &rusqlite::Connection) -> Result<Vec<S
 }
 
 #[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionRecord>, String> {
+pub async fn list_sessions(
+    state: State<'_, AppState>,
+    project_id: Option<String>,
+) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     spawn_blocking(move || {
         let connection = database::open_connection()?;
         cleanup_dismissed_sessions(&connection)?;
         let dismissed_ids = load_dismissed_session_ids(&connection)?;
+        let session_dirs = match project_id.as_deref() {
+            Some(project_id) => vec![session_context_for_project_id(project_id)?.session_dir],
+            None => all_session_contexts()?
+                .into_iter()
+                .map(|context| context.session_dir)
+                .collect(),
+        };
         drop(connection);
 
-        let mut sessions = all_session_contexts()?
+        let mut sessions = session_dirs
             .into_iter()
-            .map(|context| list_real_sessions(&context.session_dir, &subscribed))
+            .map(|session_dir| list_real_sessions(&session_dir, &subscribed))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .flatten()
