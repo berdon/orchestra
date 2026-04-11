@@ -277,10 +277,12 @@ export function TaskDetailPage({
   const deleteHoldTimerRef = useRef<number | null>(null);
   const detailPageRef = useRef<HTMLDivElement | null>(null);
   const primaryHeaderRef = useRef<HTMLDivElement | null>(null);
+  const compactHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
   const tabBodyRef = useRef<HTMLDivElement | null>(null);
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
+  const [compactHeaderVisible, setCompactHeaderVisible] = useState(false);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const taskHeading = draft.title.trim() || task.title;
@@ -364,8 +366,10 @@ export function TaskDetailPage({
   useEffect(() => {
     const detailPage = detailPageRef.current;
     const primaryHeader = primaryHeaderRef.current;
-    if (!detailPage || !primaryHeader || typeof window === "undefined") {
+    const sentinel = compactHeaderSentinelRef.current;
+    if (!detailPage || !primaryHeader || !sentinel || typeof window === "undefined") {
       setFloatingChromeLayout(null);
+      setCompactHeaderVisible(false);
       return;
     }
 
@@ -373,15 +377,16 @@ export function TaskDetailPage({
     let currentAncestor = detailPage.parentElement;
     while (currentAncestor) {
       const styles = window.getComputedStyle(currentAncestor);
-      const isScrollable = ["auto", "scroll", "overlay"].includes(styles.overflowY);
-      if (isScrollable) {
+      if (["auto", "scroll", "overlay"].includes(styles.overflowY)) {
         scrollRoot = currentAncestor;
         break;
       }
       currentAncestor = currentAncestor.parentElement;
     }
-    const pageHeader = (scrollRoot?.querySelector(".page-header") as HTMLElement | null)
-      ?? (detailPage.ownerDocument.querySelector(".page-header") as HTMLElement | null);
+    const pageHeader = detailPage.ownerDocument.querySelector(".page-header") as HTMLElement | null;
+    scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
+    window.scrollTo({ top: 0, behavior: "auto" });
+    setCompactHeaderVisible(false);
     let frameId: number | null = null;
 
     const updateFloatingChrome = () => {
@@ -392,13 +397,16 @@ export function TaskDetailPage({
         const detailRect = detailPage.getBoundingClientRect();
         const pageHeaderRect = pageHeader?.getBoundingClientRect() ?? null;
         const pageHeaderBottom = pageHeaderRect?.bottom ?? 0;
-        const nextLayout = detailRect.width > 0 && detailRect.bottom > pageHeaderBottom + 72
+        const pinnedTop = Math.max(pageHeaderBottom, 0) + 10;
+        const nextLayout = detailRect.width > 0 && detailRect.bottom > pinnedTop + 72
           ? {
               left: Math.max(detailRect.left, 12),
               right: Math.max(window.innerWidth - detailRect.right, 12),
-              top: pageHeaderBottom + 10,
+              top: pinnedTop,
             }
           : null;
+        const scrollPosition = Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, detailPage.ownerDocument.documentElement.scrollTop);
+        const nextVisible = scrollPosition > 120 && sentinel.getBoundingClientRect().top <= Math.max(pageHeaderBottom, 0) + 4;
 
         setFloatingChromeLayout((current) => {
           if (!nextLayout && !current) {
@@ -415,11 +423,11 @@ export function TaskDetailPage({
           }
           return nextLayout;
         });
+        setCompactHeaderVisible((current) => (current === nextVisible ? current : nextVisible));
       });
     };
 
     updateFloatingChrome();
-    const intervalId = window.setInterval(updateFloatingChrome, 180);
     scrollRoot?.addEventListener("scroll", updateFloatingChrome, { passive: true });
     window.addEventListener("scroll", updateFloatingChrome, { passive: true });
     window.addEventListener("resize", updateFloatingChrome);
@@ -428,12 +436,11 @@ export function TaskDetailPage({
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
       }
-      window.clearInterval(intervalId);
       scrollRoot?.removeEventListener("scroll", updateFloatingChrome);
       window.removeEventListener("scroll", updateFloatingChrome);
       window.removeEventListener("resize", updateFloatingChrome);
     };
-  }, [isEditing, task.id]);
+  }, [task.id]);
 
   useEffect(() => {
     if (!defaultFile?.exists || !defaultFile.absolutePath) {
@@ -1477,6 +1484,7 @@ export function TaskDetailPage({
             <TaskActionMenu actions={buildHeaderActions()} pendingActionId={pendingActionId} />
           </div>
         </div>
+        <div className="task-detail-primary-header-sentinel" ref={compactHeaderSentinelRef} aria-hidden="true" />
 
         {isEditing ? (
           <div className="task-detail-edit-shell">
@@ -1756,7 +1764,7 @@ export function TaskDetailPage({
         <div className="task-detail-tabs__body" ref={tabBodyRef}>{renderTabPanel()}</div>
       </section>
 
-      {stickyChromeStyle ? (
+      {!isEditing && compactHeaderVisible && stickyChromeStyle ? (
         <div className="task-detail-floating-header" data-role="task-detail-compact-header" style={{ ...stickyChromeStyle, top: `${floatingChromeLayout?.top ?? 0}px` }}>
           <div className="task-detail-floating-header__copy">
             <div className="task-detail-floating-header__title-row">
@@ -1772,9 +1780,11 @@ export function TaskDetailPage({
               ) : null}
             </div>
           </div>
-          <div className="task-detail-floating-header__actions">
-            <span className="status-badge status-badge--neutral">Quick context</span>
-          </div>
+          <TaskActionMenu
+            actions={buildHeaderActions().map((action) => ({ ...action, dataRole: undefined }))}
+            menuLabel="Sticky task actions"
+            pendingActionId={pendingActionId}
+          />
         </div>
       ) : null}
 
