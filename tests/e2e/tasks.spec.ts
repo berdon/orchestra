@@ -625,7 +625,7 @@ test("task detail manages lane-scoped todos and blocks completion until current-
   })).toBe("completed");
 });
 
-test("task detail opens tracked repo files when clicking @file mentions in comments", async ({ page }) => {
+test("task detail opens tracked repo files when clicking $file mentions in comments", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -643,10 +643,10 @@ test("task detail opens tracked repo files when clicking @file mentions in comme
 
   await page.locator('[data-role="task-detail-tab-comments"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
-  await page.locator('[data-role="task-comment-message"]').fill("Please review @docs/design.md before you continue.");
+  await page.locator('[data-role="task-comment-message"]').fill("Please review $docs/design.md before you continue.");
   await page.locator('[data-role="add-task-comment"]').click();
 
-  await page.locator('[data-role="task-comment-file-mention-link"]').first().click();
+  await page.locator('[data-role="task-comment-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
   await expect(page.locator('[data-role="selected-task-file-reference-card"]')).toBeVisible();
   const repoFileState = await page.evaluate(() => {
@@ -661,6 +661,51 @@ test("task detail opens tracked repo files when clicking @file mentions in comme
   expect(repoFileState.selectedLabel).toContain("docs/design.md");
   expect(repoFileState.cardTop).not.toBeNull();
   expect((repoFileState.cardTop ?? 0) < repoFileState.viewportHeight).toBe(true);
+});
+
+test("task comment composer autocompletes tasks, agents, and roles and renders task mentions as links", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: /^Roles$/ }).click();
+  await page.locator('[data-role="new-role"]').click();
+  await page.locator('[data-role="role-name"]').fill("Reviewer");
+  await page.getByLabel("Capacity").fill("1");
+  await page.locator('[data-role="save-role"]').click();
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Mention target task");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Mention source task");
+  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="task-detail-tab-comments"]').click();
+  await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
+
+  await page.locator('[data-role="task-comment-message"]').fill("Coordinate with @dat");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Data");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Agent · data");
+
+  await page.locator('[data-role="task-comment-message"]').fill("Ask @rev");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Reviewer");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Role · reviewer");
+
+  await page.locator('[data-role="task-comment-message"]').fill("Please review @target");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Mention target task");
+  await page.locator('[data-role="task-comment-mention-option"]').filter({ hasText: "Mention target task" }).click();
+  await expect(page.locator('[data-role="task-comment-message"]')).toHaveValue(/Please review @ORC-\d+\s/);
+
+  await page.locator('[data-role="add-task-comment"]').click();
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Mention target task");
+
+  await page.locator('[data-role="task-comment-mention-link"]').filter({ hasText: "Mention target task" }).first().click();
+  await expect(page.getByRole("heading", { name: "Mention target task" })).toBeVisible();
 });
 
 test("task detail renders markdown descriptions and comments with preserved line breaks", async ({ page }) => {

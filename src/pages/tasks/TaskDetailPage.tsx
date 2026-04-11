@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import hljs from "highlight.js";
-import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
@@ -35,6 +35,7 @@ interface TaskDetailPageProps {
   draft: TaskUpsertInput;
   commentDraft: TaskCommentInput;
   fileReferenceDraft: TaskFileReferenceInput;
+  tasks: TaskSummary[];
   workflows: WorkflowSummary[];
   workflowLanes: Array<{ id: string; name: string }>;
   agents: AgentSummary[];
@@ -56,6 +57,8 @@ interface TaskDetailPageProps {
   onPublish: () => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
   onDispatch: () => void;
   onRetry: () => void;
   onPauseRuntime: () => void;
@@ -200,6 +203,7 @@ export function TaskDetailPage({
   draft,
   commentDraft,
   fileReferenceDraft,
+  tasks,
   workflows,
   workflowLanes,
   agents,
@@ -221,6 +225,8 @@ export function TaskDetailPage({
   onPublish,
   onDelete,
   onOpenTask,
+  onOpenAgent,
+  onOpenRole,
   onDispatch,
   onRetry,
   onPauseRuntime,
@@ -1286,6 +1292,9 @@ export function TaskDetailPage({
             <TaskCommentComposer
               author={commentDraft.author}
               authorDataRole="task-comment-author"
+              tasks={tasks}
+              agents={agents}
+              roles={roles}
               message={commentDraft.message}
               messageDataRole="task-comment-message"
               messageLabel="Add comment"
@@ -1318,10 +1327,16 @@ export function TaskDetailPage({
                         </div>
                       </div>
                       <TaskCommentMessage
-                        dataRole="task-comment-file-mention-link"
+                        dataRole="task-comment-mention-link"
                         fileReferences={task.fileReferences}
+                        tasks={tasks}
+                        agents={agents}
+                        roles={roles}
                         message={comment.message}
                         onOpenFileReference={handleOpenCommentFileReference}
+                        onOpenTask={onOpenTask}
+                        onOpenAgent={onOpenAgent}
+                        onOpenRole={onOpenRole}
                       />
                       {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
                       <div className="task-comment-thread__actions">
@@ -1345,10 +1360,16 @@ export function TaskDetailPage({
                               </div>
                             </div>
                             <TaskCommentMessage
-                              dataRole="task-comment-file-mention-link"
+                              dataRole="task-comment-mention-link"
                               fileReferences={task.fileReferences}
+                              tasks={tasks}
+                              agents={agents}
+                              roles={roles}
                               message={reply.message}
                               onOpenFileReference={handleOpenCommentFileReference}
+                              onOpenTask={onOpenTask}
+                              onOpenAgent={onOpenAgent}
+                              onOpenRole={onOpenRole}
                             />
                             {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
                           </article>
@@ -1361,6 +1382,9 @@ export function TaskDetailPage({
                         author={replyDraft.author}
                         authorDataRole="task-reply-author"
                         className="task-comment-reply-composer"
+                        tasks={tasks}
+                        agents={agents}
+                        roles={roles}
                         interruptChecked={replyDraft.interruptAgent}
                         interruptDataRole="task-reply-interrupt"
                         message={replyDraft.message}
@@ -1618,6 +1642,9 @@ export function TaskDetailPage({
                     ) : (
                       <CommentableFileViewer
                         taskId={task.id}
+                        tasks={tasks}
+                        agents={agents}
+                        roles={roles}
                         commentDraft={commentDraft}
                         comments={task.comments}
                         content={defaultFileContent ?? ""}
@@ -1627,6 +1654,9 @@ export function TaskDetailPage({
                         onCommentDraftChange={onCommentDraftChange}
                         onDeleteComment={onDeleteComment}
                         onOpenFileReference={handleOpenCommentFileReference}
+                        onOpenTask={onOpenTask}
+                        onOpenAgent={onOpenAgent}
+                        onOpenRole={onOpenRole}
                         onUpdateComment={onUpdateComment}
                         reference={defaultFile}
                       />
@@ -1650,6 +1680,9 @@ export function TaskDetailPage({
               <TaskCommentComposer
                 className="task-comment-composer task-comment-composer--summary"
                 compactMeta
+                tasks={tasks}
+                agents={agents}
+                roles={roles}
                 interruptChecked={commentDraft.interruptAgent}
                 interruptDataRole="default-file-quick-comment-interrupt"
                 message={commentDraft.message}
@@ -1680,10 +1713,16 @@ export function TaskDetailPage({
                           </div>
                         </div>
                         <TaskCommentMessage
-                          dataRole="task-comment-file-mention-link"
+                          dataRole="task-comment-mention-link"
                           fileReferences={task.fileReferences}
+                          tasks={tasks}
+                          agents={agents}
+                          roles={roles}
                           message={comment.message}
                           onOpenFileReference={handleOpenCommentFileReference}
+                          onOpenTask={onOpenTask}
+                          onOpenAgent={onOpenAgent}
+                          onOpenRole={onOpenRole}
                         />
                         {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
                         <div className="task-comment-thread__actions">
@@ -1707,10 +1746,16 @@ export function TaskDetailPage({
                                 </div>
                               </div>
                               <TaskCommentMessage
-                                dataRole="task-comment-file-mention-link"
+                                dataRole="task-comment-mention-link"
                                 fileReferences={task.fileReferences}
+                                tasks={tasks}
+                                agents={agents}
+                                roles={roles}
                                 message={reply.message}
                                 onOpenFileReference={handleOpenCommentFileReference}
+                                onOpenTask={onOpenTask}
+                                onOpenAgent={onOpenAgent}
+                                onOpenRole={onOpenRole}
                               />
                             </article>
                           ))}

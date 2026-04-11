@@ -23,6 +23,46 @@ test("chat nav lists named agents and excludes roles", async ({ page }) => {
   await expect(page.getByRole("tab", { name: "Reviewer" })).toHaveCount(0);
 });
 
+test("chat composer autocompletes project tasks, agents, and roles and renders task mentions as links", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: /^Roles$/ }).click();
+  await page.locator('[data-role="new-role"]').click();
+  await page.locator('[data-role="role-name"]').fill("Reviewer");
+  await page.getByLabel("Capacity").fill("1");
+  await page.locator('[data-role="save-role"]').click();
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Autocomplete navigation task");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+
+  await page.locator('[data-role="composer-input"]').fill("Loop in @dat");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Data");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Agent · data");
+
+  await page.locator('[data-role="composer-input"]').fill("Ask @rev");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Reviewer");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Role · reviewer");
+
+  await page.locator('[data-role="composer-input"]').fill("Please follow up on @auto");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Autocomplete navigation task");
+  await page.locator('[data-role="composer-mention-option"]').filter({ hasText: "Autocomplete navigation task" }).click();
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue(/Please follow up on @ORC-\d+\s/);
+
+  await page.locator('[data-role="send-message"]').click();
+  await expect(page.locator('[data-role="transcript-entry-rendered-markdown"]').last()).toContainText("Autocomplete navigation task");
+  await expect(page.locator('[data-role="transcript-mention-link"]').filter({ hasText: "Autocomplete navigation task" }).last()).toBeVisible();
+});
+
 test("chat page opens an agent main session with focused chat controls while Sessions stays available", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

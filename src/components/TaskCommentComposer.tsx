@@ -1,7 +1,11 @@
 import { TaskCommentMentionsTextarea } from "./TaskCommentMentionsTextarea";
+import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
 
 interface TaskCommentComposerProps {
   taskId: string;
+  tasks: TaskSummary[];
+  agents: AgentSummary[];
+  roles: RoleSummary[];
   message: string;
   onMessageChange: (message: string) => void;
   onSubmit: () => void;
@@ -30,6 +34,9 @@ interface TaskCommentComposerProps {
 
 export function TaskCommentComposer({
   taskId,
+  tasks,
+  agents,
+  roles,
   message,
   onMessageChange,
   onSubmit,
@@ -80,6 +87,9 @@ export function TaskCommentComposer({
         <span className="field-group__label">{messageLabel}</span>
         <TaskCommentMentionsTextarea
           taskId={taskId}
+          tasks={tasks}
+          agents={agents}
+          roles={roles}
           value={message}
           rows={rows}
           dataRole={messageDataRole}

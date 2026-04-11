@@ -91,24 +91,14 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
-  await page.evaluate(() => {
-    const tasksButton = Array.from(document.querySelectorAll('button')).find((element) =>
-      (element.textContent ?? '').trim() === 'Tasks',
-    ) as HTMLButtonElement | undefined;
-    tasksButton?.click();
-  });
-  await page.evaluate(() => {
-    const match = Array.from(document.querySelectorAll('[data-role="task-card"]')).find((element) =>
-      (element.textContent ?? '').includes('Implement task foundation shell'),
-    ) as HTMLButtonElement | undefined;
-    match?.click();
-  });
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
   await expect(page.getByRole("heading", { name: "Implement task foundation shell" })).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file. See @docs/design.md");
+  await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file. See $docs/design.md");
   await page.locator('[data-role="add-default-file-quick-comment"]').click();
 
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file. See @docs/design.md");
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file. See docs/design.md");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
   const wrapToggle = page.locator('[data-role="default-file-wrap-toggle"]');
   const fileViewer = page.locator('[data-role="default-file-code-viewer"]');
@@ -141,7 +131,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   expect(nowrapMetrics.lineScrollWidth).toBeGreaterThan(nowrapMetrics.viewerClientWidth + 20);
   await wrapToggle.click();
   await expect(wrapToggle).toHaveAttribute("data-wrap-mode", "wrap");
-  await page.locator('[data-role="task-comment-file-mention-link"]').first().click();
+  await page.locator('[data-role="task-comment-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
 
   await page.evaluate(() => {

@@ -2,21 +2,23 @@ import { Fragment, type ReactNode } from "react";
 import hljs from "highlight.js";
 import { marked } from "marked";
 
-interface MarkdownMentionMatch {
+export interface MarkdownMentionMatch {
   key: string;
   label?: string;
   onClick: () => void;
 }
+
+export type MarkdownMentionResolver = (mention: string) => MarkdownMentionMatch | null;
 
 interface MarkdownContentProps {
   message: string;
   className?: string;
   dataRole?: string;
   mentionLinkDataRole?: string;
-  mentionResolver?: (mention: string) => MarkdownMentionMatch | null;
+  mentionResolver?: MarkdownMentionResolver;
 }
 
-const MENTION_PATTERN = /@(?:[a-z0-9._-]+:)?[a-z0-9._/-]+/gi;
+const MENTION_PATTERN = /[@$](?:[a-z0-9._-]+:)?[a-z0-9._/-]+/gi;
 const TRAILING_PUNCTUATION = /[),.!?;:]+$/;
 
 type MarkdownToken = {
@@ -76,7 +78,7 @@ function splitMentionToken(token: string) {
 function renderTextWithMentions(
   text: string,
   keyPrefix: string,
-  mentionResolver?: (mention: string) => MarkdownMentionMatch | null,
+  mentionResolver?: MarkdownMentionResolver,
   mentionLinkDataRole?: string,
 ) {
   if (!mentionResolver) {
@@ -128,7 +130,7 @@ function renderTextWithMentions(
 function renderInlineTokens(
   tokens: MarkdownToken[] | undefined,
   keyPrefix: string,
-  mentionResolver?: (mention: string) => MarkdownMentionMatch | null,
+  mentionResolver?: MarkdownMentionResolver,
   mentionLinkDataRole?: string,
 ): ReactNode[] {
   if (!tokens?.length) {
@@ -169,7 +171,7 @@ function renderInlineTokens(
 
 function renderMarkdown(
   message: string,
-  mentionResolver?: (mention: string) => MarkdownMentionMatch | null,
+  mentionResolver?: MarkdownMentionResolver,
   mentionLinkDataRole?: string,
 ) {
   const tokens = marked.lexer(message, { gfm: true, breaks: true }) as MarkdownToken[];

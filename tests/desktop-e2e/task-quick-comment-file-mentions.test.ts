@@ -22,7 +22,7 @@ const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 
 describe("desktop task quick comment file mentions", () => {
-  it.skipIf(!isDesktopE2E)("supports @file mention text in the quick comment composer and opens the referenced file from the rendered comment", async () => {
+  it.skipIf(!isDesktopE2E)("supports $file mention text in the quick comment composer and opens the referenced file from the rendered comment", async () => {
     expect(testHome).toBeTruthy();
 
     const repoPath = join(testHome!, "workspace", "quick-comment-file-mentions-repo");
@@ -56,7 +56,7 @@ describe("desktop task quick comment file mentions", () => {
         projectId: project.id,
         input: {
           title: "Quick comment mention task",
-          description: "Use @file mentions in quick comments.",
+          description: "Use $file mentions in quick comments.",
           type: "task",
           status: "ready",
           priority: "P2",
@@ -87,13 +87,13 @@ describe("desktop task quick comment file mentions", () => {
       await openTaskCard(sessionId, "Quick comment mention task");
       await waitForText(sessionId, "Comment on this task");
 
-      await setInputValue(sessionId, '[data-role="default-file-quick-comment-message"]', 'Please inspect @docs/design.md');
+      await setInputValue(sessionId, '[data-role="default-file-quick-comment-message"]', 'Please inspect $docs/design.md');
 
       const quickCommentValue = await executeScript<string>(sessionId, `
         const textarea = document.querySelector('[data-role="default-file-quick-comment-message"]');
         return textarea instanceof HTMLTextAreaElement ? textarea.value : '';
       `);
-      expect(quickCommentValue).toContain('@docs/design.md');
+      expect(quickCommentValue).toContain('$docs/design.md');
 
       await executeScript(sessionId, `
         const button = document.querySelector('[data-role="add-default-file-quick-comment"]');
@@ -101,10 +101,10 @@ describe("desktop task quick comment file mentions", () => {
         button.click();
         return true;
       `);
-      await waitForText(sessionId, 'Please inspect @docs/design.md');
+      await waitForText(sessionId, 'Please inspect docs/design.md');
 
       await executeScript(sessionId, `
-        const button = document.querySelector('[data-role="task-comment-file-mention-link"]');
+        const button = document.querySelector('[data-role="task-comment-mention-link"]');
         if (!(button instanceof HTMLElement)) return false;
         button.click();
         return true;

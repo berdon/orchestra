@@ -22,7 +22,7 @@ const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 
 describe("desktop task comment file mention links", () => {
-  it.skipIf(!isDesktopE2E)("opens the referenced task file in the repo-files pane when a rendered @file mention is clicked", async () => {
+  it.skipIf(!isDesktopE2E)("opens the referenced task file in the repo-files pane when a rendered $file mention is clicked", async () => {
     expect(testHome).toBeTruthy();
 
     const repoPath = join(testHome!, "workspace", "comment-file-links-repo");
@@ -41,7 +41,7 @@ describe("desktop task comment file mention links", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Comment Link Project",
-          description: "Desktop @file link test.",
+          description: "Desktop $file link test.",
         },
       });
       const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
@@ -56,7 +56,7 @@ describe("desktop task comment file mention links", () => {
         projectId: project.id,
         input: {
           title: "Comment mention link task",
-          description: "Clicking @file mentions should open the tracked file.",
+          description: "Clicking $file mentions should open the tracked file.",
           type: "task",
           status: "ready",
           priority: "P2",
@@ -81,7 +81,7 @@ describe("desktop task comment file mention links", () => {
         taskId: task.id,
         input: {
           author: "Reviewer",
-          message: "Please review @docs/design.md before you continue.",
+          message: "Please review $docs/design.md before you continue.",
           interruptAgent: false,
         },
       });
@@ -92,9 +92,9 @@ describe("desktop task comment file mention links", () => {
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
 
       await openTaskCard(sessionId, "Comment mention link task");
-      await waitForText(sessionId, "Please review @docs/design.md before you continue.");
+      await waitForText(sessionId, "Please review docs/design.md before you continue.");
       await executeScript(sessionId, `
-        const button = document.querySelector('[data-role="task-comment-file-mention-link"]');
+        const button = document.querySelector('[data-role="task-comment-mention-link"]');
         if (!(button instanceof HTMLElement)) return false;
         button.click();
         return true;

@@ -34,13 +34,14 @@ import {
   subscribeSession,
   unsubscribeSession,
 } from "./lib/tauri";
-import { ensureAgentSession, listAgentOperations, openAgentSessionInTerminal } from "./lib/agents";
+import { ensureAgentSession, listAgentOperations, listAgents, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { applyPendingRunToSession, createPendingUserRun, type PendingSessionRun, reduceSessionTranscriptEvent } from "./lib/sessionTranscriptReducer";
 import { sortSessionRecords } from "./lib/sessionList";
 import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
+import { listRoles } from "./lib/roles";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
@@ -62,6 +63,7 @@ import { GeneralPanel } from "./settings/GeneralPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AgentOperationsSnapshot,
+  AgentSummary,
   AppInfo,
   BridgeDiagnostics,
   JsonValue,
@@ -70,6 +72,7 @@ import type {
   ProjectSessionPromptSettings,
   PrimaryPage,
   ProjectSummary,
+  RoleSummary,
   SessionActivityState,
   SessionEvent,
   SessionModelState,
@@ -562,6 +565,9 @@ export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
+  const [referenceTasks, setReferenceTasks] = useState<TaskSummary[]>([]);
+  const [referenceAgents, setReferenceAgents] = useState<AgentSummary[]>([]);
+  const [referenceRoles, setReferenceRoles] = useState<RoleSummary[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => loadStoredSidebarCollapsed());
@@ -991,6 +997,28 @@ export function App() {
     setProjectUnreadCounts(counts);
   }
 
+  async function loadProjectReferenceData() {
+    if (isDetachedWindow || !activeProjectId) {
+      setReferenceTasks([]);
+      setReferenceAgents([]);
+      setReferenceRoles([]);
+      return;
+    }
+
+    try {
+      const [tasks, agents, roles] = await Promise.all([
+        listTasks(false, activeProjectId),
+        listAgents(false, activeProjectId),
+        listRoles(false),
+      ]);
+      setReferenceTasks(tasks);
+      setReferenceAgents(agents);
+      setReferenceRoles(roles);
+    } catch (error) {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load project references."));
+    }
+  }
+
   async function handleSaveSessionPromptTemplate(template: string | null) {
     if (!activeProject) {
       return;
@@ -1281,6 +1309,14 @@ export function App() {
   }, [activeProjectId, isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
 
   useEffect(() => {
+    if (isDetachedWindow) {
+      return;
+    }
+
+    void loadProjectReferenceData();
+  }, [activePage, activeProjectId, isDetachedWindow, settingsTab]);
+
+  useEffect(() => {
     if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
       return;
     }
@@ -1297,6 +1333,12 @@ export function App() {
       }
     };
 
+    const refreshProjectReferences = () => {
+      if (!disposed) {
+        void loadProjectReferenceData();
+      }
+    };
+
     void listenToInboxChanges(() => {
       refreshUnreadCounts();
     }).then((dispose) => {
@@ -1305,6 +1347,7 @@ export function App() {
 
     void listenToTaskChanges(() => {
       refreshUnreadCounts();
+      refreshProjectReferences();
     }).then((dispose) => {
       stopTasks = dispose;
     });
@@ -1314,7 +1357,7 @@ export function App() {
       stopInbox();
       stopTasks();
     };
-  }, [isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
+  }, [activeProjectId, isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -2399,6 +2442,9 @@ export function App() {
           <AgentChatPage
             agent={selectedChatAgent}
             session={chatSession}
+            referenceTasks={referenceTasks}
+            referenceAgents={referenceAgents}
+            referenceRoles={referenceRoles}
             displayedEvents={displayedEvents}
             sessionPending={Boolean(chatSessionPendingRun)}
             sessionDisplayStatus={chatSessionDisplayStatus}
@@ -2441,12 +2487,18 @@ export function App() {
                 handleStopSession(chatSession.id);
               }
             }}
+            onOpenTask={navigateToTask}
+            onOpenAgent={navigateToChatAgent}
+            onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
         ) : activePage === "sessions" ? (
           <SessionsPage
             sessions={filteredSessions}
+            referenceTasks={referenceTasks}
+            referenceAgents={referenceAgents}
+            referenceRoles={referenceRoles}
             sessionFilter={sessionFilter}
             onSessionFilterChange={setSessionFilter}
             selectedSession={selectedSession}
@@ -2475,6 +2527,9 @@ export function App() {
             onDraftChange={handleSelectedSessionDraftChange}
             onSendMessage={handleSelectedSessionSend}
             onStopSession={handleSelectedSessionStop}
+            onOpenTask={navigateToTask}
+            onOpenAgent={navigateToChatAgent}
+            onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
             onCompactSession={handleSelectedSessionCompact}
           />
@@ -2488,6 +2543,8 @@ export function App() {
             taskBoardViewMode={taskBoardViewMode}
             tasksOverviewToken={tasksOverviewToken}
             onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
+            onOpenAgent={navigateToChatAgent}
+            onOpenRole={navigateToRole}
           />
         )}
         </div>
@@ -2504,6 +2561,9 @@ export function App() {
         draftMessage={supervisorSessionDraftMessage}
         error={sessionActionError}
         events={supervisorSession?.events ?? []}
+        referenceTasks={referenceTasks}
+        referenceAgents={referenceAgents}
+        referenceRoles={referenceRoles}
         formatTimestamp={formatTimestamp}
         onClose={() => setSupervisorQuickChatOpen(false)}
         onDraftChange={(value) => {
@@ -2518,6 +2578,9 @@ export function App() {
             setSupervisorQuickChatOpen(false);
           }
         }}
+        onOpenTask={navigateToTask}
+        onOpenAgent={navigateToChatAgent}
+        onOpenRole={navigateToRole}
         onSend={() => {
           if (supervisorSession) {
             handleSendMessage(supervisorSession.id);

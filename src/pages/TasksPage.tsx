@@ -185,6 +185,8 @@ interface TasksPageProps {
   taskBoardViewMode?: TaskBoardViewMode;
   tasksOverviewToken?: number;
   onTaskBoardViewModeChange?: (viewMode: TaskBoardViewMode) => void;
+  onOpenAgent?: (agentId: string) => void;
+  onOpenRole?: (roleId: string) => void;
 }
 
 function sameData<T>(current: T, next: T) {
@@ -240,6 +242,8 @@ export function TasksPage({
   taskBoardViewMode = "cards",
   tasksOverviewToken = 0,
   onTaskBoardViewModeChange,
+  onOpenAgent,
+  onOpenRole,
 }: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -1309,6 +1313,7 @@ export function TasksPage({
         <TaskDetailPage
           agents={agents}
           commentDraft={commentDraft}
+          tasks={tasks}
           deleting={deletingTask}
           dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
           draft={taskDraft}
@@ -1332,6 +1337,8 @@ export function TasksPage({
           }}
           onFileReferenceDraftChange={setFileReferenceDraft}
           onOpenTask={openTaskDetail}
+          onOpenAgent={onOpenAgent ?? (() => {})}
+          onOpenRole={onOpenRole ?? (() => {})}
           onPublish={() => void handlePublishDetailTask()}
           onUpdateComment={(commentId, message) => handleUpdateComment(commentId, message)}
           onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
