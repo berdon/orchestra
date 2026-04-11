@@ -2254,6 +2254,7 @@ strong {
   padding: 18px;
 }
 
+.task-detail-shell,
 .task-detail-stack,
 .workflow-lane-list,
 .workflow-validation-list,
@@ -2696,12 +2697,13 @@ strong {
 .task-detail-tabs-panel {
   display: grid;
   gap: 18px;
-  padding: 0;
+  padding: 0 0 112px;
   background: transparent;
 }
 
 .task-page.task-detail-page.panel {
-  padding: 0;
+  position: relative;
+  padding: 0 0 112px;
   background: transparent;
 }
 
@@ -2713,6 +2715,12 @@ strong {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.task-detail-tabs--dock {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 
 .task-detail-tab {
@@ -2734,6 +2742,59 @@ strong {
 
 .task-detail-tabs__body {
   min-width: 0;
+  scroll-margin-top: 128px;
+}
+
+.task-detail-floating-header,
+.task-detail-tab-dock {
+  position: fixed;
+  z-index: 12;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--color-toolbar-background) 96%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+}
+
+.task-detail-floating-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.task-detail-floating-header__copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-detail-floating-header__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.task-detail-floating-header__title-row h3 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-detail-floating-header__meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-detail-tab-dock {
+  bottom: 16px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-radius: 14px;
 }
 
 .task-action-menu,

@@ -16,7 +16,7 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
   await page.locator('[data-role="task-title"]').fill("Draft board task");
   await page.locator('[data-role="save-task"]').click();
 
-  await expect(page.getByRole("heading", { name: "Draft board task" })).toBeVisible();
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Draft board task");
   await expect(page.locator('[data-role="publish-task"]')).toBeVisible();
   await expect(page.locator('[data-role="task-overview-description"]')).toContainText("No description provided.");
   await expect(page.getByRole("button", { name: "Back to tasks" })).toHaveCount(0);
@@ -24,7 +24,7 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
 
   await page.locator('[data-role="task-card"]').filter({ hasText: "Draft board task" }).first().click();
-  await expect(page.getByRole("heading", { name: "Draft board task" })).toBeVisible();
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Draft board task");
   await expect(page.locator('[data-role="task-overview-description"]')).toContainText("No description provided.");
   await page.getByRole("button", { name: "Tasks" }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
@@ -1481,6 +1481,73 @@ test("dispatching an agent-owned task reuses the agent main session instead of s
   });
 
   expect(sessionCounts).toBe(1);
+});
+
+test("task detail keeps the bottom tab dock visible while scrolling", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected seeded task was not found");
+    }
+    const timestamp = new Date().toISOString();
+    target.description = Array.from({ length: 80 }, (_, index) => `Long task detail line ${index + 1}`).join("\n\n");
+    target.updatedAt = timestamp;
+    target.comments = Array.from({ length: 8 }, (_, index) => ({
+      id: `comment-${index}`,
+      taskId: target.id,
+      author: "User",
+      message: `Comment ${index + 1}`,
+      interruptAgent: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }));
+    target.commentCount = target.comments.length;
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: {
+        taskIds: [target.id],
+        reason: "task.updated",
+      },
+    }));
+  });
+
+  const tabDock = page.getByRole('tablist', { name: 'Task detail panels' });
+  await expect(tabDock).toBeVisible();
+
+  const initialDockGap = await tabDock.evaluate((node) => Math.round(window.innerHeight - node.getBoundingClientRect().bottom));
+  expect(initialDockGap).toBeLessThanOrEqual(32);
+
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = 1400;
+      content.dispatchEvent(new Event('scroll'));
+      return;
+    }
+    window.scrollTo({ top: 1400, behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    return Boolean((content && content.scrollTop > 500) || window.scrollY > 500);
+  });
+
+  await expect(page.locator('.task-detail-floating-header')).toBeVisible();
+  await tabDock.getByRole('tab', { name: 'Comments' }).click();
+  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
+
 });
 
 test("task detail refreshes from backend task-change events without waiting on polling", async ({ page }) => {

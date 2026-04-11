@@ -67,6 +67,7 @@ import type {
 import { TaskCreatePage } from "./tasks/TaskCreatePage";
 import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
+import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetailRouteState } from "./tasks/taskDetailLoadGuards";
 import { buildTaskBoardModel, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
 import { TasksOverviewPage, type TaskBoardFilter, type TaskBoardViewMode } from "./tasks/TasksOverviewPage";
 
@@ -75,6 +76,19 @@ type TasksRoute =
   | { kind: "create"; parentTaskId?: string | null; workflowId?: string | null; scheduled?: boolean }
   | { kind: "detail"; taskId: string }
   | { kind: "schedule"; scheduleId: string };
+
+function toTaskDetailRouteState(route: TasksRoute): TaskDetailRouteState {
+  switch (route.kind) {
+    case "detail":
+      return { kind: "detail", taskId: route.taskId };
+    case "schedule":
+      return { kind: "schedule", scheduleId: route.scheduleId };
+    case "create":
+      return { kind: "create" };
+    default:
+      return { kind: "overview" };
+  }
+}
 
 function createBlankTaskDraft(): TaskUpsertInput {
   return {
@@ -259,6 +273,9 @@ export function TasksPage({
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
   const tasksOverviewTokenRef = useRef(0);
+  const routeRef = useRef<TaskDetailRouteState>({ kind: "overview" });
+  const taskDetailLoadRequestRef = useRef(0);
+  const taskScheduleLoadRequestRef = useRef(0);
 
   const filteredTasks = useMemo(() => {
     switch (taskFilter) {
@@ -419,12 +436,16 @@ export function TasksPage({
   }
 
   async function loadTaskDetail(taskId: string, options?: { preserveDraft?: boolean; silent?: boolean }) {
+    const requestId = ++taskDetailLoadRequestRef.current;
     if (!options?.silent) {
       setLoadingTaskDetail(true);
       setTaskActionError(null);
     }
     try {
       const [task, messages] = await Promise.all([getTask(taskId), listTaskMessages(taskId)]);
+      if (!shouldApplyTaskDetailLoad(routeRef.current, taskId, requestId, taskDetailLoadRequestRef.current)) {
+        return;
+      }
       setTaskDetail((current) => (sameData(current, task) ? current : task));
       setTaskMessages((current) => (sameData(current, messages) ? current : messages));
       if (!options?.silent) {
@@ -440,21 +461,27 @@ export function TasksPage({
         setTaskDraftDirty(false);
       }
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to load task.");
+      if (taskDetailLoadRequestRef.current === requestId) {
+        setTaskActionError(error instanceof Error ? error.message : "Unable to load task.");
+      }
     } finally {
-      if (!options?.silent) {
+      if (!options?.silent && taskDetailLoadRequestRef.current === requestId) {
         setLoadingTaskDetail(false);
       }
     }
   }
 
   async function loadTaskScheduleDetail(scheduleId: string, options?: { preserveDraft?: boolean; silent?: boolean }) {
+    const requestId = ++taskScheduleLoadRequestRef.current;
     if (!options?.silent) {
       setLoadingTaskDetail(true);
       setTaskActionError(null);
     }
     try {
       const schedule = await getTaskSchedule(scheduleId);
+      if (!shouldApplyTaskScheduleLoad(routeRef.current, scheduleId, requestId, taskScheduleLoadRequestRef.current)) {
+        return;
+      }
       setTaskScheduleDetail((current) => (sameData(current, schedule) ? current : schedule));
       if (!options?.preserveDraft) {
         const nextDraft = taskScheduleToDraft(schedule);
@@ -462,9 +489,11 @@ export function TasksPage({
         setTaskScheduleDraftDirty(false);
       }
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to load task schedule.");
+      if (taskScheduleLoadRequestRef.current === requestId) {
+        setTaskActionError(error instanceof Error ? error.message : "Unable to load task schedule.");
+      }
     } finally {
-      if (!options?.silent) {
+      if (!options?.silent && taskScheduleLoadRequestRef.current === requestId) {
         setLoadingTaskDetail(false);
       }
     }
@@ -473,6 +502,10 @@ export function TasksPage({
   useEffect(() => {
     void loadTasksData();
   }, [projectId]);
+
+  useEffect(() => {
+    routeRef.current = toTaskDetailRouteState(route);
+  }, [route]);
 
   useEffect(() => {
     if (route.kind === "detail") {
@@ -576,8 +609,11 @@ export function TasksPage({
     }
 
     tasksOverviewTokenRef.current = tasksOverviewToken;
+    taskDetailLoadRequestRef.current += 1;
+    taskScheduleLoadRequestRef.current += 1;
     setRoute({ kind: "overview" });
     setTaskDetail(null);
+    setTaskMessages([]);
     setTaskScheduleDetail(null);
     setTaskDraft(createBlankTaskDraft());
     setTaskScheduleDraft(createBlankTaskScheduleDraft());
@@ -592,8 +628,11 @@ export function TasksPage({
   }, [tasksOverviewToken]);
 
   useEffect(() => {
+    taskDetailLoadRequestRef.current += 1;
+    taskScheduleLoadRequestRef.current += 1;
     setRoute({ kind: "overview" });
     setTaskDetail(null);
+    setTaskMessages([]);
     setTaskScheduleDetail(null);
     setTaskDraft(createBlankTaskDraft());
     setTaskScheduleDraft(createBlankTaskScheduleDraft());
@@ -615,7 +654,10 @@ export function TasksPage({
       repositoryIds: defaultRepositoryId ? [defaultRepositoryId] : [],
       repositoryId: defaultRepositoryId,
     };
+    taskDetailLoadRequestRef.current += 1;
+    taskScheduleLoadRequestRef.current += 1;
     setTaskDetail(null);
+    setTaskMessages([]);
     setTaskScheduleDetail(null);
     setTaskDraft(nextTaskDraft);
     setTaskScheduleDraft(createBlankTaskScheduleDraft(nextTaskDraft));
@@ -632,12 +674,18 @@ export function TasksPage({
   }
 
   function openTaskDetail(taskId: string) {
+    taskDetailLoadRequestRef.current += 1;
+    setTaskDetail(null);
+    setTaskMessages([]);
     setTaskScheduleDetail(null);
     setRoute({ kind: "detail", taskId });
   }
 
   function openTaskScheduleDetail(scheduleId: string) {
+    taskScheduleLoadRequestRef.current += 1;
     setTaskDetail(null);
+    setTaskMessages([]);
+    setTaskScheduleDetail(null);
     setRoute({ kind: "schedule", scheduleId });
   }
 
@@ -1184,6 +1232,13 @@ export function TasksPage({
     }
   }
 
+  if (typeof window !== "undefined") {
+    const testWindow = window as typeof window & {
+      __orchestraTestOpenTaskDetail?: (taskId: string) => void;
+    };
+    testWindow.__orchestraTestOpenTaskDetail = openTaskDetail;
+  }
+
   return (
     <section className="panel-stack task-page-stack">
       {taskActionError ? <p className="error-copy">{taskActionError}</p> : null}
@@ -1250,7 +1305,7 @@ export function TasksPage({
           schedule={taskScheduleDetail}
           workflows={workflowSummaries}
         />
-      ) : route.kind === "detail" && taskDetail ? (
+      ) : route.kind === "detail" && taskDetail?.id === route.taskId ? (
         <TaskDetailPage
           agents={agents}
           commentDraft={commentDraft}
@@ -1307,6 +1362,18 @@ export function TasksPage({
           workflowLanes={taskWorkflowLanes}
           onSendMail={(body, interrupt) => handleSendTaskMail(body, interrupt)}
         />
+      ) : route.kind === "detail" ? (
+        <section className="panel empty-state">
+          <p className="eyebrow">Task detail</p>
+          <h3>Loading task</h3>
+          <p>Refreshing the selected task detail…</p>
+        </section>
+      ) : route.kind === "schedule" ? (
+        <section className="panel empty-state">
+          <p className="eyebrow">Task schedule</p>
+          <h3>Loading schedule</h3>
+          <p>Refreshing the selected schedule detail…</p>
+        </section>
       ) : (
         <section className="panel empty-state">
           <p className="eyebrow">No task selected</p>

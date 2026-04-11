@@ -189,6 +189,12 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
 
 const DELETE_HOLD_MS = 2000;
 
+interface FloatingTaskChromeLayout {
+  left: number;
+  right: number;
+  top: number;
+}
+
 export function TaskDetailPage({
   task,
   draft,
@@ -269,10 +275,15 @@ export function TaskDetailPage({
     return [5, 10, 25].includes(stored) ? stored : 5;
   });
   const deleteHoldTimerRef = useRef<number | null>(null);
+  const detailPageRef = useRef<HTMLDivElement | null>(null);
+  const primaryHeaderRef = useRef<HTMLDivElement | null>(null);
+  const tabBodyRef = useRef<HTMLDivElement | null>(null);
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
+  const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
+  const taskHeading = draft.title.trim() || task.title;
   const commentThreads = groupTaskComments(task.comments);
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const recentHistory = timelineItems.slice(0, historyLimit);
@@ -349,6 +360,80 @@ export function TaskDetailPage({
       window.localStorage.setItem("orchestra.taskDetail.historyLimit", String(historyLimit));
     }
   }, [historyLimit]);
+
+  useEffect(() => {
+    const detailPage = detailPageRef.current;
+    const primaryHeader = primaryHeaderRef.current;
+    if (!detailPage || !primaryHeader || typeof window === "undefined") {
+      setFloatingChromeLayout(null);
+      return;
+    }
+
+    let scrollRoot: HTMLElement | null = null;
+    let currentAncestor = detailPage.parentElement;
+    while (currentAncestor) {
+      const styles = window.getComputedStyle(currentAncestor);
+      const isScrollable = ["auto", "scroll", "overlay"].includes(styles.overflowY);
+      if (isScrollable) {
+        scrollRoot = currentAncestor;
+        break;
+      }
+      currentAncestor = currentAncestor.parentElement;
+    }
+    const pageHeader = (scrollRoot?.querySelector(".page-header") as HTMLElement | null)
+      ?? (detailPage.ownerDocument.querySelector(".page-header") as HTMLElement | null);
+    let frameId: number | null = null;
+
+    const updateFloatingChrome = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(() => {
+        const detailRect = detailPage.getBoundingClientRect();
+        const pageHeaderRect = pageHeader?.getBoundingClientRect() ?? null;
+        const pageHeaderBottom = pageHeaderRect?.bottom ?? 0;
+        const nextLayout = detailRect.width > 0 && detailRect.bottom > pageHeaderBottom + 72
+          ? {
+              left: Math.max(detailRect.left, 12),
+              right: Math.max(window.innerWidth - detailRect.right, 12),
+              top: pageHeaderBottom + 10,
+            }
+          : null;
+
+        setFloatingChromeLayout((current) => {
+          if (!nextLayout && !current) {
+            return current;
+          }
+          if (
+            current
+            && nextLayout
+            && current.left === nextLayout.left
+            && current.right === nextLayout.right
+            && current.top === nextLayout.top
+          ) {
+            return current;
+          }
+          return nextLayout;
+        });
+      });
+    };
+
+    updateFloatingChrome();
+    const intervalId = window.setInterval(updateFloatingChrome, 180);
+    scrollRoot?.addEventListener("scroll", updateFloatingChrome, { passive: true });
+    window.addEventListener("scroll", updateFloatingChrome, { passive: true });
+    window.addEventListener("resize", updateFloatingChrome);
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      window.clearInterval(intervalId);
+      scrollRoot?.removeEventListener("scroll", updateFloatingChrome);
+      window.removeEventListener("scroll", updateFloatingChrome);
+      window.removeEventListener("resize", updateFloatingChrome);
+    };
+  }, [isEditing, task.id]);
 
   useEffect(() => {
     if (!defaultFile?.exists || !defaultFile.absolutePath) {
@@ -629,6 +714,13 @@ export function TaskDetailPage({
     setActiveTab("repo-files");
     setSelectedFileReference(reference.id);
     loadFileContent(reference);
+  }
+
+  function handleTabSelect(tabId: TaskDetailTab) {
+    setActiveTab(tabId);
+    window.requestAnimationFrame(() => {
+      tabBodyRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
   }
 
   function renderTabPanel() {
@@ -1348,22 +1440,36 @@ export function TaskDetailPage({
     }
   }
 
+  const taskHeaderMeta = [
+    task.number,
+    `${task.commentCount} comments`,
+    `${task.todos.length} todos`,
+    `${task.laneRunCount} lane runs`,
+    task.childCount ? `${task.childCount} children` : null,
+    task.attachmentCount ? `${task.attachmentCount} attachments` : null,
+    task.blockedByCount ? `${task.blockedByCount} blockers` : null,
+    task.readyForDispatch ? "Dispatchable" : "Not dispatchable",
+  ].filter(Boolean);
+
+  const stickyChromeStyle = floatingChromeLayout
+    ? {
+        left: `${floatingChromeLayout.left}px`,
+        right: `${floatingChromeLayout.right}px`,
+      }
+    : undefined;
+
   return (
     <>
+      <div className="task-detail-shell" ref={detailPageRef}>
       <section className="task-page task-detail-page panel">
-        <div className="panel__header panel__header--session-detail">
+        <div className="panel__header panel__header--session-detail task-detail-primary-header" ref={primaryHeaderRef}>
           <div>
             <p className="eyebrow">Task detail</p>
-            <h2 data-role="task-title-heading">{draft.title.trim() || task.title}</h2>
+            <h2 data-role="task-title-heading">{taskHeading}</h2>
             <div className="session-detail__meta">
-              <span>{task.number}</span>
-              <span>{task.commentCount} comments</span>
-              <span>{task.todos.length} todos</span>
-              <span>{task.laneRunCount} lane runs</span>
-              {task.childCount ? <span>{task.childCount} children</span> : null}
-              {task.attachmentCount ? <span>{task.attachmentCount} attachments</span> : null}
-              {task.blockedByCount ? <span>{task.blockedByCount} blockers</span> : null}
-              <span>{task.readyForDispatch ? "Dispatchable" : "Not dispatchable"}</span>
+              {taskHeaderMeta.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
             </div>
           </div>
 
@@ -1647,24 +1753,51 @@ export function TaskDetailPage({
       </section>
 
       <section className="panel task-detail-tabs-panel">
-        <div className="task-detail-tabs" role="tablist" aria-label="Task detail panels">
-          {TAB_OPTIONS.map((tab) => (
-            <button
-              key={tab.id}
-              className={activeTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
-              data-role={`task-detail-tab-${tab.id}`}
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="task-detail-tabs__body">{renderTabPanel()}</div>
+        <div className="task-detail-tabs__body" ref={tabBodyRef}>{renderTabPanel()}</div>
       </section>
+
+      {stickyChromeStyle ? (
+        <div className="task-detail-floating-header" data-role="task-detail-compact-header" style={{ ...stickyChromeStyle, top: `${floatingChromeLayout?.top ?? 0}px` }}>
+          <div className="task-detail-floating-header__copy">
+            <div className="task-detail-floating-header__title-row">
+              <span className="status-badge status-badge--neutral">{task.number}</span>
+              <h3>{taskHeading}</h3>
+            </div>
+            <div className="task-detail-floating-header__meta">
+              <span className={`status-badge status-badge--${getStatusTone(task.status)}`}>{formatStatusLabel(task.status)}</span>
+              {task.activeLaneAssignment ? (
+                <span className={`status-badge status-badge--${task.activeLaneAssignment.status === "active" ? "success" : task.activeLaneAssignment.status === "queued" ? "warning" : "neutral"}`}>
+                  {formatStatusLabel(task.activeLaneAssignment.status)}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="task-detail-floating-header__actions">
+            <span className="status-badge status-badge--neutral">Quick context</span>
+          </div>
+        </div>
+      ) : null}
+
+      {stickyChromeStyle ? (
+        <div className="task-detail-tab-dock" data-role="task-detail-tab-dock" style={stickyChromeStyle}>
+          <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Task detail panels">
+            {TAB_OPTIONS.map((tab) => (
+              <button
+                key={tab.id}
+                className={activeTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
+                data-role={`task-detail-tab-${tab.id}`}
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                type="button"
+                onClick={() => handleTabSelect(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      </div>
 
       {showDeleteConfirm ? (
         <div className="quick-chat-overlay" data-role="task-delete-confirm-overlay" onClick={() => !deleting && setShowDeleteConfirm(false)}>
