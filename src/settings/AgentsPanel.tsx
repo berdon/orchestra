@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import type { InheritedAccessSummary } from "../components/access/AccessSummary";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import {
@@ -405,8 +406,13 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
   }
 
   return (
-    <section className="role-shell">
-      <aside className="role-nav-panel">
+    <ResizableSidebarLayout
+      className="role-shell"
+      storageKey="orchestra.layout.agents.secondary-nav-width"
+      navigationClassName="role-nav-panel"
+      detailClassName="panel role-detail-panel"
+      navigation={(
+      <>
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Agent library</p>
@@ -448,9 +454,10 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
             </a>
           ))}
         </nav>
-      </aside>
-
-      <section className="panel role-detail-panel">
+      </>
+      )}
+      detail={(
+      <>
         {selectedAgentSummary || isCreatingAgent ? (
           <div className="workflow-editor-grid">
             <div className="panel__header panel__header--stacked">
@@ -711,7 +718,8 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
             <p>Use the agent list to inspect an existing definition or create a persistent global or project-specific worker.</p>
           </div>
         )}
-      </section>
-    </section>
+      </>
+      )}
+    />
   );
 }

@@ -253,6 +253,16 @@ pub struct SessionRecord {
     pub terminal_attached: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug_info: Option<SessionDebugInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

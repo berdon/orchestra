@@ -661,7 +661,10 @@ fn fallback_session_file_summary(
         path: path.to_path_buf(),
         record: SessionRecord {
             id: resolved_session_id.clone(),
-            title: format!("Session {}", &resolved_session_id[..resolved_session_id.len().min(8)]),
+            title: format!(
+                "Session {}",
+                &resolved_session_id[..resolved_session_id.len().min(8)]
+            ),
             status: "idle".into(),
             created_at,
             updated_at,
@@ -669,6 +672,11 @@ fn fallback_session_file_summary(
             events: Vec::new(),
             terminal_attached: false,
             debug_info: None,
+            task_id: None,
+            task_number: None,
+            task_title: None,
+            worker_type: None,
+            worker_name: None,
         },
     })
 }
@@ -865,6 +873,11 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
             events,
             terminal_attached: false,
             debug_info: None,
+            task_id: None,
+            task_number: None,
+            task_title: None,
+            worker_type: None,
+            worker_name: None,
         },
     })
 }
@@ -1003,6 +1016,11 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
             events: Vec::new(),
             terminal_attached: false,
             debug_info: None,
+            task_id: None,
+            task_number: None,
+            task_title: None,
+            worker_type: None,
+            worker_name: None,
         },
     })
 }

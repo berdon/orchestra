@@ -28,6 +28,83 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
 });
 
+test("sessions list uses deterministic task ordering and delays the dismiss affordance until hover settles", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-late",
+          title: "runtime-z",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
+          taskId: "task-10",
+          taskNumber: "ORC-10",
+          taskTitle: "Tenth task",
+          workerType: "agent",
+          workerName: "Reviewer",
+        },
+        {
+          id: "session-early",
+          title: "runtime-a",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [],
+          taskId: "task-2",
+          taskNumber: "ORC-2",
+          taskTitle: "Second task",
+          workerType: "agent",
+          workerName: "Builder",
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await expect(page.locator('[data-role="session-link"]').first()).toContainText("ORC-2");
+  await expect(page.locator('[data-role="session-link"]').first()).toContainText("Second task");
+
+  const firstRow = page.locator('.session-list-row').first();
+  const dismissButton = firstRow.locator('.session-delete-button');
+  await expect(dismissButton).toHaveJSProperty('tabIndex', -1);
+  await firstRow.hover();
+  await page.waitForTimeout(2100);
+  await expect(firstRow).toHaveClass(/session-list-row--actions-visible/);
+  await expect(dismissButton).toHaveJSProperty('tabIndex', 0);
+});
+
+test("sessions secondary nav width is resizable and persists", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  const panel = page.locator('.session-list-panel');
+  const handle = page.locator('[data-role="secondary-nav-resize-handle"]').first();
+  const initialWidth = await panel.evaluate((node) => node.getBoundingClientRect().width);
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) {
+    throw new Error('Expected resize handle bounding box');
+  }
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 + 72, handleBox.y + handleBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  const resizedWidth = await panel.evaluate((node) => node.getBoundingClientRect().width);
+  expect(resizedWidth).toBeGreaterThan(initialWidth + 40);
+
+  const storedWidth = await page.evaluate(() => window.localStorage.getItem('orchestra.layout.sessions.secondary-nav-width'));
+  expect(Number(storedWidth)).toBeGreaterThan(initialWidth + 40);
+});
+
 test("sessions composer model selector is compact, fixed-width, and unlabeled", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

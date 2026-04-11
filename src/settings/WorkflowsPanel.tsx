@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
 import {
@@ -431,8 +432,13 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
         </div>
       </section>
 
-      <section className="workflow-shell">
-        <aside className="workflow-nav-panel">
+      <ResizableSidebarLayout
+        className="workflow-shell"
+        storageKey="orchestra.layout.workflows.secondary-nav-width"
+        navigationClassName="workflow-nav-panel"
+        detailClassName="panel workflow-detail-panel"
+        navigation={(
+        <>
           <div className="panel__header panel__header--stacked">
             <div>
               <p className="eyebrow">Workflow library</p>
@@ -476,9 +482,10 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
               </a>
             ))}
           </nav>
-        </aside>
-
-        <section className="panel workflow-detail-panel">
+        </>
+        )}
+        detail={(
+        <>
           <div className="panel__header panel__header--session-detail">
             <div>
               <p className="eyebrow">Workflow editor</p>
@@ -928,8 +935,9 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
               )}
             </section>
           </div>
-        </section>
-      </section>
+        </>
+        )}
+      />
     </section>
   );
 }

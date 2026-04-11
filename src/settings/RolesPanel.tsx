@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import { getPolicy, listPolicies } from "../lib/policies";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
@@ -287,8 +288,13 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
   }
 
   return (
-    <section className="role-shell">
-      <aside className="role-nav-panel">
+    <ResizableSidebarLayout
+      className="role-shell"
+      storageKey="orchestra.layout.roles.secondary-nav-width"
+      navigationClassName="role-nav-panel"
+      detailClassName="panel role-detail-panel"
+      navigation={(
+      <>
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Role library</p>
@@ -328,9 +334,10 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
             </a>
           ))}
         </nav>
-      </aside>
-
-      <section className="panel role-detail-panel">
+      </>
+      )}
+      detail={(
+      <>
         {selectedRoleSummary || isCreatingRole ? (
           <div className="workflow-editor-grid">
             <div className="panel__header panel__header--stacked">
@@ -527,7 +534,8 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
             <p>Use the role list to inspect an existing definition or create a new role for workflow ownership.</p>
           </div>
         )}
-      </section>
-    </section>
+      </>
+      )}
+    />
   );
 }

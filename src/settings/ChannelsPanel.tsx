@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import {
   createChannel,
   deleteChannel,
@@ -249,8 +250,13 @@ export function ChannelsPanel() {
   }
 
   return (
-    <section className="task-shell">
-      <aside className="task-nav-panel">
+    <ResizableSidebarLayout
+      className="task-shell"
+      storageKey="orchestra.layout.channels.secondary-nav-width"
+      navigationClassName="task-nav-panel"
+      detailClassName="panel task-detail-panel"
+      navigation={(
+      <>
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">External channels</p>
@@ -293,9 +299,10 @@ export function ChannelsPanel() {
             </a>
           ))}
         </nav>
-      </aside>
-
-      <section className="panel task-detail-panel">
+      </>
+      )}
+      detail={(
+      <>
         <div className="task-detail-stack">
           <div className="panel__header panel__header--session-detail">
             <div>
@@ -447,7 +454,8 @@ export function ChannelsPanel() {
             </section>
           ) : null}
         </div>
-      </section>
-    </section>
+      </>
+      )}
+    />
   );
 }
