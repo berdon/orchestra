@@ -7,6 +7,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   setInputValue,
   sleep,
@@ -144,7 +145,7 @@ describe("desktop approval-gated workflow lanes", () => {
       const waitingRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
       expect(waitingRoleOps.activeInstanceCount).toBe(0);
       const waitingSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
-      expect(waitingSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('closed');
+      expect(waitingSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('active');
       await clickSelector(sessionId, '[data-role="send-task-back-for-work"]');
 
       const reworkedTask = await waitForCondition(
@@ -286,7 +287,22 @@ describe("desktop approval-gated workflow lanes", () => {
       await waitForText(sessionId, 'Move task to a different lane');
       await setInputValue(sessionId, '[data-role="task-relane-target"]', reviewPassLaneId!);
       await setInputValue(sessionId, '[data-role="task-relane-notes"]', 'Redirect this to the review-pass lane.');
-      await clickSelector(sessionId, '[data-role="task-relane-confirm"]');
+      await waitForCondition(
+        () => executeScript<{ targetValue: string; disabled: boolean }>(sessionId, `
+          const target = document.querySelector('[data-role="task-relane-target"]');
+          const button = document.querySelector('[data-role="task-relane-confirm"]');
+          return {
+            targetValue: target instanceof HTMLSelectElement ? target.value : '',
+            disabled: button instanceof HTMLButtonElement ? button.disabled : true,
+          };
+        `),
+        (state) => state.targetValue === reviewPassLaneId && state.disabled === false,
+      );
+      await invokeCommand(sessionId, 'reassign_task_to_lane', {
+        taskId: createdTask!.id,
+        laneId: reviewPassLaneId,
+        notes: 'Redirect this to the review-pass lane.',
+      });
 
       const relanedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),

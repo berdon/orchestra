@@ -7,6 +7,7 @@ test("chat nav lists named agents and excludes roles", async ({ page }) => {
 
   await page.goto("/");
 
+  await expect(page.locator('[data-role="project-switcher"]')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "Settings" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: /^Roles$/ }).click();
@@ -29,6 +30,7 @@ test("chat page opens an agent main session with focused chat controls while Ses
 
   await page.goto("/");
 
+  await expect(page.getByRole("button", { name: "Chat" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Chat" }).click();
   await page.locator('[data-role="chat-agent-nav-data"]').click();
 
@@ -96,6 +98,39 @@ test("chat page opens an agent main session with focused chat controls while Ses
   const secondSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
 
   expect(secondSessionId).toBe(firstSessionId);
+});
+
+test("chat page New session rotates the active agent session in place and leaves prior sessions in history", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+
+  const firstSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(firstSessionId).toBeTruthy();
+
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await page.locator('[data-role="session-action-new"]').click();
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await expect(page.locator('[data-role="session-filter-active"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(0);
+
+  const secondSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(secondSessionId).toBeTruthy();
+  expect(secondSessionId).not.toBe(firstSessionId);
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-link"]').filter({ hasText: "Data main session" })).toHaveCount(2);
+
+  const selectedSessionId = await page.locator('.session-list-link--active[data-role="session-link"]').getAttribute("data-session-id");
+  expect(selectedSessionId).toBe(secondSessionId);
 });
 
 test("chat page reuses a cached main session from the session list before reopening the agent runtime", async ({ page }) => {

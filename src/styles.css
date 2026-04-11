@@ -693,6 +693,7 @@ strong {
 }
 
 .project-switcher {
+  position: relative;
   display: grid;
   gap: 6px;
 }
@@ -737,6 +738,63 @@ strong {
   background: color-mix(in srgb, var(--bg-elevated) 92%, var(--color-sidebar-background));
 }
 
+.project-switcher__native-select {
+  position: absolute;
+  inset: auto;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-switcher__trigger-label,
+.project-switcher__item-label,
+.nav-item__label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.project-switcher__chevron {
+  color: var(--text-muted);
+}
+
+.project-switcher__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 96%, var(--color-sidebar-background));
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.project-switcher__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.project-switcher__item:hover {
+  background: var(--color-list-row-hover);
+}
+
+.project-switcher__item--active {
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--bg-elevated));
+}
+
 .app-shell[data-sidebar-collapsed="true"] .sidebar {
   padding-inline: 10px;
 }
@@ -748,6 +806,8 @@ strong {
 
 .app-shell[data-sidebar-collapsed="true"] .sidebar__brand-copy,
 .app-shell[data-sidebar-collapsed="true"] .project-switcher__label,
+.app-shell[data-sidebar-collapsed="true"] .project-switcher__trigger-label,
+.app-shell[data-sidebar-collapsed="true"] .project-switcher__chevron,
 .app-shell[data-sidebar-collapsed="true"] .nav-item__label--full {
   display: none;
 }
@@ -768,6 +828,7 @@ strong {
 .app-shell[data-sidebar-collapsed="true"] .project-switcher__button {
   min-height: 34px;
   padding-inline: 6px;
+  justify-content: center;
 }
 
 .project-switcher__button,
@@ -813,6 +874,7 @@ strong {
   min-height: 36px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   border-color: transparent;
   background: transparent;
   color: var(--text-muted);
@@ -820,6 +882,11 @@ strong {
   padding: 8px 10px;
   border-radius: 8px;
   font-weight: 550;
+}
+
+.nav-item__badge,
+.project-switcher__badge {
+  flex-shrink: 0;
 }
 
 .nav-item:hover,

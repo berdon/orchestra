@@ -3,6 +3,7 @@ import {
   cleanupStaleBridgeInstances,
   clearLogs,
   compactSession,
+  createContextualSession,
   createSession,
   deleteSession,
   getAppInfo,
@@ -17,11 +18,14 @@ import {
   getCurrentAgentTerminalSessionId,
   isCurrentAgentTerminalWindow,
   isCurrentLogsWindow,
+  listInboxMessages,
   listSessions,
   listTasks,
   listWorkflows,
+  listenToInboxChanges,
   listenToSessionChanges,
   listenToSessionStream,
+  listenToTaskChanges,
   openLogsWindow,
   reportClientError,
   sendSessionMessage,
@@ -41,6 +45,7 @@ import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/pro
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
+import { ProjectSwitcher } from "./components/ProjectSwitcher";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
 import { InboxPage } from "./pages/InboxPage";
@@ -61,6 +66,7 @@ import type {
   BridgeDiagnostics,
   JsonValue,
   LogEntry,
+  MailboxMessage,
   ProjectSessionPromptSettings,
   PrimaryPage,
   ProjectSummary,
@@ -72,6 +78,7 @@ import type {
   SessionStatus,
   SessionStreamEnvelope,
   SettingsTab,
+  TaskSummary,
 } from "./types";
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string; shortLabel: string }> = [
@@ -186,6 +193,12 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
   }
 
   return "Choose a model";
+}
+
+function countInboxUnreadThings(messages: MailboxMessage[], tasks: TaskSummary[]) {
+  const unreadMessages = messages.filter((message) => !message.readAt && !message.archivedAt).length;
+  const attentionTasks = tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked).length;
+  return unreadMessages + attentionTasks;
 }
 
 function isScrolledToBottom(node: HTMLDivElement, threshold = 24) {
@@ -530,6 +543,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("projects");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(getActiveProjectId());
+  const [projectUnreadCounts, setProjectUnreadCounts] = useState<Record<string, number>>({});
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
@@ -604,9 +618,24 @@ export function App() {
     [activeProjectId, projects],
   );
 
+  const activeProjectUnreadCount = useMemo(
+    () => (activeProjectId ? projectUnreadCounts[activeProjectId] ?? 0 : 0),
+    [activeProjectId, projectUnreadCounts],
+  );
+
+  const hasUnreadOutsideActiveProject = useMemo(
+    () => projects.some((project) => project.id !== activeProjectId && (projectUnreadCounts[project.id] ?? 0) > 0),
+    [activeProjectId, projectUnreadCounts, projects],
+  );
+
   const filteredSessions = useMemo(
     () => sessions.filter((session) => (sessionFilter === "closed" ? session.status === "closed" : session.status !== "closed")),
     [sessionFilter, sessions],
+  );
+
+  const activeSessionCount = useMemo(
+    () => sessions.filter((session) => session.status !== "closed").length,
+    [sessions],
   );
 
   const selectedSession = useMemo(
@@ -944,6 +973,24 @@ export function App() {
     setSessionPromptSettings(await getSessionPromptSettings(activeProject.slug));
   }
 
+  async function loadProjectUnreadCounts() {
+    if (isLogsWindow || isAgentTerminalWindow || projects.length === 0) {
+      setProjectUnreadCounts({});
+      return;
+    }
+
+    const counts = Object.fromEntries(
+      await Promise.all(projects.map(async (project) => {
+        const [messages, tasks] = await Promise.all([
+          listInboxMessages(project.id, true),
+          listTasks(false, project.id),
+        ]);
+        return [project.id, countInboxUnreadThings(messages, tasks)] as const;
+      })),
+    );
+    setProjectUnreadCounts(counts);
+  }
+
   async function handleSaveSessionPromptTemplate(template: string | null) {
     if (!activeProject) {
       return;
@@ -961,7 +1008,7 @@ export function App() {
     setSessionActionError(null);
 
     try {
-      const listedSessions = sortSessionRecords((await listSessions()).map(normalizeSessionRecord));
+      const listedSessions = sortSessionRecords((await listSessions(activeProjectId)).map(normalizeSessionRecord));
       const hydratedSessions = sortSessionRecords(
         reconcileListedSessions(sessionsRef.current, listedSessions, {
           preserveDetailedSessionIds: [
@@ -1212,6 +1259,9 @@ export function App() {
     if (activeProjectId) {
       setActiveProjectId(activeProjectId);
     }
+    sessionsRef.current = [];
+    setSessions([]);
+    setSelectedSessionId(null);
     setChatSessionId(null);
     chatSessionAgentIdRef.current = null;
     chatSessionRecoveryMissRef.current = null;
@@ -1219,6 +1269,52 @@ export function App() {
     lastKnownChatSessionAgentIdRef.current = null;
     lastKnownChatSessionDraftRef.current = "";
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
+      return;
+    }
+
+    void loadProjectUnreadCounts().catch(() => {
+      setProjectUnreadCounts({});
+    });
+  }, [activeProjectId, isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
+
+  useEffect(() => {
+    if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
+      return;
+    }
+
+    let disposed = false;
+    let stopInbox = () => {};
+    let stopTasks = () => {};
+
+    const refreshUnreadCounts = () => {
+      if (!disposed) {
+        void loadProjectUnreadCounts().catch(() => {
+          setProjectUnreadCounts({});
+        });
+      }
+    };
+
+    void listenToInboxChanges(() => {
+      refreshUnreadCounts();
+    }).then((dispose) => {
+      stopInbox = dispose;
+    });
+
+    void listenToTaskChanges(() => {
+      refreshUnreadCounts();
+    }).then((dispose) => {
+      stopTasks = dispose;
+    });
+
+    return () => {
+      disposed = true;
+      stopInbox();
+      stopTasks();
+    };
+  }, [isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -1672,6 +1768,10 @@ export function App() {
 
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
+  const navBadgeByPage: Partial<Record<PrimaryPage, string>> = useMemo(() => ({
+    inbox: activeProjectUnreadCount > 0 ? String(activeProjectUnreadCount) : "",
+    sessions: activeSessionCount > 0 ? String(activeSessionCount) : "",
+  }), [activeProjectUnreadCount, activeSessionCount]);
 
   const handleThemeChange = useCallback((nextThemeId: OrchestraThemeId) => {
     setThemeId(nextThemeId);
@@ -1779,7 +1879,7 @@ export function App() {
     setCommandPaletteLoading(true);
     try {
       const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows] = await Promise.all([
-        listSessions(),
+        listSessions(activeProjectId),
         listTasks(false, activeProjectId),
         listAgentOperations(false, activeProjectId),
         listRoleOperations(false),
@@ -1932,9 +2032,29 @@ export function App() {
     });
   }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
 
-  function handleCreateFreshSession() {
-    setActivePage("sessions");
-    void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null));
+  async function handleCreateFreshSession(sessionId?: string | null, options?: { chatAgentId?: string | null }) {
+    setIsSubmitting(true);
+    setSessionActionError(null);
+
+    try {
+      const nextSession = sessionId
+        ? await createContextualSession(sessionId, activeProject?.slug ?? null)
+        : await createSession(undefined, activeProject?.slug ?? null);
+      mergeSessionRecord(nextSession, { select: false });
+      setSelectedSessionId(nextSession.id);
+
+      if (options?.chatAgentId) {
+        setChatSessionId(nextSession.id);
+        chatSessionAgentIdRef.current = options.chatAgentId;
+        lastKnownChatSessionIdRef.current = nextSession.id;
+        lastKnownChatSessionAgentIdRef.current = options.chatAgentId;
+        void loadChatAgents({ background: true });
+      }
+    } catch (error) {
+      setSessionActionError(await reportClientError("ui.sessions.create_contextual", error, "Unable to create a new session."));
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function handleCompactExistingSession(sessionId?: string | null) {
@@ -2070,25 +2190,18 @@ export function App() {
             </button>
           </div>
 
-          <div className="project-switcher">
-            <span className="project-switcher__label">Project</span>
-            <select
-              className="project-switcher__button"
-              data-role="project-switcher"
-              value={activeProject?.id ?? ""}
-              onChange={(event) => setActiveProjectIdState(event.target.value || null)}
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <ProjectSwitcher
+            projects={projects}
+            activeProjectId={activeProject?.id ?? null}
+            unreadCountsByProject={projectUnreadCounts}
+            hasUnreadOutsideActiveProject={hasUnreadOutsideActiveProject && activeProjectUnreadCount === 0}
+            onSelectProject={(projectId) => setActiveProjectIdState(projectId)}
+          />
 
           <nav className="primary-nav" aria-label="Primary">
-            {activeNavItems.map((item) => (
-              item.id === "chat" ? (
+            {activeNavItems.map((item) => {
+              const badgeText = navBadgeByPage[item.id];
+              return item.id === "chat" ? (
                 <div className="settings-nav" key={item.id}>
                   <button
                     className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
@@ -2097,6 +2210,7 @@ export function App() {
                   >
                     <span className="nav-item__label nav-item__label--full">{item.label}</span>
                     <span className="nav-item__label nav-item__label--short" aria-hidden="true">{item.shortLabel}</span>
+                    {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                   </button>
 
                   {activePage === "chat" && !isSidebarCollapsed ? (
@@ -2124,6 +2238,7 @@ export function App() {
                   key={item.id}
                   className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
                   type="button"
+                  data-role={`nav-item-${item.id}`}
                   onClick={() => {
                     if (item.id === "tasks") {
                       navigateToTasksOverview();
@@ -2134,9 +2249,10 @@ export function App() {
                 >
                   <span className="nav-item__label nav-item__label--full">{item.label}</span>
                   <span className="nav-item__label nav-item__label--short" aria-hidden="true">{item.shortLabel}</span>
+                  {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                 </button>
-              )
-            ))}
+              );
+            })}
           </nav>
         </div>
 
@@ -2325,7 +2441,7 @@ export function App() {
                 handleStopSession(chatSession.id);
               }
             }}
-            onCreateNewSession={handleCreateFreshSession}
+            onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
         ) : activePage === "sessions" ? (
@@ -2359,7 +2475,7 @@ export function App() {
             onDraftChange={handleSelectedSessionDraftChange}
             onSendMessage={handleSelectedSessionSend}
             onStopSession={handleSelectedSessionStop}
-            onCreateNewSession={handleCreateFreshSession}
+            onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
             onCompactSession={handleSelectedSessionCompact}
           />
         ) : (
