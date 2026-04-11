@@ -16,8 +16,8 @@ use commands::{
     app::{
         cleanup_stale_bridge_instances, clear_logs, debug_seed_idle_task_whip_scenario,
         export_logs_bundle, get_app_info, get_bridge_diagnostics, get_logs,
-        get_pi_executable_diagnostic, get_session_storage_info, list_pi_models,
-        open_logs_window, report_client_error,
+        get_pi_executable_diagnostic, get_session_storage_info, list_pi_models, open_logs_window,
+        report_client_error,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -50,8 +50,8 @@ use commands::{
     roles::{archive_role, create_role, get_role, list_roles, update_role, validate_role},
     sessions::{
         compact_session, create_session, delete_session, get_session_model_state,
-        get_session_record, list_sessions, resume_session, send_session_message,
-        set_session_model, stop_session_runtime, subscribe_session, unsubscribe_session,
+        get_session_record, list_sessions, resume_session, send_session_message, set_session_model,
+        stop_session_runtime, subscribe_session, unsubscribe_session,
     },
     task_schedules::{
         create_task_schedule, delete_task_schedule, get_task_schedule, list_task_schedules,
@@ -64,15 +64,15 @@ use commands::{
         delete_task_todo, dispatch_task_lane, get_task, get_task_context, get_task_file_content,
         list_task_comments, list_task_file_references, list_task_repositories, list_task_todos,
         list_tasks, list_unfinished_task_todos, manual_task_whip, mark_task_todo_finished,
-        mark_task_todo_unfinished, remove_task_attachment, remove_task_dependency,
-        remove_task_file_reference, request_user_intervention, reset_task_runtime,
-        search_task_comment_file_mentions, send_lane_back_for_work,
+        mark_task_todo_unfinished, reassign_task_to_lane, remove_task_attachment,
+        remove_task_dependency, remove_task_file_reference, request_user_intervention,
+        reset_task_runtime, search_task_comment_file_mentions, send_lane_back_for_work,
         set_default_task_file_reference, update_task, update_task_comment,
     },
     workflows::{
         add_workflow_lane, archive_workflow, create_workflow, delete_workflow_lane,
-        duplicate_workflow, get_workflow, list_workflows, reorder_workflow_lanes,
-        update_workflow, update_workflow_lane, validate_workflow,
+        duplicate_workflow, get_workflow, list_workflows, reorder_workflow_lanes, update_workflow,
+        update_workflow_lane, validate_workflow,
     },
 };
 use state::AppState;
@@ -259,6 +259,7 @@ pub fn run() {
             complete_lane_as_failure,
             request_user_intervention,
             approve_lane_completion,
+            reassign_task_to_lane,
             send_lane_back_for_work,
             manual_task_whip,
             reset_task_runtime,

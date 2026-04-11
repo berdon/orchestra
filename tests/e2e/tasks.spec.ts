@@ -1116,6 +1116,112 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   expect(initialSessionId).toContain("Session:");
 });
 
+test("task detail can re-lane an approval-paused task into a specific worker lane and auto-dispatch it", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-relane",
+          slug: "relane-flow",
+          name: "Relane Flow",
+          description: "Move approval-paused work into a different worker lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent-approval",
+              key: "agent-approval",
+              name: "Agent approval",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              requireUserApprovalOnSuccess: true,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+            {
+              id: "lane-review-pass",
+              key: "review-pass",
+              name: "Review pass",
+              description: null,
+              order: 1,
+              assignedEntityType: "agent",
+              assignedEntityId: "reviewer",
+              entryPromptTemplate: "Take over this task and finish the redirected work.",
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Approval relane task");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-relane");
+  await page.locator('[data-role="publish-task"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Approval relane task");
+    if (!target?.activeLaneAssignment) {
+      throw new Error("Expected active lane assignment for approval relane task");
+    }
+    const updatedAt = new Date().toISOString();
+    target.status = "in_review";
+    target.assigneeType = "user";
+    target.assigneeId = null;
+    target.activeLaneAssignment = {
+      ...target.activeLaneAssignment,
+      status: "awaiting_user_approval",
+      pendingOutcome: "success",
+      completionNotes: "Needs a dedicated review pass.",
+      updatedAt,
+    };
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: { taskIds: [target.id], reason: "test.seed.awaiting-approval" },
+    }));
+  });
+
+  await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
+  await page.locator('[data-role="toggle-task-relane"]').first().click();
+  await expect(page.locator('[data-role="task-relane-panel"]').first()).toBeVisible();
+  await page.locator('[data-role="task-relane-target"]').selectOption("lane-review-pass");
+  await page.locator('[data-role="task-relane-notes"]').fill("Redirect this into the review pass lane.");
+  await page.locator('[data-role="task-relane-confirm"]').click();
+
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("lane-review-pass");
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("active");
+  await expect(page.locator('[data-role="approve-task-lane"]')).toHaveCount(0);
+
+  const relanedTask = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((entry: { title?: string }) => entry.title === "Approval relane task");
+  });
+  expect(relanedTask.currentLaneId).toBe("lane-review-pass");
+  expect(relanedTask.status).toBe("in_progress");
+  expect(relanedTask.activeLaneAssignment?.laneId).toBe("lane-review-pass");
+  expect(relanedTask.laneRuns?.[0]?.result).toBe("failure");
+});
+
 test("task detail dispatches an agent-owned task via publish, retries the active session, and completes the workflow", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

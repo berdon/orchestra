@@ -8,6 +8,7 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   invokeCommand,
+  setInputValue,
   sleep,
   waitForText,
 } from "./driver";
@@ -181,6 +182,128 @@ describe("desktop approval-gated workflow lanes", () => {
       expect(completedRoleOps.activeInstanceCount).toBe(0);
       const finalSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
       expect(finalSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('closed');
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
+
+  it.skipIf(!isDesktopE2E)("re-lanes approval-paused work into a selected worker lane and dispatches it", async () => {
+    expect(testHome).toBeTruthy();
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const repositoryRoot = join(testHome!, "workspace", "lane-approval-repo", "repository");
+
+      await createProjectViaSettings(sessionId, "Relane Lane Project", "Desktop end-to-end re-lane flow test.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Relane Lane Repo",
+        path: repositoryRoot,
+        defaultBranch: "main",
+        makeDefault: true,
+      });
+      await switchProject(sessionId, "Relane Lane Project");
+      await createRoleViaSettings(sessionId, {
+        name: "Relane Worker",
+        capacity: "1",
+        description: "Handles approval and follow-up lanes.",
+      });
+      const role = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false })
+        .then((roles) => roles.find((entry) => entry.name === 'Relane Worker'));
+      expect(role).toBeTruthy();
+      await createWorkflowViaSettings(sessionId, {
+        name: "Relane Flow",
+        description: "Worker success can be redirected into a different lane.",
+        lanes: [
+          {
+            name: "Implement",
+            key: "implement",
+            ownerType: "role",
+            ownerReference: "relane-worker",
+            entryPromptTemplate: "Implement the task and stop for review.",
+            requireUserApprovalOnSuccess: true,
+          },
+          {
+            name: "Review pass",
+            key: "review-pass",
+            ownerType: "role",
+            ownerReference: "relane-worker",
+            entryPromptTemplate: "Take over the redirected task and finish it.",
+          },
+        ],
+      });
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Relane Flow'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
+      const reviewPassLaneId = workflow.lanes.find((lane: { key: string }) => lane.key === 'review-pass')?.id;
+      expect(reviewPassLaneId).toBeTruthy();
+      await createTaskViaTasks(sessionId, {
+        title: "Approval relane desktop task",
+        description: "Verify re-lane flow against the desktop runtime.",
+        repositoryName: "Relane Lane Repo",
+        workflowName: "Relane Flow",
+      });
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Relane Lane Project'));
+      expect(project).toBeTruthy();
+      const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
+        includeArchived: false,
+      }).then((tasks) => tasks.find((entry) => entry.title === 'Approval relane desktop task'));
+      expect(createdTask).toBeTruthy();
+
+      const dispatchedTask = await waitForCondition(
+        async () => {
+          let currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          if (!currentTask.activeLaneAssignment?.sessionId) {
+            await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: createdTask!.id }).catch(() => undefined);
+            await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+            await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: role!.id }).catch(() => undefined);
+            currentTask = await invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id });
+          }
+          return currentTask;
+        },
+        (task) => Boolean(task.activeLaneAssignment?.sessionId) && task.activeLaneAssignment?.status === 'active' && Boolean(task.activeLaneAssignment?.roleInstanceId),
+      );
+      const initialWorkerSessionId = dispatchedTask.activeLaneAssignment?.sessionId;
+      expect(initialWorkerSessionId).toBeTruthy();
+
+      await completeTaskLaneWithRetries(sessionId, createdTask!.id);
+
+      await openTaskCard(sessionId, 'Approval relane desktop task');
+      await clickByText(sessionId, '[role="tab"]', 'Runtime');
+      await waitForText(sessionId, 'Lane execution');
+
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
+        (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
+      );
+      await clickSelector(sessionId, '[data-role="toggle-task-relane"]');
+      await waitForText(sessionId, 'Move task to a different lane');
+      await setInputValue(sessionId, '[data-role="task-relane-target"]', reviewPassLaneId!);
+      await setInputValue(sessionId, '[data-role="task-relane-notes"]', 'Redirect this to the review-pass lane.');
+      await clickSelector(sessionId, '[data-role="task-relane-confirm"]');
+
+      const relanedTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
+        (task) => task.currentLaneId === reviewPassLaneId && task.status === 'in_progress' && task.activeLaneAssignment?.status === 'active',
+      );
+      expect(relanedTask.activeLaneAssignment?.laneId).toBe(reviewPassLaneId);
+      expect(relanedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+      expect(relanedTask.activeLaneAssignment?.sessionId).not.toBe(initialWorkerSessionId);
+      expect(relanedTask.laneRuns[0]?.result).toBe('failure');
+
+      await completeTaskLaneWithRetries(sessionId, createdTask!.id);
+      const completedTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
+        (task) => task.status === 'completed',
+      );
+      expect(completedTask.currentLaneId).toBeNull();
+      expect(completedTask.laneRuns).toHaveLength(2);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

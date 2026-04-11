@@ -172,6 +172,7 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "complete_lane_as_success",
     "complete_lane_as_failure",
     "request_user_intervention",
+    "reassign_task_to_lane",
     "add_task_dependency",
     "remove_task_dependency",
     "add_task_attachment",
@@ -1660,6 +1661,55 @@ fn invoke_bridge_command(
             serde_json::to_value(task).map_err(|error| {
                 format!("Unable to serialize user-intervention task lane: {error}")
             })
+        }
+        "reassign_task_to_lane" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let lane_id = require_string(&payload, "laneId")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.transition",
+            )?;
+            let context = session_context_for_task_id(&task_id)?;
+            let mut writable = database::open_connection()?;
+            let previous_assignment =
+                crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
+            let task = crate::services::task_runtime::reassign_task_to_lane(
+                &mut writable,
+                &context.project_root,
+                &context.session_dir,
+                &task_id,
+                &lane_id,
+                notes,
+                authorization,
+            )?;
+            for outcome in crate::services::task_runtime::collect_post_completion_auto_dispatches(
+                &mut writable,
+                &task_id,
+            )? {
+                config.start_assignment_async(outcome.session_dir, &outcome.assignment)?;
+            }
+            if let Some(session_id) =
+                crate::services::task_runtime::transitioned_assignment_session_to_retire(
+                    previous_assignment.as_ref(),
+                    &task,
+                )
+            {
+                if let Some(app) = config.clone_app_handle() {
+                    live_sessions::schedule_session_retirement(
+                        app,
+                        session_id,
+                        Duration::from_millis(250),
+                        "tool.reassign_task_to_lane",
+                    );
+                }
+            }
+            serde_json::to_value(task)
+                .map_err(|error| format!("Unable to serialize re-laned task: {error}"))
         }
         "add_task_dependency" => {
             let blocker_task_id = require_string(&payload, "blockerTaskId")?;

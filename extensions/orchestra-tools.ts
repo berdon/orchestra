@@ -1077,6 +1077,31 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
+  if (tool.name === "reassign_task_to_lane") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, laneId, and optionally notes describing why the task is being moved.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        laneId: Type.String({ description: "Workflow lane id that should own the task next." }),
+        notes: Type.Optional(Type.String({ description: "Optional re-lane notes describing the failure or redirect." })),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; laneId: string; notes?: string }) {
+        const payload = {
+          taskId: params.taskId,
+          laneId: params.laneId,
+          ...(params.notes !== undefined ? { notes: params.notes } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
   if (tool.name === "get_unread_mail") {
     return {
       name: tool.name,

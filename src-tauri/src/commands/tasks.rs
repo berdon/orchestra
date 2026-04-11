@@ -969,6 +969,117 @@ pub async fn approve_lane_completion(
 }
 
 #[tauri::command]
+pub async fn reassign_task_to_lane(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    lane_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    let result = async {
+        let task_id_for_context = task_id.clone();
+        let context = tauri::async_runtime::spawn_blocking(move || {
+            session_context_for_task_id(&task_id_for_context)
+        })
+        .await
+        .map_err(|error| format!("Unable to join task re-lane context task: {error}"))??;
+        let mut connection = database::open_connection()?;
+        let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
+        let mut task = task_runtime::reassign_task_to_lane(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &task_id,
+            &lane_id,
+            notes,
+            None,
+        )?;
+
+        let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
+            task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
+        } else {
+            state.log(
+                "warn",
+                "task.transition.auto_dispatch.blocked",
+                &format!(
+                    "Skipped auto-dispatch after re-laning task {} because PI is unavailable",
+                    task_id
+                ),
+            );
+            Vec::new()
+        };
+        for outcome in &auto_dispatches {
+            task_runtime::start_assignment_run(
+                app.clone(),
+                &state,
+                outcome.session_dir.clone(),
+                &outcome.assignment,
+            )?;
+            if let Some(session_id) = outcome.assignment.session_id.clone() {
+                emit_session_change(&app, "task.transition.relane", [session_id]);
+            }
+        }
+        if !auto_dispatches.is_empty() {
+            task = tasks::get_task_context(&connection, &task_id)?;
+        }
+
+        let retired_session_id = task_runtime::transitioned_assignment_session_to_retire(
+            previous_assignment.as_ref(),
+            &task,
+        );
+
+        record_task_domain_event(
+            &connection,
+            "task.relaned",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "status": task.status.clone(),
+                "workflowId": task.workflow_id.clone(),
+                "laneId": task.current_lane_id.clone(),
+                "targetLaneId": lane_id,
+            }),
+        );
+
+        Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
+            task,
+            auto_dispatches
+                .iter()
+                .map(|outcome| outcome.task_id.clone())
+                .collect(),
+            retired_session_id,
+        ))
+    }
+    .await;
+
+    match result {
+        Ok((task, auto_dispatched_task_ids, retired_session_id)) => {
+            state.log(
+                "info",
+                "task.transition.relane",
+                &format!("Re-laned task {} to lane {}", task_id, lane_id),
+            );
+            let mut changed_task_ids = vec![task.id.clone()];
+            changed_task_ids.extend(auto_dispatched_task_ids);
+            emit_task_change(&app, "task.transition.relane", changed_task_ids);
+            if let Some(session_id) = retired_session_id {
+                crate::services::live_sessions::schedule_session_retirement(
+                    app.clone(),
+                    session_id,
+                    Duration::ZERO,
+                    "task.transition.relane",
+                );
+            }
+            Ok(task)
+        }
+        Err(error) => {
+            log_task_command_failure(&state, "task.transition.relane.failed", &task_id, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn send_lane_back_for_work(
     app: AppHandle,
     state: State<'_, AppState>,

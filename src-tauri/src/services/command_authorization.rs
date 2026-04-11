@@ -52,10 +52,18 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     ("list_workflows", "List workflows", "workflows.read"),
     ("get_workflow", "Get a workflow", "workflows.read"),
-    ("validate_workflow", "Validate a workflow definition", "workflows.read"),
+    (
+        "validate_workflow",
+        "Validate a workflow definition",
+        "workflows.read",
+    ),
     ("create_workflow", "Create a workflow", "workflows.create"),
     ("update_workflow", "Update a workflow", "workflows.update"),
-    ("add_workflow_lane", "Add a lane to a workflow", "workflows.update"),
+    (
+        "add_workflow_lane",
+        "Add a lane to a workflow",
+        "workflows.update",
+    ),
     (
         "update_workflow_lane",
         "Update a workflow lane",
@@ -129,9 +137,21 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     ("list_projects", "List Orchestra projects", "projects.read"),
     ("get_project", "Get an Orchestra project", "projects.read"),
-    ("create_project", "Create an Orchestra project", "projects.create"),
-    ("update_project", "Update an Orchestra project", "projects.update"),
-    ("delete_project", "Delete an Orchestra project", "projects.delete"),
+    (
+        "create_project",
+        "Create an Orchestra project",
+        "projects.create",
+    ),
+    (
+        "update_project",
+        "Update an Orchestra project",
+        "projects.update",
+    ),
+    (
+        "delete_project",
+        "Delete an Orchestra project",
+        "projects.delete",
+    ),
     (
         "list_repositories",
         "List Orchestra repositories",
@@ -274,6 +294,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     (
         "request_user_intervention",
         "Request user intervention for the active lane",
+        "tasks.transition",
+    ),
+    (
+        "reassign_task_to_lane",
+        "Move a task into a specific workflow lane",
         "tasks.transition",
     ),
     (
