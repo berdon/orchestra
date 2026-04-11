@@ -113,7 +113,7 @@ const SessionComposer = memo(function SessionComposer({
   onCompactSession,
 }: SessionComposerProps) {
   const [showSessionActions, setShowSessionActions] = useState(false);
-  const canCreateNewSession = Boolean(onCreateNewSession);
+  const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly && !sessionPending;
   const canCompactSession = Boolean(onCompactSession) && !sessionReadOnly && !sessionPending;
 
   useEffect(() => {
@@ -187,15 +187,19 @@ const SessionComposer = memo(function SessionComposer({
                 </button>
                 {showSessionActions ? (
                   <div className="session-actions-menu__dropdown" data-role="session-actions-menu" role="menu">
-                    {canCreateNewSession ? (
+                    {onCreateNewSession ? (
                       <button
                         className="secondary-button session-actions-menu__item"
                         data-role="session-action-new"
                         type="button"
                         role="menuitem"
+                        disabled={!canCreateNewSession}
                         onClick={() => {
                           setShowSessionActions(false);
-                          onCreateNewSession?.();
+                          if (!canCreateNewSession) {
+                            return;
+                          }
+                          onCreateNewSession();
                         }}
                       >
                         New session
