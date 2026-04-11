@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { deleteAgentQueueEntry, getAgentOperations, listAgentOperations } from "../lib/agents";
 import {
   deleteRoleQueueEntry,
@@ -175,8 +176,13 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
   }
 
   return (
-    <section className="workforce-shell">
-      <aside className="workforce-nav-panel">
+    <ResizableSidebarLayout
+      className="workforce-shell"
+      storageKey="orchestra.layout.workforce.secondary-nav-width"
+      navigationClassName="workforce-nav-panel"
+      detailClassName="panel workforce-detail-panel"
+      navigation={(
+      <>
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Workforce</p>
@@ -252,9 +258,10 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
             ))}
           </nav>
         </div>
-      </aside>
-
-      <section className="panel workforce-detail-panel">
+      </>
+      )}
+      detail={(
+      <>
         {selectedWorker?.type === "role" && selectedRoleDetail ? (
           <RoleOperationsDetail
             detail={selectedRoleDetail}
@@ -368,7 +375,8 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
             <p>Select a role or agent to inspect project-scoped runtime state, queue pressure, sessions, and execution details.</p>
           </div>
         )}
-      </section>
-    </section>
+      </>
+      )}
+    />
   );
 }

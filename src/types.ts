@@ -178,6 +178,11 @@ export interface SessionRecord {
   activeToolName?: string | null;
   lastActivityAt?: string | null;
   debugInfo?: SessionDebugInfo | null;
+  taskId?: string | null;
+  taskNumber?: string | null;
+  taskTitle?: string | null;
+  workerType?: string | null;
+  workerName?: string | null;
 }
 
 export interface SessionScrollState {

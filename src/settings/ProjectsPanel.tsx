@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import {
   attachRepositoryRemote,
   createProject,
@@ -244,8 +245,13 @@ export function ProjectsPanel() {
   }
 
   return (
-    <section className="task-shell">
-      <aside className="task-nav-panel">
+    <ResizableSidebarLayout
+      className="task-shell"
+      storageKey="orchestra.layout.projects.secondary-nav-width"
+      navigationClassName="task-nav-panel"
+      detailClassName="panel task-detail-panel"
+      navigation={(
+      <>
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Project catalog</p>
@@ -285,9 +291,10 @@ export function ProjectsPanel() {
             </a>
           ))}
         </nav>
-      </aside>
-
-      <section className="panel task-detail-panel">
+      </>
+      )}
+      detail={(
+      <>
         <div className="task-detail-stack">
           <div className="panel__header panel__header--session-detail">
             <div>
@@ -472,7 +479,8 @@ export function ProjectsPanel() {
             </section>
           ) : null}
         </div>
-      </section>
-    </section>
+      </>
+      )}
+    />
   );
 }

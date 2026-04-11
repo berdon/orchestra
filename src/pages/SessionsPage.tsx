@@ -1,6 +1,8 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
+import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
+import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
@@ -100,16 +102,48 @@ export function SessionsPage({
   onCompactSession,
 }: SessionsPageProps) {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
+  const revealTimerRef = useRef<number | null>(null);
   const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
 
   useEffect(() => {
     setShowDebugInfo(false);
   }, [selectedSession?.id]);
 
+  useEffect(() => () => {
+    if (revealTimerRef.current !== null) {
+      window.clearTimeout(revealTimerRef.current);
+    }
+  }, []);
+
+  function scheduleDeleteReveal(sessionId: string) {
+    if (revealTimerRef.current !== null) {
+      window.clearTimeout(revealTimerRef.current);
+    }
+    setRevealedDeleteSessionId(null);
+    revealTimerRef.current = window.setTimeout(() => {
+      setRevealedDeleteSessionId(sessionId);
+      revealTimerRef.current = null;
+    }, 2000);
+  }
+
+  function hideDeleteReveal() {
+    if (revealTimerRef.current !== null) {
+      window.clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
+    setRevealedDeleteSessionId(null);
+  }
+
   return (
     <section className="panel-stack panel-stack--sessions">
-      <section className="session-shell">
-        <aside className="session-list-panel">
+      <ResizableSidebarLayout
+        className="session-shell"
+        storageKey="orchestra.layout.sessions.secondary-nav-width"
+        navigationClassName="session-list-panel"
+        detailClassName="session-detail-column"
+        navigation={(
+        <>
           {loadingSessions ? <p className="muted-copy">Loading sessions…</p> : null}
           {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
 
@@ -139,39 +173,57 @@ export function SessionsPage({
           <div className="session-list-scroll">
             <nav className="session-list" aria-label="Sessions">
               {sessions.length === 0 ? <p className="muted-copy">No {sessionFilter} sessions.</p> : null}
-              {sessions.map((session) => (
-                <div
-                  key={session.id}
-                  className={session.id === selectedSession?.id ? "session-list-row session-list-row--active" : "session-list-row"}
-                >
-                  <a
-                    data-role="session-link"
-                    data-session-id={session.id}
-                    className={session.id === selectedSession?.id ? "session-list-link session-list-link--active" : "session-list-link"}
-                    href="#"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      onSelectSession(session.id);
+              {sessions.map((session) => {
+                const isActive = session.id === selectedSession?.id;
+                const showDeleteAction = revealedDeleteSessionId === session.id;
+                return (
+                  <div
+                    key={session.id}
+                    className={[
+                      "session-list-row",
+                      isActive ? "session-list-row--active" : "",
+                      showDeleteAction ? "session-list-row--actions-visible" : "",
+                    ].filter(Boolean).join(" ")}
+                    onMouseEnter={() => scheduleDeleteReveal(session.id)}
+                    onMouseLeave={hideDeleteReveal}
+                    onFocusCapture={() => setRevealedDeleteSessionId(session.id)}
+                    onBlurCapture={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        hideDeleteReveal();
+                      }
                     }}
                   >
-                    <div className="session-list-link__content">
-                      <span className="session-list-link__title">{session.title}</span>
-                      <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : getActivityTone(session.activityState)}`}>
-                        {session.terminalAttached ? "Terminal attached" : formatActivityLabel(session.activityState, session.activeToolName)}
-                      </span>
-                    </div>
-                  </a>
-                  <button
-                    className="session-delete-button"
-                    type="button"
-                    aria-label={`Dismiss ${session.title}`}
-                    title="Dismiss from session list"
-                    onClick={() => onDeleteSession(session.id)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                    <a
+                      data-role="session-link"
+                      data-session-id={session.id}
+                      className={isActive ? "session-list-link session-list-link--active" : "session-list-link"}
+                      href="#"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onSelectSession(session.id);
+                      }}
+                    >
+                      <div className="session-list-link__header">
+                        <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
+                        <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : getActivityTone(session.activityState)}`}>
+                          {session.terminalAttached ? "Terminal attached" : formatActivityLabel(session.activityState, session.activeToolName)}
+                        </span>
+                      </div>
+                      <span className="session-list-link__title">{getSessionListTitle(session)}</span>
+                    </a>
+                    <button
+                      className="session-delete-button"
+                      type="button"
+                      tabIndex={showDeleteAction ? 0 : -1}
+                      aria-label={`Dismiss ${getSessionListTitle(session)}`}
+                      title="Dismiss from session list"
+                      onClick={() => onDeleteSession(session.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
             </nav>
           </div>
 
@@ -182,9 +234,10 @@ export function SessionsPage({
               </button>
             </div>
           ) : null}
-        </aside>
-
-        <div className="session-detail-column">
+        </>
+        )}
+        detail={(
+        <>
           <SessionChatPanel
             session={selectedSession}
             displayedEvents={displayedEvents}
@@ -250,8 +303,9 @@ export function SessionsPage({
               </div>
             </section>
           ) : null}
-        </div>
-      </section>
+        </>
+        )}
+      />
     </section>
   );
 }

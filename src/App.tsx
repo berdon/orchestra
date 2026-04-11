@@ -37,6 +37,7 @@ import {
 import { ensureAgentSession, listAgentOperations, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { applyPendingRunToSession, createPendingUserRun, type PendingSessionRun, reduceSessionTranscriptEvent } from "./lib/sessionTranscriptReducer";
+import { sortSessionRecords } from "./lib/sessionList";
 import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
@@ -80,13 +81,13 @@ import type {
   TaskSummary,
 } from "./types";
 
-const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
-  { id: "tasks", label: "Tasks" },
-  { id: "inbox", label: "Inbox" },
-  { id: "agents", label: "Agents" },
-  { id: "chat", label: "Chat" },
-  { id: "sessions", label: "Sessions" },
-  { id: "settings", label: "Settings" },
+const NAV_ITEMS: Array<{ id: PrimaryPage; label: string; shortLabel: string }> = [
+  { id: "tasks", label: "Tasks", shortLabel: "Ta" },
+  { id: "inbox", label: "Inbox", shortLabel: "In" },
+  { id: "agents", label: "Agents", shortLabel: "Ag" },
+  { id: "chat", label: "Chat", shortLabel: "Ch" },
+  { id: "sessions", label: "Sessions", shortLabel: "Se" },
+  { id: "settings", label: "Settings", shortLabel: "St" },
 ];
 
 const SETTINGS_TABS = [
@@ -100,11 +101,16 @@ const SETTINGS_TABS = [
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
 
 function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
   const stored = window.localStorage.getItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY);
   return stored === "table" || stored === "cards" ? stored : "cards";
+}
+
+function loadStoredSidebarCollapsed() {
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
 }
 
 function supervisorQuickChatStorageKey(projectId: string | null) {
@@ -465,6 +471,11 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     terminalAttached: session.terminalAttached ?? false,
     activityState: session.activityState ?? deriveSessionActivityState(session),
     lastActivityAt: session.lastActivityAt ?? session.updatedAt,
+    taskId: session.taskId ?? null,
+    taskNumber: session.taskNumber ?? null,
+    taskTitle: session.taskTitle ?? null,
+    workerType: session.workerType ?? null,
+    workerName: session.workerName ?? null,
   };
 }
 
@@ -496,6 +507,14 @@ function areSessionDebugInfoEqual(left?: SessionRecord["debugInfo"], right?: Ses
     && left?.sessionCwd === right?.sessionCwd;
 }
 
+function areSessionMetadataEqual(left: SessionRecord, right: SessionRecord) {
+  return left.taskId === right.taskId
+    && left.taskNumber === right.taskNumber
+    && left.taskTitle === right.taskTitle
+    && left.workerType === right.workerType
+    && left.workerName === right.workerName;
+}
+
 function areSessionRecordsEqual(left: SessionRecord, right: SessionRecord) {
   return left.id === right.id
     && left.title === right.title
@@ -507,6 +526,7 @@ function areSessionRecordsEqual(left: SessionRecord, right: SessionRecord) {
     && left.activeToolName === right.activeToolName
     && left.lastActivityAt === right.lastActivityAt
     && areSessionDebugInfoEqual(left.debugInfo, right.debugInfo)
+    && areSessionMetadataEqual(left, right)
     && areSessionEventsEqual(left.events, right.events);
 }
 
@@ -515,10 +535,6 @@ function areSessionListsEqual(left: SessionRecord[], right: SessionRecord[]) {
     const other = right[index];
     return Boolean(other) && areSessionRecordsEqual(session, other);
   });
-}
-
-function sortSessionRecords(sessions: SessionRecord[]) {
-  return [...sessions].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
 export function App() {
@@ -548,6 +564,7 @@ export function App() {
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => loadStoredSidebarCollapsed());
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [loadingChatAgents, setLoadingChatAgents] = useState(false);
   const [loadingChatSessionAgentId, setLoadingChatSessionAgentId] = useState<string | null>(null);
@@ -591,6 +608,10 @@ export function App() {
   useEffect(() => {
     applyOrchestraTheme(themeId);
   }, [themeId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -2147,7 +2168,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind}>
+    <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind} data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}>
       <aside className="sidebar">
         <div className="sidebar__top">
           <div className="sidebar__brand" data-role="app-brand">
@@ -2156,6 +2177,17 @@ export function App() {
               <strong>Orchestra</strong>
               <span>Operator workbench</span>
             </div>
+            <button
+              className="sidebar__collapse-toggle"
+              data-role="toggle-sidebar-collapse"
+              type="button"
+              aria-label={isSidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+              aria-expanded={!isSidebarCollapsed}
+              title={isSidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+              onClick={() => setIsSidebarCollapsed((current) => !current)}
+            >
+              {isSidebarCollapsed ? "»" : "«"}
+            </button>
           </div>
 
           <ProjectSwitcher
@@ -2176,11 +2208,12 @@ export function App() {
                     type="button"
                     onClick={() => setActivePage(item.id)}
                   >
-                    <span className="nav-item__label">{item.label}</span>
-                    {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge">{badgeText}</span> : null}
+                    <span className="nav-item__label nav-item__label--full">{item.label}</span>
+                    <span className="nav-item__label nav-item__label--short" aria-hidden="true">{item.shortLabel}</span>
+                    {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                   </button>
 
-                  {activePage === "chat" ? (
+                  {activePage === "chat" && !isSidebarCollapsed ? (
                     <div className="settings-subnav" role="tablist" aria-label="Chat agents">
                       {loadingChatAgents ? <span className="settings-subnav__hint">Loading agents…</span> : null}
                       {!loadingChatAgents && chatAgents.length === 0 ? <span className="settings-subnav__hint">No agents yet.</span> : null}
@@ -2214,7 +2247,8 @@ export function App() {
                     setActivePage(item.id);
                   }}
                 >
-                  <span className="nav-item__label">{item.label}</span>
+                  <span className="nav-item__label nav-item__label--full">{item.label}</span>
+                  <span className="nav-item__label nav-item__label--short" aria-hidden="true">{item.shortLabel}</span>
                   {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                 </button>
               );
@@ -2229,10 +2263,11 @@ export function App() {
               type="button"
               onClick={() => setActivePage("settings")}
             >
-              Settings
+              <span className="nav-item__label nav-item__label--full">Settings</span>
+              <span className="nav-item__label nav-item__label--short" aria-hidden="true">St</span>
             </button>
 
-            {activePage === "settings" ? (
+            {activePage === "settings" && !isSidebarCollapsed ? (
               <div className="settings-subnav" role="tablist" aria-label="Settings sections">
                 {SETTINGS_TABS.map((tab) => (
                   <button

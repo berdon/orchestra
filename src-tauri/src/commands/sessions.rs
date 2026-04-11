@@ -236,6 +236,110 @@ fn load_session_debug_info(
     }))
 }
 
+fn load_session_list_metadata(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<
+    (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    String,
+> {
+    let assignment_metadata = connection
+        .query_row(
+            r#"
+            SELECT
+                t.id,
+                t.number,
+                t.title,
+                tla.worker_type,
+                CASE
+                    WHEN tla.worker_type = 'agent' THEN a.name
+                    WHEN tla.worker_type = 'role' THEN r.name
+                    WHEN tla.worker_type = 'user' THEN 'User'
+                    ELSE NULL
+                END AS worker_name
+            FROM task_lane_assignments tla
+            JOIN tasks t ON t.id = tla.task_id
+            LEFT JOIN agents a ON tla.worker_type = 'agent' AND a.id = tla.worker_id
+            LEFT JOIN roles r ON tla.worker_type = 'role' AND r.id = tla.worker_id
+            WHERE tla.session_id = ?1
+            ORDER BY
+                CASE tla.status
+                    WHEN 'active' THEN 0
+                    WHEN 'awaiting_user_approval' THEN 1
+                    WHEN 'queued' THEN 2
+                    ELSE 3
+                END,
+                COALESCE(tla.completed_at, tla.updated_at, tla.created_at) DESC,
+                tla.id DESC
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load session list metadata {session_id}: {error}"))?;
+
+    if let Some(metadata) = assignment_metadata {
+        return Ok(metadata);
+    }
+
+    let agent_metadata = connection
+        .query_row(
+            r#"
+            SELECT a.name
+            FROM agent_runtime_states ars
+            JOIN agents a ON a.id = ars.agent_id
+            WHERE ars.main_session_id = ?1
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load agent session metadata {session_id}: {error}"))?
+        .flatten();
+
+    if let Some(worker_name) = agent_metadata {
+        return Ok((None, None, None, Some("agent".into()), Some(worker_name)));
+    }
+
+    let role_metadata = connection
+        .query_row(
+            r#"
+            SELECT r.name
+            FROM role_instances ri
+            JOIN roles r ON r.id = ri.role_id
+            WHERE ri.session_id = ?1
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load role session metadata {session_id}: {error}"))?
+        .flatten();
+
+    if let Some(worker_name) = role_metadata {
+        return Ok((None, None, None, Some("role".into()), Some(worker_name)));
+    }
+
+    Ok((None, None, None, None, None))
+}
+
 fn decorate_session_record_with_connection(
     connection: &rusqlite::Connection,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
@@ -246,6 +350,13 @@ fn decorate_session_record_with_connection(
         record.debug_info = load_session_debug_info(connection, &record.id)?;
     }
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
+    let (task_id, task_number, task_title, worker_type, worker_name) =
+        load_session_list_metadata(connection, &record.id)?;
+    record.task_id = task_id;
+    record.task_number = task_number;
+    record.task_title = task_title;
+    record.worker_type = worker_type;
+    record.worker_name = worker_name;
 
     let is_persistent_agent_session = connection
         .query_row(
@@ -1617,6 +1728,11 @@ mod tests {
             }],
             terminal_attached: false,
             debug_info: None,
+            task_id: None,
+            task_number: None,
+            task_title: None,
+            worker_type: None,
+            worker_name: None,
         }
     }
 

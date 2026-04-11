@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { sortSessionRecords } from "./sessionList";
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import type {
   AgentSummary,
@@ -526,6 +527,17 @@ function saveMockSessions(sessions: SessionRecord[], projectId?: string | null) 
   setStoredValue(sessionStorageKey(projectId), sessions);
 }
 
+function attachMockSessionTaskMetadata(session: SessionRecord, task: Pick<TaskDetail, "id" | "number" | "title">, workerType: string, workerName?: string | null) {
+  return {
+    ...session,
+    taskId: task.id,
+    taskNumber: task.number,
+    taskTitle: task.title,
+    workerType,
+    workerName: workerName ?? null,
+  } satisfies SessionRecord;
+}
+
 export function upsertMockSession(session: SessionRecord) {
   const sessions = ensureMockSessions().filter((entry) => entry.id !== session.id);
   saveMockSessions(sortSessions([session, ...sessions]));
@@ -583,7 +595,7 @@ function updateMockSession(sessionId: string, updater: (session: SessionRecord) 
 }
 
 function sortSessions(sessions: SessionRecord[]) {
-  return [...sessions].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return sortSessionRecords(sessions);
 }
 
 function generateAssistantReply(message: string) {
@@ -2828,6 +2840,7 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
       assignment.sessionId = agentSession.id;
       assignment.runtimeCwd = getProjectRuntimeCwd(CURRENT_PROJECT_ID);
+      updateMockSession(agentSession.id, (current) => attachMockSessionTaskMetadata(current, task, "agent", lane.assignedEntityId ?? "Agent"));
       const agentQueueEntryId = createId("agent-queue");
       saveStoredMockAgentQueue([
         ...getStoredMockAgentQueue(),
@@ -2868,9 +2881,14 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
         ),
       );
     } else if (lane.assignedEntityType === "role") {
-      const roleSession = createMockSessionRecord(
-        `${lane.name} · ${task.title}`,
-        `Role runtime session for ${task.number} is active and ready to continue the assigned lane.`,
+      const roleSession = attachMockSessionTaskMetadata(
+        createMockSessionRecord(
+          `${lane.name} · ${task.title}`,
+          `Role runtime session for ${task.number} is active and ready to continue the assigned lane.`,
+        ),
+        task,
+        "role",
+        lane.assignedEntityId ?? lane.name,
       );
       assignment.sessionId = roleSession.id;
       upsertMockSession(roleSession);
@@ -2920,7 +2938,7 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     return null;
   }
 
-  return {
+  const assignment = {
     id: createId("task-assignment"),
     taskId: task.id,
     workflowId: workflow.id,
@@ -2942,6 +2960,29 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     createdAt: updatedAt,
     updatedAt,
   };
+
+  if (lane.assignedEntityType === "agent" && assignment.workerId) {
+    const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
+    assignment.sessionId = agentSession.id;
+    updateMockSession(agentSession.id, (current) => attachMockSessionTaskMetadata(current, task, "agent", lane.assignedEntityId ?? "Agent"));
+  }
+
+  if (lane.assignedEntityType === "role") {
+    const roleSession = attachMockSessionTaskMetadata(
+      createMockSessionRecord(
+        `${lane.name} · ${task.title}`,
+        `Role runtime session for ${task.number} is active and ready to continue the assigned lane.`,
+      ),
+      task,
+      "role",
+      lane.assignedEntityId ?? lane.name,
+    );
+    assignment.sessionId = roleSession.id;
+    upsertMockSession(roleSession);
+    emitMockSessionChange({ sessionIds: [roleSession.id], reason: "task.dispatch.role_session" });
+  }
+
+  return assignment;
 }
 
 function closeMockTaskSessionIfNeeded(task: TaskDetail, nextStatus: string, updatedAt: string) {
