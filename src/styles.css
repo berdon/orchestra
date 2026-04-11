@@ -2791,10 +2791,23 @@ strong {
   flex-wrap: wrap;
 }
 
+.task-detail-floating-header .task-action-menu__desktop {
+  justify-content: flex-end;
+}
+
+.task-detail-primary-header-sentinel {
+  width: 100%;
+  height: 1px;
+}
+
 .task-detail-tab-dock {
   bottom: 16px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   border-radius: 14px;
+}
+
+.task-detail-shell {
+  position: relative;
 }
 
 .task-action-menu,
