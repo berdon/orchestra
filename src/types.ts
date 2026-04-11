@@ -932,6 +932,7 @@ export type DomainEventTopic =
   | "task.completed"
   | "task.transition_success"
   | "task.failed"
+  | "task.relaned"
   | "task.user_intervention_requested"
   | "session.created"
   | "session.resumed"

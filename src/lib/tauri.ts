@@ -3222,6 +3222,94 @@ async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
   return getTask(taskId);
 }
 
+async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: string): Promise<TaskDetail> {
+  const tasks = ensureMockTasks();
+  const task = tasks.find((entry) => entry.id === taskId);
+  if (!task || !task.workflowId || !task.currentLaneId) {
+    throw new Error(`Task ${taskId} does not have an active workflow lane.`);
+  }
+
+  if (task.currentLaneId === laneId) {
+    throw new Error(`Task ${taskId} is already in lane ${laneId}.`);
+  }
+
+  const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+  const targetLane = workflow?.lanes.find((entry) => entry.id === laneId) ?? null;
+  if (!workflow || !targetLane) {
+    throw new Error(`Workflow lane ${laneId} could not be resolved for task ${taskId}.`);
+  }
+
+  const updatedAt = nowIso();
+  const normalizedNotes = notes?.trim() || null;
+  const nextStatus = targetLane.assignedEntityType === "user" ? "in_review" : "ready";
+  const nextAssigneeType = targetLane.assignedEntityType;
+  const nextAssigneeId = targetLane.assignedEntityId ?? null;
+  const autoAssignment =
+    targetLane.assignedEntityType !== "user"
+      ? buildMockAutoAssignment(task, workflow, targetLane, updatedAt)
+      : null;
+  const laneRuns = task.activeLaneAssignment
+    ? task.laneRuns.map((run, index, allRuns) =>
+        index === allRuns.length - 1 && run.completedAt == null
+          ? { ...run, result: "failure" as const, notes: normalizedNotes ?? run.notes ?? null, completedAt: updatedAt }
+          : run,
+      )
+    : task.laneRuns;
+
+  saveMockTasks(tasks.map((entry) =>
+    entry.id === taskId
+      ? {
+          ...entry,
+          currentLaneId: targetLane.id,
+          status: autoAssignment ? "in_progress" : nextStatus,
+          assigneeType: nextAssigneeType,
+          assigneeId: nextAssigneeId,
+          activeLaneAssignment: autoAssignment,
+          laneRuns:
+            autoAssignment
+              ? [
+                  ...laneRuns,
+                  {
+                    id: createId("lane-run"),
+                    taskId: entry.id,
+                    laneId: targetLane.id,
+                    sessionId: autoAssignment.sessionId!,
+                    result: "needs_user" as const,
+                    notes: null,
+                    startedAt: autoAssignment.startedAt,
+                    completedAt: null,
+                  },
+                ]
+              : laneRuns,
+          updatedAt,
+        }
+      : entry,
+  ));
+
+  finalizeMockAgentState(
+    {
+      ...task,
+      activeLaneAssignment: task.activeLaneAssignment
+        ? { ...task.activeLaneAssignment, completionNotes: normalizedNotes }
+        : null,
+    },
+    "failure",
+    updatedAt,
+    autoAssignment,
+  );
+  queueMockAutoAssignment(task, workflow, autoAssignment);
+  appendMockLog("info", "task.transition", `Re-laned task ${taskId} to lane ${laneId}`);
+  appendMockDomainEvent(
+    "task.relaned",
+    "task",
+    taskId,
+    { taskId, laneId: targetLane.id, status: autoAssignment ? "in_progress" : nextStatus, notes: normalizedNotes },
+    task.projectId,
+  );
+  emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.relane" });
+  return getTask(taskId);
+}
+
 export async function completeLaneAsSuccess(taskId: string, notes?: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return completeMockTaskLane(taskId, "success", notes);
@@ -3252,6 +3340,14 @@ export async function approveLaneCompletion(taskId: string): Promise<TaskDetail>
   }
 
   return invoke<TaskDetail>("approve_lane_completion", { taskId });
+}
+
+export async function reassignTaskToLane(taskId: string, laneId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return reassignMockTaskToLane(taskId, laneId, notes);
+  }
+
+  return invoke<TaskDetail>("reassign_task_to_lane", { taskId, laneId, notes });
 }
 
 export async function sendLaneBackForWork(taskId: string): Promise<TaskDetail> {

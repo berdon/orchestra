@@ -2608,6 +2608,102 @@ pub fn approve_pending_lane_completion(
     tasks::get_task_context(connection, task_id)
 }
 
+pub fn reassign_task_to_lane(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    lane_id: &str,
+    notes: Option<String>,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<TaskDetail, String> {
+    let task = tasks::get_task_context(connection, task_id)?;
+    let workflow = load_task_workflow(connection, &task)?;
+    let target_lane = workflow
+        .lanes
+        .iter()
+        .find(|lane| lane.id == lane_id)
+        .cloned()
+        .ok_or_else(|| format!("Workflow lane {lane_id} does not exist for task {task_id}"))?;
+
+    if task.current_lane_id.as_deref() == Some(target_lane.id.as_str()) {
+        return Err(format!(
+            "Task {task_id} is already in lane {}. Use the lane's normal completion or rework actions instead.",
+            target_lane.id
+        ));
+    }
+
+    let current_assignment = get_current_lane_assignment(connection, task_id)?;
+    if let Some(context) = authorization {
+        match context.actor_type.as_str() {
+            "user" => {}
+            "agent" | "role_instance" => {
+                let assignment = current_assignment.as_ref().ok_or_else(|| {
+                    format!(
+                        "Task {task_id} does not have an active worker-owned lane assignment to re-lane"
+                    )
+                })?;
+                if !matches!(
+                    assignment.status.as_str(),
+                    ASSIGNMENT_STATUS_ACTIVE | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+                ) {
+                    return Err(format!(
+                        "Only the user can re-lane task {task_id} while it has no active worker-owned assignment"
+                    ));
+                }
+                validate_assignment_authorization(assignment, authorization)?;
+            }
+            other => {
+                return Err(format!(
+                    "Unsupported actor type for task re-lane action: {other}"
+                ));
+            }
+        }
+    }
+
+    let now = now_iso();
+    let normalized_notes = normalize_optional(notes);
+
+    if let Some(assignment) = current_assignment.as_ref() {
+        match assignment.status.as_str() {
+            ASSIGNMENT_STATUS_ACTIVE | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => {
+                update_open_lane_run(
+                    connection,
+                    task_id,
+                    &assignment.lane_id,
+                    assignment.session_id.as_deref(),
+                    "failure",
+                    normalized_notes.clone(),
+                    &now,
+                )?;
+                finalize_worker_assignment(
+                    connection,
+                    project_root,
+                    session_dir,
+                    &task,
+                    assignment,
+                    "failure",
+                    normalized_notes.clone(),
+                    &now,
+                )?;
+            }
+            ASSIGNMENT_STATUS_QUEUED => {
+                cancel_queued_assignment_for_relane(
+                    connection,
+                    &task,
+                    assignment,
+                    normalized_notes.clone(),
+                    &now,
+                )?;
+            }
+            _ => {}
+        }
+    }
+
+    move_task_to_specific_lane(connection, &task, &target_lane, &now)?;
+    tasks::get_task_context(connection, task_id)
+}
+
 pub fn send_lane_back_for_work(
     connection: &Connection,
     task_id: &str,
@@ -2762,6 +2858,125 @@ fn move_task_to_user_review(
             params![task_id, lane_id, now],
         )
         .map_err(|error| format!("Unable to move task {} to user review: {error}", task_id))?;
+    Ok(())
+}
+
+fn move_task_to_specific_lane(
+    connection: &Connection,
+    task: &TaskDetail,
+    lane: &WorkflowLane,
+    now: &str,
+) -> Result<(), String> {
+    let status = if lane.assigned_entity_type == "user" {
+        "in_review"
+    } else {
+        "ready"
+    };
+    connection
+        .execute(
+            r#"
+            UPDATE tasks
+            SET current_lane_id = ?2,
+                assignee_type = ?3,
+                assignee_id = ?4,
+                status = ?5,
+                updated_at = ?6
+            WHERE id = ?1
+            "#,
+            params![
+                task.id,
+                lane.id,
+                lane.assigned_entity_type,
+                lane.assigned_entity_id,
+                status,
+                now,
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to move task {} to workflow lane {}: {error}",
+                task.id, lane.id
+            )
+        })?;
+    Ok(())
+}
+
+fn cancel_queued_assignment_for_relane(
+    connection: &Connection,
+    task: &TaskDetail,
+    assignment: &TaskLaneAssignment,
+    notes: Option<String>,
+    now: &str,
+) -> Result<(), String> {
+    complete_assignment(connection, &assignment.id, ASSIGNMENT_STATUS_CANCELED, now)?;
+
+    if let Some(queue_entry_id) = assignment.role_queue_entry_id.as_deref() {
+        let assigned_instance_id = connection
+            .query_row(
+                "SELECT assigned_instance_id FROM role_queue_entries WHERE id = ?1",
+                [queue_entry_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to inspect role queue entry {} for task {}: {error}",
+                    queue_entry_id, task.id
+                )
+            })?
+            .flatten();
+
+        connection
+            .execute(
+                r#"
+                UPDATE role_queue_entries
+                SET status = 'canceled',
+                    completed_at = ?2,
+                    updated_at = ?2
+                WHERE id = ?1
+                  AND status IN ('queued', 'assigned')
+                "#,
+                params![queue_entry_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to cancel role queue entry {} for task {}: {error}",
+                    queue_entry_id, task.id
+                )
+            })?;
+
+        if let Some(instance_id) = assigned_instance_id.as_deref() {
+            clear_role_instance_for_reset(connection, instance_id, notes.clone(), now)?;
+        }
+    }
+
+    if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
+        clear_role_instance_for_reset(connection, role_instance_id, notes.clone(), now)?;
+    }
+
+    if let Some(worker_id) = assignment.worker_id.as_deref() {
+        if assignment.worker_type == "agent" {
+            connection
+                .execute(
+                    r#"
+                    UPDATE agent_runtime_states
+                    SET status = 'idle',
+                        current_queue_entry_id = NULL,
+                        last_error = ?4,
+                        updated_at = ?3
+                    WHERE project_id = ?1 AND agent_id = ?2
+                    "#,
+                    params![task.project_id, worker_id, now, notes.as_deref()],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to reset agent runtime state for task {} during re-lane: {error}",
+                        task.id
+                    )
+                })?;
+        }
+    }
+
     Ok(())
 }
 
@@ -4716,6 +4931,185 @@ mod tests {
                 .map(|instance| instance.status.as_str()),
             Some("completed")
         );
+    }
+
+    #[test]
+    fn reassigns_awaiting_approval_work_to_a_specific_lane_and_auto_dispatches_it() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Relane Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Relane Flow".into(),
+                description: None,
+                lanes: vec![
+                    WorkflowLaneInput {
+                        id: Some("lane-implement".into()),
+                        key: "implement".into(),
+                        name: "Implement".into(),
+                        description: None,
+                        order: Some(0),
+                        assigned_entity_type: "role".into(),
+                        assigned_entity_id: Some(role.slug.clone()),
+                        entry_prompt_template: Some("Implement the task".into()),
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: true,
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                    WorkflowLaneInput {
+                        id: Some("lane-fix".into()),
+                        key: "fix".into(),
+                        name: "Fix".into(),
+                        description: None,
+                        order: Some(1),
+                        assigned_entity_type: "role".into(),
+                        assigned_entity_id: Some(role.slug.clone()),
+                        entry_prompt_template: Some("Fix the failed lane".into()),
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: false,
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                ],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-relane");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-relane', 'orchestra', 'runtime-relane', 'Runtime Relane Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![project_root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Re-lane failed work".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-relane".into()),
+                repository_ids: vec!["repo-relane".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("task lane should dispatch");
+        let initial_session_id = assignment
+            .session_id
+            .clone()
+            .expect("role assignment should have a session");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role assignment should have an instance");
+
+        let awaiting_review = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("This still needs more work".into()),
+            None,
+        )
+        .expect("lane should pause for approval");
+        assert_eq!(awaiting_review.status, "in_review");
+        assert_eq!(
+            awaiting_review
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
+        );
+
+        let relaned = reassign_task_to_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            "lane-fix",
+            Some("Implement lane failed review".into()),
+            None,
+        )
+        .expect("task should move to the selected lane");
+        assert_eq!(relaned.current_lane_id.as_deref(), Some("lane-fix"));
+        assert_eq!(relaned.status, "ready");
+        assert!(relaned.active_lane_assignment.is_none());
+        assert_eq!(relaned.lane_runs.len(), 1);
+        assert_eq!(relaned.lane_runs[0].result, "failure");
+        assert!(relaned.lane_runs[0].completed_at.is_some());
+        let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load after relane");
+        assert_eq!(waiting_ops.active_instance_count, 0);
+        assert_eq!(waiting_ops.assigned_count, 0);
+        assert_eq!(
+            waiting_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("failed")
+        );
+
+        let next_assignment =
+            dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("re-laned task should dispatch into the selected lane");
+        assert_eq!(next_assignment.lane_id, "lane-fix");
+        assert_ne!(
+            next_assignment.session_id.as_deref(),
+            Some(initial_session_id.as_str())
+        );
+
+        let dispatched_task = tasks::get_task_context(&connection, &task.id)
+            .expect("task should reload after dispatch");
+        assert_eq!(dispatched_task.current_lane_id.as_deref(), Some("lane-fix"));
+        assert_eq!(dispatched_task.status, "in_progress");
+        assert_eq!(
+            dispatched_task
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.lane_id.as_str()),
+            Some("lane-fix")
+        );
+        assert_eq!(dispatched_task.lane_runs.len(), 2);
+        assert!(dispatched_task.lane_runs[1].completed_at.is_none());
     }
 
     #[test]

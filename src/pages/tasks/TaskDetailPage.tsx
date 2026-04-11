@@ -61,6 +61,7 @@ interface TaskDetailPageProps {
   onPauseRuntime: () => void;
   onWhipTask: () => void;
   onResetTask: () => void;
+  onRelane: (laneId: string, notes?: string) => void;
   onComplete: (outcome: "success" | "failure" | "needs_user") => void;
   onApproveCompletion: () => void;
   onSendBackForWork: () => void;
@@ -219,6 +220,7 @@ export function TaskDetailPage({
   onPauseRuntime,
   onWhipTask,
   onResetTask,
+  onRelane,
   onComplete,
   onApproveCompletion,
   onSendBackForWork,
@@ -254,6 +256,9 @@ export function TaskDetailPage({
   const [loadingDefaultFileContent, setLoadingDefaultFileContent] = useState(false);
   const [todoDraftDescription, setTodoDraftDescription] = useState("");
   const [todoDraftLaneId, setTodoDraftLaneId] = useState<string>(task.currentLaneId ?? draft.currentLaneId ?? "");
+  const [showRelanePanel, setShowRelanePanel] = useState(false);
+  const [relaneTargetLaneId, setRelaneTargetLaneId] = useState("");
+  const [relaneNotes, setRelaneNotes] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [pendingScrollReferenceId, setPendingScrollReferenceId] = useState<string | null>(null);
   const [historyLimit, setHistoryLimit] = useState<number>(() => {
@@ -273,6 +278,7 @@ export function TaskDetailPage({
   const recentHistory = timelineItems.slice(0, historyLimit);
   const summaryComments = commentThreads.slice(-4).reverse();
   const todoGroups = groupTodosByLane(task);
+  const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
 
@@ -291,7 +297,10 @@ export function TaskDetailPage({
     setMailInterrupt(false);
     setTodoDraftDescription("");
     setTodoDraftLaneId(task.currentLaneId ?? draft.currentLaneId ?? "");
-  }, [draft.currentLaneId, task.currentLaneId, task.id]);
+    setShowRelanePanel(false);
+    setRelaneNotes("");
+    setRelaneTargetLaneId(workflowLanes.find((lane) => lane.id !== task.currentLaneId)?.id ?? "");
+  }, [workflowLanes, draft.currentLaneId, task.currentLaneId, task.id]);
 
   useEffect(() => {
     if (!replyTargetCommentId) {
@@ -522,6 +531,16 @@ export function TaskDetailPage({
       });
     }
 
+    if (availableRelaneTargets.length && !["draft", "completed", "canceled"].includes(task.status)) {
+      actions.push({
+        id: "relane",
+        label: showRelanePanel ? "Cancel re-lane" : "Re-lane",
+        onClick: () => setShowRelanePanel((current) => !current),
+        variant: showRelanePanel ? "danger" : "secondary",
+        dataRole: "toggle-task-relane",
+      });
+    }
+
     if (task.status !== "draft" && task.status !== "ready" && task.activeLaneAssignment) {
       actions.push({
         id: "whip",
@@ -598,6 +617,13 @@ export function TaskDetailPage({
     setTodoDraftDescription("");
   }
 
+  function handleRelaneSubmit() {
+    if (!relaneTargetLaneId) {
+      return;
+    }
+    onRelane(relaneTargetLaneId, relaneNotes.trim() || undefined);
+  }
+
   function handleOpenCommentFileReference(reference: TaskFileReference) {
     setPendingScrollReferenceId(reference.id);
     setActiveTab("repo-files");
@@ -638,6 +664,40 @@ export function TaskDetailPage({
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
+                {showRelanePanel && availableRelaneTargets.length ? (
+                  <article className="task-history-card" data-role="task-relane-panel">
+                    <div className="workflow-section__header">
+                      <strong>Move task to a different lane</strong>
+                      <span className="status-badge status-badge--warning">Re-lane</span>
+                    </div>
+                    <p className="muted-copy">
+                      Choose a different workflow lane for this task. Orchestra will update ownership and auto-dispatch the new lane when it is worker-owned.
+                    </p>
+                    {task.activeLaneAssignment?.status === "awaiting_user_approval" ? (
+                      <p className="muted-copy">Use Needs work if you want to continue in the current lane and reuse the same session.</p>
+                    ) : null}
+                    <div className="field-grid field-grid--two-column">
+                      <label className="field-group">
+                        <span className="field-group__label">Target lane</span>
+                        <select className="select-input" data-role="task-relane-target" value={relaneTargetLaneId} onChange={(event) => setRelaneTargetLaneId(event.target.value)}>
+                          <option value="">Select a lane</option>
+                          {availableRelaneTargets.map((lane) => (
+                            <option key={lane.id} value={lane.id}>{lane.name} · {lane.id}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field-group field-group--full-width">
+                        <span className="field-group__label">Notes</span>
+                        <textarea className="text-area" data-role="task-relane-notes" rows={3} value={relaneNotes} onChange={(event) => setRelaneNotes(event.target.value)} placeholder="Explain why this task needs to move lanes" />
+                      </label>
+                    </div>
+                    <div className="action-cluster action-cluster--wrap">
+                      <button className="primary-button" data-role="task-relane-confirm" type="button" disabled={Boolean(pendingActionId) || !relaneTargetLaneId} onClick={handleRelaneSubmit}>
+                        Move to lane
+                      </button>
+                    </div>
+                  </article>
+                ) : null}
                 <div className="action-cluster">
                   <button className="secondary-button secondary-button--danger" data-role="reset-task-runtime" type="button" disabled={Boolean(pendingActionId)} onClick={onResetTask}>
                     Reset task runtime
@@ -668,7 +728,40 @@ export function TaskDetailPage({
                 </div>
               </div>
             ) : (
-              <p className="muted-copy">No active runtime assignment for this task.</p>
+              <div className="task-section-list">
+                <p className="muted-copy">No active runtime assignment for this task.</p>
+                {showRelanePanel && availableRelaneTargets.length ? (
+                  <article className="task-history-card" data-role="task-relane-panel">
+                    <div className="workflow-section__header">
+                      <strong>Move task to a different lane</strong>
+                      <span className="status-badge status-badge--warning">Re-lane</span>
+                    </div>
+                    <p className="muted-copy">
+                      Choose a different workflow lane for this task. Orchestra will update ownership and auto-dispatch the new lane when it is worker-owned.
+                    </p>
+                    <div className="field-grid field-grid--two-column">
+                      <label className="field-group">
+                        <span className="field-group__label">Target lane</span>
+                        <select className="select-input" data-role="task-relane-target" value={relaneTargetLaneId} onChange={(event) => setRelaneTargetLaneId(event.target.value)}>
+                          <option value="">Select a lane</option>
+                          {availableRelaneTargets.map((lane) => (
+                            <option key={lane.id} value={lane.id}>{lane.name} · {lane.id}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field-group field-group--full-width">
+                        <span className="field-group__label">Notes</span>
+                        <textarea className="text-area" data-role="task-relane-notes" rows={3} value={relaneNotes} onChange={(event) => setRelaneNotes(event.target.value)} placeholder="Explain why this task needs to move lanes" />
+                      </label>
+                    </div>
+                    <div className="action-cluster action-cluster--wrap">
+                      <button className="primary-button" data-role="task-relane-confirm" type="button" disabled={Boolean(pendingActionId) || !relaneTargetLaneId} onClick={handleRelaneSubmit}>
+                        Move to lane
+                      </button>
+                    </div>
+                  </article>
+                ) : null}
+              </div>
             )}
 
             <div className="task-section-list" data-role="task-mail-history">

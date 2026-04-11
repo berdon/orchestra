@@ -39,6 +39,7 @@ import {
   stopSessionRuntime,
   manualTaskWhip,
   listTaskMessages,
+  reassignTaskToLane,
   markTaskTodoFinished,
   markTaskTodoUnfinished,
   deleteTaskTodo,
@@ -189,6 +190,7 @@ const TASK_EVENT_TOOL_NAMES = new Set([
   "complete_lane_as_success",
   "complete_lane_as_failure",
   "request_user_intervention",
+  "reassign_task_to_lane",
   "add_task_dependency",
   "remove_task_dependency",
   "add_task_attachment",
@@ -1084,6 +1086,17 @@ export function TasksPage({
     }, "Unable to approve task lane.");
   }
 
+  async function handleRelaneTask(targetLaneId: string, notes?: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    await runDetailAction("relane", async () => {
+      await reassignTaskToLane(route.taskId, targetLaneId, notes);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId);
+    }, "Unable to re-lane task.");
+  }
+
   async function handleSendLaneBackForWork() {
     if (route.kind !== "detail") {
       return;
@@ -1271,6 +1284,7 @@ export function TasksPage({
           onPauseRuntime={() => void handlePauseTaskRuntime()}
           onWhipTask={() => void handleWhipTask()}
           onResetTask={() => void handleResetTaskRuntime()}
+          onRelane={(laneId, notes) => void handleRelaneTask(laneId, notes)}
           onSendBackForWork={() => void handleSendLaneBackForWork()}
           onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
           onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
