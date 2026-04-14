@@ -33,6 +33,8 @@ const VALID_TASK_STATUSES: &[&str] = &[
 ];
 const VALID_TASK_PRIORITIES: &[&str] = &["P0", "P1", "P2", "P3", "P4"];
 const VALID_ASSIGNEE_TYPES: &[&str] = &["user", "agent", "role", "unassigned"];
+const VALID_COMMENT_ORIGIN_TYPES: &[&str] = &["user", "agent", "role", "system"];
+const DEFAULT_TASK_COMMENT_USER_ID: &str = "desktop-user";
 const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "canceled"];
 
 #[derive(Debug, Clone)]
@@ -113,17 +115,12 @@ pub fn list_tasks_materialized_from_schedule(
     let rows = statement
         .query_map(params![schedule_id, limit as i64], map_task_summary_row)
         .map_err(|error| {
-            format!(
-                "Unable to query materialized tasks for schedule {schedule_id}: {error}"
-            )
+            format!("Unable to query materialized tasks for schedule {schedule_id}: {error}")
         })?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            format!(
-                "Unable to read materialized tasks for schedule {schedule_id}: {error}"
-            )
-        })
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        format!("Unable to read materialized tasks for schedule {schedule_id}: {error}")
+    })
 }
 
 pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
@@ -158,17 +155,18 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     whip_max_attempts: row.get(13)?,
                     archived: row.get::<_, i64>(14)? != 0,
                     comment_count: row.get(15)?,
-                    lane_run_count: row.get(16)?,
-                    child_count: row.get(17)?,
-                    completed_child_count: row.get(18)?,
-                    in_progress_child_count: row.get(19)?,
-                    blocked_child_count: row.get(20)?,
-                    blocked_by_count: row.get(21)?,
-                    blocking_count: row.get(22)?,
-                    attachment_count: row.get(23)?,
-                    dependency_blocked: row.get::<_, i64>(24)? != 0,
-                    ready_for_dispatch: row.get::<_, i64>(25)? != 0,
-                    repository_id: row.get(28)?,
+                    unread_comment_count: row.get(16)?,
+                    lane_run_count: row.get(17)?,
+                    child_count: row.get(18)?,
+                    completed_child_count: row.get(19)?,
+                    in_progress_child_count: row.get(20)?,
+                    blocked_child_count: row.get(21)?,
+                    blocked_by_count: row.get(22)?,
+                    blocking_count: row.get(23)?,
+                    attachment_count: row.get(24)?,
+                    dependency_blocked: row.get::<_, i64>(25)? != 0,
+                    ready_for_dispatch: row.get::<_, i64>(26)? != 0,
+                    repository_id: row.get(29)?,
                     repository_ids: Vec::new(),
                     parent: None,
                     lineage: Vec::new(),
@@ -182,8 +180,8 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     todos: Vec::new(),
                     lane_runs: Vec::new(),
                     active_lane_assignment: None,
-                    created_at: row.get(26)?,
-                    updated_at: row.get(27)?,
+                    created_at: row.get(27)?,
+                    updated_at: row.get(28)?,
                 })
             },
         )
@@ -439,12 +437,8 @@ pub fn update_task(
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let existing = get_task(connection, task_id)?;
-    let normalized = prepare_task_input_for_project(
-        connection,
-        &existing.project_id,
-        input,
-        Some(task_id),
-    )?;
+    let normalized =
+        prepare_task_input_for_project(connection, &existing.project_id, input, Some(task_id))?;
     let now = now_iso();
 
     let tx = connection
@@ -620,6 +614,8 @@ pub fn add_task_comment(
 
     let TaskCommentInput {
         author,
+        origin_type,
+        origin_id,
         message,
         interrupt_agent,
         parent_comment_id,
@@ -635,12 +631,19 @@ pub fn add_task_comment(
 
     let author = author.trim();
     let message = message.trim();
+    let origin_type = normalized_optional_string(origin_type).unwrap_or_else(|| "user".into());
+    let origin_id = normalized_optional_string(origin_id);
     let parent_comment_id = normalized_optional_string(parent_comment_id);
     if author.is_empty() {
         return Err("author: Comment author is required.".to_string());
     }
     if message.is_empty() {
         return Err("message: Comment message is required.".to_string());
+    }
+    if !VALID_COMMENT_ORIGIN_TYPES.contains(&origin_type.as_str()) {
+        return Err(
+            "originType: Comment origin must be one of: user, agent, role, system.".to_string(),
+        );
     }
     validate_task_comment_parent(connection, task_id, parent_comment_id.as_deref())?;
 
@@ -663,6 +666,8 @@ pub fn add_task_comment(
         task_id: task_id.to_string(),
         parent_comment_id: parent_comment_id.clone(),
         author: author.to_string(),
+        origin_type: origin_type.clone(),
+        origin_id: origin_id.clone(),
         message: message.to_string(),
         interrupt_agent,
         repository_id: anchor_input
@@ -688,12 +693,14 @@ pub fn add_task_comment(
         .transaction()
         .map_err(|error| format!("Unable to start task comment transaction: {error}"))?;
     tx.execute(
-        "INSERT INTO task_comments (id, task_id, parent_comment_id, author, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        "INSERT INTO task_comments (id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             comment.id,
             comment.task_id,
             comment.parent_comment_id,
             comment.author,
+            comment.origin_type,
+            comment.origin_id,
             comment.message,
             if comment.interrupt_agent { 1 } else { 0 },
             comment.repository_id,
@@ -979,7 +986,7 @@ pub fn list_unread_task_comments(
     let mut statement = connection
         .prepare(
             r#"
-            SELECT c.id, c.task_id, c.parent_comment_id, c.author, c.message, c.interrupt_agent, c.repository_id, c.relative_path, c.line_start, c.line_end, c.column_start, c.column_end, c.selected_text, c.anchor_commit_hash, c.anchor_has_uncommitted_changes, c.created_at, c.updated_at
+            SELECT c.id, c.task_id, c.parent_comment_id, c.author, c.origin_type, c.origin_id, c.message, c.interrupt_agent, c.repository_id, c.relative_path, c.line_start, c.line_end, c.column_start, c.column_end, c.selected_text, c.anchor_commit_hash, c.anchor_has_uncommitted_changes, c.created_at, c.updated_at
             FROM task_comments c
             WHERE c.task_id = ?1
               AND NOT EXISTS (
@@ -999,21 +1006,23 @@ pub fn list_unread_task_comments(
                 task_id: row.get(1)?,
                 parent_comment_id: row.get(2)?,
                 author: row.get(3)?,
-                message: row.get(4)?,
-                interrupt_agent: row.get::<_, i64>(5)? != 0,
-                repository_id: row.get(6)?,
-                relative_path: row.get(7)?,
-                line_start: row.get(8)?,
-                line_end: row.get(9)?,
-                column_start: row.get(10)?,
-                column_end: row.get(11)?,
-                selected_text: row.get(12)?,
-                anchor_commit_hash: row.get(13)?,
+                origin_type: row.get(4)?,
+                origin_id: row.get(5)?,
+                message: row.get(6)?,
+                interrupt_agent: row.get::<_, i64>(7)? != 0,
+                repository_id: row.get(8)?,
+                relative_path: row.get(9)?,
+                line_start: row.get(10)?,
+                line_end: row.get(11)?,
+                column_start: row.get(12)?,
+                column_end: row.get(13)?,
+                selected_text: row.get(14)?,
+                anchor_commit_hash: row.get(15)?,
                 anchor_has_uncommitted_changes: row
-                    .get::<_, Option<i64>>(14)?
+                    .get::<_, Option<i64>>(16)?
                     .map(|value| value != 0),
-                created_at: row.get(15)?,
-                updated_at: row.get(16)?,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
             })
         })
         .map_err(|error| format!("Unable to load unread task comments for {task_id}: {error}"))?;
@@ -1090,6 +1099,82 @@ pub fn mark_task_comments_read(
     }
 
     load_task_comment_receipts(connection, task_id, session_id, Some(&comments))
+}
+
+pub fn count_unread_task_comments_for_user(
+    connection: &Connection,
+    task_id: &str,
+    user_id: &str,
+) -> Result<i64, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM task_comments c
+            WHERE c.task_id = ?1
+              AND c.origin_type != 'user'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM task_comment_user_receipts r
+                  WHERE r.comment_id = c.id AND r.user_id = ?2
+              )
+            "#,
+            params![task_id, user_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            format!("Unable to count unread user task comments for {task_id}: {error}")
+        })
+}
+
+pub fn mark_task_comments_read_for_user(
+    connection: &Connection,
+    task_id: &str,
+    comment_ids: Option<&[String]>,
+) -> Result<i64, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+
+    let comments = load_comments_for_user_receipt_update(connection, task_id, comment_ids)?;
+    if comments.is_empty() {
+        return Ok(0);
+    }
+
+    let now = now_iso();
+    for comment in &comments {
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_comment_user_receipts (
+                    comment_id,
+                    task_id,
+                    user_id,
+                    read_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?4, ?4)
+                ON CONFLICT(comment_id, user_id) DO UPDATE SET
+                    read_at = excluded.read_at,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    comment.id.as_str(),
+                    task_id,
+                    DEFAULT_TASK_COMMENT_USER_ID,
+                    now
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to record user task comment receipt for comment {} on task {}: {error}",
+                    comment.id, task_id
+                )
+            })?;
+    }
+
+    Ok(comments.len() as i64)
 }
 
 fn validate_task_comment_parent(
@@ -1286,6 +1371,18 @@ fn load_comments_for_receipt_update(
     Ok(filtered)
 }
 
+fn load_comments_for_user_receipt_update(
+    connection: &Connection,
+    task_id: &str,
+    comment_ids: Option<&[String]>,
+) -> Result<Vec<TaskComment>, String> {
+    let comments = load_comments_for_receipt_update(connection, task_id, comment_ids)?;
+    Ok(comments
+        .into_iter()
+        .filter(|comment| comment.origin_type != "user")
+        .collect())
+}
+
 fn load_task_comment_receipts(
     connection: &Connection,
     task_id: &str,
@@ -1344,7 +1441,7 @@ fn load_task_comment(connection: &Connection, comment_id: &str) -> Result<TaskCo
     connection
         .query_row(
             r#"
-            SELECT id, task_id, parent_comment_id, author, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at
+            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at
             FROM task_comments
             WHERE id = ?1
             "#,
@@ -1355,19 +1452,21 @@ fn load_task_comment(connection: &Connection, comment_id: &str) -> Result<TaskCo
                     task_id: row.get(1)?,
                     parent_comment_id: row.get(2)?,
                     author: row.get(3)?,
-                    message: row.get(4)?,
-                    interrupt_agent: row.get::<_, i64>(5)? != 0,
-                    repository_id: row.get(6)?,
-                    relative_path: row.get(7)?,
-                    line_start: row.get(8)?,
-                    line_end: row.get(9)?,
-                    column_start: row.get(10)?,
-                    column_end: row.get(11)?,
-                    selected_text: row.get(12)?,
-                    anchor_commit_hash: row.get(13)?,
-                    anchor_has_uncommitted_changes: row.get::<_, Option<i64>>(14)?.map(|value| value != 0),
-                    created_at: row.get(15)?,
-                    updated_at: row.get(16)?,
+                    origin_type: row.get(4)?,
+                    origin_id: row.get(5)?,
+                    message: row.get(6)?,
+                    interrupt_agent: row.get::<_, i64>(7)? != 0,
+                    repository_id: row.get(8)?,
+                    relative_path: row.get(9)?,
+                    line_start: row.get(10)?,
+                    line_end: row.get(11)?,
+                    column_start: row.get(12)?,
+                    column_end: row.get(13)?,
+                    selected_text: row.get(14)?,
+                    anchor_commit_hash: row.get(15)?,
+                    anchor_has_uncommitted_changes: row.get::<_, Option<i64>>(16)?.map(|value| value != 0),
+                    created_at: row.get(17)?,
+                    updated_at: row.get(18)?,
                 })
             },
         )
@@ -1380,7 +1479,7 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, task_id, parent_comment_id, author, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at
+            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, created_at, updated_at
             FROM task_comments
             WHERE task_id = ?1
             ORDER BY created_at ASC, id ASC
@@ -1395,21 +1494,23 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
                 task_id: row.get(1)?,
                 parent_comment_id: row.get(2)?,
                 author: row.get(3)?,
-                message: row.get(4)?,
-                interrupt_agent: row.get::<_, i64>(5)? != 0,
-                repository_id: row.get(6)?,
-                relative_path: row.get(7)?,
-                line_start: row.get(8)?,
-                line_end: row.get(9)?,
-                column_start: row.get(10)?,
-                column_end: row.get(11)?,
-                selected_text: row.get(12)?,
-                anchor_commit_hash: row.get(13)?,
+                origin_type: row.get(4)?,
+                origin_id: row.get(5)?,
+                message: row.get(6)?,
+                interrupt_agent: row.get::<_, i64>(7)? != 0,
+                repository_id: row.get(8)?,
+                relative_path: row.get(9)?,
+                line_start: row.get(10)?,
+                line_end: row.get(11)?,
+                column_start: row.get(12)?,
+                column_end: row.get(13)?,
+                selected_text: row.get(14)?,
+                anchor_commit_hash: row.get(15)?,
                 anchor_has_uncommitted_changes: row
-                    .get::<_, Option<i64>>(14)?
+                    .get::<_, Option<i64>>(16)?
                     .map(|value| value != 0),
-                created_at: row.get(15)?,
-                updated_at: row.get(16)?,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
             })
         })
         .map_err(|error| format!("Unable to read task comments for {task_id}: {error}"))?;
@@ -2061,6 +2162,7 @@ fn task_summary_columns(alias: &str) -> String {
         {alias}.whip_max_attempts,
         {alias}.archived,
         COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = {alias}.id), 0) AS comment_count,
+        {unread_user_comments} AS unread_comment_count,
         COALESCE((SELECT COUNT(*) FROM task_lane_runs lr WHERE lr.task_id = {alias}.id), 0) AS lane_run_count,
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id), 0) AS child_count,
         COALESCE((SELECT COUNT(*) FROM tasks child WHERE child.parent_task_id = {alias}.id AND child.status = 'completed'), 0) AS completed_child_count,
@@ -2076,6 +2178,14 @@ fn task_summary_columns(alias: &str) -> String {
         "#,
         unresolved_blockers = unresolved_blocker_sql(alias),
         unfinished_child_blockers = unfinished_child_blocker_sql(alias),
+        unread_user_comments = unread_user_comment_count_sql(alias),
+    )
+}
+
+fn unread_user_comment_count_sql(alias: &str) -> String {
+    format!(
+        "COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = {alias}.id AND c.origin_type != 'user' AND NOT EXISTS (SELECT 1 FROM task_comment_user_receipts r WHERE r.comment_id = c.id AND r.user_id = '{user_id}')), 0)",
+        user_id = DEFAULT_TASK_COMMENT_USER_ID,
     )
 }
 
@@ -2109,18 +2219,19 @@ fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
         whip_max_attempts: row.get(13)?,
         archived: row.get::<_, i64>(14)? != 0,
         comment_count: row.get(15)?,
-        lane_run_count: row.get(16)?,
-        child_count: row.get(17)?,
-        completed_child_count: row.get(18)?,
-        in_progress_child_count: row.get(19)?,
-        blocked_child_count: row.get(20)?,
-        blocked_by_count: row.get(21)?,
-        blocking_count: row.get(22)?,
-        attachment_count: row.get(23)?,
-        dependency_blocked: row.get::<_, i64>(24)? != 0,
-        ready_for_dispatch: row.get::<_, i64>(25)? != 0,
-        created_at: row.get(26)?,
-        updated_at: row.get(27)?,
+        unread_comment_count: row.get(16)?,
+        lane_run_count: row.get(17)?,
+        child_count: row.get(18)?,
+        completed_child_count: row.get(19)?,
+        in_progress_child_count: row.get(20)?,
+        blocked_child_count: row.get(21)?,
+        blocked_by_count: row.get(22)?,
+        blocking_count: row.get(23)?,
+        attachment_count: row.get(24)?,
+        dependency_blocked: row.get::<_, i64>(25)? != 0,
+        ready_for_dispatch: row.get::<_, i64>(26)? != 0,
+        created_at: row.get(27)?,
+        updated_at: row.get(28)?,
     })
 }
 
@@ -2653,6 +2764,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Reviewer".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Please course-correct before continuing.".into(),
                 interrupt_agent: true,
                 parent_comment_id: None,
@@ -2783,6 +2896,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Reviewer".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Clarify this selected text.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
@@ -2828,6 +2943,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Reviewer".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Please split this into smaller steps.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
@@ -2847,6 +2964,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Worker".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Split completed and queued for follow-up review.".into(),
                 interrupt_agent: false,
                 parent_comment_id: Some(parent.id.clone()),
@@ -2883,6 +3002,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Reviewer".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Parent comment".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
@@ -2902,6 +3023,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Worker".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Reply comment".into(),
                 interrupt_agent: false,
                 parent_comment_id: Some(parent.id.clone()),
@@ -2922,6 +3045,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "User".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Nested reply".into(),
                 interrupt_agent: false,
                 parent_comment_id: Some(reply.id.clone()),
@@ -2992,6 +3117,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Reviewer".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Check the failing test before you continue.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
@@ -3011,6 +3138,8 @@ mod tests {
             &task.id,
             TaskCommentInput {
                 author: "Lead".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Also update the release notes.".into(),
                 interrupt_agent: true,
                 parent_comment_id: None,
@@ -3055,6 +3184,130 @@ mod tests {
         let unread_after_all = list_unread_task_comments(&connection, &task.id, &assignment)
             .expect("all comments should now be read");
         assert!(unread_after_all.is_empty());
+    }
+
+    #[test]
+    fn tracks_user_unread_comment_receipts_without_affecting_worker_receipts() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "User unread receipts", "in_progress", None);
+        let now = now_iso();
+        let assignment = TaskLaneAssignment {
+            id: "assignment-user-receipts".into(),
+            task_id: task.id.clone(),
+            workflow_id: "workflow-dev".into(),
+            lane_id: "lane-plan".into(),
+            worker_type: "agent".into(),
+            worker_id: Some("agent-data".into()),
+            status: "active".into(),
+            session_id: Some("session-user-receipts".into()),
+            runtime_cwd: Some("/tmp/user-receipts".into()),
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: Some("Prompt".into()),
+            pending_outcome: None,
+            completion_notes: None,
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: now.clone(),
+            completed_at: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL, ?10, 0, NULL, ?11, NULL, ?11, ?11)",
+                params![
+                    assignment.id.as_str(),
+                    assignment.task_id.as_str(),
+                    assignment.workflow_id.as_str(),
+                    assignment.lane_id.as_str(),
+                    assignment.worker_type.as_str(),
+                    assignment.worker_id.as_deref(),
+                    assignment.status.as_str(),
+                    assignment.session_id.as_deref(),
+                    assignment.runtime_cwd.as_deref(),
+                    assignment.prompt.as_deref(),
+                    now.as_str(),
+                ],
+            )
+            .expect("assignment should insert");
+
+        let worker_comment = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Reviewer".into(),
+                origin_type: Some("agent".into()),
+                origin_id: Some("agent-reviewer".into()),
+                message: "Please address the latest review feedback.".into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
+            },
+        )
+        .expect("worker comment should add");
+        let _user_comment = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "User".into(),
+                origin_type: Some("user".into()),
+                origin_id: None,
+                message: "I have already reviewed this.".into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
+            },
+        )
+        .expect("user comment should add");
+
+        assert_eq!(
+            count_unread_task_comments_for_user(
+                &connection,
+                &task.id,
+                DEFAULT_TASK_COMMENT_USER_ID,
+            )
+            .expect("user unread count should load"),
+            1
+        );
+
+        let worker_unread_before = list_unread_task_comments(&connection, &task.id, &assignment)
+            .expect("worker unread comments should load");
+        assert_eq!(worker_unread_before.len(), 2);
+
+        let marked_count = mark_task_comments_read_for_user(&connection, &task.id, None)
+            .expect("user read receipts should record");
+        assert_eq!(marked_count, 1);
+        assert_eq!(
+            count_unread_task_comments_for_user(
+                &connection,
+                &task.id,
+                DEFAULT_TASK_COMMENT_USER_ID,
+            )
+            .expect("user unread count should reload"),
+            0
+        );
+
+        let worker_unread_after = list_unread_task_comments(&connection, &task.id, &assignment)
+            .expect("worker unread comments should remain unchanged");
+        assert_eq!(worker_unread_after.len(), 2);
+        assert_eq!(worker_unread_after[0].id, worker_comment.id);
     }
 
     #[test]

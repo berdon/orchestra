@@ -789,6 +789,8 @@ pub struct TaskComment {
     pub task_id: String,
     pub parent_comment_id: Option<String>,
     pub author: String,
+    pub origin_type: String,
+    pub origin_id: Option<String>,
     pub message: String,
     pub interrupt_agent: bool,
     pub repository_id: Option<String>,
@@ -879,6 +881,10 @@ pub struct TaskCommentFileMentionCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct TaskCommentInput {
     pub author: String,
+    #[serde(default)]
+    pub origin_type: Option<String>,
+    #[serde(default)]
+    pub origin_id: Option<String>,
     pub message: String,
     pub interrupt_agent: bool,
     #[serde(default)]
@@ -1061,6 +1067,7 @@ pub struct TaskSummary {
     pub whip_max_attempts: i64,
     pub archived: bool,
     pub comment_count: i64,
+    pub unread_comment_count: i64,
     pub lane_run_count: i64,
     pub child_count: i64,
     pub completed_child_count: i64,
@@ -1109,6 +1116,7 @@ pub struct TaskDetail {
     pub whip_max_attempts: i64,
     pub archived: bool,
     pub comment_count: i64,
+    pub unread_comment_count: i64,
     pub lane_run_count: i64,
     pub child_count: i64,
     pub completed_child_count: i64,

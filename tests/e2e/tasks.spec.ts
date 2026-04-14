@@ -901,6 +901,95 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Review me");
 });
 
+test("task comment unread badges track non-user comments and clear when the comments tab is opened", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-comment-unread",
+          projectId: "orchestra",
+          number: "ORC-7",
+          title: "Unread task comments",
+          description: "Unread comment badge coverage.",
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 2,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [
+            {
+              id: "comment-agent",
+              taskId: "task-comment-unread",
+              author: "Reviewer",
+              originType: "agent",
+              originId: "agent-reviewer",
+              message: "Please update the implementation plan.",
+              interruptAgent: false,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+            {
+              id: "comment-user",
+              taskId: "task-comment-unread",
+              author: "User",
+              originType: "user",
+              originId: null,
+              message: "Acknowledged.",
+              interruptAgent: false,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+          ],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.task-comment-user-receipts", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.locator('[data-role="nav-badge-tasks"]')).toContainText("1");
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Unread task comments" }).first().click();
+  await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toContainText("1 unread");
+  await page.locator('[data-role="open-task-comments"]').click();
+  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-unread-comments-tab-badge"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="nav-badge-tasks"]')).toHaveCount(0);
+});
+
 test("task detail dispatches a role-owned lane and shows its runtime assignment", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

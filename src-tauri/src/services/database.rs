@@ -352,6 +352,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 task_id TEXT NOT NULL,
                 parent_comment_id TEXT,
                 author TEXT NOT NULL,
+                origin_type TEXT NOT NULL DEFAULT 'user',
+                origin_id TEXT,
                 message TEXT NOT NULL,
                 interrupt_agent INTEGER NOT NULL DEFAULT 0,
                 repository_id TEXT,
@@ -395,6 +397,21 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_task_comment_receipts_assignment_id
                 ON task_comment_receipts(assignment_id, read_at ASC);
+
+            CREATE TABLE IF NOT EXISTS task_comment_user_receipts (
+                comment_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                read_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (comment_id, user_id),
+                FOREIGN KEY(comment_id) REFERENCES task_comments(id) ON DELETE CASCADE,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_comment_user_receipts_task_user
+                ON task_comment_user_receipts(task_id, user_id, read_at ASC);
 
             CREATE TABLE IF NOT EXISTS mailbox_messages (
                 id TEXT PRIMARY KEY,
@@ -1248,6 +1265,23 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
             })?;
     }
 
+    if !columns.contains("origin_type") {
+        connection
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'user'",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add origin_type column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("origin_id") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN origin_id TEXT", [])
+            .map_err(|error| format!("Unable to add origin_id column to task_comments: {error}"))?;
+    }
+
     if !columns.contains("line_start") {
         connection
             .execute(
@@ -1342,6 +1376,29 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
             format!(
                 "Unable to create task comment anchor index after migration: {error}"
             )
+        })?;
+
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS task_comment_user_receipts (
+                comment_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                read_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (comment_id, user_id),
+                FOREIGN KEY(comment_id) REFERENCES task_comments(id) ON DELETE CASCADE,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_comment_user_receipts_task_user
+                ON task_comment_user_receipts(task_id, user_id, read_at ASC);
+            "#,
+        )
+        .map_err(|error| {
+            format!("Unable to ensure task comment user receipt tables after migration: {error}")
         })?;
 
     Ok(())

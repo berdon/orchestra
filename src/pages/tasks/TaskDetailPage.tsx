@@ -53,6 +53,7 @@ interface TaskDetailPageProps {
   pendingActionId?: string | null;
   onDraftChange: (draft: TaskUpsertInput) => void;
   onCommentDraftChange: (draft: TaskCommentInput) => void;
+  onCommentsTabViewed: () => void;
   onSave: () => void;
   onPublish: () => void;
   onDelete: () => void;
@@ -224,6 +225,7 @@ export function TaskDetailPage({
   pendingActionId = null,
   onDraftChange,
   onCommentDraftChange,
+  onCommentsTabViewed,
   onSave,
   onPublish,
   onDelete,
@@ -290,6 +292,7 @@ export function TaskDetailPage({
   const tabBodyRef = useRef<HTMLDivElement | null>(null);
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
+  const lastMarkedCommentsReadKeyRef = useRef<string | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
   const [compactHeaderVisible, setCompactHeaderVisible] = useState(false);
 
@@ -329,6 +332,18 @@ export function TaskDetailPage({
       setReplyDraft((current) => ({ ...current, author: commentDraft.author }));
     }
   }, [commentDraft.author, replyTargetCommentId]);
+
+  useEffect(() => {
+    if (activeTab !== "comments" || task.unreadCommentCount <= 0) {
+      return;
+    }
+    const readKey = `${task.id}:${task.unreadCommentCount}`;
+    if (lastMarkedCommentsReadKeyRef.current === readKey) {
+      return;
+    }
+    lastMarkedCommentsReadKeyRef.current = readKey;
+    onCommentsTabViewed();
+  }, [activeTab, onCommentsTabViewed, task.id, task.unreadCommentCount]);
 
   useEffect(() => {
     if (activeTab === "repo-files" && task.fileReferences.length > 0) {
@@ -1776,6 +1791,16 @@ export function TaskDetailPage({
               ) : (
                 <p className="muted-copy">No comments yet. Add one here or anchor a comment directly from the file preview.</p>
               )}
+              <div className="task-detail-summary__comments-footer">
+                <button className="secondary-button" data-role="open-task-comments" type="button" onClick={() => handleTabSelect("comments")}>
+                  View all comments
+                </button>
+                {task.unreadCommentCount > 0 ? (
+                  <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-footer-badge">
+                    {task.unreadCommentCount} unread
+                  </span>
+                ) : null}
+              </div>
             </section>
 
             <section className="task-detail-summary__history">
@@ -1863,7 +1888,12 @@ export function TaskDetailPage({
                 type="button"
                 onClick={() => handleTabSelect(tab.id)}
               >
-                {tab.label}
+                <span>{tab.label}</span>
+                {tab.id === "comments" && task.unreadCommentCount > 0 ? (
+                  <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-tab-badge">
+                    {task.unreadCommentCount}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>

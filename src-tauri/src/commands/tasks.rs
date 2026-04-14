@@ -93,6 +93,35 @@ pub fn list_task_comments(task_id: String) -> Result<Vec<TaskComment>, String> {
 }
 
 #[tauri::command]
+pub fn mark_task_comments_read_for_user(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let connection = database::open_connection()?;
+    tasks::mark_task_comments_read_for_user(&connection, &task_id, None)?;
+    let task = tasks::get_task_context(&connection, &task_id)?;
+    state.log(
+        "info",
+        "task.comment.user_read",
+        &format!(
+            "Marked non-user task comments read for user on task {}",
+            task_id
+        ),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "mark_task_comments_read_for_user",
+        None,
+        None,
+        &task_id,
+        "success",
+    );
+    emit_task_change(&app, "task.comment.user_read", [task.id.clone()]);
+    Ok(task)
+}
+
+#[tauri::command]
 pub fn list_task_todos(task_id: String) -> Result<Vec<TaskTodo>, String> {
     let connection = database::open_connection()?;
     tasks::list_task_todos(&connection, &task_id)
@@ -563,10 +592,8 @@ pub fn add_task_dependency(
     let mut connection = database::open_connection()?;
     let dependency =
         tasks::add_task_dependency(&mut connection, &blocker_task_id, &blocked_task_id)?;
-    let canceled_assignment = task_runtime::cancel_dispatch_for_dependency_block(
-        &mut connection,
-        &blocked_task_id,
-    )?;
+    let canceled_assignment =
+        task_runtime::cancel_dispatch_for_dependency_block(&mut connection, &blocked_task_id)?;
     state.log(
         "info",
         "task.dependency.added",
