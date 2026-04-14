@@ -130,10 +130,13 @@ function groupTaskComments(comments: TaskComment[]) {
     repliesByParent.set(comment.parentCommentId, replies);
   }
 
-  return topLevelComments.map((comment) => ({
-    comment,
-    replies: repliesByParent.get(comment.id) ?? [],
-  }));
+  return topLevelComments
+    .slice()
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map((comment) => ({
+      comment,
+      replies: repliesByParent.get(comment.id) ?? [],
+    }));
 }
 
 function formatCommentAnchorLabel(comment: TaskComment) {
@@ -295,7 +298,7 @@ export function TaskDetailPage({
   const commentThreads = groupTaskComments(task.comments);
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const recentHistory = timelineItems.slice(0, historyLimit);
-  const summaryComments = commentThreads.slice(-4).reverse();
+  const summaryComments = commentThreads.slice(0, 4);
   const todoGroups = groupTodosByLane(task);
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];

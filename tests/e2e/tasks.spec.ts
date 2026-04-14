@@ -708,6 +708,32 @@ test("task comment composer autocompletes tasks, agents, and roles and renders t
   await expect(page.getByRole("heading", { name: "Mention target task" })).toBeVisible();
 });
 
+test("task comments show newest threads first", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Comment ordering task");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="task-detail-tab-comments"]').click();
+  await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
+  await page.locator('[data-role="task-comment-message"]').fill("First comment");
+  await page.locator('[data-role="add-task-comment"]').click();
+
+  await page.waitForTimeout(25);
+  await page.locator('[data-role="task-comment-message"]').fill("Second comment");
+  await page.locator('[data-role="add-task-comment"]').click();
+
+  const comments = page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-item"]');
+  await expect(comments).toHaveCount(2);
+  await expect(comments.first()).toContainText("Second comment");
+  await expect(comments.nth(1)).toContainText("First comment");
+});
+
 test("task detail renders markdown descriptions and comments with preserved line breaks", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
