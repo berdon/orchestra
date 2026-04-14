@@ -11,6 +11,7 @@ import {
   invokeCommand,
   setInputValue,
   sleep,
+  waitForSelector,
   waitForText,
 } from "./driver";
 import {
@@ -284,25 +285,18 @@ describe("desktop approval-gated workflow lanes", () => {
         (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
       );
       await clickSelector(sessionId, '[data-role="toggle-task-relane"]');
-      await waitForText(sessionId, 'Move task to a different lane');
-      await setInputValue(sessionId, '[data-role="task-relane-target"]', reviewPassLaneId!);
+      await waitForSelector(sessionId, '[data-role="task-relane-menu"]');
+      await executeScript(sessionId, `
+        const option = Array.from(document.querySelectorAll('[data-role="task-relane-option"]')).find((entry) =>
+          entry.getAttribute('data-lane-id') === arguments[0],
+        );
+        if (!(option instanceof HTMLElement)) return false;
+        option.click();
+        return true;
+      `, [reviewPassLaneId]);
+      await waitForSelector(sessionId, '[data-role="task-relane-confirm-dialog"]');
       await setInputValue(sessionId, '[data-role="task-relane-notes"]', 'Redirect this to the review-pass lane.');
-      await waitForCondition(
-        () => executeScript<{ targetValue: string; disabled: boolean }>(sessionId, `
-          const target = document.querySelector('[data-role="task-relane-target"]');
-          const button = document.querySelector('[data-role="task-relane-confirm"]');
-          return {
-            targetValue: target instanceof HTMLSelectElement ? target.value : '',
-            disabled: button instanceof HTMLButtonElement ? button.disabled : true,
-          };
-        `),
-        (state) => state.targetValue === reviewPassLaneId && state.disabled === false,
-      );
-      await invokeCommand(sessionId, 'reassign_task_to_lane', {
-        taskId: createdTask!.id,
-        laneId: reviewPassLaneId,
-        notes: 'Redirect this to the review-pass lane.',
-      });
+      await clickSelector(sessionId, '[data-role="task-relane-confirm"]');
 
       const relanedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
