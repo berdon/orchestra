@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -15,7 +15,9 @@ use uuid::Uuid;
 
 use crate::{
     models::{AuthorizationContext, SessionModel, SessionModelState, SessionStreamEnvelope},
-    services::{app_events, database, pi_sessions::get_session_path, task_runtime},
+    services::{
+        app_events, database, harness_settings, pi_sessions::get_session_path, task_runtime,
+    },
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -35,6 +37,31 @@ fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> 
             path.display()
         ))
     }
+}
+
+fn build_runtime_pi_args(
+    session_path: &Path,
+    session_dir: &Path,
+    orchestra_extension_path: &Path,
+    extra_extensions: &[String],
+) -> Vec<String> {
+    let mut args = vec![
+        "--offline".to_string(),
+        "--mode".to_string(),
+        "rpc".to_string(),
+        "--session".to_string(),
+        session_path.display().to_string(),
+        "--session-dir".to_string(),
+        session_dir.display().to_string(),
+        "--no-extensions".to_string(),
+        "--extension".to_string(),
+        orchestra_extension_path.display().to_string(),
+    ];
+    for extension in extra_extensions {
+        args.push("--extension".to_string());
+        args.push(extension.clone());
+    }
+    args
 }
 
 fn format_path_diagnostic(path: &std::path::Path) -> String {
@@ -83,41 +110,42 @@ impl SessionRuntime {
         )?;
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
         let extension_path = resolve_orchestra_extension_path(&app)?;
+        let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
 
         let pi_executable = app
             .state::<crate::state::AppState>()
             .sync_pi_runtime_health()?;
-        let args = vec![
-            "--offline".to_string(),
-            "--mode".to_string(),
-            "rpc".to_string(),
-            "--session".to_string(),
-            session_path.display().to_string(),
-            "--session-dir".to_string(),
-            session_dir.display().to_string(),
-            "--no-extensions".to_string(),
-            "--extension".to_string(),
-            extension_path.display().to_string(),
-        ];
+        let args = build_runtime_pi_args(
+            &session_path,
+            &session_dir,
+            &extension_path,
+            &extra_extensions,
+        );
         let requested_project_root = project_root.clone();
         let requested_project_root_diagnostic = format_path_diagnostic(&requested_project_root);
         let session_dir_diagnostic = format_path_diagnostic(&session_dir);
         let session_path_diagnostic = format_path_diagnostic(&session_path);
         let pi_executable_diagnostic = format_path_diagnostic(&pi_executable);
         let extension_path_diagnostic = format_path_diagnostic(&extension_path);
+        let extra_extension_diagnostics = if extra_extensions.is_empty() {
+            "<none>".to_string()
+        } else {
+            extra_extensions.join(", ")
+        };
         let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
 
         app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.spawn.request",
             &format!(
-                "Session {} spawn request: pi={} cwd={} session_dir={} session_path={} extension={} shell_path={}",
+                "Session {} spawn request: pi={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} shell_path={}",
                 session_id,
                 pi_executable_diagnostic,
                 requested_project_root_diagnostic,
                 session_dir_diagnostic,
                 session_path_diagnostic,
                 extension_path_diagnostic,
+                &extra_extension_diagnostics,
                 shell_path.as_deref().unwrap_or("<unavailable>"),
             ),
         );
@@ -149,12 +177,13 @@ impl SessionRuntime {
             .spawn()
             .map_err(|error| {
                 let diagnostic = format!(
-                    "Unable to start pi RPC process: {error} (pi={} cwd={} session_dir={} session_path={} extension={})",
+                    "Unable to start pi RPC process: {error} (pi={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={})",
                     pi_executable_diagnostic,
                     requested_project_root_diagnostic,
                     session_dir_diagnostic,
                     session_path_diagnostic,
                     extension_path_diagnostic,
+                    &extra_extension_diagnostics,
                 );
                 app.state::<crate::state::AppState>().log(
                     "error",
@@ -663,7 +692,9 @@ impl SessionRuntime {
 
     pub fn compact(&self, custom_instructions: Option<&str>) -> Result<Value, String> {
         if self.current_run_id().is_some() {
-            return Err("Wait for the current response to finish before compacting this session".into());
+            return Err(
+                "Wait for the current response to finish before compacting this session".into(),
+            );
         }
 
         let mut command = json!({
@@ -1167,6 +1198,39 @@ mod tests {
                 .expect("authorization should exist");
         assert_eq!(authorization.actor_type, "agent");
         assert_eq!(authorization.actor_id, "agent-7");
+    }
+
+    #[test]
+    fn build_runtime_pi_args_appends_configured_extensions_after_orchestra_extension() {
+        let args = build_runtime_pi_args(
+            Path::new("/tmp/session.jsonl"),
+            Path::new("/tmp/sessions"),
+            Path::new("/tmp/extensions/orchestra-tools.ts"),
+            &[
+                "npm:pi-example".to_string(),
+                "./extensions/local-extra.ts".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "--offline".to_string(),
+                "--mode".to_string(),
+                "rpc".to_string(),
+                "--session".to_string(),
+                "/tmp/session.jsonl".to_string(),
+                "--session-dir".to_string(),
+                "/tmp/sessions".to_string(),
+                "--no-extensions".to_string(),
+                "--extension".to_string(),
+                "/tmp/extensions/orchestra-tools.ts".to_string(),
+                "--extension".to_string(),
+                "npm:pi-example".to_string(),
+                "--extension".to_string(),
+                "./extensions/local-extra.ts".to_string(),
+            ]
+        );
     }
 }
 

@@ -38,6 +38,10 @@ pub fn orchestra_database_path(root: &Path) -> PathBuf {
     root.join("orchestra.db")
 }
 
+pub fn orchestra_settings_path(root: &Path) -> PathBuf {
+    root.join("settings.json")
+}
+
 pub fn project_root(root: &Path, project_slug: &str) -> PathBuf {
     root.join("projects").join(sanitize_slug(project_slug))
 }
@@ -58,7 +62,11 @@ pub fn managed_repository_root(root: &Path, project_slug: &str, repository_slug:
     project_repositories_dir(root, project_slug).join(sanitize_slug(repository_slug))
 }
 
-pub fn managed_repository_checkout_dir(root: &Path, project_slug: &str, repository_slug: &str) -> PathBuf {
+pub fn managed_repository_checkout_dir(
+    root: &Path,
+    project_slug: &str,
+    repository_slug: &str,
+) -> PathBuf {
     managed_repository_root(root, project_slug, repository_slug).join("repository")
 }
 
@@ -87,6 +95,10 @@ mod tests {
         assert_eq!(
             orchestra_database_path(&root),
             PathBuf::from("/tmp/home/.orchestra/orchestra.db")
+        );
+        assert_eq!(
+            orchestra_settings_path(&root),
+            PathBuf::from("/tmp/home/.orchestra/settings.json")
         );
         assert_eq!(
             project_session_dir(&root, "Orchestra App"),

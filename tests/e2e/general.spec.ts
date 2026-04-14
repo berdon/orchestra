@@ -58,6 +58,13 @@ test("settings general renders bridge diagnostics and session prompt controls", 
       }),
     );
     window.localStorage.setItem(
+      "orchestra.mock.harness-settings",
+      JSON.stringify({
+        extraExtensions: ["npm:pi-example", "./extensions/local-extra.ts"],
+        updatedAt: timestamp,
+      }),
+    );
+    window.localStorage.setItem(
       "orchestra.mock.logs",
       JSON.stringify([
         {
@@ -101,6 +108,16 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
   await page.locator('[data-role="reset-session-prompt-template"]').click();
   await expect(page.locator('[data-role="session-prompt-template"]')).toContainText("As you do work - periodically comment on tasks to give an update on what you’re doing.");
+
+  await expect(page.getByRole("heading", { name: "PI settings" })).toBeVisible();
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/local-extra.ts");
+  await page.locator('[data-role="pi-runtime-extensions"]').fill("npm:pi-example\n./extensions/second-extra.ts\n./extensions/second-extra.ts");
+  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/second-extra.ts");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.harness-settings"))).toContain("./extensions/second-extra.ts");
+  await page.locator('[data-role="reset-pi-runtime-extensions"]').click();
+  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("");
 
   await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toBeVisible();
   await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");

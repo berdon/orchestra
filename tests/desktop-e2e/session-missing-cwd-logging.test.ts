@@ -76,7 +76,8 @@ describe("desktop session missing cwd recovery", () => {
       expect(logText).toContain("(sessions.runtime.spawn.request):");
       expect(logText).toContain(`session_dir=${expectedSessionDir}`);
       expect(logText).toContain("pi=");
-      expect(logText).toContain("extension=");
+      expect(logText).toContain("orchestra_extension=");
+      expect(logText).toContain("extra_extensions=");
       expect(logText).not.toContain("(sessions.runtime.spawn.failed):");
       expect(logText).not.toContain(`cwd=${missingCwd}`);
     } finally {
