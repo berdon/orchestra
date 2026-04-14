@@ -99,6 +99,8 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await page.locator('[data-role="session-prompt-template"]').fill("Task {TASK.ID} {TASK.STATUS}");
   await page.locator('[data-role="save-session-prompt-template"]').click();
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
+  await page.locator('[data-role="reset-session-prompt-template"]').click();
+  await expect(page.locator('[data-role="session-prompt-template"]')).toContainText("As you do work - periodically comment on tasks to give an update on what you’re doing.");
 
   await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toBeVisible();
   await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");
