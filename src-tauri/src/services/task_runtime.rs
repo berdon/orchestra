@@ -49,6 +49,25 @@ fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionCont
     pi_sessions::session_context_for_project_id(&task.project_id)
 }
 
+pub fn task_transition_event_reason(outcome: &str, task: &TaskDetail) -> &'static str {
+    if outcome == "success"
+        && task
+            .active_lane_assignment
+            .as_ref()
+            .map(|assignment| assignment.status.as_str())
+            == Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
+    {
+        "task.transition.awaiting_user_approval"
+    } else {
+        match outcome {
+            "success" => "task.transition.success",
+            "failure" => "task.transition.failure",
+            "needs_user" => "task.transition.needs_user",
+            _ => "task.transition.updated",
+        }
+    }
+}
+
 pub fn get_active_lane_assignment(
     connection: &Connection,
     task_id: &str,

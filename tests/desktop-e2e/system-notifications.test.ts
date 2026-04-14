@@ -1,0 +1,139 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  createReadyWebdriverSession,
+  deleteWebdriverSession,
+  dispatchWindowEvent,
+  ensureReactReady,
+  executeScript,
+  invokeCommand,
+  sleep,
+} from "./driver";
+
+const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
+
+async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | undefined;
+
+  while (Date.now() < deadline) {
+    lastValue = await callback();
+    if (predicate(lastValue)) {
+      return lastValue;
+    }
+    await sleep(500);
+  }
+
+  throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue, null, 2)}`);
+}
+
+describe("desktop system notifications", () => {
+  it.skipIf(!isDesktopE2E)("records system notifications for new user mail and approval-needed tasks", async () => {
+    const sessionId = await createReadyWebdriverSession();
+
+    try {
+      await ensureReactReady(sessionId);
+      await executeScript(sessionId, `
+        window.__orchestraTestNotifications = [];
+        class MockNotification {
+          static permission = "granted";
+          static async requestPermission() { return "granted"; }
+          constructor(_title, _options) {}
+        }
+        window.Notification = MockNotification;
+      `);
+
+      const project = await invokeCommand<{ id: string }>(sessionId, "create_project", {
+        input: { name: "Notification Project" },
+      });
+      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
+
+      const role = await invokeCommand<{ slug: string }>(sessionId, "create_role", {
+        input: {
+          name: "Notification Worker",
+          description: "Handles approval-notification test work.",
+          systemPrompt: "Implement the task and stop for approval.",
+          capacity: 1,
+        },
+      });
+      const workflow = await invokeCommand<{ id: string }>(sessionId, "create_workflow", {
+        input: {
+          name: "Notification Approval Flow",
+          description: "Stops for user approval.",
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: role.slug,
+              entryPromptTemplate: "Implement the task and stop for approval.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: true,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+      const task = await invokeCommand<{ id: string }>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Desktop notification approval task",
+          description: "Task used to verify approval-needed system notifications.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: workflow.id,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+        },
+      });
+
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: task.id }),
+        (loadedTask) => Boolean(loadedTask?.activeLaneAssignment),
+      );
+
+      await invokeCommand(sessionId, "send_mailbox_message", {
+        input: {
+          projectId: project.id,
+          recipientType: "user",
+          body: "Please review the desktop notification behavior.",
+          priority: "interrupt",
+        },
+      });
+
+      await waitForCondition(
+        () => executeScript<any[]>(sessionId, "return window.__orchestraTestNotifications ?? [];"),
+        (notifications) => notifications.length >= 1,
+      );
+
+      await invokeCommand(sessionId, "complete_lane_as_success", {
+        taskId: task.id,
+        notes: "Please verify the lane output before approving.",
+      });
+
+      const notifications = await waitForCondition(
+        () => executeScript<any[]>(sessionId, "return window.__orchestraTestNotifications ?? [];"),
+        (entries) => entries.length >= 2,
+      );
+
+      expect(notifications[0]?.title).toBe("Orchestra — New message");
+      expect(notifications[0]?.body).toContain("Notification Project");
+      expect(notifications[0]?.body).toContain("Please review the desktop notification behavior.");
+      expect(notifications[1]?.title).toBe("Orchestra — Approval needed");
+      expect(notifications[1]?.body).toContain("Desktop notification approval task");
+      expect(notifications[1]?.body).toContain("Please verify the lane output before approving.");
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 180_000);
+});

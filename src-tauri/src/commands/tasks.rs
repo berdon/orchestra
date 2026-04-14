@@ -1321,7 +1321,7 @@ async fn complete_lane_command(
             changed_task_ids.extend(auto_dispatched_task_ids);
             emit_task_change(
                 &app,
-                &format!("task.transition.{outcome}"),
+                task_runtime::task_transition_event_reason(outcome, &task),
                 changed_task_ids,
             );
             if let Some(session_id) = retired_session_id {
