@@ -1218,7 +1218,7 @@ fn get_session_model_state_with_executable(
     executable: &Path,
 ) -> Result<SessionModelState, String> {
     let stored = resolve_session(session_dir, session_id, true)?;
-    let payloads = run_rpc_process(
+    let payloads = run_rpc_query_process(
         executable,
         project_root,
         session_dir,
@@ -1267,7 +1267,7 @@ fn set_session_model_with_executable(
     executable: &Path,
 ) -> Result<SessionModelState, String> {
     let stored = resolve_session(session_dir, session_id, true)?;
-    let payloads = run_rpc_process(
+    let payloads = run_rpc_query_process(
         executable,
         project_root,
         session_dir,
@@ -1322,7 +1322,7 @@ fn set_session_thinking_level_with_executable(
     executable: &Path,
 ) -> Result<SessionModelState, String> {
     let stored = resolve_session(session_dir, session_id, true)?;
-    let payloads = run_rpc_process(
+    let payloads = run_rpc_query_process(
         executable,
         project_root,
         session_dir,
@@ -1383,7 +1383,7 @@ fn list_available_models_with_executable(executable: &Path) -> Result<Vec<Sessio
     })?;
 
     let created = create_session_file(&project_root, &session_dir, Some("Model query"), false)?;
-    let payloads = run_rpc_process(
+    let payloads = run_rpc_query_process(
         &resolved_executable,
         &project_root,
         &session_dir,
@@ -1406,17 +1406,20 @@ fn list_available_models_with_executable(executable: &Path) -> Result<Vec<Sessio
     Ok(models)
 }
 
-fn run_rpc_process<F>(
+fn spawn_rpc_process(
     executable: &Path,
     project_root: &Path,
     session_dir: &Path,
     session_path: &Path,
-    commands: &[Value],
-    mut on_payload: F,
-) -> Result<Vec<Value>, String>
-where
-    F: FnMut(&Value),
-{
+) -> Result<
+    (
+        std::process::Child,
+        std::process::ChildStdin,
+        std::process::ChildStdout,
+        std::process::ChildStderr,
+    ),
+    String,
+> {
     let pi_executable = resolve_pi_executable(Some(executable))?;
     let args = vec![
         "--offline".to_string(),
@@ -1439,7 +1442,7 @@ where
         .spawn()
         .map_err(|error| format!("Unable to start pi RPC process: {error}"))?;
 
-    let mut stdin = child
+    let stdin = child
         .stdin
         .take()
         .ok_or_else(|| "Unable to open stdin for pi RPC process".to_string())?;
@@ -1451,6 +1454,23 @@ where
         .stderr
         .take()
         .ok_or_else(|| "Unable to open stderr for pi RPC process".to_string())?;
+
+    Ok((child, stdin, stdout, stderr))
+}
+
+fn run_rpc_process<F>(
+    executable: &Path,
+    project_root: &Path,
+    session_dir: &Path,
+    session_path: &Path,
+    commands: &[Value],
+    mut on_payload: F,
+) -> Result<Vec<Value>, String>
+where
+    F: FnMut(&Value),
+{
+    let (mut child, mut stdin, stdout, stderr) =
+        spawn_rpc_process(executable, project_root, session_dir, session_path)?;
 
     let stderr_handle = thread::spawn(move || -> String {
         let mut reader = BufReader::new(stderr);
@@ -1507,6 +1527,104 @@ where
             .unwrap_or_default();
         return Err(format!(
             "pi RPC process exited unsuccessfully{stderr_suffix}"
+        ));
+    }
+
+    Ok(payloads)
+}
+
+fn run_rpc_query_process<F>(
+    executable: &Path,
+    project_root: &Path,
+    session_dir: &Path,
+    session_path: &Path,
+    commands: &[Value],
+    mut on_payload: F,
+) -> Result<Vec<Value>, String>
+where
+    F: FnMut(&Value),
+{
+    let expected_response_ids = commands
+        .iter()
+        .filter_map(|command| {
+            command
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect::<HashSet<_>>();
+
+    let (mut child, mut stdin, stdout, stderr) =
+        spawn_rpc_process(executable, project_root, session_dir, session_path)?;
+
+    let stderr_handle = thread::spawn(move || -> String {
+        let mut reader = BufReader::new(stderr);
+        let mut buffer = String::new();
+        let _ = reader.read_to_string(&mut buffer);
+        buffer
+    });
+
+    for command in commands {
+        writeln!(stdin, "{command}")
+            .map_err(|error| format!("Unable to send command to pi RPC process: {error}"))?;
+    }
+
+    stdin
+        .flush()
+        .map_err(|error| format!("Unable to flush pi RPC stdin: {error}"))?;
+
+    let mut payloads = Vec::new();
+    let mut received_response_ids = HashSet::new();
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|error| format!("Unable to read pi RPC output: {error}"))?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let payload: Value = serde_json::from_str(trimmed).map_err(|error| {
+            format!("Unable to parse pi RPC output as JSON: {error}. Raw line: {trimmed}")
+        })?;
+
+        if payload.get("type").and_then(Value::as_str) == Some("response") {
+            if let Some(id) = payload.get("id").and_then(Value::as_str) {
+                if expected_response_ids.contains(id) {
+                    received_response_ids.insert(id.to_string());
+                }
+            }
+        }
+
+        on_payload(&payload);
+        payloads.push(payload);
+
+        if !expected_response_ids.is_empty() && received_response_ids == expected_response_ids {
+            break;
+        }
+    }
+
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    let stderr_output = stderr_handle
+        .join()
+        .unwrap_or_else(|_| "Unable to join pi RPC stderr reader".to_string());
+
+    if received_response_ids != expected_response_ids {
+        let stderr_suffix = non_empty_trimmed(&stderr_output)
+            .map(|output| format!(": {output}"))
+            .unwrap_or_default();
+        return Err(format!(
+            "pi RPC process ended before all expected responses were received{stderr_suffix}"
         ));
     }
 
@@ -1823,152 +1941,156 @@ function appendEntry(entry) {
   fs.appendFileSync(sessionFile, JSON.stringify(entry) + '\n');
 }
 
+const usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function handleCommand(command) {
+  if (command.type === 'get_state') {
+    process.stdout.write(
+      JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'get_state',
+        success: true,
+        data: { model: getCurrentModel(), thinkingLevel: getCurrentThinkingLevel() },
+      }) + '\n'
+    );
+    return;
+  }
+
+  if (command.type === 'get_available_models') {
+    process.stdout.write(
+      JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'get_available_models',
+        success: true,
+        data: { models: MODELS },
+      }) + '\n'
+    );
+    return;
+  }
+
+  if (command.type === 'set_model') {
+    appendEntry({
+      type: 'model_change',
+      id: 'model0001',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      provider: command.provider,
+      modelId: command.modelId,
+    });
+    const model = MODELS.find((entry) => entry.provider === command.provider && entry.id === command.modelId);
+    process.stdout.write(
+      JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'set_model',
+        success: Boolean(model),
+        ...(model ? { data: model } : { error: 'Model not found' }),
+      }) + '\n'
+    );
+    return;
+  }
+
+  if (command.type === 'set_thinking_level') {
+    appendEntry({
+      type: 'thinking_level_change',
+      id: 'thinking0001',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      thinkingLevel: command.level,
+    });
+    process.stdout.write(
+      JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'set_thinking_level',
+        success: true,
+        data: { level: command.level },
+      }) + '\n'
+    );
+    return;
+  }
+
+  if (command.type === 'prompt') {
+    const now = new Date();
+    const later = new Date(now.getTime() + 1);
+    const model = getCurrentModel();
+    appendEntry({
+      type: 'message',
+      id: '11111111',
+      parentId: null,
+      timestamp: now.toISOString(),
+      message: {
+        role: 'user',
+        content: command.message,
+        timestamp: now.getTime(),
+        attachments: [],
+      },
+    });
+    process.stdout.write(JSON.stringify({ id: command.id, type: 'response', command: 'prompt', success: true }) + '\n');
+    process.stdout.write(
+      JSON.stringify({
+        type: 'message_update',
+        message: { role: 'assistant', content: [] },
+        assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial: {} },
+      }) + '\n'
+    );
+    process.stdout.write(
+      JSON.stringify({
+        type: 'message_update',
+        message: { role: 'assistant', content: [] },
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Echo: ', partial: {} },
+      }) + '\n'
+    );
+    process.stdout.write(
+      JSON.stringify({
+        type: 'message_update',
+        message: { role: 'assistant', content: [] },
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: command.message, partial: {} },
+      }) + '\n'
+    );
+    appendEntry({
+      type: 'message',
+      id: '22222222',
+      parentId: '11111111',
+      timestamp: later.toISOString(),
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: `Echo: ${command.message}` }],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage,
+        stopReason: 'stop',
+        timestamp: later.getTime(),
+      },
+    });
+    process.stdout.write(JSON.stringify({ type: 'agent_end', messages: [] }) + '\n');
+  }
+}
+
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   input += chunk;
+  let newlineIndex;
+  while ((newlineIndex = input.indexOf('\n')) >= 0) {
+    const line = input.slice(0, newlineIndex).trim();
+    input = input.slice(newlineIndex + 1);
+    if (!line) continue;
+    handleCommand(JSON.parse(line));
+  }
 });
 process.stdin.on('end', () => {
-  const commands = input
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  const usage = {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-
-  for (const command of commands) {
-    if (command.type === 'get_state') {
-      process.stdout.write(
-        JSON.stringify({
-          id: command.id,
-          type: 'response',
-          command: 'get_state',
-          success: true,
-          data: { model: getCurrentModel(), thinkingLevel: getCurrentThinkingLevel() },
-        }) + '\n'
-      );
-      continue;
-    }
-
-    if (command.type === 'get_available_models') {
-      process.stdout.write(
-        JSON.stringify({
-          id: command.id,
-          type: 'response',
-          command: 'get_available_models',
-          success: true,
-          data: { models: MODELS },
-        }) + '\n'
-      );
-      continue;
-    }
-
-    if (command.type === 'set_model') {
-      appendEntry({
-        type: 'model_change',
-        id: 'model0001',
-        parentId: null,
-        timestamp: new Date().toISOString(),
-        provider: command.provider,
-        modelId: command.modelId,
-      });
-      const model = MODELS.find((entry) => entry.provider === command.provider && entry.id === command.modelId);
-      process.stdout.write(
-        JSON.stringify({
-          id: command.id,
-          type: 'response',
-          command: 'set_model',
-          success: Boolean(model),
-          ...(model ? { data: model } : { error: 'Model not found' }),
-        }) + '\n'
-      );
-      continue;
-    }
-
-    if (command.type === 'set_thinking_level') {
-      appendEntry({
-        type: 'thinking_level_change',
-        id: 'thinking0001',
-        parentId: null,
-        timestamp: new Date().toISOString(),
-        thinkingLevel: command.level,
-      });
-      process.stdout.write(
-        JSON.stringify({
-          id: command.id,
-          type: 'response',
-          command: 'set_thinking_level',
-          success: true,
-          data: { level: command.level },
-        }) + '\n'
-      );
-      continue;
-    }
-
-    if (command.type === 'prompt') {
-      const now = new Date();
-      const later = new Date(now.getTime() + 1);
-      const model = getCurrentModel();
-      appendEntry({
-        type: 'message',
-        id: '11111111',
-        parentId: null,
-        timestamp: now.toISOString(),
-        message: {
-          role: 'user',
-          content: command.message,
-          timestamp: now.getTime(),
-          attachments: [],
-        },
-      });
-      process.stdout.write(JSON.stringify({ id: command.id, type: 'response', command: 'prompt', success: true }) + '\n');
-      process.stdout.write(
-        JSON.stringify({
-          type: 'message_update',
-          message: { role: 'assistant', content: [] },
-          assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial: {} },
-        }) + '\n'
-      );
-      process.stdout.write(
-        JSON.stringify({
-          type: 'message_update',
-          message: { role: 'assistant', content: [] },
-          assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Echo: ', partial: {} },
-        }) + '\n'
-      );
-      process.stdout.write(
-        JSON.stringify({
-          type: 'message_update',
-          message: { role: 'assistant', content: [] },
-          assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: command.message, partial: {} },
-        }) + '\n'
-      );
-      appendEntry({
-        type: 'message',
-        id: '22222222',
-        parentId: '11111111',
-        timestamp: later.toISOString(),
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: `Echo: ${command.message}` }],
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
-          usage,
-          stopReason: 'stop',
-          timestamp: later.getTime(),
-        },
-      });
-      process.stdout.write(JSON.stringify({ type: 'agent_end', messages: [] }) + '\n');
-    }
-  }
+  process.exit(0);
 });
 "#;
 
@@ -1981,6 +2103,77 @@ process.stdin.on('end', () => {
                 .permissions();
             permissions.set_mode(0o755);
             fs::set_permissions(path, permissions).expect("fake pi script should be executable");
+        }
+    }
+
+    fn write_fake_streaming_query_pi_executable(path: &Path) {
+        let script = r#"#!/usr/bin/env node
+const HUGE_MODELS = Array.from({ length: 500 }, (_, index) => ({
+  id: `huge-model-${index}`,
+  name: `Huge Model ${index}`,
+  api: 'openai-completions',
+  provider: 'openrouter',
+  baseUrl: 'https://openrouter.ai/api/v1',
+  reasoning: true,
+  input: ['text', 'image'],
+  cost: { input: 0.25, output: 1.0, cacheRead: 0.025, cacheWrite: 0 },
+  contextWindow: 1048576,
+  maxTokens: 131072,
+}));
+
+let buffer = '';
+let sawEof = false;
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  let newlineIndex;
+  while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const command = JSON.parse(line);
+    if (command.type === 'get_available_models') {
+      const response = JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'get_available_models',
+        success: true,
+        data: { models: HUGE_MODELS },
+      }) + '\n';
+      let offset = 0;
+      const writeChunk = () => {
+        if (sawEof) {
+          process.exit(0);
+          return;
+        }
+        const nextOffset = Math.min(offset + 1024, response.length);
+        process.stdout.write(response.slice(offset, nextOffset));
+        offset = nextOffset;
+        if (offset >= response.length) {
+          return;
+        }
+        setTimeout(writeChunk, 1);
+      };
+      writeChunk();
+    }
+  }
+});
+process.stdin.on('end', () => {
+  sawEof = true;
+  setTimeout(() => process.exit(0), 0);
+});
+"#;
+
+        fs::write(path, script).expect("streaming fake pi script should be writable");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(path)
+                .expect("streaming fake pi script metadata should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions)
+                .expect("streaming fake pi script should be executable");
         }
     }
 
@@ -2498,5 +2691,27 @@ process.stdin.on('end', () => {
         .expect("thinking level should update");
 
         assert_eq!(after_thinking.current_thinking_level, "high");
+    }
+
+    #[test]
+    fn loads_large_model_catalog_without_stdin_eof_truncation() {
+        let root = unique_temp_dir("orchestra-real-session-large-model-catalog");
+        let project_root = root.join("project");
+        let fake_pi = root.join("fake-streaming-pi.mjs");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        write_fake_streaming_query_pi_executable(&fake_pi);
+
+        let models = list_available_models_with_executable(&fake_pi)
+            .expect("large model catalog should load without truncation");
+
+        assert_eq!(models.len(), 500);
+        assert_eq!(
+            models.first().map(|model| model.id.as_str()),
+            Some("huge-model-0")
+        );
+        assert_eq!(
+            models.last().map(|model| model.id.as_str()),
+            Some("huge-model-499")
+        );
     }
 }
