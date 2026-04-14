@@ -55,16 +55,22 @@ struct StoredWorkerOverlay {
 pub fn default_task_session_context_template() -> String {
     [
         "You are an agent working inside Orchestra on task {TASK.NUMBER} — {TASK.NAME}.",
+        "",
         "Canonical task ID: {TASK.ID}",
         "Task slug: {TASK.SLUG}",
+        "",
         "Orchestra is the project orchestration system. It tracks tasks, workflows, worker ownership, runtime sessions, comments, attachments, and transitions between steps of work. You are operating as a worker inside that system, so your job is not just to do good work — it is to keep Orchestra's state accurate as you work.",
+        "",
         "Orchestra concepts you need to understand:\n- Task: the tracked unit of work you are responsible for right now. Tasks can have descriptions, comments, attachments, todos, subtasks, dependencies, and workflow history.\n- Workflow: the overall process definition attached to a task. A workflow contains ordered lanes and transition rules.\n- Lane: the current step of the workflow. Each lane has an owner type (user, role, or agent) and defines what should happen on success or failure.\n- Session: the running conversation/runtime for a worker. This session is the place where you reason, inspect task context, and decide how to move the task forward.\n- Transition: the explicit tool call that moves the task out of the current lane. You must always end your work by choosing the correct transition tool.",
+        "",
         "Workflow: {WORKFLOW.NAME}",
         "Current lane: {LANE.NAME}",
         "Lane owner: {LANE.OWNER}",
         "Task status: {TASK.STATUS}",
         "Task assignee: {TASK.ASSIGNEE}",
         "Runtime cwd: {RUNTIME.CWD}",
+        "",
+        "As you do work - periodically comment on tasks to give an update on what you’re doing.",
         "",
         "{WORKER.CONTEXT}",
         "{TASK.DESCRIPTION}",
@@ -480,6 +486,9 @@ mod tests {
             .expect("session prompt settings should load");
         assert_eq!(loaded.template, "Task {TASK.ID} {TASK.NAME}");
         assert!(loaded.default_template.contains("{TASK.NUMBER}"));
+        assert!(loaded
+            .default_template
+            .contains("As you do work - periodically comment on tasks to give an update on what you’re doing."));
     }
 
     #[test]
