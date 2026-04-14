@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import hljs from "highlight.js";
 
-import type { TaskComment, TaskCommentInput, TaskFileReference } from "../types";
+import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskFileReference, TaskSummary } from "../types";
 import { TaskCommentComposer } from "./TaskCommentComposer";
 import { TaskCommentMessage } from "./TaskCommentMessage";
 
@@ -49,6 +49,9 @@ interface ThreadPopoverState {
 
 interface CommentableFileViewerProps {
   taskId: string;
+  tasks: TaskSummary[];
+  agents: AgentSummary[];
+  roles: RoleSummary[];
   reference: TaskFileReference;
   fileReferences: TaskFileReference[];
   content: string;
@@ -60,6 +63,9 @@ interface CommentableFileViewerProps {
   onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
   onDeleteComment: (commentId: string) => Promise<boolean>;
   onOpenFileReference: (reference: TaskFileReference) => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
 }
 
 const DEFAULT_VIEWPORT_HEIGHT_PX = 720;
@@ -258,6 +264,9 @@ function buildThreadsByLine(threads: FileCommentThread[]) {
 
 export function CommentableFileViewer({
   taskId,
+  tasks,
+  agents,
+  roles,
   reference,
   fileReferences,
   content,
@@ -269,6 +278,9 @@ export function CommentableFileViewer({
   onUpdateComment,
   onDeleteComment,
   onOpenFileReference,
+  onOpenTask,
+  onOpenAgent,
+  onOpenRole,
 }: CommentableFileViewerProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -710,6 +722,9 @@ export function CommentableFileViewer({
             ) : null}
             <TaskCommentComposer
               taskId={taskId}
+              tasks={tasks}
+              agents={agents}
+              roles={roles}
               className="task-comment-composer"
               interruptChecked={commentDraft.interruptAgent}
               interruptDataRole="default-file-comment-interrupt"
@@ -764,10 +779,16 @@ export function CommentableFileViewer({
                     </label>
                   ) : (
                     <TaskCommentMessage
-                      dataRole="task-comment-file-mention-link"
+                      dataRole="task-comment-mention-link"
                       fileReferences={fileReferences}
+                      tasks={tasks}
+                      agents={agents}
+                      roles={roles}
                       message={comment.message}
                       onOpenFileReference={onOpenFileReference}
+                      onOpenTask={onOpenTask}
+                      onOpenAgent={onOpenAgent}
+                      onOpenRole={onOpenRole}
                     />
                   )}
                   {comment.selectedText ? <pre className="file-content-viewer__selection-preview">{comment.selectedText}</pre> : null}
@@ -792,10 +813,16 @@ export function CommentableFileViewer({
                             </label>
                           ) : (
                             <TaskCommentMessage
-                              dataRole="task-comment-file-mention-link"
+                              dataRole="task-comment-mention-link"
                               fileReferences={fileReferences}
+                              tasks={tasks}
+                              agents={agents}
+                              roles={roles}
                               message={reply.message}
                               onOpenFileReference={onOpenFileReference}
+                              onOpenTask={onOpenTask}
+                              onOpenAgent={onOpenAgent}
+                              onOpenRole={onOpenRole}
                             />
                           )}
                           <div className="file-content-viewer__thread-actions">
@@ -840,6 +867,9 @@ export function CommentableFileViewer({
                   {replyTargetCommentId === comment.id ? (
                     <TaskCommentComposer
                       taskId={taskId}
+                      tasks={tasks}
+                      agents={agents}
+                      roles={roles}
                       className="file-content-viewer__reply-composer"
                       message={replyMessage}
                       messageDataRole="default-file-reply-message"

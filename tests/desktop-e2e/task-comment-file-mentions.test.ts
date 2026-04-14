@@ -25,7 +25,7 @@ const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 
 describe("desktop task comment file mentions", () => {
-  it.skipIf(!isDesktopE2E)("shows @file autocomplete and automatically tracks referenced files from comments and replies", async () => {
+  it.skipIf(!isDesktopE2E)("shows $file autocomplete and automatically tracks referenced files from comments and replies", async () => {
     expect(testHome).toBeTruthy();
 
     const repoPath = join(testHome!, "workspace", "comment-file-mentions-repo");
@@ -60,7 +60,7 @@ describe("desktop task comment file mentions", () => {
         projectId: project.id,
         input: {
           title: 'Comment mention task',
-          description: 'Use @file mentions inside comments.',
+          description: 'Use $file mentions inside comments.',
           type: 'task',
           status: 'ready',
           priority: 'P2',
@@ -84,7 +84,7 @@ describe("desktop task comment file mentions", () => {
       await waitForText(sessionId, 'Task conversation');
 
       await setInputValue(sessionId, '[data-role="task-comment-author"]', 'Reviewer');
-      await setInputValue(sessionId, '[data-role="task-comment-message"]', 'Please review @docs/des');
+      await setInputValue(sessionId, '[data-role="task-comment-message"]', 'Please review $docs/des');
       await executeScript(sessionId, `
         const message = document.querySelector('[data-role="task-comment-message"]');
         if (!(message instanceof HTMLTextAreaElement)) return false;
@@ -106,14 +106,14 @@ describe("desktop task comment file mentions", () => {
         const textarea = document.querySelector('[data-role="task-comment-message"]');
         return textarea instanceof HTMLTextAreaElement ? textarea.value : '';
       `);
-      expect(topLevelMessage).toContain('@docs/design.md');
+      expect(topLevelMessage).toContain('$docs/design.md');
 
       await clickSelector(sessionId, '[data-role="add-task-comment"]');
-      await waitForText(sessionId, 'Please review @docs/design.md');
+      await waitForText(sessionId, 'Please review docs/design.md');
 
       await clickSelector(sessionId, '[data-role="reply-task-comment"]');
       await setInputValue(sessionId, '[data-role="task-reply-author"]', 'Worker');
-      await setInputValue(sessionId, '[data-role="task-reply-message"]', 'Implemented in @docs/pla');
+      await setInputValue(sessionId, '[data-role="task-reply-message"]', 'Implemented in $docs/pla');
       await executeScript(sessionId, `
         const message = document.querySelector('[data-role="task-reply-message"]');
         if (!(message instanceof HTMLTextAreaElement)) return false;
@@ -135,14 +135,14 @@ describe("desktop task comment file mentions", () => {
           const textarea = document.querySelector('[data-role="task-reply-message"]');
           return textarea instanceof HTMLTextAreaElement ? textarea.value : '';
         `);
-        if (replyValue.includes('@docs/plan.md')) {
+        if (replyValue.includes('$docs/plan.md')) {
           break;
         }
         await sleep(250);
       }
 
       await clickSelector(sessionId, '[data-role="add-task-reply"]');
-      await waitForText(sessionId, 'Implemented in @docs/plan.md');
+      await waitForText(sessionId, 'Implemented in docs/plan.md');
 
       await clickByText(sessionId, '[role="tab"]', 'Repo files');
       await waitForText(sessionId, 'Comment Mention Repo · docs/design.md');

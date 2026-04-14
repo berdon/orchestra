@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js";
-import { marked } from "marked";
 
+import { MarkdownContent, type MarkdownMentionResolver } from "./MarkdownContent";
 import { buildCollapsedPreview, detectTranscriptContent, isFoldableTranscriptEvent, isToolCallTranscriptEvent } from "../lib/sessionTranscript";
 import type { SessionEvent } from "../types";
 
@@ -9,6 +9,8 @@ interface TranscriptEventCardProps {
   event: SessionEvent;
   formatTimestamp: (timestamp: string) => string;
   tone: string;
+  mentionResolver?: MarkdownMentionResolver;
+  mentionLinkDataRole?: string;
 }
 
 function escapeHtml(value: string) {
@@ -16,7 +18,7 @@ function escapeHtml(value: string) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+    .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
 
@@ -46,79 +48,6 @@ function highlightText(message: string, language?: string) {
   }
 }
 
-function renderInlineMarkdown(text: string, keyPrefix: string) {
-  const parts = text.split(/(`[^`]+`)/g);
-  return parts.map((part, index) => {
-    const key = `${keyPrefix}-${index}`;
-    if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
-      return <code key={key}>{part.slice(1, -1)}</code>;
-    }
-    return <span key={key}>{part}</span>;
-  });
-}
-
-function renderMarkdown(message: string) {
-  const tokens = marked.lexer(message, { gfm: true, breaks: true });
-
-  return tokens.map((token, index) => {
-    const key = `markdown-${index}`;
-
-    switch (token.type) {
-      case "heading": {
-        const level = Math.min(Math.max(token.depth, 1), 6);
-        switch (level) {
-          case 1:
-            return <h1 key={key} className="transcript-markdown-heading">{token.text}</h1>;
-          case 2:
-            return <h2 key={key} className="transcript-markdown-heading">{token.text}</h2>;
-          case 3:
-            return <h3 key={key} className="transcript-markdown-heading">{token.text}</h3>;
-          case 4:
-            return <h4 key={key} className="transcript-markdown-heading">{token.text}</h4>;
-          case 5:
-            return <h5 key={key} className="transcript-markdown-heading">{token.text}</h5>;
-          default:
-            return <h6 key={key} className="transcript-markdown-heading">{token.text}</h6>;
-        }
-      }
-      case "paragraph":
-        return <p key={key} className="transcript-event__paragraph">{renderInlineMarkdown(token.text, key)}</p>;
-      case "space":
-        return null;
-      case "hr":
-        return <hr key={key} className="transcript-markdown-rule" />;
-      case "blockquote":
-        return <blockquote key={key} className="transcript-markdown-blockquote">{token.text}</blockquote>;
-      case "list": {
-        const ListTag = token.ordered ? "ol" : "ul";
-        const listClassName = token.ordered
-          ? "transcript-markdown-list transcript-markdown-list--ordered"
-          : "transcript-markdown-list transcript-markdown-list--unordered";
-        return (
-          <ListTag key={key} className={listClassName}>
-            {token.items.map((item: { text: string }, itemIndex: number) => (
-              <li key={`${key}-item-${itemIndex}`} value={token.ordered ? itemIndex + 1 : undefined}>{item.text}</li>
-            ))}
-          </ListTag>
-        );
-      }
-      case "code": {
-        const { html, detectedLanguage } = highlightText(token.text, token.lang || undefined);
-        return (
-          <figure key={key} className="transcript-code-block" data-language={detectedLanguage}>
-            <figcaption>{detectedLanguage}</figcaption>
-            <pre>
-              <code dangerouslySetInnerHTML={{ __html: html }} />
-            </pre>
-          </figure>
-        );
-      }
-      default:
-        return <pre key={key} className="transcript-fallback-pre">{(token as { raw?: string }).raw ?? ""}</pre>;
-    }
-  });
-}
-
 function copyTextToClipboard(text: string) {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     return navigator.clipboard.writeText(text);
@@ -136,7 +65,13 @@ function copyTextToClipboard(text: string) {
   return Promise.resolve();
 }
 
-export const TranscriptEventCard = memo(function TranscriptEventCard({ event, formatTimestamp, tone }: TranscriptEventCardProps) {
+export const TranscriptEventCard = memo(function TranscriptEventCard({
+  event,
+  formatTimestamp,
+  tone,
+  mentionResolver,
+  mentionLinkDataRole,
+}: TranscriptEventCardProps) {
   const [expanded, setExpanded] = useState(() => !isFoldableTranscriptEvent(event));
   const [copied, setCopied] = useState(false);
   const thinkingPreview = (event.thinkingText ?? "").trim() || (event.kind === "assistant" && event.thinking ? "Thinking…" : "");
@@ -203,14 +138,16 @@ export const TranscriptEventCard = memo(function TranscriptEventCard({ event, fo
         ) : null}
         {foldable && !expanded ? (
           toolCall ? <pre className="transcript-event__preview" data-role="transcript-entry-preview">{event.label ?? preview.text}</pre> : <pre className="transcript-event__preview" data-role="transcript-entry-preview">{preview.text}</pre>
-        ) : message ? descriptor.mode === "markdown" ? (
-          <div className="transcript-render transcript-render--markdown" data-role="transcript-entry-rendered-markdown">
-            {renderMarkdown(message)}
-          </div>
-        ) : descriptor.mode === "code" ? (
+        ) : message ? descriptor.mode === "code" ? (
           <SyntaxHighlightedBlock message={message} language={descriptor.language} />
         ) : (
-          <p className="transcript-event__paragraph">{message}</p>
+          <MarkdownContent
+            className="transcript-render transcript-render--markdown"
+            dataRole="transcript-entry-rendered-markdown"
+            mentionLinkDataRole={mentionLinkDataRole}
+            mentionResolver={mentionResolver}
+            message={message}
+          />
         ) : null}
         <div className="transcript-event__footer">
           <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>

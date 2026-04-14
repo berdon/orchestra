@@ -9,7 +9,9 @@ use std::{
 use rusqlite::Connection;
 
 use crate::{
-    models::{TaskCommentFileMentionCandidate, TaskFileReference, TaskFileReferenceInput, TaskRepository},
+    models::{
+        TaskCommentFileMentionCandidate, TaskFileReference, TaskFileReferenceInput, TaskRepository,
+    },
     services::{task_file_references, task_repositories, task_runtime, tasks},
 };
 
@@ -121,7 +123,11 @@ pub fn add_file_references_for_comment_mentions(
     }
 
     let task_workspace_cwd = current_task_workspace_cwd(connection, task_id)?;
-    let existing = task_file_references::load_task_file_references(connection, task_id, task_workspace_cwd.as_deref())?;
+    let existing = task_file_references::load_task_file_references(
+        connection,
+        task_id,
+        task_workspace_cwd.as_deref(),
+    )?;
     let mut existing_paths = existing
         .into_iter()
         .map(|reference| (reference.repository_id, reference.relative_path))
@@ -133,10 +139,16 @@ pub fn add_file_references_for_comment_mentions(
         let Some(resolved) = resolve_exact_mention(&repositories, &token)? else {
             continue;
         };
-        if !processed.insert((resolved.repository_id.clone(), resolved.relative_path.clone())) {
+        if !processed.insert((
+            resolved.repository_id.clone(),
+            resolved.relative_path.clone(),
+        )) {
             continue;
         }
-        if existing_paths.contains(&(resolved.repository_id.clone(), resolved.relative_path.clone())) {
+        if existing_paths.contains(&(
+            resolved.repository_id.clone(),
+            resolved.relative_path.clone(),
+        )) {
             continue;
         }
 
@@ -161,19 +173,33 @@ fn mention_search_repositories(
     task_id: &str,
 ) -> Result<Vec<RepositorySearchRoot>, String> {
     let task_workspace_cwd = current_task_workspace_cwd(connection, task_id)?;
-    let repositories = task_repositories::load_task_repositories(connection, task_id, task_workspace_cwd.as_deref())?;
+    let repositories = task_repositories::load_task_repositories(
+        connection,
+        task_id,
+        task_workspace_cwd.as_deref(),
+    )?;
     Ok(repositories
         .into_iter()
         .filter_map(resolve_repository_search_root)
         .collect())
 }
 
-fn current_task_workspace_cwd(connection: &Connection, task_id: &str) -> Result<Option<String>, String> {
+fn current_task_workspace_cwd(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<String>, String> {
     let task = tasks::get_task(connection, task_id)?;
     Ok(task
         .active_lane_assignment
         .as_ref()
-        .map(|assignment| task_runtime::resolve_assignment_workspace_cwd(connection, assignment, task_id, &task.project_id))
+        .map(|assignment| {
+            task_runtime::resolve_assignment_workspace_cwd(
+                connection,
+                assignment,
+                task_id,
+                &task.project_id,
+            )
+        })
         .transpose()?
         .flatten())
 }
@@ -207,11 +233,15 @@ fn resolve_repository_search_root(repository: TaskRepository) -> Option<Reposito
     })
 }
 
-fn build_insert_text(repository: &RepositorySearchRoot, relative_path: &str, repository_count: usize) -> String {
+fn build_insert_text(
+    repository: &RepositorySearchRoot,
+    relative_path: &str,
+    repository_count: usize,
+) -> String {
     if repository_count > 1 {
-        format!("@{}:{}", repository.repository_slug, relative_path)
+        format!("${}:{}", repository.repository_slug, relative_path)
     } else {
-        format!("@{}", relative_path)
+        format!("${}", relative_path)
     }
 }
 
@@ -234,7 +264,14 @@ fn repository_index(root_path: &str) -> Result<CachedRepositoryIndex, String> {
 
 fn build_repository_index(root_path: &str) -> Result<CachedRepositoryIndex, String> {
     let output = Command::new("git")
-        .args(["-C", root_path, "ls-files", "--cached", "--others", "--exclude-standard"])
+        .args([
+            "-C",
+            root_path,
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
         .output()
         .map_err(|error| format!("Unable to enumerate repository files at {root_path}: {error}"))?;
 
@@ -335,7 +372,8 @@ fn parse_query(query: &str) -> (Option<String>, String) {
 fn normalize_relative_query(value: &str) -> String {
     value
         .trim()
-        .trim_start_matches("@")
+        .trim_start_matches('@')
+        .trim_start_matches('$')
         .trim_start_matches("./")
         .replace('\\', "/")
 }
@@ -345,10 +383,13 @@ fn extract_file_mentions(message: &str) -> Vec<String> {
     let chars = message.char_indices().collect::<Vec<_>>();
 
     for (index, (byte_index, character)) in chars.iter().enumerate() {
-        if *character != '@' {
+        if *character != '@' && *character != '$' {
             continue;
         }
-        if let Some((_, previous)) = index.checked_sub(1).and_then(|position| chars.get(position)) {
+        if let Some((_, previous)) = index
+            .checked_sub(1)
+            .and_then(|position| chars.get(position))
+        {
             if previous.is_alphanumeric() || matches!(previous, '_' | '/' | '.' | '-') {
                 continue;
             }
@@ -357,16 +398,23 @@ fn extract_file_mentions(message: &str) -> Vec<String> {
         let start = byte_index + character.len_utf8();
         let mut end = message.len();
         for (next_byte_index, next_character) in chars.iter().skip(index + 1) {
-            if next_character.is_whitespace() || matches!(next_character, ')' | ']' | '}' | '>' | '"' | '\'' | ',' | ';') {
+            if next_character.is_whitespace()
+                || matches!(
+                    next_character,
+                    ')' | ']' | '}' | '>' | '"' | '\'' | ',' | ';'
+                )
+            {
                 end = *next_byte_index;
                 break;
             }
         }
 
-        let token = message[start..end]
-            .trim_end_matches(['.', '!', '?'])
-            .trim();
+        let token = message[start..end].trim_end_matches(['.', '!', '?']).trim();
         if token.is_empty() {
+            continue;
+        }
+        if *character == '@' && !token.contains('/') && !token.contains(':') && !token.contains('.')
+        {
             continue;
         }
         mentions.push(token.to_string());
@@ -452,7 +500,10 @@ mod tests {
     }
 
     fn temp_repo_dir(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("orchestra-{name}-{}", uuid::Uuid::new_v4().simple()));
+        let path = std::env::temp_dir().join(format!(
+            "orchestra-{name}-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
         fs::create_dir_all(&path).expect("create temp repo dir");
         path
     }
@@ -545,9 +596,15 @@ mod tests {
 
         let results = search_task_comment_file_mentions(&connection, &task_id, "docs/", Some(10))
             .expect("search mentions should succeed");
-        assert!(results.iter().any(|entry| entry.relative_path == "docs/design.md"));
-        assert!(results.iter().any(|entry| entry.relative_path == "docs/plan.md"));
-        assert!(!results.iter().any(|entry| entry.relative_path == "ignored.txt"));
+        assert!(results
+            .iter()
+            .any(|entry| entry.relative_path == "docs/design.md"));
+        assert!(results
+            .iter()
+            .any(|entry| entry.relative_path == "docs/plan.md"));
+        assert!(!results
+            .iter()
+            .any(|entry| entry.relative_path == "ignored.txt"));
     }
 
     #[test]
@@ -565,7 +622,7 @@ mod tests {
             &task_id,
             crate::models::TaskCommentInput {
                 author: "User".into(),
-                message: "Please review @docs/design.md before merging.".into(),
+                message: "Please review $docs/design.md before merging.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
                 repository_id: None,
@@ -581,8 +638,9 @@ mod tests {
         .expect("comment should insert");
         assert!(!comment.id.is_empty());
 
-        let references = task_file_references::load_task_file_references(&connection, &task_id, None)
-            .expect("file references should load");
+        let references =
+            task_file_references::load_task_file_references(&connection, &task_id, None)
+                .expect("file references should load");
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].relative_path, "docs/design.md");
     }
@@ -607,7 +665,7 @@ mod tests {
             &task_id,
             crate::models::TaskCommentInput {
                 author: "User".into(),
-                message: "This bare mention stays ambiguous: @docs/shared.md".into(),
+                message: "This bare mention stays ambiguous: $docs/shared.md".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
                 repository_id: None,
@@ -622,8 +680,9 @@ mod tests {
         )
         .expect("ambiguous comment should insert");
 
-        let references_after_ambiguous = task_file_references::load_task_file_references(&connection, &task_id, None)
-            .expect("file references should load");
+        let references_after_ambiguous =
+            task_file_references::load_task_file_references(&connection, &task_id, None)
+                .expect("file references should load");
         assert!(references_after_ambiguous.is_empty());
 
         tasks::add_task_comment(
@@ -631,7 +690,7 @@ mod tests {
             &task_id,
             crate::models::TaskCommentInput {
                 author: "User".into(),
-                message: "This one is explicit: @docs:docs/shared.md".into(),
+                message: "This one is explicit: $docs:docs/shared.md".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
                 repository_id: None,
@@ -646,8 +705,9 @@ mod tests {
         )
         .expect("prefixed comment should insert");
 
-        let references = task_file_references::load_task_file_references(&connection, &task_id, None)
-            .expect("file references should load");
+        let references =
+            task_file_references::load_task_file_references(&connection, &task_id, None)
+                .expect("file references should load");
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].repository_slug, "docs");
         assert_eq!(references[0].relative_path, "docs/shared.md");

@@ -1,7 +1,48 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
+import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
-import type { SessionEvent, SessionRecord } from "../types";
+import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import type { AgentSummary, RoleSummary, SessionEvent, SessionRecord, TaskSummary } from "../types";
+
+function resolveMentionAction(
+  reference: ProjectMentionLink | null | undefined,
+  actions: {
+    onOpenTask: (taskId: string) => void;
+    onOpenAgent: (agentId: string) => void;
+    onOpenRole: (roleId: string) => void;
+  },
+) {
+  if (!reference) {
+    return null;
+  }
+
+  if (reference.kind === "task" && reference.taskId) {
+    return {
+      key: `task:${reference.taskId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenTask(reference.taskId as string),
+    };
+  }
+
+  if (reference.kind === "agent" && reference.agentId) {
+    return {
+      key: `agent:${reference.agentId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenAgent(reference.agentId as string),
+    };
+  }
+
+  if (reference.kind === "role" && reference.roleId) {
+    return {
+      key: `role:${reference.roleId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenRole(reference.roleId as string),
+    };
+  }
+
+  return null;
+}
 
 interface SupervisorQuickChatModalProps {
   open: boolean;
@@ -10,11 +51,17 @@ interface SupervisorQuickChatModalProps {
   draftMessage: string;
   pending: boolean;
   error: string | null;
+  referenceTasks: TaskSummary[];
+  referenceAgents: AgentSummary[];
+  referenceRoles: RoleSummary[];
   formatTimestamp: (timestamp: string) => string;
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onClose: () => void;
   onOpenFullSession: () => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
 }
 
 export function SupervisorQuickChatModal({
@@ -24,14 +71,32 @@ export function SupervisorQuickChatModal({
   draftMessage,
   pending,
   error,
+  referenceTasks,
+  referenceAgents,
+  referenceRoles,
   formatTimestamp,
   onDraftChange,
   onSend,
   onClose,
   onOpenFullSession,
+  onOpenTask,
+  onOpenAgent,
+  onOpenRole,
 }: SupervisorQuickChatModalProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const projectMentionLookup = useMemo(
+    () => buildProjectMentionLookup({ tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
+    [referenceAgents, referenceRoles, referenceTasks],
+  );
+  const mentionResolver = useMemo(
+    () => (mention: string) => resolveMentionAction(projectMentionLookup.get(mention.trim().toLowerCase()), {
+      onOpenTask,
+      onOpenAgent,
+      onOpenRole,
+    }),
+    [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -80,6 +145,8 @@ export function SupervisorQuickChatModal({
               key={event.id}
               event={event}
               formatTimestamp={formatTimestamp}
+              mentionLinkDataRole="transcript-mention-link"
+              mentionResolver={mentionResolver}
               tone={event.kind}
             />
           ))}
@@ -94,29 +161,32 @@ export function SupervisorQuickChatModal({
         >
           <label className="field-group field-group--composer">
             <span className="field-group__label">Message supervisor</span>
-            <textarea
-              ref={inputRef}
-              className="text-area"
-              data-role="supervisor-composer-input"
-              rows={4}
+            <AutocompleteTextarea
+              dataRole="supervisor-composer-input"
+              listDataRole="supervisor-mention-list"
+              onChange={onDraftChange}
+              onEscape={onClose}
+              onSubmitShortcut={onSend}
+              optionDataRole="supervisor-mention-option"
               placeholder="Ask the supervisor to coordinate, review, or help steer the project…"
+              rows={4}
+              sources={[
+                {
+                  trigger: "@",
+                  search: async (query) => searchProjectReferenceAutocompleteCandidates(query, {
+                    tasks: referenceTasks,
+                    agents: referenceAgents,
+                    roles: referenceRoles,
+                  }, 12),
+                },
+              ]}
+              textareaRef={inputRef}
               value={draftMessage}
-              onChange={(event) => onDraftChange(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  onSend();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  onClose();
-                }
-              }}
             />
           </label>
           <div className="composer__footer">
             <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
-            <button className="primary-button" data-role="supervisor-send-message" type="submit" disabled={draftMessage.trim().length === 0}>
+            <button className="primary-button" data-role="supervisor-send-message" type="submit" disabled={pending || draftMessage.trim().length === 0}>
               Send
             </button>
           </div>

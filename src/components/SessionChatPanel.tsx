@@ -1,7 +1,9 @@
-import { memo, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { memo, useEffect, useMemo, useState, type FormEvent, type RefObject, type UIEvent } from "react";
 
+import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
-import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
+import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus, TaskSummary } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
@@ -37,9 +39,51 @@ function formatSessionStatusLabel(status: SessionStatus) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+function resolveMentionAction(
+  reference: ProjectMentionLink | null | undefined,
+  actions: {
+    onOpenTask: (taskId: string) => void;
+    onOpenAgent: (agentId: string) => void;
+    onOpenRole: (roleId: string) => void;
+  },
+) {
+  if (!reference) {
+    return null;
+  }
+
+  if (reference.kind === "task" && reference.taskId) {
+    return {
+      key: `task:${reference.taskId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenTask(reference.taskId as string),
+    };
+  }
+
+  if (reference.kind === "agent" && reference.agentId) {
+    return {
+      key: `agent:${reference.agentId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenAgent(reference.agentId as string),
+    };
+  }
+
+  if (reference.kind === "role" && reference.roleId) {
+    return {
+      key: `role:${reference.roleId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenRole(reference.roleId as string),
+    };
+  }
+
+  return null;
+}
+
 interface SessionChatPanelProps {
   session: SessionRecord | null;
   title?: string | null;
+  referenceTasks: TaskSummary[];
+  referenceAgents: AgentSummary[];
+  referenceRoles: RoleSummary[];
   displayedEvents: SessionEvent[];
   sessionPending: boolean;
   sessionDisplayStatus: SessionStatus;
@@ -60,6 +104,9 @@ interface SessionChatPanelProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
   onCreateNewSession?: () => void;
   onCompactSession?: () => void;
   emptyStateEyebrow?: string;
@@ -69,6 +116,9 @@ interface SessionChatPanelProps {
 
 interface SessionComposerProps {
   session: SessionRecord;
+  referenceTasks: TaskSummary[];
+  referenceAgents: AgentSummary[];
+  referenceRoles: RoleSummary[];
   sessionPending: boolean;
   selectedModelState?: SessionModelState;
   sessionReadOnly: boolean;
@@ -88,6 +138,7 @@ interface SessionComposerProps {
 interface SessionTranscriptProps {
   sessionId: string;
   displayedEvents: SessionEvent[];
+  mentionResolver?: (mention: string) => { key: string; label?: string; onClick: () => void } | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
   onScrollLockChange: (lockedToBottom: boolean) => void;
@@ -97,6 +148,9 @@ interface SessionTranscriptProps {
 
 const SessionComposer = memo(function SessionComposer({
   session,
+  referenceTasks,
+  referenceAgents,
+  referenceRoles,
   sessionPending,
   selectedModelState,
   sessionReadOnly,
@@ -125,17 +179,6 @@ const SessionComposer = memo(function SessionComposer({
     onSendMessage();
   }
 
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      onSendMessage();
-    }
-  }
-
-  function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    onDraftChange(event.target.value);
-  }
-
   return (
     <>
       {sessionReadOnly ? (
@@ -147,15 +190,26 @@ const SessionComposer = memo(function SessionComposer({
       <form className="composer" onSubmit={handleComposerSubmit}>
         <label className="field-group field-group--composer">
           <span className="field-group__label">Send</span>
-          <textarea
-            className="text-area"
-            data-role="composer-input"
-            rows={4}
-            placeholder="Tell the session what to do next…"
-            value={draftMessage}
+          <AutocompleteTextarea
+            dataRole="composer-input"
             disabled={sessionReadOnly}
-            onChange={handleDraftChange}
-            onKeyDown={handleComposerKeyDown}
+            listDataRole="composer-mention-list"
+            onChange={onDraftChange}
+            onSubmitShortcut={onSendMessage}
+            optionDataRole="composer-mention-option"
+            placeholder="Tell the session what to do next…"
+            rows={4}
+            sources={[
+              {
+                trigger: "@",
+                search: async (query) => searchProjectReferenceAutocompleteCandidates(query, {
+                  tasks: referenceTasks,
+                  agents: referenceAgents,
+                  roles: referenceRoles,
+                }, 12),
+              },
+            ]}
+            value={draftMessage}
           />
         </label>
         <div className="composer__footer">
@@ -274,6 +328,7 @@ const SessionComposer = memo(function SessionComposer({
 const SessionTranscript = memo(function SessionTranscript({
   sessionId,
   displayedEvents,
+  mentionResolver,
   transcriptRef,
   scrollState,
   onScrollLockChange,
@@ -388,6 +443,8 @@ const SessionTranscript = memo(function SessionTranscript({
             event={event}
             formatTimestamp={formatTimestamp}
             tone={getEventTone(event.kind)}
+            mentionLinkDataRole="transcript-mention-link"
+            mentionResolver={mentionResolver}
           />
         ))}
       </div>
@@ -408,6 +465,9 @@ const SessionTranscript = memo(function SessionTranscript({
 export function SessionChatPanel({
   session,
   title,
+  referenceTasks,
+  referenceAgents,
+  referenceRoles,
   displayedEvents,
   sessionPending,
   sessionDisplayStatus,
@@ -428,12 +488,29 @@ export function SessionChatPanel({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onOpenTask,
+  onOpenAgent,
+  onOpenRole,
   onCreateNewSession,
   onCompactSession,
   emptyStateEyebrow = "No session selected",
   emptyStateTitle = "Create or select a session",
   emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
 }: SessionChatPanelProps) {
+  const projectMentionLookup = useMemo(
+    () => buildProjectMentionLookup({ tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
+    [referenceAgents, referenceRoles, referenceTasks],
+  );
+
+  const mentionResolver = useMemo(
+    () => (mention: string) => resolveMentionAction(projectMentionLookup.get(mention.trim().toLowerCase()), {
+      onOpenTask,
+      onOpenAgent,
+      onOpenRole,
+    }),
+    [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
+  );
+
   return (
     <section
       className={sessionReadOnly ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
@@ -460,6 +537,7 @@ export function SessionChatPanel({
           <SessionTranscript
             sessionId={session.id}
             displayedEvents={displayedEvents}
+            mentionResolver={mentionResolver}
             transcriptRef={transcriptRef}
             scrollState={scrollState}
             onScrollLockChange={onScrollLockChange}
@@ -469,6 +547,9 @@ export function SessionChatPanel({
 
           <SessionComposer
             session={session}
+            referenceTasks={referenceTasks}
+            referenceAgents={referenceAgents}
+            referenceRoles={referenceRoles}
             sessionPending={sessionPending}
             selectedModelState={selectedModelState}
             sessionReadOnly={sessionReadOnly}

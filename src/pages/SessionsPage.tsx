@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
-import type { SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus } from "../types";
+import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus, TaskSummary } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
@@ -36,6 +36,9 @@ function getActivityTone(activityState?: SessionActivityState) {
 
 interface SessionsPageProps {
   sessions: SessionRecord[];
+  referenceTasks: TaskSummary[];
+  referenceAgents: AgentSummary[];
+  referenceRoles: RoleSummary[];
   sessionFilter: "active" | "closed";
   onSessionFilterChange: (value: "active" | "closed") => void;
   selectedSession: SessionRecord | null;
@@ -64,12 +67,18 @@ interface SessionsPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
   onCompactSession: () => void;
 }
 
 export function SessionsPage({
   sessions,
+  referenceTasks,
+  referenceAgents,
+  referenceRoles,
   sessionFilter,
   onSessionFilterChange,
   selectedSession,
@@ -98,6 +107,9 @@ export function SessionsPage({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onOpenTask,
+  onOpenAgent,
+  onOpenRole,
   onCreateNewSession,
   onCompactSession,
 }: SessionsPageProps) {
@@ -240,6 +252,9 @@ export function SessionsPage({
         <>
           <SessionChatPanel
             session={selectedSession}
+            referenceTasks={referenceTasks}
+            referenceAgents={referenceAgents}
+            referenceRoles={referenceRoles}
             displayedEvents={displayedEvents}
             sessionPending={selectedSessionPending}
             sessionDisplayStatus={selectedSessionDisplayStatus}
@@ -260,6 +275,9 @@ export function SessionsPage({
             onDraftChange={onDraftChange}
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
+            onOpenTask={onOpenTask}
+            onOpenAgent={onOpenAgent}
+            onOpenRole={onOpenRole}
             onCreateNewSession={onCreateNewSession}
             onCompactSession={onCompactSession}
           />

@@ -3,16 +3,22 @@ import type { RefObject } from "react";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import type {
   AgentDefinition,
+  AgentSummary,
+  RoleSummary,
   SessionEvent,
   SessionModelState,
   SessionRecord,
   SessionScrollState,
   SessionStatus,
+  TaskSummary,
 } from "../types";
 
 interface AgentChatPageProps {
   agent: AgentDefinition | null;
   session: SessionRecord | null;
+  referenceTasks: TaskSummary[];
+  referenceAgents: AgentSummary[];
+  referenceRoles: RoleSummary[];
   displayedEvents: SessionEvent[];
   sessionPending: boolean;
   sessionDisplayStatus: SessionStatus;
@@ -36,6 +42,9 @@ interface AgentChatPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
   onCompactSession: () => void;
 }
@@ -43,6 +52,9 @@ interface AgentChatPageProps {
 export function AgentChatPage({
   agent,
   session,
+  referenceTasks,
+  referenceAgents,
+  referenceRoles,
   displayedEvents,
   sessionPending,
   sessionDisplayStatus,
@@ -66,6 +78,9 @@ export function AgentChatPage({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onOpenTask,
+  onOpenAgent,
+  onOpenRole,
   onCreateNewSession,
   onCompactSession,
 }: AgentChatPageProps) {
@@ -90,6 +105,9 @@ export function AgentChatPage({
         <SessionChatPanel
           session={session}
           title={agent ? `${agent.name} chat` : null}
+          referenceTasks={referenceTasks}
+          referenceAgents={referenceAgents}
+          referenceRoles={referenceRoles}
           displayedEvents={displayedEvents}
           sessionPending={sessionPending}
           sessionDisplayStatus={sessionDisplayStatus}
@@ -110,6 +128,9 @@ export function AgentChatPage({
           onDraftChange={onDraftChange}
           onSendMessage={onSendMessage}
           onStopSession={onStopSession}
+          onOpenTask={onOpenTask}
+          onOpenAgent={onOpenAgent}
+          onOpenRole={onOpenRole}
           onCreateNewSession={onCreateNewSession}
           onCompactSession={onCompactSession}
           emptyStateEyebrow="Agent chat"

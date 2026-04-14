@@ -3759,7 +3759,44 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
 
 export async function searchTaskCommentFileMentions(taskId: string, query: string, limit = 10): Promise<TaskCommentFileMentionCandidate[]> {
   if (!isTauriAvailable()) {
-    return [];
+    const task = ensureMockTasks().find((entry) => entry.id === taskId) ?? null;
+    if (!task) {
+      return [];
+    }
+
+    const normalizedQuery = query.trim().replace(/^[@$]/, "").toLowerCase();
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const repositoryCount = new Set(task.fileReferences.map((reference) => reference.repositoryId)).size;
+
+    return task.fileReferences
+      .map((reference) => {
+        const scopedPath = `${reference.repositorySlug}:${reference.relativePath}`.toLowerCase();
+        const barePath = reference.relativePath.toLowerCase();
+        const matchIndex = barePath.indexOf(normalizedQuery);
+        const scopedMatchIndex = scopedPath.indexOf(normalizedQuery);
+        const bestIndex = matchIndex >= 0 ? matchIndex : scopedMatchIndex;
+        return {
+          repositoryId: reference.repositoryId,
+          repositoryName: reference.repositoryName,
+          repositorySlug: reference.repositorySlug,
+          relativePath: reference.relativePath,
+          displayText: repositoryCount > 1 ? `${reference.relativePath} — ${reference.repositoryName}` : reference.relativePath,
+          insertText: repositoryCount > 1 ? `$${reference.repositorySlug}:${reference.relativePath}` : `$${reference.relativePath}`,
+          bestIndex,
+        };
+      })
+      .filter((candidate) => candidate.bestIndex >= 0)
+      .sort((left, right) => {
+        if (left.bestIndex !== right.bestIndex) {
+          return left.bestIndex - right.bestIndex;
+        }
+        return left.relativePath.localeCompare(right.relativePath);
+      })
+      .slice(0, limit)
+      .map(({ bestIndex: _bestIndex, ...candidate }) => candidate);
   }
 
   return invoke<TaskCommentFileMentionCandidate[]>("search_task_comment_file_mentions", { taskId, query, limit });
