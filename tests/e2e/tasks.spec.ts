@@ -1363,8 +1363,9 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
 
   await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
   await page.locator('[data-role="toggle-task-relane"]').first().click();
-  await expect(page.locator('[data-role="task-relane-panel"]').first()).toBeVisible();
-  await page.locator('[data-role="task-relane-target"]').selectOption("lane-review-pass");
+  await expect(page.locator('[data-role="task-relane-menu"]').first()).toBeVisible();
+  await page.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]').first().click();
+  await expect(page.locator('[data-role="task-relane-confirm-dialog"]')).toBeVisible();
   await page.locator('[data-role="task-relane-notes"]').fill("Redirect this into the review pass lane.");
   await page.locator('[data-role="task-relane-confirm"]').click();
 

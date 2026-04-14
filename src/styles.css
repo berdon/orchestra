@@ -2815,6 +2815,7 @@ strong {
 }
 
 .task-action-menu,
+.task-relane-menu,
 .task-detail-summary,
 .task-detail-summary__history,
 .task-detail-summary__file,
@@ -2832,6 +2833,32 @@ strong {
   gap: 12px;
   flex-wrap: wrap;
   padding-top: 4px;
+}
+
+.task-relane-menu {
+  position: relative;
+}
+
+.task-relane-menu__dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(320px, calc(100vw - 48px));
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--color-overlay-background);
+  box-shadow: var(--shadow-overlay);
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+}
+
+.task-relane-menu__option {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  text-align: left;
 }
 
 .task-action-menu__desktop {
