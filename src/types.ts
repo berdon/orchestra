@@ -351,6 +351,11 @@ export interface ProjectTaskAutomationSettings {
   updatedAt?: string | null;
 }
 
+export interface PiRuntimeSettings {
+  extraExtensions: string[];
+  updatedAt?: string | null;
+}
+
 export interface TelegramChannelConfig {
   botUsername?: string | null;
   apiBaseUrl?: string | null;

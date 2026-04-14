@@ -14,11 +14,11 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::{
     models::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
-        ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo, TaskUpsertInput,
-        WorkflowLaneInput, WorkflowUpsertInput,
+        PiRuntimeSettings, ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo,
+        TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
-        database,
+        database, harness_settings,
         orchestra_paths::default_orchestra_root,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session_path,
@@ -239,6 +239,18 @@ pub fn get_session_storage_info(
 }
 
 #[tauri::command]
+pub fn get_pi_runtime_settings() -> Result<PiRuntimeSettings, String> {
+    harness_settings::get_pi_runtime_settings()
+}
+
+#[tauri::command]
+pub fn update_pi_runtime_settings(
+    extra_extensions: Vec<String>,
+) -> Result<PiRuntimeSettings, String> {
+    harness_settings::update_pi_runtime_settings(extra_extensions)
+}
+
+#[tauri::command]
 pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableDiagnostic {
     match state.sync_pi_runtime_health() {
         Ok(path) => PiExecutableDiagnostic {
@@ -284,7 +296,9 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
         RoleUpsertInput {
             name: format!("Whip Worker {}", uuid::Uuid::new_v4().simple()),
             description: Some("Seeded role for automatic whip testing.".into()),
-            system_prompt: Some("You are a seeded test worker. Do not complete tasks automatically.".into()),
+            system_prompt: Some(
+                "You are a seeded test worker. Do not complete tasks automatically.".into(),
+            ),
             provider: None,
             model: None,
             thinking_level: Some("medium".into()),
@@ -307,7 +321,9 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
                 order: Some(0),
                 assigned_entity_type: "role".into(),
                 assigned_entity_id: Some(role.slug.clone()),
-                entry_prompt_template: Some("Stay assigned and wait for follow-up instructions.".into()),
+                entry_prompt_template: Some(
+                    "Stay assigned and wait for follow-up instructions.".into(),
+                ),
                 use_separate_worktree: false,
                 require_user_approval_on_success: false,
                 success_transition_type: "end".into(),
@@ -322,7 +338,10 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
         Some(&project.id),
         TaskUpsertInput {
             title: "Seeded automatic whip task".into(),
-            description: Some("Task with an assigned idle role session that should be whipped automatically.".into()),
+            description: Some(
+                "Task with an assigned idle role session that should be whipped automatically."
+                    .into(),
+            ),
             task_type: "task".into(),
             status: "in_progress".into(),
             priority: "P1".into(),
@@ -341,7 +360,10 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
     let context = crate::services::pi_sessions::session_context_for_project_id(&project.id)?;
     let runtime_cwd = context.project_root.join("seeded-whip-runtime");
     std::fs::create_dir_all(&runtime_cwd).map_err(|error| {
-        format!("Unable to create seeded whip runtime directory {}: {error}", runtime_cwd.display())
+        format!(
+            "Unable to create seeded whip runtime directory {}: {error}",
+            runtime_cwd.display()
+        )
     })?;
     let created_session = crate::services::pi_sessions::create_session_file(
         &runtime_cwd,

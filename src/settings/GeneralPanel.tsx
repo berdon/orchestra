@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
-import type { BridgeDiagnostics, LogEntry, ProjectSessionPromptSettings } from "../types";
+import type { BridgeDiagnostics, LogEntry, PiRuntimeSettings, ProjectSessionPromptSettings } from "../types";
 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
   selectedThemeId: OrchestraThemeId;
   bridgeDiagnostics: BridgeDiagnostics | null;
   sessionPromptSettings: ProjectSessionPromptSettings | null;
+  piRuntimeSettings: PiRuntimeSettings | null;
   loadingBridgeDiagnostics: boolean;
   refreshingBridgeDiagnostics: boolean;
   logs: LogEntry[];
@@ -23,6 +24,7 @@ interface GeneralPanelProps {
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
   onSaveSessionPromptTemplate: (template: string | null) => void;
+  onSavePiRuntimeSettings: (extraExtensions: string[]) => void;
   onRefreshLogs: () => void;
   onToggleIncludeRelatedSessionSnapshot: (nextValue: boolean) => void;
   onExportLogs: () => void;
@@ -41,6 +43,7 @@ export function GeneralPanel({
   selectedThemeId,
   bridgeDiagnostics,
   sessionPromptSettings,
+  piRuntimeSettings,
   loadingBridgeDiagnostics,
   refreshingBridgeDiagnostics,
   logs,
@@ -55,17 +58,23 @@ export function GeneralPanel({
   onCleanupStaleBridges,
   onOpenLogsWindow,
   onSaveSessionPromptTemplate,
+  onSavePiRuntimeSettings,
   onRefreshLogs,
   onToggleIncludeRelatedSessionSnapshot,
   onExportLogs,
   onClearLogs,
 }: GeneralPanelProps) {
   const [templateDraft, setTemplateDraft] = useState("");
+  const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
 
   useEffect(() => {
     setTemplateDraft(sessionPromptSettings?.template ?? "");
   }, [sessionPromptSettings?.template]);
+
+  useEffect(() => {
+    setPiExtensionsDraft(piRuntimeSettings?.extraExtensions.join("\n") ?? "");
+  }, [piRuntimeSettings?.extraExtensions]);
   return (
     <section className="panel-stack">
       <section className="panel general-panel">
@@ -148,6 +157,43 @@ export function GeneralPanel({
                 </tbody>
               </table>
             </div>
+          </section>
+        ) : null}
+
+        {piRuntimeSettings ? (
+          <section className="task-section task-section--compact" data-role="pi-runtime-settings-panel">
+            <div className="task-section__header">
+              <div>
+                <p className="eyebrow">Harness configuration</p>
+                <h4>PI settings</h4>
+                <p className="muted-copy">Add extra pi extensions to load for newly spawned Orchestra runtime sessions. Enter one extension name or path per line. Orchestra still loads its built-in extension, and existing sessions keep their current extension set.</p>
+              </div>
+              <div className="action-cluster action-cluster--wrap">
+                <button className="secondary-button" data-role="reset-pi-runtime-extensions" type="button" onClick={() => setPiExtensionsDraft("")}>
+                  Reset to built-in only
+                </button>
+                <button
+                  className="secondary-button"
+                  data-role="save-pi-runtime-extensions"
+                  type="button"
+                  onClick={() => onSavePiRuntimeSettings(piExtensionsDraft.split(/\r?\n/g))}
+                >
+                  Save PI settings
+                </button>
+              </div>
+            </div>
+            <label className="field-group">
+              <span className="field-group__label">Extra runtime extensions</span>
+              <textarea
+                className="text-area"
+                data-role="pi-runtime-extensions"
+                rows={6}
+                placeholder="npm:my-extension\n./extensions/local-extension.ts"
+                value={piExtensionsDraft}
+                onChange={(event) => setPiExtensionsDraft(event.target.value)}
+              />
+            </label>
+            <p className="muted-copy">Last updated: {formatDateTime(piRuntimeSettings.updatedAt)}</p>
           </section>
         ) : null}
 

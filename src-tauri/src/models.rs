@@ -460,6 +460,13 @@ pub struct ProjectTaskAutomationSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PiRuntimeSettings {
+    pub extra_extensions: Vec<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TelegramChannelConfig {
     pub bot_username: Option<String>,
     pub api_base_url: Option<String>,

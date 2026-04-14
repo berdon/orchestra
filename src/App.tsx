@@ -43,6 +43,7 @@ import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
+import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSettings";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
 import { sendSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
@@ -71,6 +72,7 @@ import type {
   JsonValue,
   LogEntry,
   MailboxMessage,
+  PiRuntimeSettings,
   ProjectSessionPromptSettings,
   PrimaryPage,
   ProjectSummary,
@@ -593,6 +595,7 @@ export function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
+  const [piRuntimeSettings, setPiRuntimeSettings] = useState<PiRuntimeSettings | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
@@ -1027,6 +1030,14 @@ export function App() {
     setSessionPromptSettings(await getSessionPromptSettings(activeProject.slug));
   }
 
+  async function loadPiRuntimeSettings() {
+    try {
+      setPiRuntimeSettings(await getPiRuntimeSettings());
+    } catch (error) {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load PI runtime settings."));
+    }
+  }
+
   async function loadProjectUnreadCounts() {
     if (isLogsWindow || isAgentTerminalWindow || projects.length === 0) {
       setProjectUnreadCounts({});
@@ -1076,6 +1087,14 @@ export function App() {
       return;
     }
     setSessionPromptSettings(await updateSessionPromptSettings(template, activeProject.slug));
+  }
+
+  async function handleSavePiRuntimeSettings(extraExtensions: string[]) {
+    try {
+      setPiRuntimeSettings(await updatePiRuntimeSettings(extraExtensions));
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to save PI runtime settings.");
+    }
   }
 
   async function loadSessions(options?: { background?: boolean }) {
@@ -1326,6 +1345,7 @@ export function App() {
     };
 
     void loadAppInfo();
+    void loadPiRuntimeSettings();
     void isCurrentLogsWindow().then(setIsLogsWindow);
     void isCurrentAgentTerminalWindow().then(setIsAgentTerminalWindow);
     void getCurrentAgentTerminalSessionId().then(setAgentTerminalSessionId);
@@ -2555,6 +2575,7 @@ export function App() {
               selectedThemeId={themeId}
               bridgeDiagnostics={bridgeDiagnostics}
               sessionPromptSettings={sessionPromptSettings}
+              piRuntimeSettings={piRuntimeSettings}
               loadingBridgeDiagnostics={loadingBridgeDiagnostics}
               refreshingBridgeDiagnostics={refreshingBridgeDiagnostics}
               logs={logs}
@@ -2569,6 +2590,7 @@ export function App() {
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
+              onSavePiRuntimeSettings={(extraExtensions) => void handleSavePiRuntimeSettings(extraExtensions)}
               onRefreshLogs={() => void loadLogs()}
               onToggleIncludeRelatedSessionSnapshot={setIncludeRelatedSessionSnapshot}
               onExportLogs={() => void handleExportLogsBundle()}

@@ -16,8 +16,8 @@ use commands::{
     app::{
         cleanup_stale_bridge_instances, clear_logs, debug_seed_idle_task_whip_scenario,
         export_logs_bundle, get_app_info, get_bridge_diagnostics, get_logs,
-        get_pi_executable_diagnostic, get_session_storage_info, list_pi_models, open_logs_window,
-        report_client_error,
+        get_pi_executable_diagnostic, get_pi_runtime_settings, get_session_storage_info,
+        list_pi_models, open_logs_window, report_client_error, update_pi_runtime_settings,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -168,6 +168,8 @@ pub fn run() {
             list_telegram_chat_candidates,
             run_dispatcher_tick,
             get_session_storage_info,
+            get_pi_runtime_settings,
+            update_pi_runtime_settings,
             get_pi_executable_diagnostic,
             list_pi_models,
             list_agents,
