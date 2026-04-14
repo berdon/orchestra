@@ -35,12 +35,41 @@ describe("desktop system notifications", () => {
       await ensureReactReady(sessionId);
       await executeScript(sessionId, `
         window.__orchestraTestNotifications = [];
-        class MockNotification {
-          static permission = "granted";
-          static async requestPermission() { return "granted"; }
-          constructor(_title, _options) {}
-        }
-        window.Notification = MockNotification;
+        window.__orchestraNotificationTestDriver = {
+          permission: "granted",
+          async requestPermission() { return "granted"; },
+          async notify(input) {
+            const container = document.getElementById("orchestra-test-notification-overlay") || (() => {
+              const element = document.createElement("div");
+              element.id = "orchestra-test-notification-overlay";
+              Object.assign(element.style, {
+                position: "fixed",
+                top: "16px",
+                right: "16px",
+                zIndex: "99999",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                maxWidth: "360px",
+              });
+              document.body.appendChild(element);
+              return element;
+            })();
+            const card = document.createElement("div");
+            Object.assign(card.style, {
+              background: "rgba(20, 24, 33, 0.96)",
+              color: "white",
+              borderRadius: "12px",
+              padding: "12px 14px",
+              boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              fontFamily: "system-ui, sans-serif",
+              whiteSpace: "pre-wrap",
+            });
+            card.textContent = input.title + "\\n" + input.body;
+            container.appendChild(card);
+          },
+        };
       `);
 
       const project = await invokeCommand<{ id: string }>(sessionId, "create_project", {
