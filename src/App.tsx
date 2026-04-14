@@ -204,6 +204,10 @@ function countInboxUnreadThings(messages: MailboxMessage[], tasks: TaskSummary[]
   return unreadMessages + attentionTasks;
 }
 
+function countUnreadTaskComments(tasks: TaskSummary[]) {
+  return tasks.reduce((total, task) => total + (task.unreadCommentCount ?? 0), 0);
+}
+
 function isScrolledToBottom(node: HTMLDivElement, threshold = 24) {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= threshold;
 }
@@ -547,6 +551,7 @@ export function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(getActiveProjectId());
   const [projectUnreadCounts, setProjectUnreadCounts] = useState<Record<string, number>>({});
+  const [projectTaskCommentUnreadCounts, setProjectTaskCommentUnreadCounts] = useState<Record<string, number>>({});
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
@@ -627,6 +632,10 @@ export function App() {
   const activeProjectUnreadCount = useMemo(
     () => (activeProjectId ? projectUnreadCounts[activeProjectId] ?? 0 : 0),
     [activeProjectId, projectUnreadCounts],
+  );
+  const activeProjectTaskCommentUnreadCount = useMemo(
+    () => (activeProjectId ? projectTaskCommentUnreadCounts[activeProjectId] ?? 0 : 0),
+    [activeProjectId, projectTaskCommentUnreadCounts],
   );
 
   const hasUnreadOutsideActiveProject = useMemo(
@@ -982,19 +991,23 @@ export function App() {
   async function loadProjectUnreadCounts() {
     if (isLogsWindow || isAgentTerminalWindow || projects.length === 0) {
       setProjectUnreadCounts({});
+      setProjectTaskCommentUnreadCounts({});
       return;
     }
 
-    const counts = Object.fromEntries(
-      await Promise.all(projects.map(async (project) => {
-        const [messages, tasks] = await Promise.all([
-          listInboxMessages(project.id, true),
-          listTasks(false, project.id),
-        ]);
-        return [project.id, countInboxUnreadThings(messages, tasks)] as const;
-      })),
-    );
-    setProjectUnreadCounts(counts);
+    const projectUnreadData = await Promise.all(projects.map(async (project) => {
+      const [messages, tasks] = await Promise.all([
+        listInboxMessages(project.id, true),
+        listTasks(false, project.id),
+      ]);
+      return {
+        projectId: project.id,
+        inboxUnreadCount: countInboxUnreadThings(messages, tasks),
+        taskCommentUnreadCount: countUnreadTaskComments(tasks),
+      };
+    }));
+    setProjectUnreadCounts(Object.fromEntries(projectUnreadData.map((entry) => [entry.projectId, entry.inboxUnreadCount])));
+    setProjectTaskCommentUnreadCounts(Object.fromEntries(projectUnreadData.map((entry) => [entry.projectId, entry.taskCommentUnreadCount])));
   }
 
   async function loadProjectReferenceData() {
@@ -1812,9 +1825,10 @@ export function App() {
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const navBadgeByPage: Partial<Record<PrimaryPage, string>> = useMemo(() => ({
+    tasks: activeProjectTaskCommentUnreadCount > 0 ? String(activeProjectTaskCommentUnreadCount) : "",
     inbox: activeProjectUnreadCount > 0 ? String(activeProjectUnreadCount) : "",
     sessions: activeSessionCount > 0 ? String(activeSessionCount) : "",
-  }), [activeProjectUnreadCount, activeSessionCount]);
+  }), [activeProjectTaskCommentUnreadCount, activeProjectUnreadCount, activeSessionCount]);
 
   const handleThemeChange = useCallback((nextThemeId: OrchestraThemeId) => {
     setThemeId(nextThemeId);

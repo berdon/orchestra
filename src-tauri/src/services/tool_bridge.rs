@@ -1447,9 +1447,20 @@ fn invoke_bridge_command(
         "comment_on_task" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.comment")?;
-            let input: TaskCommentInput =
+            let mut input: TaskCommentInput =
                 serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
                     .map_err(|error| format!("Unable to parse task comment input: {error}"))?;
+            if input.origin_type.is_none() {
+                if let Some(context) = authorization {
+                    input.origin_type = Some(match context.actor_type.as_str() {
+                        "agent" => "agent".into(),
+                        "role" | "role_instance" => "role".into(),
+                        "user" => "user".into(),
+                        _ => "system".into(),
+                    });
+                    input.origin_id = input.origin_id.or_else(|| Some(context.actor_id.clone()));
+                }
+            }
             let mut writable = database::open_connection()?;
             let comment = tasks::add_task_comment(&mut writable, &task_id, input)?;
             if let Some(active_assignment) =

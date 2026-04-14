@@ -622,6 +622,8 @@ mod tests {
             &task_id,
             crate::models::TaskCommentInput {
                 author: "User".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "Please review $docs/design.md before merging.".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
@@ -665,6 +667,8 @@ mod tests {
             &task_id,
             crate::models::TaskCommentInput {
                 author: "User".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "This bare mention stays ambiguous: $docs/shared.md".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,
@@ -690,6 +694,8 @@ mod tests {
             &task_id,
             crate::models::TaskCommentInput {
                 author: "User".into(),
+                origin_type: None,
+                origin_id: None,
                 message: "This one is explicit: $docs:docs/shared.md".into(),
                 interrupt_agent: false,
                 parent_comment_id: None,

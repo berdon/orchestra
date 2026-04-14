@@ -660,6 +660,8 @@ export interface TaskComment {
   taskId: string;
   parentCommentId?: string | null;
   author: string;
+  originType: string;
+  originId?: string | null;
   message: string;
   interruptAgent: boolean;
   repositoryId?: string | null;
@@ -677,6 +679,8 @@ export interface TaskComment {
 
 export interface TaskCommentInput {
   author: string;
+  originType?: string | null;
+  originId?: string | null;
   message: string;
   interruptAgent: boolean;
   parentCommentId?: string | null;
@@ -873,6 +877,7 @@ export interface TaskSummary {
   whipMaxAttempts?: number;
   archived: boolean;
   commentCount: number;
+  unreadCommentCount: number;
   laneRunCount: number;
   childCount: number;
   completedChildCount: number;

@@ -39,6 +39,7 @@ import {
   stopSessionRuntime,
   manualTaskWhip,
   listTaskMessages,
+  markTaskCommentsReadForUser,
   reassignTaskToLane,
   markTaskTodoFinished,
   markTaskTodoUnfinished,
@@ -1024,6 +1025,20 @@ export function TasksPage({
     }, "Unable to delete task todo.");
   }
 
+  async function handleMarkTaskCommentsReadForUser() {
+    if (route.kind !== "detail" || !taskDetail?.unreadCommentCount) {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await markTaskCommentsReadForUser(route.taskId);
+      await loadTasksData();
+      await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
+    } catch (error) {
+      setTaskActionError(error instanceof Error ? error.message : "Unable to mark task comments read.");
+    }
+  }
+
   async function handleAddComment(draft: TaskCommentInput): Promise<boolean> {
     if (route.kind !== "detail") {
       return false;
@@ -1328,6 +1343,7 @@ export function TasksPage({
           onAddFileReference={() => void handleAddFileReference()}
           onApproveCompletion={() => void handleApproveLaneCompletion()}
           onCommentDraftChange={setCommentDraft}
+          onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
           onDelete={() => void handleDeleteDetailTask()}
           onDispatch={() => void handleDispatchTaskLane()}

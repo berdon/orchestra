@@ -2825,6 +2825,15 @@ strong {
   gap: 12px;
 }
 
+.task-detail-summary__comments-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
 .task-action-menu__desktop {
   display: flex;
   flex-wrap: wrap;

@@ -60,6 +60,7 @@ const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
 const TASK_FILE_CONTENT_STORAGE_KEY = "orchestra.mock.file-contents";
 const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
+const TASK_COMMENT_USER_RECEIPT_STORAGE_KEY = "orchestra.mock.task-comment-user-receipts";
 const MAILBOX_STORAGE_KEY = "orchestra.mock.mailbox";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
@@ -207,6 +208,31 @@ function createEvent(kind: SessionEvent["kind"], message: string, overrides?: Pa
 function getStoredValue<T>(key: string): T | null {
   const value = window.localStorage.getItem(key);
   return value ? (JSON.parse(value) as T) : null;
+}
+
+function getStoredMockTaskCommentUserReceipts() {
+  return getStoredValue<Array<{ commentId: string; taskId: string; userId: string; readAt: string }>>(TASK_COMMENT_USER_RECEIPT_STORAGE_KEY) ?? [];
+}
+
+function saveStoredMockTaskCommentUserReceipts(receipts: Array<{ commentId: string; taskId: string; userId: string; readAt: string }>) {
+  setStoredValue(TASK_COMMENT_USER_RECEIPT_STORAGE_KEY, receipts);
+}
+
+function normalizeMockTaskComment(comment: TaskComment): TaskComment {
+  return {
+    ...comment,
+    originType: comment.originType ?? "user",
+    originId: comment.originId ?? null,
+  };
+}
+
+function countMockUnreadTaskComments(task: Pick<TaskDetail, "id" | "comments">) {
+  const receipts = getStoredMockTaskCommentUserReceipts();
+  return task.comments
+    .map(normalizeMockTaskComment)
+    .filter((comment) => comment.originType !== "user")
+    .filter((comment) => !receipts.some((receipt) => receipt.commentId === comment.id && receipt.taskId === task.id && receipt.userId === "desktop-user"))
+    .length;
 }
 
 function setStoredValue<T>(key: string, value: T) {
@@ -654,6 +680,7 @@ function seedMockTasks(): TaskDetail[] {
       parentTaskId: null,
       archived: false,
       commentCount: 0,
+      unreadCommentCount: 0,
       laneRunCount: 0,
       childCount: 0,
       completedChildCount: 0,
@@ -697,6 +724,7 @@ function seedMockTasks(): TaskDetail[] {
       parentTaskId: epicTaskId,
       archived: false,
       commentCount: 1,
+      unreadCommentCount: 0,
       laneRunCount: 1,
       childCount: 0,
       completedChildCount: 0,
@@ -723,6 +751,8 @@ function seedMockTasks(): TaskDetail[] {
           id: createId("task-comment"),
           taskId: planningTaskId,
           author: "User",
+          originType: "user",
+          originId: null,
           message: "Start with persistence and a task list/detail shell before layering on graph features.",
           interruptAgent: false,
           createdAt: timestamp,
@@ -763,6 +793,7 @@ function seedMockTasks(): TaskDetail[] {
       parentTaskId: epicTaskId,
       archived: false,
       commentCount: 0,
+      unreadCommentCount: 0,
       laneRunCount: 0,
       childCount: 0,
       completedChildCount: 0,
@@ -1363,6 +1394,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     parentTaskId: task.parentTaskId,
     archived: task.archived,
     commentCount: task.comments.length,
+    unreadCommentCount: countMockUnreadTaskComments(task),
     laneRunCount: task.laneRuns.length,
     childCount: task.children.length,
     completedChildCount: task.children.filter((child) => child.status === "completed").length,
@@ -1453,6 +1485,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         blockedBy,
         blocking,
         commentCount: task.comments.length,
+        unreadCommentCount: countMockUnreadTaskComments(task),
         laneRunCount: task.laneRuns.length,
         childCount: children.length,
         completedChildCount: children.filter((child) => child.status === "completed").length,
@@ -1505,6 +1538,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     whipMaxAttempts: Math.max(1, input.whipMaxAttempts ?? existingTask?.whipMaxAttempts ?? 10),
     archived: input.archived ?? existingTask?.archived ?? false,
     commentCount: existingTask?.comments.length ?? 0,
+    unreadCommentCount: existingTask?.unreadCommentCount ?? 0,
     laneRunCount: existingTask?.laneRuns.length ?? 0,
     childCount: 0,
     completedChildCount: 0,
@@ -3834,6 +3868,8 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
       taskId,
       parentCommentId,
       author,
+      originType: input.originType?.trim() || "user",
+      originId: input.originId?.trim() || null,
       message,
       interruptAgent: input.interruptAgent,
       repositoryId: input.repositoryId?.trim() || null,
@@ -3874,6 +3910,37 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
   }
 
   return invoke<TaskComment>("comment_on_task", { taskId, input });
+}
+
+export async function markTaskCommentsReadForUser(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const task = await getTask(taskId);
+    const receipts = getStoredMockTaskCommentUserReceipts();
+    const now = nowIso();
+    const nextReceipts = [...receipts];
+    for (const comment of task.comments.map(normalizeMockTaskComment)) {
+      if (comment.originType === "user") {
+        continue;
+      }
+      const existing = nextReceipts.find((receipt) => receipt.commentId === comment.id && receipt.taskId === taskId && receipt.userId === "desktop-user");
+      if (existing) {
+        existing.readAt = now;
+      } else {
+        nextReceipts.push({
+          commentId: comment.id,
+          taskId,
+          userId: "desktop-user",
+          readAt: now,
+        });
+      }
+    }
+    saveStoredMockTaskCommentUserReceipts(nextReceipts);
+    appendMockLog("info", "task.comment.user_read", `Marked non-user task comments read for task ${taskId}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.comment.user_read" });
+    return getTask(taskId);
+  }
+
+  return invoke<TaskDetail>("mark_task_comments_read_for_user", { taskId });
 }
 
 export async function listInboxMessages(projectId?: string | null, includeArchived = false): Promise<MailboxMessage[]> {
