@@ -16,6 +16,7 @@ import {
   getSessionModelState,
   getSessionRecord,
   getCurrentAgentTerminalSessionId,
+  getTask,
   isCurrentAgentTerminalWindow,
   isCurrentLogsWindow,
   listInboxMessages,
@@ -43,6 +44,7 @@ import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/proj
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
+import { sendSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
@@ -81,6 +83,7 @@ import type {
   SessionStatus,
   SessionStreamEnvelope,
   SettingsTab,
+  TaskDetail,
   TaskSummary,
 } from "./types";
 
@@ -206,6 +209,40 @@ function countInboxUnreadThings(messages: MailboxMessage[], tasks: TaskSummary[]
 
 function countUnreadTaskComments(tasks: TaskSummary[]) {
   return tasks.reduce((total, task) => total + (task.unreadCommentCount ?? 0), 0);
+}
+
+function truncateNotificationText(value: string, maxLength = 140) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function resolveProjectNotificationLabel(projects: ProjectSummary[], projectId?: string | null) {
+  return projects.find((project) => project.id === projectId)?.name ?? "Orchestra";
+}
+
+function buildInboxNotificationBody(message: MailboxMessage, projectLabel: string) {
+  const taskLabel = message.taskNumber
+    ? message.taskTitle
+      ? `${message.taskNumber} · ${message.taskTitle}`
+      : message.taskNumber
+    : null;
+  const summary = truncateNotificationText(message.body);
+  const context = [projectLabel, message.senderLabel, taskLabel].filter(Boolean).join(" · ");
+  return summary ? `${context}\n${summary}` : context;
+}
+
+function buildTaskAttentionNotificationBody(task: TaskDetail, projectLabel: string, reason: string) {
+  const headline = `${projectLabel} · ${task.number} · ${task.title}`;
+  const notes = task.activeLaneAssignment?.completionNotes
+    ? truncateNotificationText(task.activeLaneAssignment.completionNotes)
+    : "";
+  const action = reason === "task.transition.awaiting_user_approval"
+    ? "Open Orchestra to approve the lane or send it back for more work."
+    : "Open Orchestra to review the blocker and decide how to proceed.";
+  return [headline, notes || action].filter(Boolean).join("\n");
 }
 
 function isScrolledToBottom(node: HTMLDivElement, threshold = 24) {
@@ -615,6 +652,8 @@ export function App() {
   const backgroundSessionRefreshInFlightRef = useRef(false);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
+  const notifiedInboxDeliveryIdsRef = useRef(new Set<string>());
+  const notifiedTaskAttentionKeysRef = useRef(new Set<string>());
 
   useEffect(() => {
     applyOrchestraTheme(themeId);
@@ -1352,15 +1391,85 @@ export function App() {
       }
     };
 
-    void listenToInboxChanges(() => {
+    const notifyInboxDeliveries = async (deliveryIds: string[]) => {
+      if (!deliveryIds.length) {
+        return;
+      }
+      const messages = await listInboxMessages(null, true);
+      const deliveries = messages.filter(
+        (message) => deliveryIds.includes(message.deliveryId) && !message.readAt && !message.archivedAt,
+      );
+      for (const message of deliveries) {
+        if (disposed || notifiedInboxDeliveryIdsRef.current.has(message.deliveryId)) {
+          continue;
+        }
+        notifiedInboxDeliveryIdsRef.current.add(message.deliveryId);
+        await sendSystemNotification({
+          title: "Orchestra — New message",
+          body: buildInboxNotificationBody(
+            message,
+            resolveProjectNotificationLabel(projects, message.projectId),
+          ),
+          tag: `mailbox:${message.deliveryId}`,
+        });
+      }
+    };
+
+    const notifyTaskAttention = async (taskIds: string[], reason: string) => {
+      if (!taskIds.length) {
+        return;
+      }
+      const tasks = await Promise.all(taskIds.map(async (taskId) => {
+        try {
+          return await getTask(taskId);
+        } catch {
+          return null;
+        }
+      }));
+      for (const task of tasks) {
+        if (!task || disposed) {
+          continue;
+        }
+        if (
+          reason === "task.transition.awaiting_user_approval"
+          && task.activeLaneAssignment?.status !== "awaiting_user_approval"
+        ) {
+          continue;
+        }
+        const dedupeKey = `${reason}:${task.id}:${task.updatedAt}`;
+        if (notifiedTaskAttentionKeysRef.current.has(dedupeKey)) {
+          continue;
+        }
+        notifiedTaskAttentionKeysRef.current.add(dedupeKey);
+        await sendSystemNotification({
+          title: reason === "task.transition.awaiting_user_approval"
+            ? "Orchestra — Approval needed"
+            : "Orchestra — User intervention needed",
+          body: buildTaskAttentionNotificationBody(
+            task,
+            resolveProjectNotificationLabel(projects, task.projectId),
+            reason,
+          ),
+          tag: `task-attention:${reason}:${task.id}`,
+        });
+      }
+    };
+
+    void listenToInboxChanges((event) => {
       refreshUnreadCounts();
+      if (event.reason === "mailbox.sent") {
+        void notifyInboxDeliveries(event.deliveryIds).catch(() => undefined);
+      }
     }).then((dispose) => {
       stopInbox = dispose;
     });
 
-    void listenToTaskChanges(() => {
+    void listenToTaskChanges((event) => {
       refreshUnreadCounts();
       refreshProjectReferences();
+      if (["task.transition.awaiting_user_approval", "task.transition.needs_user"].includes(event.reason)) {
+        void notifyTaskAttention(event.taskIds, event.reason).catch(() => undefined);
+      }
     }).then((dispose) => {
       stopTasks = dispose;
     });
