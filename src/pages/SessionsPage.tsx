@@ -72,6 +72,7 @@ interface SessionsPageProps {
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
   onCompactSession: () => void;
+  onReloadSession: () => void;
 }
 
 export function SessionsPage({
@@ -112,6 +113,7 @@ export function SessionsPage({
   onOpenRole,
   onCreateNewSession,
   onCompactSession,
+  onReloadSession,
 }: SessionsPageProps) {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
@@ -280,6 +282,7 @@ export function SessionsPage({
             onOpenRole={onOpenRole}
             onCreateNewSession={onCreateNewSession}
             onCompactSession={onCompactSession}
+            onReloadSession={onReloadSession}
           />
 
           {canShowDebugInfo && !showDebugInfo ? (

@@ -2054,23 +2054,27 @@ export function App() {
       });
   }, [mergeSessionRecord, removePendingRun, sessions]);
 
-  const handleSendMessage = useCallback((sessionId: string) => {
+  const queueSessionMessage = useCallback((sessionId: string, message: string, options?: { clearDraft?: boolean }) => {
     const session = sessions.find((entry) => entry.id === sessionId);
     if (!session) {
       return;
     }
 
-    const trimmedMessage = (draftMessages[sessionId] ?? "").trim();
+    const trimmedMessage = message.trim();
     if (!trimmedMessage) {
       return;
     }
 
+    const clearDraft = options?.clearDraft ?? false;
+    const previousDraft = draftMessages[sessionId] ?? "";
     const runId = createClientId("run");
     const timestamp = nowIso();
     const pendingRun = createPendingUserRun(runId, trimmedMessage, timestamp);
 
     setSessionActionError(null);
-    updateDraftMessage(sessionId, "");
+    if (clearDraft) {
+      updateDraftMessage(sessionId, "");
+    }
     setPendingRuns((current) => ({
       ...current,
       [sessionId]: pendingRun,
@@ -2084,10 +2088,21 @@ export function App() {
         events: record.events.filter((event) => event.runId !== runId),
       }));
       removePendingRun(sessionId, runId);
-      updateDraftMessage(sessionId, trimmedMessage);
+      if (clearDraft) {
+        updateDraftMessage(sessionId, previousDraft);
+      }
       setSessionActionError(await reportClientError("ui.sessions.message.queue", error, "Unable to queue message."));
     });
   }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
+
+  const handleSendMessage = useCallback((sessionId: string) => {
+    const trimmedMessage = (draftMessages[sessionId] ?? "").trim();
+    if (!trimmedMessage) {
+      return;
+    }
+
+    queueSessionMessage(sessionId, trimmedMessage, { clearDraft: true });
+  }, [draftMessages, queueSessionMessage]);
 
   async function handleCreateFreshSession(sessionId?: string | null, options?: { chatAgentId?: string | null }) {
     setIsSubmitting(true);
@@ -2121,6 +2136,13 @@ export function App() {
     void runSessionAction(async () => compactSession(sessionId));
   }
 
+  const handleReloadExistingSession = useCallback((sessionId?: string | null) => {
+    if (!sessionId) {
+      return;
+    }
+    queueSessionMessage(sessionId, "/reload");
+  }, [queueSessionMessage]);
+
   const handleSelectedSessionModelChange = useCallback((value: string) => {
     if (selectedSession) {
       void handleModelChange(selectedSession.id, value);
@@ -2150,6 +2172,12 @@ export function App() {
     }
     handleCompactExistingSession(selectedSession?.id);
   }, [selectedSession?.id, selectedSession?.terminalAttached]);
+  const handleSelectedSessionReload = useCallback(() => {
+    if (selectedSession?.terminalAttached) {
+      return;
+    }
+    handleReloadExistingSession(selectedSession?.id);
+  }, [handleReloadExistingSession, selectedSession?.id, selectedSession?.terminalAttached]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -2506,6 +2534,7 @@ export function App() {
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
+            onReloadSession={() => handleReloadExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
         ) : activePage === "sessions" ? (
           <SessionsPage
@@ -2546,6 +2575,7 @@ export function App() {
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
             onCompactSession={handleSelectedSessionCompact}
+            onReloadSession={handleSelectedSessionReload}
           />
         ) : (
           <TasksPage

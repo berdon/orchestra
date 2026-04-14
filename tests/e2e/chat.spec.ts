@@ -140,7 +140,7 @@ test("chat page opens an agent main session with focused chat controls while Ses
   expect(secondSessionId).toBe(firstSessionId);
 });
 
-test("chat page New session rotates the active agent session in place and leaves prior sessions in history", async ({ page }) => {
+test("chat page session actions can reload the current agent chat and rotate a new session in place", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -164,6 +164,11 @@ test("chat page New session rotates the active agent session in place and leaves
   const secondSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
   expect(secondSessionId).toBeTruthy();
   expect(secondSessionId).not.toBe(firstSessionId);
+
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await page.locator('[data-role="session-action-reload"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("/reload");
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", secondSessionId ?? "");
 
   await page.getByRole("button", { name: "Sessions" }).click();
   await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();

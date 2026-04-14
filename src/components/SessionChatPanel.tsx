@@ -109,6 +109,7 @@ interface SessionChatPanelProps {
   onOpenRole: (roleId: string) => void;
   onCreateNewSession?: () => void;
   onCompactSession?: () => void;
+  onReloadSession?: () => void;
   emptyStateEyebrow?: string;
   emptyStateTitle?: string;
   emptyStateDescription?: string;
@@ -133,6 +134,7 @@ interface SessionComposerProps {
   onStopSession: () => void;
   onCreateNewSession?: () => void;
   onCompactSession?: () => void;
+  onReloadSession?: () => void;
 }
 
 interface SessionTranscriptProps {
@@ -165,10 +167,12 @@ const SessionComposer = memo(function SessionComposer({
   onStopSession,
   onCreateNewSession,
   onCompactSession,
+  onReloadSession,
 }: SessionComposerProps) {
   const [showSessionActions, setShowSessionActions] = useState(false);
   const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly && !sessionPending;
   const canCompactSession = Boolean(onCompactSession) && !sessionReadOnly && !sessionPending;
+  const canReloadSession = Boolean(onReloadSession) && !sessionReadOnly && !sessionPending;
 
   useEffect(() => {
     setShowSessionActions(false);
@@ -227,7 +231,7 @@ const SessionComposer = memo(function SessionComposer({
             </div>
           </div>
           <div className="composer__actions">
-            {canCreateNewSession || onCompactSession ? (
+            {onCreateNewSession || onCompactSession || onReloadSession ? (
               <div className="session-actions-menu">
                 <button
                   className="secondary-button session-actions-menu__trigger"
@@ -272,6 +276,24 @@ const SessionComposer = memo(function SessionComposer({
                         }}
                       >
                         Compact
+                      </button>
+                    ) : null}
+                    {onReloadSession ? (
+                      <button
+                        className="secondary-button session-actions-menu__item"
+                        data-role="session-action-reload"
+                        type="button"
+                        role="menuitem"
+                        disabled={!canReloadSession}
+                        onClick={() => {
+                          setShowSessionActions(false);
+                          if (!canReloadSession) {
+                            return;
+                          }
+                          onReloadSession();
+                        }}
+                      >
+                        Reload
                       </button>
                     ) : null}
                   </div>
@@ -493,6 +515,7 @@ export function SessionChatPanel({
   onOpenRole,
   onCreateNewSession,
   onCompactSession,
+  onReloadSession,
   emptyStateEyebrow = "No session selected",
   emptyStateTitle = "Create or select a session",
   emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
@@ -564,6 +587,7 @@ export function SessionChatPanel({
             onStopSession={onStopSession}
             onCreateNewSession={onCreateNewSession}
             onCompactSession={onCompactSession}
+            onReloadSession={onReloadSession}
           />
         </>
       ) : (
