@@ -47,6 +47,7 @@ interface AgentChatPageProps {
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
   onCompactSession: () => void;
+  onReloadSession: () => void;
 }
 
 export function AgentChatPage({
@@ -83,6 +84,7 @@ export function AgentChatPage({
   onOpenRole,
   onCreateNewSession,
   onCompactSession,
+  onReloadSession,
 }: AgentChatPageProps) {
   let emptyStateTitle = "Choose an agent chat";
   let emptyStateDescription = "Select a named agent from the Chat sidebar to open or resume its main session.";
@@ -133,6 +135,7 @@ export function AgentChatPage({
           onOpenRole={onOpenRole}
           onCreateNewSession={onCreateNewSession}
           onCompactSession={onCompactSession}
+          onReloadSession={onReloadSession}
           emptyStateEyebrow="Agent chat"
           emptyStateTitle={emptyStateTitle}
           emptyStateDescription={emptyStateDescription}

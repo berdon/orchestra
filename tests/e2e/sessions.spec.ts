@@ -151,7 +151,7 @@ test("sessions composer model selector is compact, fixed-width, and unlabeled", 
   expect(layout?.cogHeight).toBe(layout?.sendHeight);
 });
 
-test("sessions composer session actions can compact the current session and create a new one", async ({ page }) => {
+test("sessions composer session actions can reload, compact the current session, and create a new one", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -170,6 +170,12 @@ test("sessions composer session actions can compact the current session and crea
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(initialCount + 1);
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session is active. Send a message to begin the interaction loop.");
   await expect(page.locator('[data-role="session-transcript"]')).not.toContainText("Session compacted.");
+
+  const reloadedSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await page.locator('[data-role="session-action-reload"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("/reload");
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", reloadedSessionId ?? "");
 });
 
 test("sessions composer New session rotates a selected worker-owned session instead of creating a generic detached session", async ({ page }) => {

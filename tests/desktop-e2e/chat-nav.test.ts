@@ -120,6 +120,11 @@ describe("desktop agent chat navigation", () => {
       expect(secondChatSessionId).toBeTruthy();
       expect(secondChatSessionId).not.toBe(firstChatSessionId);
 
+      await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
+      await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
+      await clickSelector(sessionId, '[data-role="session-action-reload"]');
+      await waitForText(sessionId, '/reload');
+
       const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
       await setInputValue(sessionId, '[data-role="composer-input"]', longLine);
       await clickSelector(sessionId, '[data-role="send-message"]');
