@@ -85,6 +85,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
           "Beta selected text",
           "Gamma line",
           "This is a deliberately long file preview line that should exceed the default viewer width and prove that the wrap toggle behaves correctly when enabled and disabled in the task file viewer.",
+          ...Array.from({ length: 40 }, (_, index) => `Extra filler line ${index + 5}`),
         ].join("\n"),
       }),
     );
@@ -100,7 +101,9 @@ test("task detail supports quick comments, line comments, replies, and viewer co
 
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file. See docs/design.md");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
+  await expect(page.locator('.file-content-viewer__header').first()).not.toContainText("Resizable");
   const wrapToggle = page.locator('[data-role="default-file-wrap-toggle"]');
+  const scrollBottom = page.locator('[data-role="default-file-scroll-bottom"]');
   const fileViewer = page.locator('[data-role="default-file-code-viewer"]');
   await expect(wrapToggle).toHaveAttribute("data-wrap-mode", "wrap");
   await expect(fileViewer).toHaveAttribute("data-wrap-mode", "wrap");
@@ -131,6 +134,14 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   expect(nowrapMetrics.lineScrollWidth).toBeGreaterThan(nowrapMetrics.viewerClientWidth + 20);
   await wrapToggle.click();
   await expect(wrapToggle).toHaveAttribute("data-wrap-mode", "wrap");
+  await scrollBottom.click();
+  await expect.poll(async () => page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    if (!viewer) {
+      return null;
+    }
+    return viewer.scrollHeight - viewer.clientHeight - viewer.scrollTop;
+  })).toBeLessThanOrEqual(4);
   await page.locator('[data-role="task-comment-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
 
