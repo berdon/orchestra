@@ -119,7 +119,20 @@ export function WorkflowTaskBoardSection({
                   <td>{section.workflowName}</td>
                   <td>{resolveLaneLabel(task, section)}</td>
                   <td>{resolveTaskAssigneeLabel(task, agents, roles)}</td>
-                  <td>{task.commentCount}</td>
+                  <td>
+                    <div className="task-table__comments-cell">
+                      <span>{task.commentCount}</span>
+                      {task.unreadCommentCount > 0 ? (
+                        <span
+                          className="status-badge status-badge--warning status-badge--compact"
+                          data-role="task-table-unread-comments-badge"
+                          title={`${task.unreadCommentCount} unread comment${task.unreadCommentCount === 1 ? "" : "s"}`}
+                        >
+                          {task.unreadCommentCount} unread
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

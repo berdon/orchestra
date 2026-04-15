@@ -20,16 +20,40 @@ describe("desktop task comment unread badges", () => {
     try {
       await ensureReactReady(sessionId);
 
+      const workflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: "Unread comment workflow",
+          description: "User-owned task board lane for unread comment coverage.",
+          lanes: [
+            {
+              id: "lane-user-review",
+              key: "user-review",
+              name: "User review",
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: null,
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+
       const task = await invokeCommand<any>(sessionId, "create_task", {
         projectId: "orchestra",
         input: {
           title: "Unread task comments",
           description: "Unread comment badge coverage.",
           type: "task",
-          status: "in_progress",
+          status: "in_review",
           priority: "P1",
-          workflowId: null,
-          currentLaneId: null,
+          workflowId: workflow.id,
+          currentLaneId: "lane-user-review",
           assigneeType: "user",
           assigneeId: null,
           repositoryId: null,
@@ -70,7 +94,21 @@ describe("desktop task comment unread badges", () => {
       );
       expect(navBadge).toBe("1");
 
-      await clickByText(sessionId, '[data-role="task-card"]', 'Unread task comments');
+      const cardBadge = await executeScript<string>(
+        sessionId,
+        `return document.querySelector('[data-role="task-card"][data-task-id="${task.id}"] [data-role="task-card-unread-comments-badge"]')?.textContent?.trim() ?? '';`,
+      );
+      expect(cardBadge).toBe("1 unread");
+
+      await clickSelector(sessionId, '[data-role="task-view-table"]');
+      await waitForSelector(sessionId, '[data-role="task-table-unread-comments-badge"]');
+      const tableBadge = await executeScript<string>(
+        sessionId,
+        `return document.querySelector('[data-role="task-table-row"][data-task-id="${task.id}"] [data-role="task-table-unread-comments-badge"]')?.textContent?.trim() ?? '';`,
+      );
+      expect(tableBadge).toBe("1 unread");
+
+      await clickSelector(sessionId, `[data-role="task-table-row"][data-task-id="${task.id}"]`);
       await waitForSelector(sessionId, '[data-role="task-unread-comments-footer-badge"]');
       const footerBadge = await executeScript<string>(
         sessionId,

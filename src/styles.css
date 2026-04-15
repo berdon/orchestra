@@ -2612,6 +2612,13 @@ strong {
   margin: 0;
 }
 
+.task-table__comments-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .task-lane-board {
   width: max-content;
   min-width: 100%;

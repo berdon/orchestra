@@ -906,6 +906,37 @@ test("task comment unread badges track non-user comments and clear when the comm
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
     window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-comment-unread",
+          slug: "comment-unread",
+          name: "Comment Unread Flow",
+          description: "User-owned lane for unread comment badge coverage.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-user-review",
+              key: "user-review",
+              name: "User review",
+              description: null,
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: null,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
       "orchestra.mock.tasks",
       JSON.stringify([
         {
@@ -915,10 +946,10 @@ test("task comment unread badges track non-user comments and clear when the comm
           title: "Unread task comments",
           description: "Unread comment badge coverage.",
           type: "task",
-          status: "in_progress",
+          status: "in_review",
           priority: "P1",
-          workflowId: null,
-          currentLaneId: null,
+          workflowId: "workflow-comment-unread",
+          currentLaneId: "lane-user-review",
           assigneeType: "user",
           assigneeId: null,
           repositoryId: null,
@@ -981,7 +1012,14 @@ test("task comment unread badges track non-user comments and clear when the comm
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator('[data-role="nav-badge-tasks"]')).toContainText("1");
-  await page.locator('[data-role="task-card"]').filter({ hasText: "Unread task comments" }).first().click();
+  await expect(
+    page.locator('[data-role="task-card"]').filter({ hasText: "Unread task comments" }).first().locator('[data-role="task-card-unread-comments-badge"]'),
+  ).toContainText("1 unread");
+  await page.locator('[data-role="task-view-table"]').click();
+  await expect(
+    page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread task comments" }).locator('[data-role="task-table-unread-comments-badge"]'),
+  ).toContainText("1 unread");
+  await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread task comments" }).first().click();
   await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toContainText("1 unread");
   await page.locator('[data-role="open-task-comments"]').click();
   await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute("aria-selected", "true");

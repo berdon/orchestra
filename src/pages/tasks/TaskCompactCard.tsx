@@ -43,6 +43,15 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCard
       </strong>
       <div className="task-compact-card__meta">
         <span title={assigneeLabel}>{assigneeLabel}</span>
+        {task.unreadCommentCount > 0 ? (
+          <span
+            className="status-badge status-badge--warning status-badge--compact"
+            data-role="task-card-unread-comments-badge"
+            title={`${task.unreadCommentCount} unread comment${task.unreadCommentCount === 1 ? "" : "s"}`}
+          >
+            {task.unreadCommentCount} unread
+          </span>
+        ) : null}
       </div>
     </button>
   );
