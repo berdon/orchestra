@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
-import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStatus, TaskSummary } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
@@ -50,6 +50,7 @@ interface SessionsPageProps {
   loadingSessions: boolean;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
+  loadingRuntimeDetailsSessionId: string | null;
   draftMessage: string;
   sessionActionError: string | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
@@ -73,6 +74,7 @@ interface SessionsPageProps {
   onCreateNewSession: () => void;
   onCompactSession: () => void;
   onReloadSession: () => void;
+  onLoadRuntimeDetails: (sessionId: string) => Promise<SessionRuntimeDetails>;
 }
 
 export function SessionsPage({
@@ -91,6 +93,7 @@ export function SessionsPage({
   loadingSessions,
   loadingModelSessionId,
   changingModelSessionId,
+  loadingRuntimeDetailsSessionId,
   draftMessage,
   sessionActionError,
   transcriptRef,
@@ -114,14 +117,19 @@ export function SessionsPage({
   onCreateNewSession,
   onCompactSession,
   onReloadSession,
+  onLoadRuntimeDetails,
 }: SessionsPageProps) {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [runtimeDetails, setRuntimeDetails] = useState<SessionRuntimeDetails | null>(null);
+  const [runtimeDetailsError, setRuntimeDetailsError] = useState<string | null>(null);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
   const revealTimerRef = useRef<number | null>(null);
   const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
 
   useEffect(() => {
     setShowDebugInfo(false);
+    setRuntimeDetails(null);
+    setRuntimeDetailsError(null);
   }, [selectedSession?.id]);
 
   useEffect(() => () => {
@@ -147,6 +155,24 @@ export function SessionsPage({
       revealTimerRef.current = null;
     }
     setRevealedDeleteSessionId(null);
+  }
+
+  async function handleOpenRuntimeDetails() {
+    if (!selectedSession) {
+      return;
+    }
+    setRuntimeDetailsError(null);
+    try {
+      setRuntimeDetails(await onLoadRuntimeDetails(selectedSession.id));
+    } catch (error) {
+      setRuntimeDetails(null);
+      setRuntimeDetailsError(error instanceof Error ? error.message : "Unable to load session runtime details.");
+    }
+  }
+
+  function handleCloseRuntimeDetails() {
+    setRuntimeDetails(null);
+    setRuntimeDetailsError(null);
   }
 
   return (
@@ -285,16 +311,30 @@ export function SessionsPage({
             onReloadSession={onReloadSession}
           />
 
-          {canShowDebugInfo && !showDebugInfo ? (
-            <button
-              type="button"
-              className="session-debug-toggle"
-              data-role="show-session-debug"
-              onClick={() => setShowDebugInfo(true)}
-            >
-              Show debug information
-            </button>
+          {selectedSession ? (
+            <div className="session-detail-actions-row">
+              <button
+                type="button"
+                className="session-debug-toggle"
+                data-role="open-session-runtime-details"
+                onClick={() => void handleOpenRuntimeDetails()}
+              >
+                {loadingRuntimeDetailsSessionId === selectedSession.id ? "Loading runtime details…" : "Runtime details"}
+              </button>
+              {canShowDebugInfo && !showDebugInfo ? (
+                <button
+                  type="button"
+                  className="session-debug-toggle"
+                  data-role="show-session-debug"
+                  onClick={() => setShowDebugInfo(true)}
+                >
+                  Show debug information
+                </button>
+              ) : null}
+            </div>
           ) : null}
+
+          {runtimeDetailsError ? <p className="error-copy">{runtimeDetailsError}</p> : null}
 
           {canShowDebugInfo && showDebugInfo && selectedSession?.debugInfo ? (
             <section className="panel session-debug-panel" data-role="session-debug-paths">
@@ -323,6 +363,100 @@ export function SessionsPage({
                 </section>
               </div>
             </section>
+          ) : null}
+
+          {runtimeDetails ? (
+            <div className="quick-chat-overlay" data-role="session-runtime-details-overlay" onClick={handleCloseRuntimeDetails}>
+              <section className="quick-chat-modal panel session-runtime-details-dialog" data-role="session-runtime-details-dialog" onClick={(event) => event.stopPropagation()}>
+                <div className="panel__header panel__header--stacked">
+                  <div>
+                    <p className="eyebrow">Session</p>
+                    <h4>Runtime details</h4>
+                    <p className="muted-copy">See the extension/runtime metadata Orchestra currently knows for this session.</p>
+                  </div>
+                  <div className="action-cluster action-cluster--wrap">
+                    <button className="secondary-button" type="button" data-role="close-session-runtime-details" onClick={handleCloseRuntimeDetails}>
+                      Close
+                    </button>
+                  </div>
+                </div>
+
+                <div className="session-debug-grid">
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Runtime source</p>
+                    <p className="session-debug-value">{runtimeDetails.source === "live_runtime" ? "Live runtime active" : "Expected next runtime spawn"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Extension load mode</p>
+                    <p className="session-debug-value">{runtimeDetails.extensionLoadMode}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Automatic extensions/plugins</p>
+                    <p className="session-debug-value">{runtimeDetails.automaticExtensionsDisabled ? "Disabled by --no-extensions" : "Enabled"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Subscribed</p>
+                    <p className="session-debug-value">{runtimeDetails.subscribed ? "Yes" : "No"}</p>
+                  </section>
+                </div>
+
+                <div className="session-runtime-details-grid">
+                  <section className="session-debug-item" data-role="session-runtime-loaded-extensions">
+                    <p className="eyebrow">Loaded extensions</p>
+                    {runtimeDetails.loadedExtensions.length ? (
+                      <ul className="session-runtime-details-list">
+                        {runtimeDetails.loadedExtensions.map((extension) => (
+                          <li className="session-debug-value" key={extension}>{extension}</li>
+                        ))}
+                      </ul>
+                    ) : <p className="session-debug-value">—</p>}
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Extra configured extensions</p>
+                    {runtimeDetails.extraExtensions.length ? (
+                      <ul className="session-runtime-details-list">
+                        {runtimeDetails.extraExtensions.map((extension) => (
+                          <li className="session-debug-value" key={extension}>{extension}</li>
+                        ))}
+                      </ul>
+                    ) : <p className="session-debug-value">None</p>}
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">PI executable</p>
+                    <p className="session-debug-value">{runtimeDetails.piExecutablePath ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Shell PATH source</p>
+                    <p className="session-debug-value">{runtimeDetails.shellPath ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Project root</p>
+                    <p className="session-debug-value">{runtimeDetails.projectRoot ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Session directory</p>
+                    <p className="session-debug-value">{runtimeDetails.sessionDir ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Session file</p>
+                    <p className="session-debug-value">{runtimeDetails.sessionPath ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Orchestra extension</p>
+                    <p className="session-debug-value">{runtimeDetails.orchestraExtensionPath ?? "—"}</p>
+                  </section>
+                </div>
+
+                <section className="session-debug-item" data-role="session-runtime-notes">
+                  <p className="eyebrow">Notes</p>
+                  <ul className="session-runtime-details-list">
+                    {runtimeDetails.notes.map((note) => (
+                      <li className="session-debug-value" key={note}>{note}</li>
+                    ))}
+                  </ul>
+                </section>
+              </section>
+            </div>
           ) : null}
         </>
         )}

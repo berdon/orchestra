@@ -14,7 +14,10 @@ use tauri::{path::BaseDirectory, AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
-    models::{AuthorizationContext, SessionModel, SessionModelState, SessionStreamEnvelope},
+    models::{
+        AuthorizationContext, SessionModel, SessionModelState, SessionRuntimeDetails,
+        SessionStreamEnvelope,
+    },
     services::{
         app_events, database, harness_settings, pi_sessions::get_session_path, task_runtime,
     },
@@ -84,6 +87,10 @@ pub struct SessionRuntime {
     project_root: Mutex<PathBuf>,
     session_dir: PathBuf,
     session_path: PathBuf,
+    pi_executable_path: PathBuf,
+    shell_path: Option<String>,
+    orchestra_extension_path: PathBuf,
+    extra_extensions: Vec<String>,
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Option<Child>>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
@@ -221,6 +228,10 @@ impl SessionRuntime {
             project_root: Mutex::new(requested_project_root),
             session_dir,
             session_path,
+            pi_executable_path: pi_executable,
+            shell_path,
+            orchestra_extension_path: extension_path,
+            extra_extensions,
             stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(Some(child)),
             pending: Mutex::new(HashMap::new()),
@@ -716,6 +727,36 @@ impl SessionRuntime {
         self.subscribed.lock().map(|value| *value).unwrap_or(false)
     }
 
+    pub fn runtime_details(&self) -> SessionRuntimeDetails {
+        let loaded_extensions = std::iter::once(self.orchestra_extension_path.display().to_string())
+            .chain(self.extra_extensions.iter().cloned())
+            .collect::<Vec<_>>();
+
+        SessionRuntimeDetails {
+            session_id: self.session_id.clone(),
+            source: "live_runtime".into(),
+            runtime_active: !self.is_closed(),
+            subscribed: self.is_subscribed(),
+            extension_load_mode: "explicit_only".into(),
+            automatic_extensions_disabled: true,
+            orchestra_extension_path: Some(self.orchestra_extension_path.display().to_string()),
+            extra_extensions: self.extra_extensions.clone(),
+            loaded_extensions,
+            pi_executable_path: Some(self.pi_executable_path.display().to_string()),
+            shell_path: self.shell_path.clone(),
+            project_root: self
+                .project_root
+                .lock()
+                .ok()
+                .map(|path| path.display().to_string()),
+            session_dir: Some(self.session_dir.display().to_string()),
+            session_path: Some(self.session_path.display().to_string()),
+            notes: vec![
+                "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
+            ],
+        }
+    }
+
     fn current_run_id(&self) -> Option<String> {
         self.current_run_id
             .lock()
@@ -926,6 +967,53 @@ pub fn maybe_runtime(
         .ok()
         .and_then(|runtimes| runtimes.get(session_id).map(Arc::clone))
         .filter(|runtime| !runtime.is_closed())
+}
+
+pub fn get_session_runtime_details(
+    app: &AppHandle,
+    state: &crate::state::AppState,
+    session_id: &str,
+) -> Result<SessionRuntimeDetails, String> {
+    if let Some(runtime) = maybe_runtime(&state.session_runtimes, session_id) {
+        return Ok(runtime.runtime_details());
+    }
+
+    let context = crate::services::pi_sessions::find_session_context_for_session(session_id)?;
+    let session_path = get_session_path(&context.session_dir, session_id)?;
+    let orchestra_extension_path = resolve_orchestra_extension_path(app)?;
+    let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
+    let pi_executable_path = state
+        .sync_pi_runtime_health()
+        .ok()
+        .map(|path| path.display().to_string());
+    let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
+    let loaded_extensions = std::iter::once(orchestra_extension_path.display().to_string())
+        .chain(extra_extensions.iter().cloned())
+        .collect::<Vec<_>>();
+
+    Ok(SessionRuntimeDetails {
+        session_id: session_id.to_string(),
+        source: "expected_config".into(),
+        runtime_active: false,
+        subscribed: state
+            .subscribed_session_ids()
+            .map(|sessions| sessions.contains(session_id))
+            .unwrap_or(false),
+        extension_load_mode: "explicit_only".into(),
+        automatic_extensions_disabled: true,
+        orchestra_extension_path: Some(orchestra_extension_path.display().to_string()),
+        extra_extensions,
+        loaded_extensions,
+        pi_executable_path,
+        shell_path,
+        project_root: Some(context.project_root.display().to_string()),
+        session_dir: Some(context.session_dir.display().to_string()),
+        session_path: Some(session_path.display().to_string()),
+        notes: vec![
+            "No live runtime is currently attached to this session. These details describe what Orchestra will load the next time it spawns the live runtime for this session.".into(),
+            "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
+        ],
+    })
 }
 
 fn runtime_authorization_context(session_id: &str) -> Result<Option<AuthorizationContext>, String> {

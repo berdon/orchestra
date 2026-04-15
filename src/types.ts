@@ -165,6 +165,24 @@ export interface SessionDebugInfo {
   sessionCwd?: string | null;
 }
 
+export interface SessionRuntimeDetails {
+  sessionId: string;
+  source: string;
+  runtimeActive: boolean;
+  subscribed: boolean;
+  extensionLoadMode: string;
+  automaticExtensionsDisabled: boolean;
+  orchestraExtensionPath?: string | null;
+  extraExtensions: string[];
+  loadedExtensions: string[];
+  piExecutablePath?: string | null;
+  shellPath?: string | null;
+  projectRoot?: string | null;
+  sessionDir?: string | null;
+  sessionPath?: string | null;
+  notes: string[];
+}
+
 export interface SessionRecord {
   id: string;
   title: string;

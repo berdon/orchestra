@@ -19,8 +19,14 @@ declare global {
   }
 }
 
+type NativeNotificationModule = {
+  isPermissionGranted: () => Promise<boolean>;
+  requestPermission: () => Promise<NotificationPermission>;
+  sendNotification: (input: { title: string; body?: string }) => Promise<void>;
+};
+
 let permissionRequest: Promise<NotificationPermission> | null = null;
-let nativeNotificationModulePromise: Promise<typeof import("@tauri-apps/plugin-notification")> | null = null;
+let nativeNotificationModulePromise: Promise<NativeNotificationModule> | null = null;
 
 function recordNotificationForTests(input: SystemNotificationInput) {
   if (typeof window === "undefined") {
@@ -59,7 +65,8 @@ async function ensureWebNotificationPermission() {
 
 async function loadNativeNotificationModule() {
   if (!nativeNotificationModulePromise) {
-    nativeNotificationModulePromise = import("@tauri-apps/plugin-notification");
+    const specifier = "@tauri-apps/plugin-notification";
+    nativeNotificationModulePromise = import(/* @vite-ignore */ specifier) as Promise<NativeNotificationModule>;
   }
   return nativeNotificationModulePromise;
 }

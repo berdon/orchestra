@@ -23,6 +23,7 @@ import type {
   SessionModel,
   SessionModelState,
   SessionRecord,
+  SessionRuntimeDetails,
   SessionStreamEnvelope,
   TaskAttachment,
   TaskAttachmentInput,
@@ -72,6 +73,7 @@ const BRIDGE_DIAGNOSTICS_STORAGE_KEY = "orchestra.mock.bridge-diagnostics";
 const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
 const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
 const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
+const HARNESS_SETTINGS_STORAGE_KEY = "orchestra.mock.harness-settings";
 const TASK_SCHEDULE_STORAGE_KEY = "orchestra.mock.task-schedules";
 const DOMAIN_EVENT_STORAGE_KEY = "orchestra.mock.domain-events";
 const CURRENT_PROJECT_ID = "orchestra";
@@ -89,6 +91,10 @@ function getInjectedWindowKind() {
 function getStoredMockProjectSettings() {
   const value = window.localStorage.getItem(PROJECT_SETTINGS_STORAGE_KEY);
   return value ? (JSON.parse(value) as { general?: { autoDispatchOnBlockerCompletion?: boolean } }) : {};
+}
+
+function getStoredMockHarnessSettings() {
+  return getStoredValue<{ extraExtensions?: string[]; updatedAt?: string | null }>(HARNESS_SETTINGS_STORAGE_KEY) ?? {};
 }
 
 function getStoredMockProjectsForSettings() {
@@ -2036,6 +2042,39 @@ export async function getSessionRecord(sessionId: string): Promise<SessionRecord
   }
 
   return invoke<SessionRecord>("get_session_record", { sessionId });
+}
+
+export async function getSessionRuntimeDetails(sessionId: string): Promise<SessionRuntimeDetails> {
+  if (!isTauriAvailable()) {
+    const session = ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
+    if (!session) {
+      throw new Error(`Unable to find session ${sessionId}`);
+    }
+
+    const extraExtensions = [...new Set((getStoredMockHarnessSettings().extraExtensions ?? []).map((entry) => entry.trim()).filter(Boolean))];
+    const orchestraExtensionPath = "extensions/orchestra-tools.ts";
+    return {
+      sessionId,
+      source: session.subscribed ? "live_runtime" : "expected_config",
+      runtimeActive: session.subscribed,
+      subscribed: session.subscribed,
+      extensionLoadMode: "explicit_only",
+      automaticExtensionsDisabled: true,
+      orchestraExtensionPath,
+      extraExtensions,
+      loadedExtensions: [orchestraExtensionPath, ...extraExtensions],
+      piExecutablePath: "pi (mock)",
+      shellPath: "/mock/bin",
+      projectRoot: session.debugInfo?.projectRoot ?? "/mock/orchestra/project",
+      sessionDir: "/mock/orchestra/sessions",
+      sessionPath: `/mock/orchestra/sessions/${sessionId}.jsonl`,
+      notes: session.subscribed
+        ? ["Browser-mode mock simulates an active runtime for subscribed sessions."]
+        : ["No live runtime is active in browser mode; these are the extensions Orchestra would load the next time this session spawns a runtime."],
+    };
+  }
+
+  return invoke<SessionRuntimeDetails>("get_session_runtime_details", { sessionId });
 }
 
 function cloneMockSessionModel(sourceSessionId: string, targetSessionId: string) {
