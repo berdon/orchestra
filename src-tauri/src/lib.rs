@@ -121,6 +121,7 @@ pub fn run() {
     );
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .manage(app_state)
         .setup(|app| {
             let state = app.state::<AppState>();

@@ -23,6 +23,7 @@ async function installNotificationStub(page: Page) {
 test("sends a system notification when the user receives a new inbox message", async ({ page }) => {
   await installNotificationStub(page);
   await page.goto("/");
+  await expect(page.getByRole("button", { name: "Tasks" })).toBeVisible();
 
   await page.evaluate(() => {
     const now = new Date().toISOString();
@@ -67,6 +68,7 @@ test("sends a system notification when the user receives a new inbox message", a
 test("sends a system notification when a task starts awaiting user approval", async ({ page }) => {
   await installNotificationStub(page);
   await page.goto("/");
+  await expect(page.getByRole("button", { name: "Tasks" })).toBeVisible();
 
   await page.evaluate(() => {
     const key = "orchestra.mock.tasks";
