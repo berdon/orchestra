@@ -3177,6 +3177,8 @@ mod tests {
             crate::models::TaskCommentInput {
                 author: "Reviewer".into(),
                 message: "Please read this through the bridge.".into(),
+                origin_type: None,
+                origin_id: None,
                 interrupt_agent: false,
                 parent_comment_id: None,
                 repository_id: None,

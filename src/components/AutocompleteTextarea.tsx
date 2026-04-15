@@ -89,6 +89,7 @@ export function AutocompleteTextarea({
   disabled = false,
   textareaRef,
 }: AutocompleteTextareaProps) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const internalRef = useRef<HTMLTextAreaElement | null>(null);
   const [activeRange, setActiveRange] = useState<AutocompleteRange | null>(null);
   const [candidates, setCandidates] = useState<ComposerAutocompleteCandidate[]>([]);
@@ -126,7 +127,9 @@ export function AutocompleteTextarea({
       try {
         const results = await source.search(activeRange.query);
         if (!cancelled) {
-          setCandidates(results);
+          const exactTypedToken = `${activeRange.trigger}${activeRange.query}`;
+          const shouldHideExactMatch = results.some((candidate) => candidate.insertText === exactTypedToken);
+          setCandidates(shouldHideExactMatch ? [] : results);
           setActiveIndex(0);
         }
       } catch {
@@ -157,6 +160,26 @@ export function AutocompleteTextarea({
     syncAutocompleteState(nextValue, caret);
   }
 
+  function clearAutocomplete() {
+    setCandidates([]);
+    setActiveRange(null);
+    setActiveIndex(0);
+  }
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!wrapperRef.current || wrapperRef.current.contains(event.target as Node)) {
+        return;
+      }
+      clearAutocomplete();
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, []);
+
   function acceptCandidate(candidate: ComposerAutocompleteCandidate | null) {
     if (!candidate || !activeRange || !internalRef.current) {
       return;
@@ -166,9 +189,7 @@ export function AutocompleteTextarea({
     const nextValue = applyAutocompleteCandidate(currentValue, activeRange, candidate);
     const nextCaret = activeRange.start + candidate.insertText.length + 1;
     onChange(nextValue);
-    setCandidates([]);
-    setActiveRange(null);
-    setActiveIndex(0);
+    clearAutocomplete();
     window.requestAnimationFrame(() => {
       internalRef.current?.focus();
       internalRef.current?.setSelectionRange(nextCaret, nextCaret);
@@ -176,7 +197,7 @@ export function AutocompleteTextarea({
   }
 
   return (
-    <div className="task-comment-mentions-input">
+    <div className="task-comment-mentions-input" ref={wrapperRef}>
       <textarea
         ref={internalRef}
         className="text-area"
@@ -190,9 +211,7 @@ export function AutocompleteTextarea({
         onKeyUp={(event) => syncAutocompleteState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
         onBlur={() => {
           window.setTimeout(() => {
-            setCandidates([]);
-            setActiveRange(null);
-            setActiveIndex(0);
+            clearAutocomplete();
           }, 120);
         }}
         onKeyDown={(event) => {
@@ -219,9 +238,7 @@ export function AutocompleteTextarea({
             }
             if (event.key === "Escape") {
               event.preventDefault();
-              setCandidates([]);
-              setActiveRange(null);
-              setActiveIndex(0);
+              clearAutocomplete();
               return;
             }
           }

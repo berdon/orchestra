@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   cleanupStaleBridgeInstances,
   clearLogs,
@@ -658,7 +658,7 @@ export function App() {
   const notifiedInboxDeliveryIdsRef = useRef(new Set<string>());
   const notifiedTaskAttentionKeysRef = useRef(new Set<string>());
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyOrchestraTheme(themeId);
   }, [themeId]);
 
