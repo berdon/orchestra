@@ -33,6 +33,7 @@ describe("desktop default-file anchored task comments", () => {
       "Alpha line",
       "Beta selected text",
       "Gamma line",
+      ...Array.from({ length: 40 }, (_, index) => `Extra filler line ${index + 4}`),
     ].join("\n"), "utf8");
     execFileSync("git", ["init", "-b", "main"], { cwd: repoPath, stdio: "ignore" });
     execFileSync("git", ["config", "user.email", "desktop-e2e@example.invalid"], { cwd: repoPath, stdio: "ignore" });
@@ -100,6 +101,11 @@ describe("desktop default-file anchored task comments", () => {
       await setInputValue(sessionId, '[data-role="default-file-quick-comment-message"]', 'General note under the default file.');
       await clickSelector(sessionId, '[data-role="add-default-file-quick-comment"]');
       await waitForText(sessionId, 'General note under the default file.');
+
+      const viewerHeaderText = await executeScript<string>(sessionId, `
+        return document.querySelector('.file-content-viewer__header')?.textContent || '';
+      `);
+      expect(viewerHeaderText).not.toContain('Resizable');
 
       await executeScript(sessionId, `
         const openDraft = window.__orchestraOpenFileCommentDraft;
@@ -213,6 +219,17 @@ describe("desktop default-file anchored task comments", () => {
       }>>(sessionId, 'list_task_comments', { taskId: task.id });
 
       expect(comments).toHaveLength(4);
+
+      await clickSelector(sessionId, '[data-role="default-file-scroll-bottom"]');
+      const distanceFromBottom = await executeScript<number>(sessionId, `
+        const viewer = document.querySelector('[data-role="default-file-code-viewer"]');
+        if (!(viewer instanceof HTMLElement)) {
+          return -1;
+        }
+        return viewer.scrollHeight - viewer.clientHeight - viewer.scrollTop;
+      `);
+      expect(distanceFromBottom).toBeLessThanOrEqual(4);
+
       await clickSelector(sessionId, '[data-role="default-file-viewer-toggle"]');
       await waitForText(sessionId, 'Expand');
       expect(comments[0]?.message).toContain('General note under the default file.');

@@ -408,6 +408,14 @@ export function CommentableFileViewer({
     });
   }
 
+  function handleScrollToBottom() {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }
+
   function openFloatingComment(anchor: FileCommentAnchor, top: number, left: number) {
     const overlay = overlayRef.current;
     if (!overlay) {
@@ -655,7 +663,14 @@ export function CommentableFileViewer({
       <div className="file-content-viewer__header">
         <strong>File preview</strong>
         <div className="action-cluster action-cluster--wrap">
-          <span className="status-badge status-badge--neutral">Resizable</span>
+          <button
+            className="secondary-button"
+            data-role="default-file-scroll-bottom"
+            type="button"
+            onClick={handleScrollToBottom}
+          >
+            Bottom
+          </button>
           <button
             className="transcript-wrap-toggle"
             data-role="default-file-wrap-toggle"
