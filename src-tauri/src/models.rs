@@ -239,6 +239,26 @@ pub struct SessionDebugInfo {
     pub session_cwd: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRuntimeDetails {
+    pub session_id: String,
+    pub source: String,
+    pub runtime_active: bool,
+    pub subscribed: bool,
+    pub extension_load_mode: String,
+    pub automatic_extensions_disabled: bool,
+    pub orchestra_extension_path: Option<String>,
+    pub extra_extensions: Vec<String>,
+    pub loaded_extensions: Vec<String>,
+    pub pi_executable_path: Option<String>,
+    pub shell_path: Option<String>,
+    pub project_root: Option<String>,
+    pub session_dir: Option<String>,
+    pub session_path: Option<String>,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {

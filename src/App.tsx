@@ -15,6 +15,7 @@ import {
   exportLogsBundle,
   getSessionModelState,
   getSessionRecord,
+  getSessionRuntimeDetails,
   getCurrentAgentTerminalSessionId,
   getTask,
   isCurrentAgentTerminalWindow,
@@ -81,6 +82,7 @@ import type {
   SessionEvent,
   SessionModelState,
   SessionRecord,
+  SessionRuntimeDetails,
   SessionScrollState,
   SessionStatus,
   SessionStreamEnvelope,
@@ -627,6 +629,7 @@ export function App() {
   const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
   const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
+  const [loadingRuntimeDetailsSessionId, setLoadingRuntimeDetailsSessionId] = useState<string | null>(null);
   const [sessionScrollState, setSessionScrollState] = useState<SessionScrollState>({ lockedToBottom: true });
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
   const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
@@ -1177,6 +1180,15 @@ export function App() {
       if (!options?.background) {
         setLoadingChatAgents(false);
       }
+    }
+  }
+
+  async function loadSelectedSessionRuntimeDetails(sessionId: string): Promise<SessionRuntimeDetails> {
+    setLoadingRuntimeDetailsSessionId(sessionId);
+    try {
+      return await getSessionRuntimeDetails(sessionId);
+    } finally {
+      setLoadingRuntimeDetailsSessionId((current) => (current === sessionId ? null : current));
     }
   }
 
@@ -2684,6 +2696,7 @@ export function App() {
             loadingSessions={loadingSessions}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
+            loadingRuntimeDetailsSessionId={loadingRuntimeDetailsSessionId}
             draftMessage={selectedSessionDraftMessage}
             sessionActionError={sessionActionError}
             transcriptRef={transcriptRef}
@@ -2707,6 +2720,7 @@ export function App() {
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
             onCompactSession={handleSelectedSessionCompact}
             onReloadSession={handleSelectedSessionReload}
+            onLoadRuntimeDetails={loadSelectedSessionRuntimeDetails}
           />
         ) : (
           <TasksPage

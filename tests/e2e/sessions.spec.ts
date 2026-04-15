@@ -1176,6 +1176,59 @@ test("sessions page hides debug paths behind a dev-only toggle below the chat pa
   await expect(debugHeading).toBeVisible();
 });
 
+test("sessions page can open runtime details and show loaded extensions for the selected session", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.harness-settings",
+      JSON.stringify({
+        extraExtensions: ["npm:pi-example", "./extensions/local-extra.ts"],
+        updatedAt: timestamp,
+      }),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-runtime-details",
+          title: "Runtime details session",
+          status: "idle",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "assistant-1",
+              kind: "assistant",
+              message: "Runtime details are available.",
+              timestamp,
+            },
+          ],
+          debugInfo: {
+            projectRoot: "/tmp/orchestra/projects/demo",
+            sessionCwd: "/tmp/orchestra/projects/demo/worktrees/agent-02",
+          },
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Runtime details session" }).click();
+  await page.locator('[data-role="open-session-runtime-details"]').click();
+
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText("Disabled by --no-extensions");
+  await expect(page.locator('[data-role="session-runtime-loaded-extensions"]')).toContainText("extensions/orchestra-tools.ts");
+  await expect(page.locator('[data-role="session-runtime-loaded-extensions"]')).toContainText("npm:pi-example");
+  await expect(page.locator('[data-role="session-runtime-loaded-extensions"]')).toContainText("./extensions/local-extra.ts");
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText("Disabled by --no-extensions");
+
+  await page.locator('[data-role="close-session-runtime-details"]').click();
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toHaveCount(0);
+});
+
 test("sessions transcript wraps long lines by default and can toggle to no-wrap", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

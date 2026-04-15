@@ -1395,6 +1395,12 @@ strong {
   text-decoration: underline;
 }
 
+.session-detail-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .session-debug-panel {
   display: grid;
   gap: 14px;
@@ -1427,6 +1433,23 @@ strong {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.82rem;
   overflow-wrap: anywhere;
+}
+
+.session-runtime-details-dialog {
+  width: min(920px, calc(100vw - 48px));
+}
+
+.session-runtime-details-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.session-runtime-details-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
 }
 
 .session-list-scroll {

@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
-    models::{QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord},
+    models::{
+        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord,
+        SessionRuntimeDetails,
+    },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
         live_sessions::{ensure_runtime, maybe_runtime},
@@ -633,6 +636,15 @@ pub async fn get_session_record(
     })
     .await
     .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
+}
+
+#[tauri::command]
+pub fn get_session_runtime_details(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRuntimeDetails, String> {
+    crate::services::live_sessions::get_session_runtime_details(&app, state.inner(), &session_id)
 }
 
 #[tauri::command]
