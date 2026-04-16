@@ -1502,6 +1502,110 @@ test("task detail dispatches an agent-owned task via publish, retries the active
   await expect(page.locator('[data-role="task-timeline"]')).toContainText("Lane lane-agent completed");
 });
 
+test("task detail can close a task immediately without deleting it", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-close-task",
+          slug: "close-task",
+          name: "Close Task Flow",
+          description: "User-owned lane for close coverage.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-user-close",
+              key: "user-close",
+              name: "User close",
+              description: null,
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: null,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-close-me",
+          projectId: "orchestra",
+          number: "ORC-88",
+          title: "Close me",
+          description: "Close button coverage.",
+          type: "task",
+          status: "in_review",
+          priority: "P2",
+          workflowId: "workflow-close-task",
+          currentLaneId: "lane-user-close",
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Close me" }).first().click();
+  await expect(page.getByRole("heading", { name: "Close me" })).toBeVisible();
+  await page.locator('[data-role="close-task"]').click();
+  await expect(page.locator('[data-role="task-close-confirm"]')).toBeVisible();
+  await page.locator('[data-role="confirm-close-task"]').click();
+
+  await expect(page.locator('[data-role="close-task"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-filter-done"]').click();
+  await page.locator('[data-role="task-view-table"]').click();
+  await expect(page.locator('[data-role="task-table"]')).toContainText("Close me");
+
+  const storedTasks = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]"));
+  expect(storedTasks.find((task: { id: string }) => task.id === "task-close-me")?.status).toBe("canceled");
+});
+
 test("task detail requires a hold before delete and confirms removal in a modal", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

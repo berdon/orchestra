@@ -271,6 +271,7 @@ export function TasksPage({
   const [savingTask, setSavingTask] = useState(false);
   const [publishingTask, setPublishingTask] = useState(false);
   const [deletingTask, setDeletingTask] = useState(false);
+  const [closingTask, setClosingTask] = useState(false);
   const [sendingTaskMail, setSendingTaskMail] = useState(false);
   const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
@@ -844,6 +845,28 @@ export function TasksPage({
     setDeletingTask(false);
   }
 
+  async function handleCloseDetailTask() {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setClosingTask(true);
+    await runDetailAction("close", async () => {
+      const currentTask = taskDetail ?? await getTask(route.taskId);
+      if (currentTask.activeLaneAssignment) {
+        await resetTaskRuntime(route.taskId);
+      }
+      const saved = await updateTask(route.taskId, {
+        ...taskToDraft(currentTask),
+        ...taskDraft,
+        status: "canceled",
+      });
+      await loadTasksData();
+      await loadTaskDetail(saved.id);
+      setTaskDraftDirty(false);
+    }, "Unable to close task.");
+    setClosingTask(false);
+  }
+
   async function handleDeleteTaskScheduleDetail() {
     if (route.kind !== "schedule") {
       return;
@@ -1330,6 +1353,7 @@ export function TasksPage({
           commentDraft={commentDraft}
           tasks={tasks}
           deleting={deletingTask}
+          closing={closingTask}
           dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
           draft={taskDraft}
           fileReferenceDraft={fileReferenceDraft}
@@ -1345,6 +1369,7 @@ export function TasksPage({
           onCommentDraftChange={setCommentDraft}
           onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
+          onClose={() => void handleCloseDetailTask()}
           onDelete={() => void handleDeleteDetailTask()}
           onDispatch={() => void handleDispatchTaskLane()}
           onDraftChange={(draft) => {

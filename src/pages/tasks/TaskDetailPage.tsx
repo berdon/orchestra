@@ -53,6 +53,7 @@ interface TaskDetailPageProps {
   saving: boolean;
   publishing: boolean;
   deleting: boolean;
+  closing: boolean;
   loading: boolean;
   sendingMail?: boolean;
   pendingActionId?: string | null;
@@ -61,6 +62,7 @@ interface TaskDetailPageProps {
   onCommentsTabViewed: () => void;
   onSave: () => void;
   onPublish: () => void;
+  onClose: () => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
@@ -295,6 +297,7 @@ export function TaskDetailPage({
   saving,
   publishing,
   deleting,
+  closing,
   loading,
   sendingMail = false,
   pendingActionId = null,
@@ -303,6 +306,7 @@ export function TaskDetailPage({
   onCommentsTabViewed,
   onSave,
   onPublish,
+  onClose,
   onDelete,
   onOpenTask,
   onOpenAgent,
@@ -336,6 +340,7 @@ export function TaskDetailPage({
 }: TaskDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [deleteHolding, setDeleteHolding] = useState(false);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState<TaskCommentInput>(() => createReplyDraft(commentDraft.author));
@@ -379,6 +384,7 @@ export function TaskDetailPage({
   const todoGroups = groupTodosByLane(task);
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
+  const canClose = !["completed", "canceled"].includes(task.status);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
 
@@ -389,6 +395,11 @@ export function TaskDetailPage({
       }
     };
   }, []);
+
+  useEffect(() => {
+    setShowDeleteConfirm(false);
+    setShowCloseConfirm(false);
+  }, [task.id, task.status]);
 
   useEffect(() => {
     setReplyTargetCommentId(null);
@@ -743,7 +754,7 @@ export function TaskDetailPage({
   }
 
   function handleDeletePointerDown() {
-    if (deleting) {
+    if (deleting || closing) {
       return;
     }
     clearDeleteHold();
@@ -1576,11 +1587,21 @@ export function TaskDetailPage({
                     variant: "primary",
                     dataRole: "save-task",
                   },
+                  ...(canClose
+                    ? [{
+                        id: "close",
+                        label: closing ? "Closing…" : "Close",
+                        onClick: () => setShowCloseConfirm(true),
+                        disabled: closing || deleting,
+                        variant: "secondary" as const,
+                        dataRole: "close-task",
+                      }]
+                    : []),
                   {
                     id: "delete",
                     label: deleting ? "Deleting…" : "Delete",
                     onClick: () => setShowDeleteConfirm(true),
-                    disabled: deleting,
+                    disabled: deleting || closing,
                     variant: "danger",
                     dataRole: "delete-task",
                   },
@@ -1607,11 +1628,21 @@ export function TaskDetailPage({
                     variant: "secondary",
                     dataRole: "edit-task",
                   },
+                  ...(canClose
+                    ? [{
+                        id: "close",
+                        label: closing ? "Closing…" : "Close",
+                        onClick: () => setShowCloseConfirm(true),
+                        disabled: closing || deleting,
+                        variant: "secondary" as const,
+                        dataRole: "close-task",
+                      }]
+                    : []),
                   {
                     id: "delete",
                     label: deleting ? "Deleting…" : "Delete",
                     onClick: () => setShowDeleteConfirm(true),
-                    disabled: deleting,
+                    disabled: deleting || closing,
                     variant: "danger",
                     dataRole: "delete-task",
                   },
@@ -1944,6 +1975,28 @@ export function TaskDetailPage({
               </button>
               <button className="primary-button" data-role="task-relane-confirm" type="button" disabled={Boolean(pendingActionId)} onClick={handleRelaneSubmit}>
                 Move to lane
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {showCloseConfirm ? (
+        <div className="quick-chat-overlay" data-role="task-close-confirm-overlay" onClick={() => !closing && setShowCloseConfirm(false)}>
+          <section className="quick-chat-modal panel task-delete-confirm" data-role="task-close-confirm" onClick={(event) => event.stopPropagation()}>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Close task</p>
+                <h3>Close {task.number}?</h3>
+              </div>
+            </div>
+            <p>This keeps the task and its history, but marks it as canceled so it is closed immediately.</p>
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" disabled={closing} onClick={() => setShowCloseConfirm(false)}>
+                Cancel
+              </button>
+              <button className="primary-button" data-role="confirm-close-task" type="button" disabled={closing} onClick={onClose}>
+                {closing ? "Closing…" : "Close task"}
               </button>
             </div>
           </section>
