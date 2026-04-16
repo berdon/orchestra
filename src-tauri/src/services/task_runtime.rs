@@ -76,29 +76,38 @@ pub fn get_active_lane_assignment(
         .query_row(
             r#"
             SELECT
-                id,
-                task_id,
-                workflow_id,
-                lane_id,
-                worker_type,
-                worker_id,
-                status,
-                session_id,
-                runtime_cwd,
-                role_queue_entry_id,
-                role_instance_id,
-                prompt,
-                pending_outcome,
-                completion_notes,
-                whip_count,
-                last_whip_at,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-            FROM task_lane_assignments
-            WHERE task_id = ?1 AND status IN ('queued', 'active')
-            ORDER BY updated_at DESC, created_at DESC
+                tla.id,
+                tla.task_id,
+                tla.workflow_id,
+                tla.lane_id,
+                tla.worker_type,
+                tla.worker_id,
+                tla.status,
+                tla.session_id,
+                tla.runtime_cwd,
+                tla.role_queue_entry_id,
+                tla.role_instance_id,
+                tla.prompt,
+                tla.pending_outcome,
+                tla.completion_notes,
+                tla.whip_count,
+                tla.last_whip_at,
+                tla.started_at,
+                tla.completed_at,
+                tla.created_at,
+                tla.updated_at
+            FROM task_lane_assignments tla
+            INNER JOIN tasks t ON t.id = tla.task_id
+            WHERE tla.task_id = ?1
+              AND tla.status IN ('queued', 'active')
+              AND t.status NOT IN ('completed', 'canceled')
+              AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
+            ORDER BY CASE tla.status
+                     WHEN 'active' THEN 0
+                     ELSE 1
+                     END,
+                     tla.created_at ASC,
+                     tla.id ASC
             LIMIT 1
             "#,
             [task_id],
@@ -116,29 +125,39 @@ pub fn get_current_lane_assignment(
         .query_row(
             r#"
             SELECT
-                id,
-                task_id,
-                workflow_id,
-                lane_id,
-                worker_type,
-                worker_id,
-                status,
-                session_id,
-                runtime_cwd,
-                role_queue_entry_id,
-                role_instance_id,
-                prompt,
-                pending_outcome,
-                completion_notes,
-                whip_count,
-                last_whip_at,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-            FROM task_lane_assignments
-            WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')
-            ORDER BY updated_at DESC, created_at DESC
+                tla.id,
+                tla.task_id,
+                tla.workflow_id,
+                tla.lane_id,
+                tla.worker_type,
+                tla.worker_id,
+                tla.status,
+                tla.session_id,
+                tla.runtime_cwd,
+                tla.role_queue_entry_id,
+                tla.role_instance_id,
+                tla.prompt,
+                tla.pending_outcome,
+                tla.completion_notes,
+                tla.whip_count,
+                tla.last_whip_at,
+                tla.started_at,
+                tla.completed_at,
+                tla.created_at,
+                tla.updated_at
+            FROM task_lane_assignments tla
+            INNER JOIN tasks t ON t.id = tla.task_id
+            WHERE tla.task_id = ?1
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval')
+              AND t.status NOT IN ('completed', 'canceled')
+              AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
+            ORDER BY CASE tla.status
+                     WHEN 'active' THEN 0
+                     WHEN 'awaiting_user_approval' THEN 1
+                     ELSE 2
+                     END,
+                     tla.created_at ASC,
+                     tla.id ASC
             LIMIT 1
             "#,
             [task_id],
@@ -448,35 +467,39 @@ pub fn get_active_assignment_for_session(
         .query_row(
             r#"
             SELECT
-                id,
-                task_id,
-                workflow_id,
-                lane_id,
-                worker_type,
-                worker_id,
-                status,
-                session_id,
-                runtime_cwd,
-                role_queue_entry_id,
-                role_instance_id,
-                prompt,
-                pending_outcome,
-                completion_notes,
-                whip_count,
-                last_whip_at,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-            FROM task_lane_assignments
-            WHERE session_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')
-            ORDER BY CASE status
+                tla.id,
+                tla.task_id,
+                tla.workflow_id,
+                tla.lane_id,
+                tla.worker_type,
+                tla.worker_id,
+                tla.status,
+                tla.session_id,
+                tla.runtime_cwd,
+                tla.role_queue_entry_id,
+                tla.role_instance_id,
+                tla.prompt,
+                tla.pending_outcome,
+                tla.completion_notes,
+                tla.whip_count,
+                tla.last_whip_at,
+                tla.started_at,
+                tla.completed_at,
+                tla.created_at,
+                tla.updated_at
+            FROM task_lane_assignments tla
+            INNER JOIN tasks t ON t.id = tla.task_id
+            WHERE tla.session_id = ?1
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval')
+              AND t.status NOT IN ('completed', 'canceled')
+              AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
+            ORDER BY CASE tla.status
                        WHEN 'active' THEN 0
                        WHEN 'awaiting_user_approval' THEN 1
                        ELSE 2
                      END,
-                     updated_at DESC,
-                     created_at DESC
+                     tla.created_at ASC,
+                     tla.id ASC
             LIMIT 1
             "#,
             [session_id],
@@ -6864,5 +6887,244 @@ mod tests {
         )
         .expect("agent lookup should not reuse role session");
         assert!(agent_session.is_none());
+    }
+
+    #[test]
+    fn complete_lane_ignores_newer_open_assignment_on_a_different_lane() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let project_root = init_test_repo("task-runtime-stale-lane-owner");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        std::fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "False lane owner failure".into(),
+                description: Some(
+                    "Current lane assignment should win over stale open rows.".into(),
+                ),
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = now_iso();
+        let later = "2999-01-01T00:00:00Z";
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    pending_outcome, completion_notes, whip_count, last_whip_at,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-stale', ?1, ?2, 'lane-implement', 'role', ?3, 'active',
+                    'session-stale', NULL, NULL, 'instance-stale', 'Stale assignment',
+                    NULL, NULL, 0, NULL,
+                    ?4, NULL, ?4, ?5
+                )
+                "#,
+                params![
+                    task.id.as_str(),
+                    workflow.id.as_str(),
+                    role.id.as_str(),
+                    now.as_str(),
+                    later
+                ],
+            )
+            .expect("stale assignment should insert");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    pending_outcome, completion_notes, whip_count, last_whip_at,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-current', ?1, ?2, 'lane-review', 'agent', ?3, 'active',
+                    'session-current', NULL, NULL, NULL, 'Current assignment',
+                    NULL, NULL, 0, NULL,
+                    ?4, NULL, ?4, ?4
+                )
+                "#,
+                params![
+                    task.id.as_str(),
+                    workflow.id.as_str(),
+                    agent.id.as_str(),
+                    now.as_str()
+                ],
+            )
+            .expect("current assignment should insert");
+
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Finished review".into()),
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+        )
+        .expect("completion should use the current lane assignment");
+        assert_eq!(updated.status, "completed");
+        assert!(updated.active_lane_assignment.is_none());
+    }
+
+    #[test]
+    fn session_assignment_lookup_ignores_open_rows_for_non_current_lanes() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Session auth lookup".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = now_iso();
+        let later = "2999-01-01T00:00:00Z";
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    pending_outcome, completion_notes, whip_count, last_whip_at,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-session-stale', ?1, ?2, 'lane-implement', 'agent', 'agent-old', 'active',
+                    'session-shared', NULL, NULL, NULL, 'Stale',
+                    NULL, NULL, 0, NULL,
+                    ?3, NULL, ?3, ?4
+                )
+                "#,
+                params![task.id.as_str(), workflow.id.as_str(), now.as_str(), later],
+            )
+            .expect("stale session assignment should insert");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    pending_outcome, completion_notes, whip_count, last_whip_at,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-session-current', ?1, ?2, 'lane-review', 'agent', ?3, 'active',
+                    'session-shared', NULL, NULL, NULL, 'Current',
+                    NULL, NULL, 0, NULL,
+                    ?4, NULL, ?4, ?4
+                )
+                "#,
+                params![
+                    task.id.as_str(),
+                    workflow.id.as_str(),
+                    agent.id.as_str(),
+                    now.as_str()
+                ],
+            )
+            .expect("current session assignment should insert");
+
+        let assignment = get_active_assignment_for_session(&connection, "session-shared")
+            .expect("session lookup should succeed")
+            .expect("session should resolve an active assignment");
+        assert_eq!(assignment.id, "assignment-session-current");
+        assert_eq!(assignment.lane_id, "lane-review");
     }
 }
