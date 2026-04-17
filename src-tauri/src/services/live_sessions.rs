@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{
     models::{
         AuthorizationContext, SessionModel, SessionModelState, SessionRuntimeDetails,
-        SessionStreamEnvelope,
+        SessionStats, SessionStreamEnvelope,
     },
     services::{
         app_events, database, harness_settings, pi_sessions::get_session_path, task_runtime,
@@ -684,6 +684,14 @@ impl SessionRuntime {
                 .filter_map(parse_model_summary)
                 .collect(),
         })
+    }
+
+    pub fn get_stats(&self) -> Result<SessionStats, String> {
+        let payload = self.send_command(json!({
+            "id": format!("session-stats-{}", Uuid::new_v4()),
+            "type": "get_session_stats",
+        }))?;
+        crate::services::pi_sessions::parse_session_stats_payload(&payload, &self.session_id)
     }
 
     pub fn set_model(&self, provider: &str, model_id: &str) -> Result<SessionModelState, String> {

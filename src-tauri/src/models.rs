@@ -289,6 +289,39 @@ pub struct SessionRuntimeDetails {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionTokenUsage {
+    pub input: i64,
+    pub output: i64,
+    pub cache_read: i64,
+    pub cache_write: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContextUsage {
+    pub tokens: Option<i64>,
+    pub context_window: i64,
+    pub percent: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStats {
+    pub session_id: String,
+    pub session_file: Option<String>,
+    pub user_messages: i64,
+    pub assistant_messages: i64,
+    pub tool_calls: i64,
+    pub tool_results: i64,
+    pub total_messages: i64,
+    pub tokens: SessionTokenUsage,
+    pub cost: f64,
+    pub context_usage: Option<SessionContextUsage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
     pub id: String,
     pub title: String,

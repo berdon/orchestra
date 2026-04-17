@@ -80,6 +80,8 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await expect(page.getByRole("combobox", { name: "Session model" })).toBeVisible();
   await expect(page.locator('[data-role="session-wrap-toggle"]')).toBeVisible();
   await expect(page.locator('[data-role="session-scroll-lock-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-context-stats"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-context-percent"]')).toContainText("context");
 
   const firstSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
   expect(firstSessionId).toBeTruthy();

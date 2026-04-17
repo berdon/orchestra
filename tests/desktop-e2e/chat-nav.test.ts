@@ -59,11 +59,19 @@ describe("desktop agent chat navigation", () => {
       await waitForSelector(sessionId, '[data-role="session-wrap-toggle"]');
       await waitForSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
       await waitForSelector(sessionId, '[data-role="composer-input"]');
+      await waitForCondition(
+        () => executeScript<boolean>(sessionId, `
+          return Boolean(document.querySelector('[data-role="session-context-stats"]'));
+        `),
+        (value) => value === true,
+      );
 
       const sessionsChrome = await executeScript<{
         hasSessionList: boolean;
         hasFilters: boolean;
         hasModelPicker: boolean;
+        hasContextStats: boolean;
+        contextPercentLabel: string;
         autoScrollMode: string;
         scrollLocked: string;
       }>(sessionId, `
@@ -71,6 +79,8 @@ describe("desktop agent chat navigation", () => {
           hasSessionList: Boolean(document.querySelector('[data-role="session-link"]')),
           hasFilters: Boolean(document.querySelector('[data-role="session-filter-active"]')),
           hasModelPicker: Boolean(document.querySelector('select[aria-label="Session model"]')),
+          hasContextStats: Boolean(document.querySelector('[data-role="session-context-stats"]')),
+          contextPercentLabel: document.querySelector('[data-role="session-context-percent"]')?.textContent || '',
           autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
           scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
         };
@@ -78,6 +88,8 @@ describe("desktop agent chat navigation", () => {
       expect(sessionsChrome.hasSessionList).toBe(false);
       expect(sessionsChrome.hasFilters).toBe(false);
       expect(sessionsChrome.hasModelPicker).toBe(true);
+      expect(sessionsChrome.hasContextStats).toBe(true);
+      expect(sessionsChrome.contextPercentLabel.toLowerCase()).toContain('context');
       expect(sessionsChrome.autoScrollMode).toBe('on');
       expect(sessionsChrome.scrollLocked).toBe('true');
 
