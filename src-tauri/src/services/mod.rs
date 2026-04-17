@@ -26,6 +26,7 @@ pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;
 pub mod startup_resume;
+pub mod system_notifications;
 pub mod task_attachments;
 pub mod task_comment_file_mentions;
 pub mod task_file_references;

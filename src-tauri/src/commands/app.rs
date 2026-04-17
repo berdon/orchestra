@@ -15,11 +15,13 @@ use crate::{
     models::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
         PiRuntimeSettings, ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo,
-        TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput,
+        SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
+        WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
         database, harness_settings,
         orchestra_paths::default_orchestra_root,
+        system_notifications,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
@@ -415,6 +417,80 @@ pub async fn list_pi_models(state: State<'_, AppState>) -> Result<Vec<SessionMod
             "pi.models.load",
             &format!("Unable to load PI models: {error}"),
         );
+    }
+
+    result
+}
+
+#[tauri::command]
+pub async fn get_system_notification_permission_state(
+    state: State<'_, AppState>,
+) -> Result<SystemNotificationPermissionState, String> {
+    let result = tauri::async_runtime::spawn_blocking(system_notifications::get_permission_state)
+        .await
+        .map_err(|error| format!("Unable to join notification permission task: {error}"))?;
+
+    if let Err(error) = &result {
+        state.log(
+            "error",
+            "notifications.permission_state",
+            &format!("Unable to read system notification permission state: {error}"),
+        );
+    }
+
+    result
+}
+
+#[tauri::command]
+pub async fn request_system_notification_permission(
+    state: State<'_, AppState>,
+) -> Result<SystemNotificationPermissionState, String> {
+    let result = tauri::async_runtime::spawn_blocking(system_notifications::request_permission)
+        .await
+        .map_err(|error| format!("Unable to join notification permission request task: {error}"))?;
+
+    match &result {
+        Ok(permission) => state.log(
+            "info",
+            "notifications.permission_request",
+            &format!("System notification permission request resolved to {:?}", permission),
+        ),
+        Err(error) => state.log(
+            "error",
+            "notifications.permission_request",
+            &format!("Unable to request system notification permission: {error}"),
+        ),
+    }
+
+    result
+}
+
+#[tauri::command]
+pub async fn send_system_notification(
+    state: State<'_, AppState>,
+    request: SystemNotificationRequest,
+) -> Result<bool, String> {
+    let request_for_task = request.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || system_notifications::send(&request_for_task))
+        .await
+        .map_err(|error| format!("Unable to join system notification delivery task: {error}"))?;
+
+    match &result {
+        Ok(true) => state.log(
+            "info",
+            "notifications.send",
+            &format!("Delivered system notification {:?}", request.tag),
+        ),
+        Ok(false) => state.log(
+            "info",
+            "notifications.send",
+            &format!("System notification transport unavailable for {:?}", request.tag),
+        ),
+        Err(error) => state.log(
+            "error",
+            "notifications.send",
+            &format!("Unable to deliver system notification {:?}: {error}", request.tag),
+        ),
     }
 
     result

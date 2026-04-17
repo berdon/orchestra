@@ -17,7 +17,9 @@ use commands::{
         cleanup_stale_bridge_instances, clear_logs, debug_seed_idle_task_whip_scenario,
         export_logs_bundle, get_app_info, get_bridge_diagnostics, get_logs,
         get_pi_executable_diagnostic, get_pi_runtime_settings, get_session_storage_info,
-        list_pi_models, open_logs_window, report_client_error, update_pi_runtime_settings,
+        get_system_notification_permission_state, list_pi_models, open_logs_window,
+        report_client_error, request_system_notification_permission, send_system_notification,
+        update_pi_runtime_settings,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -145,6 +147,13 @@ pub fn run() {
                 );
             }
             services::channels::sync_channel_runtimes(app.handle().clone(), &state)?;
+            if let Err(error) = services::system_notifications::initialize() {
+                state.log(
+                    "warn",
+                    "notifications.init",
+                    &format!("Unable to initialize system notifications: {error}"),
+                );
+            }
             services::startup_resume::resume_active_session_work_on_startup(app.handle().clone());
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
             Ok(())
@@ -172,6 +181,9 @@ pub fn run() {
             get_pi_runtime_settings,
             update_pi_runtime_settings,
             get_pi_executable_diagnostic,
+            get_system_notification_permission_state,
+            request_system_notification_permission,
+            send_system_notification,
             list_pi_models,
             list_agents,
             get_agent_operations,

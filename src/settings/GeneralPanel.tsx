@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
-import type { BridgeDiagnostics, LogEntry, PiRuntimeSettings, ProjectSessionPromptSettings } from "../types";
+import type { BridgeDiagnostics, LogEntry, PiRuntimeSettings, ProjectSessionPromptSettings, SystemNotificationPermissionState } from "../types";
 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
@@ -10,6 +10,10 @@ interface GeneralPanelProps {
   bridgeDiagnostics: BridgeDiagnostics | null;
   sessionPromptSettings: ProjectSessionPromptSettings | null;
   piRuntimeSettings: PiRuntimeSettings | null;
+  systemNotificationPermission: SystemNotificationPermissionState;
+  refreshingSystemNotificationPermission: boolean;
+  requestingSystemNotificationPermission: boolean;
+  sendingTestSystemNotification: boolean;
   loadingBridgeDiagnostics: boolean;
   refreshingBridgeDiagnostics: boolean;
   logs: LogEntry[];
@@ -25,6 +29,9 @@ interface GeneralPanelProps {
   onOpenLogsWindow: () => void;
   onSaveSessionPromptTemplate: (template: string | null) => void;
   onSavePiRuntimeSettings: (extraExtensions: string[]) => void;
+  onRefreshSystemNotificationPermission: () => void;
+  onRequestSystemNotificationPermission: () => void;
+  onSendTestSystemNotification: () => void;
   onRefreshLogs: () => void;
   onToggleIncludeRelatedSessionSnapshot: (nextValue: boolean) => void;
   onExportLogs: () => void;
@@ -38,12 +45,33 @@ function formatDateTime(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
+function formatNotificationPermissionLabel(value: SystemNotificationPermissionState) {
+  switch (value) {
+    case "not_determined":
+      return "Not determined";
+    case "denied":
+      return "Denied";
+    case "granted":
+      return "Granted";
+    case "provisional":
+      return "Provisional";
+    case "ephemeral":
+      return "Ephemeral";
+    default:
+      return "Unsupported";
+  }
+}
+
 export function GeneralPanel({
   availableThemes,
   selectedThemeId,
   bridgeDiagnostics,
   sessionPromptSettings,
   piRuntimeSettings,
+  systemNotificationPermission,
+  refreshingSystemNotificationPermission,
+  requestingSystemNotificationPermission,
+  sendingTestSystemNotification,
   loadingBridgeDiagnostics,
   refreshingBridgeDiagnostics,
   logs,
@@ -59,6 +87,9 @@ export function GeneralPanel({
   onOpenLogsWindow,
   onSaveSessionPromptTemplate,
   onSavePiRuntimeSettings,
+  onRefreshSystemNotificationPermission,
+  onRequestSystemNotificationPermission,
+  onSendTestSystemNotification,
   onRefreshLogs,
   onToggleIncludeRelatedSessionSnapshot,
   onExportLogs,
@@ -196,6 +227,53 @@ export function GeneralPanel({
             <p className="muted-copy">Last updated: {formatDateTime(piRuntimeSettings.updatedAt)}</p>
           </section>
         ) : null}
+
+        <section className="task-section task-section--compact" data-role="system-notifications-panel">
+          <div className="task-section__header">
+            <div>
+              <p className="eyebrow">Desktop integration</p>
+              <h4>System notifications</h4>
+              <p className="muted-copy">Orchestra uses a native macOS notification bridge so Notification Center sees the app as Orchestra instead of a browser/webview sender.</p>
+            </div>
+            <div className="action-cluster action-cluster--wrap">
+              <button
+                className="secondary-button"
+                data-role="refresh-system-notification-permission"
+                type="button"
+                disabled={refreshingSystemNotificationPermission}
+                onClick={onRefreshSystemNotificationPermission}
+              >
+                {refreshingSystemNotificationPermission ? "Refreshing…" : "Refresh status"}
+              </button>
+              <button
+                className="secondary-button"
+                data-role="request-system-notification-permission"
+                type="button"
+                disabled={requestingSystemNotificationPermission || systemNotificationPermission === "unsupported"}
+                onClick={onRequestSystemNotificationPermission}
+              >
+                {requestingSystemNotificationPermission ? "Requesting…" : "Request permission"}
+              </button>
+              <button
+                className="secondary-button"
+                data-role="send-test-system-notification"
+                type="button"
+                disabled={sendingTestSystemNotification || !["granted", "provisional", "ephemeral"].includes(systemNotificationPermission)}
+                onClick={onSendTestSystemNotification}
+              >
+                {sendingTestSystemNotification ? "Sending…" : "Send test notification"}
+              </button>
+            </div>
+          </div>
+          <p className="muted-copy" data-role="system-notification-permission-state">
+            Permission status: {formatNotificationPermissionLabel(systemNotificationPermission)}
+          </p>
+          {systemNotificationPermission === "unsupported" ? (
+            <p className="muted-copy">Native Orchestra system notifications are currently only available in macOS desktop builds.</p>
+          ) : (
+            <p className="muted-copy">If Orchestra does not appear in macOS Notification Center yet, request permission here and then send a test notification from this panel.</p>
+          )}
+        </section>
 
         <div className="panel__header panel__header--stacked">
           <div>
