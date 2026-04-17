@@ -1612,12 +1612,15 @@ fn format_task_user_attention_notification(
 ) -> String {
     let headline = match reason {
         "awaiting_user_approval" => "Task awaiting user approval",
-        "needs_user" => "Task requires user intervention",
+        "awaiting_user_intervention" | "needs_user" => "Task requires user intervention",
         _ => "Task requires user attention",
     };
     let action = match reason {
         "awaiting_user_approval" => {
             "Review the task in Orchestra and either approve it or send it back for more work."
+        }
+        "awaiting_user_intervention" => {
+            "Review the task in Orchestra and either resume the paused lane or move the task somewhere else."
         }
         "needs_user" => "Review the task in Orchestra and decide how to unblock or continue it.",
         _ => "Review the task in Orchestra.",

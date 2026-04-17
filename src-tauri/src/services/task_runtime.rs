@@ -20,6 +20,7 @@ use crate::{
 const ASSIGNMENT_STATUS_QUEUED: &str = "queued";
 const ASSIGNMENT_STATUS_ACTIVE: &str = "active";
 const ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL: &str = "awaiting_user_approval";
+const ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION: &str = "awaiting_user_intervention";
 const ASSIGNMENT_STATUS_COMPLETED: &str = "completed";
 const ASSIGNMENT_STATUS_FAILED: &str = "failed";
 const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
@@ -50,21 +51,23 @@ fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionCont
 }
 
 pub fn task_transition_event_reason(outcome: &str, task: &TaskDetail) -> &'static str {
-    if outcome == "success"
-        && task
-            .active_lane_assignment
-            .as_ref()
-            .map(|assignment| assignment.status.as_str())
-            == Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
+    match task
+        .active_lane_assignment
+        .as_ref()
+        .map(|assignment| assignment.status.as_str())
     {
-        "task.transition.awaiting_user_approval"
-    } else {
-        match outcome {
+        Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL) if outcome == "success" => {
+            "task.transition.awaiting_user_approval"
+        }
+        Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION) if outcome == "needs_user" => {
+            "task.transition.awaiting_user_intervention"
+        }
+        _ => match outcome {
             "success" => "task.transition.success",
             "failure" => "task.transition.failure",
             "needs_user" => "task.transition.needs_user",
             _ => "task.transition.updated",
-        }
+        },
     }
 }
 
@@ -148,13 +151,14 @@ pub fn get_current_lane_assignment(
             FROM task_lane_assignments tla
             INNER JOIN tasks t ON t.id = tla.task_id
             WHERE tla.task_id = ?1
-              AND tla.status IN ('queued', 'active', 'awaiting_user_approval')
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
               AND t.status NOT IN ('completed', 'canceled')
               AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
             ORDER BY CASE tla.status
                      WHEN 'active' THEN 0
                      WHEN 'awaiting_user_approval' THEN 1
-                     ELSE 2
+                     WHEN 'awaiting_user_intervention' THEN 2
+                     ELSE 3
                      END,
                      tla.created_at ASC,
                      tla.id ASC
@@ -199,11 +203,12 @@ pub fn find_open_assignment_for_task_lane(
             FROM task_lane_assignments
             WHERE task_id = ?1
               AND lane_id = ?2
-              AND status IN ('queued', 'active', 'awaiting_user_approval')
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
             ORDER BY CASE status
                      WHEN 'active' THEN 0
                      WHEN 'awaiting_user_approval' THEN 1
-                     ELSE 2
+                     WHEN 'awaiting_user_intervention' THEN 2
+                     ELSE 3
                      END,
                      created_at ASC,
                      id ASC
@@ -232,7 +237,7 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
             FROM task_lane_assignments
             WHERE task_id = ?1
               AND lane_id = ?2
-              AND status IN ('queued', 'active', 'awaiting_user_approval')
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
               AND id <> ?3
             ORDER BY created_at ASC, id ASC
             "#,
@@ -277,7 +282,7 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
                     completed_at = ?3,
                     updated_at = ?3
                 WHERE id = ?1
-                  AND status IN ('queued', 'active', 'awaiting_user_approval')
+                  AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
                 "#,
                 params![duplicate_id, reason, now],
             )
@@ -441,7 +446,7 @@ pub fn list_current_role_assignments(
             FROM task_lane_assignments
             WHERE worker_type = 'role'
               AND worker_id = ?1
-              AND status IN ('queued', 'active', 'awaiting_user_approval')
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
             ORDER BY updated_at DESC, created_at DESC
             "#,
         )
@@ -490,13 +495,14 @@ pub fn get_active_assignment_for_session(
             FROM task_lane_assignments tla
             INNER JOIN tasks t ON t.id = tla.task_id
             WHERE tla.session_id = ?1
-              AND tla.status IN ('queued', 'active', 'awaiting_user_approval')
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
               AND t.status NOT IN ('completed', 'canceled')
               AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
             ORDER BY CASE tla.status
                        WHEN 'active' THEN 0
                        WHEN 'awaiting_user_approval' THEN 1
-                       ELSE 2
+                       WHEN 'awaiting_user_intervention' THEN 2
+                       ELSE 3
                      END,
                      tla.created_at ASC,
                      tla.id ASC
@@ -656,7 +662,7 @@ pub fn reset_task_runtime(
         .map_err(|error| format!("Unable to start task reset transaction: {error}"))?;
 
     tx.execute(
-        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = NULL, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')",
+        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = NULL, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')",
         params![task_id, ASSIGNMENT_STATUS_CANCELED, now],
     )
     .map_err(|error| format!("Unable to clear task lane assignments for {task_id}: {error}"))?;
@@ -2557,6 +2563,7 @@ fn complete_lane(
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
     let active_assignment = get_active_lane_assignment(connection, task_id)?;
+    let current_assignment = get_current_lane_assignment(connection, task_id)?;
     let task = tasks::get_task_context(connection, task_id)?;
     let workflow = load_task_workflow(connection, &task)?;
     let lane_id = active_assignment
@@ -2608,8 +2615,21 @@ fn complete_lane(
                 assignment.lane_id,
             ));
         }
-    } else if !(task.assignee_type == "user" && task.status == "in_review") {
-        return Err(format!("Task {task_id} has no active lane assignment"));
+    } else {
+        if current_assignment.as_ref().is_some_and(|assignment| {
+            matches!(
+                assignment.status.as_str(),
+                ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+                    | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
+            )
+        }) {
+            return Err(format!(
+                "Task {task_id} is paused for user review. Use the dedicated review actions to approve, resume, or re-lane it instead of a completion tool."
+            ));
+        }
+        if !(task.assignee_type == "user" && task.status == "in_review") {
+            return Err(format!("Task {task_id} has no active lane assignment"));
+        }
     }
 
     if task.dependency_blocked {
@@ -2632,7 +2652,7 @@ fn complete_lane(
                 normalized_notes.clone(),
                 &now,
             )?;
-            mark_assignment_worker_waiting_for_approval(connection, assignment, &now)?;
+            mark_assignment_worker_waiting_for_user_response(connection, assignment, &now)?;
             move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
             let updated = tasks::get_task_context(connection, task_id)?;
             let _ = channels::notify_task_user_attention_channels(
@@ -2640,6 +2660,26 @@ fn complete_lane(
                 &updated,
                 &lane,
                 "awaiting_user_approval",
+                normalized_notes.as_deref(),
+            );
+            return Ok(updated);
+        }
+
+        if outcome == "needs_user" && matches!(assignment.worker_type.as_str(), "agent" | "role") {
+            mark_assignment_awaiting_user_intervention(
+                connection,
+                &assignment.id,
+                normalized_notes.clone(),
+                &now,
+            )?;
+            mark_assignment_worker_waiting_for_user_response(connection, assignment, &now)?;
+            move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
+            let updated = tasks::get_task_context(connection, task_id)?;
+            let _ = channels::notify_task_user_attention_channels(
+                connection,
+                &updated,
+                &lane,
+                "awaiting_user_intervention",
                 normalized_notes.as_deref(),
             );
             return Ok(updated);
@@ -2763,7 +2803,9 @@ pub fn reassign_task_to_lane(
                 })?;
                 if !matches!(
                     assignment.status.as_str(),
-                    ASSIGNMENT_STATUS_ACTIVE | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+                    ASSIGNMENT_STATUS_ACTIVE
+                        | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+                        | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
                 ) {
                     return Err(format!(
                         "Only the user can re-lane task {task_id} while it has no active worker-owned assignment"
@@ -2784,7 +2826,9 @@ pub fn reassign_task_to_lane(
 
     if let Some(assignment) = current_assignment.as_ref() {
         match assignment.status.as_str() {
-            ASSIGNMENT_STATUS_ACTIVE | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => {
+            ASSIGNMENT_STATUS_ACTIVE
+            | ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+            | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => {
                 update_open_lane_run(
                     connection,
                     task_id,
@@ -2827,9 +2871,12 @@ pub fn send_lane_back_for_work(
     task_id: &str,
 ) -> Result<TaskLaneAssignment, String> {
     let assignment = get_current_lane_assignment(connection, task_id)?
-        .ok_or_else(|| format!("Task {task_id} has no lane assignment awaiting approval"))?;
-    if assignment.status != ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL {
-        return Err(format!("Task {task_id} is not awaiting user approval"));
+        .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
+    if !matches!(
+        assignment.status.as_str(),
+        ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
+    ) {
+        return Err(format!("Task {task_id} is not paused for user review"));
     }
 
     let now = now_iso();
@@ -2928,7 +2975,39 @@ fn mark_assignment_awaiting_user_approval(
     Ok(())
 }
 
-fn mark_assignment_worker_waiting_for_approval(
+fn mark_assignment_awaiting_user_intervention(
+    connection: &Connection,
+    assignment_id: &str,
+    notes: Option<String>,
+    now: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = ?2,
+                pending_outcome = 'needs_user',
+                completion_notes = ?3,
+                updated_at = ?4
+            WHERE id = ?1
+            "#,
+            params![
+                assignment_id,
+                ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION,
+                notes,
+                now
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to mark task lane assignment {} awaiting user intervention: {error}",
+                assignment_id
+            )
+        })?;
+    Ok(())
+}
+
+fn mark_assignment_worker_waiting_for_user_response(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
     now: &str,
@@ -2949,7 +3028,7 @@ fn mark_assignment_worker_waiting_for_approval(
         )
         .map_err(|error| {
             format!(
-                "Unable to mark role instance {} waiting for approval: {error}",
+                "Unable to mark role instance {} waiting for user response: {error}",
                 role_instance_id
             )
         })?;
@@ -5056,6 +5135,152 @@ mod tests {
     }
 
     #[test]
+    fn request_user_intervention_pauses_and_resumes_the_same_lane_session() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Intervention Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-user-intervention-resume");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "User intervention resume".into(),
+                description: Some("Pause the lane for user intervention then resume it.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("role lane should dispatch");
+        let session_id = assignment
+            .session_id
+            .clone()
+            .expect("session id should exist");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance id should exist");
+
+        let awaiting_intervention = request_user_intervention(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Need help from the user".into()),
+            None,
+        )
+        .expect("lane should pause for user intervention");
+        assert_eq!(awaiting_intervention.status, "in_review");
+        assert_eq!(awaiting_intervention.assignee_type, "user");
+        assert_eq!(
+            awaiting_intervention.current_lane_id.as_deref(),
+            Some("lane-implement")
+        );
+        assert_eq!(
+            awaiting_intervention
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION)
+        );
+        assert_eq!(
+            awaiting_intervention
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.session_id.as_deref()),
+            Some(session_id.as_str())
+        );
+        assert_eq!(awaiting_intervention.lane_runs.len(), 1);
+        assert!(awaiting_intervention.lane_runs[0].completed_at.is_none());
+        let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load while awaiting intervention");
+        assert_eq!(waiting_ops.active_instance_count, 0);
+        assert_eq!(waiting_ops.assigned_count, 1);
+        assert_eq!(
+            waiting_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("waiting")
+        );
+
+        let resumed_assignment = send_lane_back_for_work(&connection, &task.id)
+            .expect("lane should resume after user intervention");
+        assert_eq!(resumed_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
+        assert_eq!(
+            resumed_assignment.session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+        let resumed_task =
+            tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(resumed_task.status, "in_progress");
+        assert_eq!(resumed_task.assignee_type, "role");
+        let running_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load after resume");
+        assert_eq!(running_ops.active_instance_count, 1);
+        assert_eq!(
+            running_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("running")
+        );
+    }
+
+    #[test]
     fn reassigns_awaiting_approval_work_to_a_specific_lane_and_auto_dispatches_it() {
         let mut connection = in_memory_connection();
         let role = roles::create_role(
@@ -6234,7 +6459,13 @@ mod tests {
                 .expect("task should escalate to user intervention");
         assert_eq!(updated.status, "in_review");
         assert_eq!(updated.assignee_type, "user");
-        assert!(updated.active_lane_assignment.is_none());
+        assert_eq!(
+            updated
+                .active_lane_assignment
+                .as_ref()
+                .map(|assignment| assignment.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION)
+        );
         assert!(updated.comments.iter().any(|comment| comment
             .message
             .contains("Automatic user intervention requested after 1 whip attempts")));
@@ -6678,9 +6909,15 @@ mod tests {
         .expect("task should move to user review");
         assert_eq!(awaiting_review.status, "in_review");
         assert_eq!(awaiting_review.assignee_type, "user");
-        assert!(awaiting_review.active_lane_assignment.is_none());
+        assert_eq!(
+            awaiting_review
+                .active_lane_assignment
+                .as_ref()
+                .map(|assignment| assignment.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION)
+        );
 
-        let updated = complete_lane_as_failure(
+        let error = complete_lane_as_failure(
             &mut connection,
             &root,
             &session_dir,
@@ -6688,10 +6925,8 @@ mod tests {
             Some("Needs more work".into()),
             None,
         )
-        .expect("user review should be able to send the lane back as failure without an active assignment");
-        assert_eq!(updated.status, "blocked");
-        assert_eq!(updated.assignee_type, "user");
-        assert!(updated.active_lane_assignment.is_none());
+        .expect_err("paused user intervention work should require dedicated review actions");
+        assert!(error.contains("paused for user review"));
     }
 
     #[test]

@@ -2106,7 +2106,7 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => {
     const assignment = entry.activeLaneAssignment;
-    return assignment?.sessionId === sessionId && ["queued", "active", "awaiting_user_approval"].includes(assignment.status);
+    return assignment?.sessionId === sessionId && ["queued", "active", "awaiting_user_approval", "awaiting_user_intervention"].includes(assignment.status);
   }) ?? null;
 
   if (task?.activeLaneAssignment) {
@@ -3283,6 +3283,37 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
     return getTask(taskId);
   }
 
+  if (
+    outcome === "needs_user"
+    && task.activeLaneAssignment
+    && ["agent", "role"].includes(task.activeLaneAssignment.workerType)
+  ) {
+    saveMockTasks(tasks.map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            status: "in_review",
+            assigneeType: "user",
+            assigneeId: null,
+            activeLaneAssignment: entry.activeLaneAssignment
+              ? {
+                  ...entry.activeLaneAssignment,
+                  status: "awaiting_user_intervention",
+                  pendingOutcome: "needs_user",
+                  completionNotes: normalizedNotes,
+                  updatedAt,
+                }
+              : null,
+            updatedAt,
+          }
+        : entry,
+    ));
+
+    appendMockLog("info", "task.transition", `Task ${taskId} is awaiting user intervention on ${lane.name}`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.awaiting_user_intervention" });
+    return getTask(taskId);
+  }
+
   let nextLaneId: string | null = task.currentLaneId;
   let nextStatus: string = task.status;
   let nextAssigneeType: string = task.assigneeType;
@@ -3493,12 +3524,18 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
 async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
-  if (!task || task.activeLaneAssignment?.status !== "awaiting_user_approval" || !task.activeLaneAssignment.sessionId) {
-    throw new Error(`Task ${taskId} is not awaiting lane approval.`);
+  if (
+    !task
+    || !task.activeLaneAssignment?.sessionId
+    || !["awaiting_user_approval", "awaiting_user_intervention"].includes(task.activeLaneAssignment.status)
+  ) {
+    throw new Error(`Task ${taskId} is not paused for user review.`);
   }
 
   const updatedAt = nowIso();
-  const followUpPrompt = "The user has requested more work be done on this lane. Reload the latest task context and comments before continuing.";
+  const followUpPrompt = task.activeLaneAssignment.status === "awaiting_user_intervention"
+    ? "The user has responded to your intervention request and resumed this lane. Reload the latest task context, comments, and mail before continuing."
+    : "The user has requested more work be done on this lane. Reload the latest task context and comments before continuing.";
 
   saveMockTasks(tasks.map((entry) =>
     entry.id === taskId

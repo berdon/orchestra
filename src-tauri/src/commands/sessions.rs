@@ -20,8 +20,8 @@ use crate::{
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
-            list_sessions as list_real_sessions, set_session_model as apply_session_model,
-            session_context_for_project_id,
+            list_sessions as list_real_sessions, session_context_for_project_id,
+            set_session_model as apply_session_model,
         },
         role_dispatch, role_runtime, roles, task_runtime,
     },
@@ -275,8 +275,9 @@ fn load_session_list_metadata(
                 CASE tla.status
                     WHEN 'active' THEN 0
                     WHEN 'awaiting_user_approval' THEN 1
-                    WHEN 'queued' THEN 2
-                    ELSE 3
+                    WHEN 'awaiting_user_intervention' THEN 2
+                    WHEN 'queued' THEN 3
+                    ELSE 4
                 END,
                 COALESCE(tla.completed_at, tla.updated_at, tla.created_at) DESC,
                 tla.id DESC
@@ -419,7 +420,7 @@ fn decorate_session_record_with_connection(
 
         if matches!(
             latest_assignment_status.as_deref(),
-            Some("completed") | Some("failed") | Some("canceled") | Some("awaiting_user_approval")
+            Some("completed") | Some("failed") | Some("canceled")
         ) || matches!(task_status.as_deref(), Some("completed") | Some("canceled"))
         {
             record.status = "closed".into();
@@ -1962,6 +1963,7 @@ mod tests {
                     "role",
                     "role-1",
                     "awaiting_user_approval",
+                    "awaiting_user_intervention",
                     "session-1",
                     "instance-1",
                     "2026-03-21T00:00:00Z",

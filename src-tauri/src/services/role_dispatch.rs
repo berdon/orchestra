@@ -316,7 +316,7 @@ fn deduplicate_open_role_lane_queue_state(
                         completion_notes = ?2,
                         completed_at = ?3,
                         updated_at = ?3
-                    WHERE id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval')
+                    WHERE id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
                     "#,
                     params![assignment.id, reason, now],
                 )

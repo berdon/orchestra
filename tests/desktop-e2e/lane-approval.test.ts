@@ -189,6 +189,107 @@ describe("desktop approval-gated workflow lanes", () => {
     }
   }, 240_000);
 
+  it.skipIf(!isDesktopE2E)("resumes a lane paused for user intervention on the same worker session", async () => {
+    expect(testHome).toBeTruthy();
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const repositoryRoot = join(testHome!, "workspace", "lane-approval-repo", "repository");
+
+      await createProjectViaSettings(sessionId, "Intervention Lane Project", "Desktop end-to-end user intervention resume flow test.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Intervention Lane Repo",
+        path: repositoryRoot,
+        defaultBranch: "main",
+        makeDefault: true,
+      });
+      await switchProject(sessionId, "Intervention Lane Project");
+      await createRoleViaSettings(sessionId, {
+        name: "Intervention Worker",
+        capacity: "1",
+        description: "Implements work that may pause for user intervention.",
+      });
+      const role = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false })
+        .then((roles) => roles.find((entry) => entry.name === 'Intervention Worker'));
+      expect(role).toBeTruthy();
+      await createWorkflowViaSettings(sessionId, {
+        name: "Intervention Flow",
+        description: "Worker can pause for user intervention and resume the same session.",
+        lanes: [
+          {
+            name: "Implement",
+            key: "implement",
+            ownerType: "role",
+            ownerReference: "intervention-worker",
+            entryPromptTemplate: "Implement the task and ask for user intervention if needed.",
+          },
+        ],
+      });
+      await createTaskViaTasks(sessionId, {
+        title: "User intervention desktop task",
+        description: "Verify user intervention resumes the same worker session.",
+        repositoryName: "Intervention Lane Repo",
+        workflowName: "Intervention Flow",
+      });
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Intervention Lane Project'));
+      expect(project).toBeTruthy();
+      const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
+        projectId: project!.id,
+        includeArchived: false,
+      }).then((tasks) => tasks.find((entry) => entry.title === 'User intervention desktop task'));
+      expect(createdTask).toBeTruthy();
+
+      const dispatchedTask = await waitForCondition(
+        async () => {
+          let currentTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask!.id });
+          if (!currentTask.activeLaneAssignment?.sessionId) {
+            await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: createdTask!.id }).catch(() => undefined);
+            await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+            await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: role!.id }).catch(() => undefined);
+            currentTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask!.id });
+          }
+          return currentTask;
+        },
+        (task) => Boolean(task.activeLaneAssignment?.sessionId) && task.activeLaneAssignment?.status === 'active' && Boolean(task.activeLaneAssignment?.roleInstanceId),
+      );
+      const workerSessionId = dispatchedTask.activeLaneAssignment?.sessionId;
+      expect(workerSessionId).toBeTruthy();
+
+      await invokeCommand(sessionId, 'request_user_intervention', {
+        taskId: createdTask!.id,
+        notes: 'Need the user to weigh in before continuing.',
+      });
+
+      await openTaskCard(sessionId, 'User intervention desktop task');
+      await clickByText(sessionId, '[role="tab"]', 'Runtime');
+      await waitForText(sessionId, 'Lane execution');
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask!.id }),
+        (task) => task.status === 'in_review' && task.activeLaneAssignment?.status === 'awaiting_user_intervention',
+      );
+      await waitForText(sessionId, 'paused until you decide how to continue it', 15_000);
+      const waitingRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
+      expect(waitingRoleOps.activeInstanceCount).toBe(0);
+      const waitingSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
+      expect(waitingSessions.find((entry) => entry.id === workerSessionId)?.status).toBe('active');
+
+      await clickSelector(sessionId, '[data-role="resume-task-lane"]');
+
+      const resumedTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask!.id }),
+        (task) => task.status === 'in_progress' && task.activeLaneAssignment?.status === 'active',
+      );
+      expect(resumedTask.activeLaneAssignment?.sessionId).toBe(workerSessionId);
+      const runningRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
+      expect(runningRoleOps.activeInstanceCount).toBe(1);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
+
   it.skipIf(!isDesktopE2E)("re-lanes approval-paused work into a selected worker lane and dispatches it", async () => {
     expect(testHome).toBeTruthy();
 

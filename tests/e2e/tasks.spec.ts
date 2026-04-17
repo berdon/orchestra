@@ -1314,6 +1314,93 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   expect(initialSessionId).toContain("Session:");
 });
 
+test("task detail resumes a lane paused for user intervention", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-agent",
+          slug: "agent-flow",
+          name: "Agent Flow",
+          description: "Single agent-owned lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent",
+              key: "agent",
+              name: "Agent",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("User intervention task");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-agent");
+  await page.locator('[data-role="publish-task"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "User intervention task");
+    if (!target?.activeLaneAssignment) {
+      throw new Error("Expected active lane assignment for user intervention task");
+    }
+    const updatedAt = new Date().toISOString();
+    target.status = "in_review";
+    target.assigneeType = "user";
+    target.assigneeId = null;
+    target.activeLaneAssignment = {
+      ...target.activeLaneAssignment,
+      status: "awaiting_user_intervention",
+      pendingOutcome: "needs_user",
+      completionNotes: "Need an answer from the user before continuing.",
+      updatedAt,
+    };
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: { taskIds: [target.id], reason: "test.seed.awaiting-user-intervention" },
+    }));
+  });
+
+  await expect(page.locator('[data-role="resume-task-lane"]').first()).toBeVisible();
+  await expect(page.locator('[data-role="task-awaiting-user-intervention-note"]').first()).toContainText("paused until you decide how to continue it");
+
+  await page.locator('[data-role="resume-task-lane"]').first().click();
+
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("active");
+  await expect(page.locator('[data-role="resume-task-lane"]')).toHaveCount(0);
+
+  const resumePromptSeen = await page.evaluate(() => {
+    const sessions = JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]");
+    return sessions.some((session: { events?: Array<{ message?: string }> }) =>
+      (session.events ?? []).some((event) => event.message?.includes("responded to your intervention request and resumed this lane")),
+    );
+  });
+  expect(resumePromptSeen).toBe(true);
+});
+
 test("task detail can re-lane an approval-paused task into a specific worker lane and auto-dispatch it", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -1594,6 +1681,7 @@ test("task detail can close a task immediately without deleting it", async ({ pa
   await expect(page.getByRole("heading", { name: "Close me" })).toBeVisible();
   await page.locator('[data-role="close-task"]').click();
   await expect(page.locator('[data-role="task-close-confirm"]')).toBeVisible();
+  await page.locator('[data-role="task-close-reason"]').fill("Work is no longer needed.");
   await page.locator('[data-role="confirm-close-task"]').click();
 
   await expect(page.locator('[data-role="close-task"]')).toHaveCount(0);
@@ -1603,7 +1691,9 @@ test("task detail can close a task immediately without deleting it", async ({ pa
   await expect(page.locator('[data-role="task-table"]')).toContainText("Close me");
 
   const storedTasks = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]"));
-  expect(storedTasks.find((task: { id: string }) => task.id === "task-close-me")?.status).toBe("canceled");
+  const closedTask = storedTasks.find((task: { id: string; status?: string; comments?: Array<{ message?: string }> }) => task.id === "task-close-me");
+  expect(closedTask?.status).toBe("canceled");
+  expect(closedTask?.comments?.some((comment) => comment.message === "Task canceled: Work is no longer needed.")).toBe(true);
 });
 
 test("task detail requires a hold before delete and confirms removal in a modal", async ({ page }) => {
