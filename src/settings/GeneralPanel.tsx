@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
-import type { BridgeDiagnostics, LogEntry, PiRuntimeSettings, ProjectSessionPromptSettings, SystemNotificationPermissionState } from "../types";
+import type { BridgeDiagnostics, LogEntry, PiRuntimeSettings, ProjectSessionPromptSettings, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
@@ -10,6 +10,7 @@ interface GeneralPanelProps {
   bridgeDiagnostics: BridgeDiagnostics | null;
   sessionPromptSettings: ProjectSessionPromptSettings | null;
   piRuntimeSettings: PiRuntimeSettings | null;
+  systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
   systemNotificationPermission: SystemNotificationPermissionState;
   refreshingSystemNotificationPermission: boolean;
   requestingSystemNotificationPermission: boolean;
@@ -68,6 +69,7 @@ export function GeneralPanel({
   bridgeDiagnostics,
   sessionPromptSettings,
   piRuntimeSettings,
+  systemNotificationEnvironment,
   systemNotificationPermission,
   refreshingSystemNotificationPermission,
   requestingSystemNotificationPermission,
@@ -268,7 +270,12 @@ export function GeneralPanel({
           <p className="muted-copy" data-role="system-notification-permission-state">
             Permission status: {formatNotificationPermissionLabel(systemNotificationPermission)}
           </p>
-          {systemNotificationPermission === "unsupported" ? (
+          {systemNotificationEnvironment?.appBundlePath ? (
+            <p className="muted-copy" data-role="system-notification-bundle-path">App bundle: {systemNotificationEnvironment.appBundlePath}</p>
+          ) : null}
+          {systemNotificationEnvironment?.reason ? (
+            <p className="muted-copy" data-role="system-notification-environment-reason">{systemNotificationEnvironment.reason}</p>
+          ) : systemNotificationPermission === "unsupported" ? (
             <p className="muted-copy">Native Orchestra system notifications are currently only available in macOS desktop builds.</p>
           ) : (
             <p className="muted-copy">If Orchestra does not appear in macOS Notification Center yet, request permission here and then send a test notification from this panel.</p>

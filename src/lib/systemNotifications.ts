@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { isTauriAvailable } from "./tauri";
-import type { SystemNotificationPermissionState } from "../types";
+import type {
+  SystemNotificationEnvironmentStatus,
+  SystemNotificationPermissionState,
+} from "../types";
 
 export interface SystemNotificationInput {
   title: string;
@@ -40,6 +43,15 @@ function mapWebPermission(permission: NotificationPermission): SystemNotificatio
     default:
       return "not_determined";
   }
+}
+
+function unsupportedEnvironmentStatus(reason?: string): SystemNotificationEnvironmentStatus {
+  return {
+    platform: typeof navigator !== "undefined" ? navigator.platform : "unknown",
+    nativeSupported: false,
+    reason: reason ?? "Native Orchestra notifications are unavailable in this environment.",
+    appBundlePath: null,
+  };
 }
 
 function recordNotificationForTests(input: SystemNotificationInput) {
@@ -93,6 +105,26 @@ async function ensurePluginNotificationPermission(): Promise<NotificationPermiss
   return await requestPermission();
 }
 
+export async function getSystemNotificationEnvironmentStatus(): Promise<SystemNotificationEnvironmentStatus> {
+  if (!isTauriAvailable()) {
+    if (typeof window === "undefined" || typeof window.Notification === "undefined") {
+      return unsupportedEnvironmentStatus();
+    }
+    return {
+      platform: "browser",
+      nativeSupported: false,
+      reason: "Browser and web test runs use the Web Notification API instead of Orchestra's native macOS notification bridge.",
+      appBundlePath: null,
+    };
+  }
+
+  try {
+    return await invoke<SystemNotificationEnvironmentStatus>("get_system_notification_environment_status");
+  } catch {
+    return unsupportedEnvironmentStatus();
+  }
+}
+
 async function getDesktopPermissionState(): Promise<SystemNotificationPermissionState> {
   if (!isTauriAvailable()) {
     if (typeof window === "undefined" || typeof window.Notification === "undefined") {
@@ -104,11 +136,7 @@ async function getDesktopPermissionState(): Promise<SystemNotificationPermission
   try {
     return await invoke<SystemNotificationPermissionState>("get_system_notification_permission_state");
   } catch {
-    try {
-      return mapWebPermission(await ensurePluginNotificationPermission());
-    } catch {
-      return "unsupported";
-    }
+    return "unsupported";
   }
 }
 
@@ -133,11 +161,7 @@ export async function requestSystemNotificationPermission(): Promise<SystemNotif
     try {
       return await invoke<SystemNotificationPermissionState>("request_system_notification_permission");
     } catch {
-      try {
-        return mapWebPermission(await ensurePluginNotificationPermission());
-      } catch {
-        return "unsupported";
-      }
+      return "unsupported";
     }
   }
 
@@ -161,7 +185,7 @@ export async function sendSystemNotification(input: SystemNotificationInput) {
   if (isTauriAvailable()) {
     try {
       const permission = await requestSystemNotificationPermission();
-      if (!["granted", "provisional", "ephemeral"].includes(permission)) {
+      if (![("granted"), ("provisional"), ("ephemeral")].includes(permission)) {
         return false;
       }
 
@@ -172,23 +196,9 @@ export async function sendSystemNotification(input: SystemNotificationInput) {
           tag: input.tag ?? null,
         },
       });
-      if (delivered) {
-        return true;
-      }
+      return delivered;
     } catch {
-      // Fall through to plugin/web fallback if the native bridge is unavailable.
-    }
-
-    try {
-      const permission = await ensurePluginNotificationPermission();
-      if (permission !== "granted") {
-        return false;
-      }
-      const { sendNotification } = await loadPluginNotificationModule();
-      await sendNotification({ title: input.title, body: input.body });
-      return true;
-    } catch {
-      // Fall through to web Notification below.
+      return false;
     }
   }
 
@@ -218,3 +228,4 @@ export async function sendTestSystemNotification() {
     tag: "system-test",
   });
 }
+

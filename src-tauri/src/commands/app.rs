@@ -15,8 +15,8 @@ use crate::{
     models::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
         PiRuntimeSettings, ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo,
-        SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
-        WorkflowLaneInput, WorkflowUpsertInput,
+        SystemNotificationEnvironmentStatus, SystemNotificationPermissionState,
+        SystemNotificationRequest, TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
         database, harness_settings,
@@ -420,6 +420,11 @@ pub async fn list_pi_models(state: State<'_, AppState>) -> Result<Vec<SessionMod
     }
 
     result
+}
+
+#[tauri::command]
+pub fn get_system_notification_environment_status() -> SystemNotificationEnvironmentStatus {
+    system_notifications::get_environment_status()
 }
 
 #[tauri::command]

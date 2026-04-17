@@ -32,6 +32,13 @@ export type SystemNotificationPermissionState =
   | "provisional"
   | "ephemeral";
 
+export interface SystemNotificationEnvironmentStatus {
+  platform: string;
+  nativeSupported: boolean;
+  reason?: string | null;
+  appBundlePath?: string | null;
+}
+
 export interface PiExecutableDiagnostic {
   resolvedPath?: string | null;
   error?: string | null;

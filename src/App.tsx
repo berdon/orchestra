@@ -46,7 +46,7 @@ import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
 import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSettings";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
-import { getSystemNotificationPermissionState, requestSystemNotificationPermission, sendSystemNotification, sendTestSystemNotification } from "./lib/systemNotifications";
+import { getSystemNotificationEnvironmentStatus, getSystemNotificationPermissionState, requestSystemNotificationPermission, sendSystemNotification, sendTestSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
@@ -76,6 +76,7 @@ import type {
   PiRuntimeSettings,
   ProjectSessionPromptSettings,
   PrimaryPage,
+  SystemNotificationEnvironmentStatus,
   SystemNotificationPermissionState,
   ProjectSummary,
   RoleSummary,
@@ -599,6 +600,7 @@ export function App() {
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
   const [piRuntimeSettings, setPiRuntimeSettings] = useState<PiRuntimeSettings | null>(null);
+  const [systemNotificationEnvironment, setSystemNotificationEnvironment] = useState<SystemNotificationEnvironmentStatus | null>(null);
   const [systemNotificationPermission, setSystemNotificationPermission] = useState<SystemNotificationPermissionState>("unsupported");
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
@@ -1048,9 +1050,14 @@ export function App() {
 
   async function loadSystemNotificationPermission() {
     try {
-      setSystemNotificationPermission(await getSystemNotificationPermissionState());
+      const [environment, permission] = await Promise.all([
+        getSystemNotificationEnvironmentStatus(),
+        getSystemNotificationPermissionState(),
+      ]);
+      setSystemNotificationEnvironment(environment);
+      setSystemNotificationPermission(permission);
     } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load system notification permission state."));
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load system notification status."));
     }
   }
 
@@ -1067,6 +1074,7 @@ export function App() {
     setRequestingSystemNotificationPermission(true);
     try {
       setSystemNotificationPermission(await requestSystemNotificationPermission());
+      await loadSystemNotificationPermission();
     } catch (error) {
       setSessionActionError(await reportClientError("ui.notifications.permission.request", error, "Unable to request system notification permission."));
     } finally {
@@ -2635,6 +2643,7 @@ export function App() {
               bridgeDiagnostics={bridgeDiagnostics}
               sessionPromptSettings={sessionPromptSettings}
               piRuntimeSettings={piRuntimeSettings}
+              systemNotificationEnvironment={systemNotificationEnvironment}
               systemNotificationPermission={systemNotificationPermission}
               refreshingSystemNotificationPermission={refreshingSystemNotificationPermission}
               requestingSystemNotificationPermission={requestingSystemNotificationPermission}

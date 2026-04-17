@@ -33,6 +33,15 @@ pub struct SystemNotificationRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SystemNotificationEnvironmentStatus {
+    pub platform: String,
+    pub native_supported: bool,
+    pub reason: Option<String>,
+    pub app_bundle_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
     pub id: String,
     pub slug: String,
