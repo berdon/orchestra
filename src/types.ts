@@ -24,6 +24,14 @@ export interface AppInfo {
   dispatchBlockedReason?: string | null;
 }
 
+export type SystemNotificationPermissionState =
+  | "unsupported"
+  | "not_determined"
+  | "denied"
+  | "granted"
+  | "provisional"
+  | "ephemeral";
+
 export interface PiExecutableDiagnostic {
   resolvedPath?: string | null;
   error?: string | null;

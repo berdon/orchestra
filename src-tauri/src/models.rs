@@ -12,6 +12,25 @@ pub struct AppInfo {
     pub dispatch_blocked_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemNotificationPermissionState {
+    Unsupported,
+    NotDetermined,
+    Denied,
+    Granted,
+    Provisional,
+    Ephemeral,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemNotificationRequest {
+    pub title: String,
+    pub body: String,
+    pub tag: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {

@@ -46,7 +46,7 @@ import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
 import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSettings";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
-import { sendSystemNotification } from "./lib/systemNotifications";
+import { getSystemNotificationPermissionState, requestSystemNotificationPermission, sendSystemNotification, sendTestSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
@@ -76,6 +76,7 @@ import type {
   PiRuntimeSettings,
   ProjectSessionPromptSettings,
   PrimaryPage,
+  SystemNotificationPermissionState,
   ProjectSummary,
   RoleSummary,
   SessionActivityState,
@@ -598,6 +599,7 @@ export function App() {
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
   const [piRuntimeSettings, setPiRuntimeSettings] = useState<PiRuntimeSettings | null>(null);
+  const [systemNotificationPermission, setSystemNotificationPermission] = useState<SystemNotificationPermissionState>("unsupported");
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
@@ -606,6 +608,9 @@ export function App() {
   const [includeRelatedSessionSnapshot, setIncludeRelatedSessionSnapshot] = useState(false);
   const [loadingBridgeDiagnostics, setLoadingBridgeDiagnostics] = useState(false);
   const [refreshingBridgeDiagnostics, setRefreshingBridgeDiagnostics] = useState(false);
+  const [refreshingSystemNotificationPermission, setRefreshingSystemNotificationPermission] = useState(false);
+  const [requestingSystemNotificationPermission, setRequestingSystemNotificationPermission] = useState(false);
+  const [sendingTestSystemNotification, setSendingTestSystemNotification] = useState(false);
   const [isLogsWindow, setIsLogsWindow] = useState(() => getInitialLogsWindowFlag());
   const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(() => getInitialAgentTerminalWindowFlag());
   const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(() => getInitialAgentTerminalSessionId());
@@ -1041,6 +1046,46 @@ export function App() {
     }
   }
 
+  async function loadSystemNotificationPermission() {
+    try {
+      setSystemNotificationPermission(await getSystemNotificationPermissionState());
+    } catch (error) {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load system notification permission state."));
+    }
+  }
+
+  async function handleRefreshSystemNotificationPermission() {
+    setRefreshingSystemNotificationPermission(true);
+    try {
+      await loadSystemNotificationPermission();
+    } finally {
+      setRefreshingSystemNotificationPermission(false);
+    }
+  }
+
+  async function handleRequestSystemNotificationPermission() {
+    setRequestingSystemNotificationPermission(true);
+    try {
+      setSystemNotificationPermission(await requestSystemNotificationPermission());
+    } catch (error) {
+      setSessionActionError(await reportClientError("ui.notifications.permission.request", error, "Unable to request system notification permission."));
+    } finally {
+      setRequestingSystemNotificationPermission(false);
+    }
+  }
+
+  async function handleSendTestSystemNotification() {
+    setSendingTestSystemNotification(true);
+    try {
+      await sendTestSystemNotification();
+      await loadSystemNotificationPermission();
+    } catch (error) {
+      setSessionActionError(await reportClientError("ui.notifications.test", error, "Unable to send the test system notification."));
+    } finally {
+      setSendingTestSystemNotification(false);
+    }
+  }
+
   async function loadProjectUnreadCounts() {
     if (isLogsWindow || isAgentTerminalWindow || projects.length === 0) {
       setProjectUnreadCounts({});
@@ -1358,6 +1403,7 @@ export function App() {
 
     void loadAppInfo();
     void loadPiRuntimeSettings();
+    void loadSystemNotificationPermission();
     void isCurrentLogsWindow().then(setIsLogsWindow);
     void isCurrentAgentTerminalWindow().then(setIsAgentTerminalWindow);
     void getCurrentAgentTerminalSessionId().then(setAgentTerminalSessionId);
@@ -1774,6 +1820,7 @@ export function App() {
     void loadLogs();
     void loadBridgeDiagnostics();
     void loadSessionPromptSettings();
+    void loadSystemNotificationPermission();
 
     const intervalId = window.setInterval(() => {
       void loadLogs();
@@ -2588,6 +2635,10 @@ export function App() {
               bridgeDiagnostics={bridgeDiagnostics}
               sessionPromptSettings={sessionPromptSettings}
               piRuntimeSettings={piRuntimeSettings}
+              systemNotificationPermission={systemNotificationPermission}
+              refreshingSystemNotificationPermission={refreshingSystemNotificationPermission}
+              requestingSystemNotificationPermission={requestingSystemNotificationPermission}
+              sendingTestSystemNotification={sendingTestSystemNotification}
               loadingBridgeDiagnostics={loadingBridgeDiagnostics}
               refreshingBridgeDiagnostics={refreshingBridgeDiagnostics}
               logs={logs}
@@ -2603,6 +2654,9 @@ export function App() {
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
               onSavePiRuntimeSettings={(extraExtensions) => void handleSavePiRuntimeSettings(extraExtensions)}
+              onRefreshSystemNotificationPermission={() => void handleRefreshSystemNotificationPermission()}
+              onRequestSystemNotificationPermission={() => void handleRequestSystemNotificationPermission()}
+              onSendTestSystemNotification={() => void handleSendTestSystemNotification()}
               onRefreshLogs={() => void loadLogs()}
               onToggleIncludeRelatedSessionSnapshot={setIncludeRelatedSessionSnapshot}
               onExportLogs={() => void handleExportLogsBundle()}
