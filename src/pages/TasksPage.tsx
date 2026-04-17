@@ -845,13 +845,22 @@ export function TasksPage({
     setDeletingTask(false);
   }
 
-  async function handleCloseDetailTask() {
+  async function handleCloseDetailTask(reason?: string) {
     if (route.kind !== "detail") {
       return;
     }
     setClosingTask(true);
     await runDetailAction("close", async () => {
-      const currentTask = taskDetail ?? await getTask(route.taskId);
+      let currentTask = taskDetail ?? await getTask(route.taskId);
+      const trimmedReason = reason?.trim();
+      if (trimmedReason) {
+        await commentOnTask(route.taskId, {
+          author: commentDraft.author || "User",
+          message: `Task canceled: ${trimmedReason}`,
+          interruptAgent: false,
+        });
+        currentTask = await getTask(route.taskId);
+      }
       if (currentTask.activeLaneAssignment) {
         await resetTaskRuntime(route.taskId);
       }
@@ -1191,11 +1200,16 @@ export function TasksPage({
     if (route.kind !== "detail") {
       return;
     }
-    await runDetailAction("needs-work-pending", async () => {
+    const actionId = taskDetail?.activeLaneAssignment?.status === "awaiting_user_intervention"
+      ? "resume-pending"
+      : "needs-work-pending";
+    await runDetailAction(actionId, async () => {
       await sendLaneBackForWork(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    }, "Unable to send task lane back for work.");
+    }, taskDetail?.activeLaneAssignment?.status === "awaiting_user_intervention"
+      ? "Unable to resume task lane."
+      : "Unable to send task lane back for work.");
   }
 
   async function handlePauseTaskRuntime() {
@@ -1369,7 +1383,7 @@ export function TasksPage({
           onCommentDraftChange={setCommentDraft}
           onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
-          onClose={() => void handleCloseDetailTask()}
+          onClose={(reason) => void handleCloseDetailTask(reason)}
           onDelete={() => void handleDeleteDetailTask()}
           onDispatch={() => void handleDispatchTaskLane()}
           onDraftChange={(draft) => {

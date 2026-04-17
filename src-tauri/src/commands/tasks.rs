@@ -1141,21 +1141,13 @@ pub async fn send_lane_back_for_work(
             state.log(
                 "info",
                 "task.transition",
-                &format!(
-                    "Sent task {} back to the current lane session for more work",
-                    task_id
-                ),
+                &format!("Resumed task {} on the current lane session", task_id),
             );
             emit_task_change(&app, "task.transition.needs_work", [task.id.clone()]);
             Ok(task)
         }
         Err(error) => {
-            log_task_command_failure(
-                &state,
-                "task.transition.needs_work.failed",
-                &task_id,
-                &error,
-            );
+            log_task_command_failure(&state, "task.transition.resume.failed", &task_id, &error);
             Err(error)
         }
     }

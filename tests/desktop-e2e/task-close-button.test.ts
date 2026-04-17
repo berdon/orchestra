@@ -69,6 +69,15 @@ describe("desktop task close button", () => {
       await waitForSelector(sessionId, '[data-role="close-task"]');
       await clickSelector(sessionId, '[data-role="close-task"]');
       await waitForSelector(sessionId, '[data-role="task-close-confirm"]');
+      await executeScript(sessionId, `
+        const input = document.querySelector('[data-role="task-close-reason"]');
+        if (!(input instanceof HTMLTextAreaElement)) {
+          throw new Error('Close reason field was not found');
+        }
+        input.value = 'No longer needed';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      `);
       await clickSelector(sessionId, '[data-role="confirm-close-task"]');
 
       const updatedTask = await invokeCommand<any>(sessionId, "get_task", { taskId: task.id });

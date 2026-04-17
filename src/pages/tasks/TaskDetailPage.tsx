@@ -62,7 +62,7 @@ interface TaskDetailPageProps {
   onCommentsTabViewed: () => void;
   onSave: () => void;
   onPublish: () => void;
-  onClose: () => void;
+  onClose: (reason?: string) => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
@@ -341,6 +341,7 @@ export function TaskDetailPage({
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [closeReason, setCloseReason] = useState("");
   const [deleteHolding, setDeleteHolding] = useState(false);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState<TaskCommentInput>(() => createReplyDraft(commentDraft.author));
@@ -399,6 +400,7 @@ export function TaskDetailPage({
   useEffect(() => {
     setShowDeleteConfirm(false);
     setShowCloseConfirm(false);
+    setCloseReason("");
   }, [task.id, task.status]);
 
   useEffect(() => {
@@ -705,6 +707,14 @@ export function TaskDetailPage({
         variant: "secondary",
         dataRole: "send-task-back-for-work",
       });
+    } else if (task.activeLaneAssignment?.status === "awaiting_user_intervention") {
+      actions.push({
+        id: "resume-pending",
+        label: "Resume",
+        onClick: onSendBackForWork,
+        variant: "primary",
+        dataRole: "resume-task-lane",
+      });
     } else if (task.status === "in_review" && !task.activeLaneAssignment && task.assigneeType === "user" && task.currentLaneId) {
       actions.push({
         id: "approve-user",
@@ -872,6 +882,12 @@ export function TaskDetailPage({
                 {task.activeLaneAssignment.status === "awaiting_user_approval" ? (
                   <p className="muted-copy" data-role="task-awaiting-approval-note">
                     This lane reported success and is paused for user approval before the workflow continues.
+                    {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
+                  </p>
+                ) : null}
+                {task.activeLaneAssignment.status === "awaiting_user_intervention" ? (
+                  <p className="muted-copy" data-role="task-awaiting-user-intervention-note">
+                    This lane asked for user intervention and is paused until you decide how to continue it.
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
@@ -1956,7 +1972,9 @@ export function TaskDetailPage({
               {task.activeLaneAssignment ? " and close the current lane assignment" : ""}.
               {task.activeLaneAssignment?.status === "awaiting_user_approval"
                 ? " If you want to keep working in the current lane and reuse the same session, use Needs work instead."
-                : " Worker-owned lanes will auto-dispatch after the move."}
+                : task.activeLaneAssignment?.status === "awaiting_user_intervention"
+                  ? " If you want to keep working in the current lane and reuse the same session, use Resume instead."
+                  : " Worker-owned lanes will auto-dispatch after the move."}
             </p>
             <label className="field-group">
               <span className="field-group__label">Notes</span>
@@ -1991,11 +2009,22 @@ export function TaskDetailPage({
               </div>
             </div>
             <p>This keeps the task and its history, but marks it as canceled so it is closed immediately.</p>
+            <label className="field-group">
+              <span className="field-group__label">Reason (optional)</span>
+              <textarea
+                className="text-area"
+                data-role="task-close-reason"
+                rows={3}
+                value={closeReason}
+                onChange={(event) => setCloseReason(event.target.value)}
+                placeholder="Why are you canceling this task?"
+              />
+            </label>
             <div className="action-cluster action-cluster--wrap">
               <button className="secondary-button" type="button" disabled={closing} onClick={() => setShowCloseConfirm(false)}>
                 Cancel
               </button>
-              <button className="primary-button" data-role="confirm-close-task" type="button" disabled={closing} onClick={onClose}>
+              <button className="primary-button" data-role="confirm-close-task" type="button" disabled={closing} onClick={() => onClose(closeReason.trim() || undefined)}>
                 {closing ? "Closing…" : "Close task"}
               </button>
             </div>
