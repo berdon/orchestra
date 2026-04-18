@@ -1,6 +1,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
+use crate::state::AppState;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskChangeEvent {
@@ -47,14 +49,19 @@ pub fn emit_task_change(
     reason: impl Into<String>,
     task_ids: impl IntoIterator<Item = String>,
 ) -> Result<(), String> {
-    emit_window_event(
-        app,
-        "orchestra:task-change",
-        &TaskChangeEvent {
-            task_ids: task_ids.into_iter().collect(),
-            reason: reason.into(),
-        },
-    )
+    let event = TaskChangeEvent {
+        task_ids: task_ids.into_iter().collect(),
+        reason: reason.into(),
+    };
+    let _ = app.state::<AppState>().publish_remote_event(
+        "task.updated",
+        None,
+        None,
+        event.task_ids.first().cloned(),
+        None,
+        &event,
+    );
+    emit_window_event(app, "orchestra:task-change", &event)
 }
 
 pub fn emit_session_change(
@@ -62,14 +69,19 @@ pub fn emit_session_change(
     reason: impl Into<String>,
     session_ids: impl IntoIterator<Item = String>,
 ) -> Result<(), String> {
-    emit_window_event(
-        app,
-        "orchestra:session-change",
-        &SessionChangeEvent {
-            session_ids: session_ids.into_iter().collect(),
-            reason: reason.into(),
-        },
-    )
+    let event = SessionChangeEvent {
+        session_ids: session_ids.into_iter().collect(),
+        reason: reason.into(),
+    };
+    let _ = app.state::<AppState>().publish_remote_event(
+        "session.updated",
+        None,
+        event.session_ids.first().cloned(),
+        None,
+        None,
+        &event,
+    );
+    emit_window_event(app, "orchestra:session-change", &event)
 }
 
 pub fn emit_inbox_change(
@@ -77,12 +89,17 @@ pub fn emit_inbox_change(
     reason: impl Into<String>,
     delivery_ids: impl IntoIterator<Item = String>,
 ) -> Result<(), String> {
-    emit_window_event(
-        app,
-        "orchestra:inbox-change",
-        &InboxChangeEvent {
-            delivery_ids: delivery_ids.into_iter().collect(),
-            reason: reason.into(),
-        },
-    )
+    let event = InboxChangeEvent {
+        delivery_ids: delivery_ids.into_iter().collect(),
+        reason: reason.into(),
+    };
+    let _ = app.state::<AppState>().publish_remote_event(
+        "inbox.updated",
+        None,
+        None,
+        None,
+        event.delivery_ids.first().cloned(),
+        &event,
+    );
+    emit_window_event(app, "orchestra:inbox-change", &event)
 }

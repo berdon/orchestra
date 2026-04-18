@@ -309,6 +309,58 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_worker_reminders_actor
                 ON worker_reminders(actor_type, actor_id, due_at ASC);
 
+            CREATE TABLE IF NOT EXISTS remote_access_settings (
+                id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                bind_host TEXT NOT NULL DEFAULT '0.0.0.0',
+                port INTEGER NOT NULL DEFAULT 49500,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS remote_pairing_codes (
+                id TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                display_code TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                consumed_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_remote_pairing_codes_expires
+                ON remote_pairing_codes(expires_at ASC, consumed_at ASC);
+
+            CREATE TABLE IF NOT EXISTS remote_devices (
+                id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                push_token TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                revoked_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_remote_devices_revoked
+                ON remote_devices(revoked_at ASC, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS remote_device_tokens (
+                id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_used_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY(device_id) REFERENCES remote_devices(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_remote_device_tokens_hash
+                ON remote_device_tokens(token_hash);
+
+            CREATE INDEX IF NOT EXISTS idx_remote_device_tokens_device
+                ON remote_device_tokens(device_id, revoked_at ASC, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

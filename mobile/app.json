@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Orchestra Mobile",
+    "slug": "orchestra-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.guppy.orchestra.mobile"
+    },
+    "android": {
+      "package": "dev.guppy.orchestra.mobile"
+    }
+  }
+}

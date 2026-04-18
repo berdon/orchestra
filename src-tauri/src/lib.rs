@@ -39,6 +39,10 @@ use commands::{
         get_session_prompt_settings, get_task_automation_settings, get_worker_overlay,
         update_session_prompt_settings, update_task_automation_settings, update_worker_overlay,
     },
+    remote::{
+        create_remote_pairing_code, get_remote_access_status, revoke_remote_device,
+        update_remote_access_settings,
+    },
     projects::{
         attach_repository_remote, create_project, create_repository, delete_project,
         delete_repository, get_project, get_repository, list_projects, list_repositories,
@@ -149,6 +153,7 @@ pub fn run() {
             }
             services::channels::sync_channel_runtimes(app.handle().clone(), &state)?;
             services::startup_resume::resume_active_session_work_on_startup(app.handle().clone());
+            let _ = services::remote_api::ensure_remote_api_server(app.handle().clone(), &state);
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
             Ok(())
         })
@@ -222,6 +227,10 @@ pub fn run() {
             set_project_default_repository,
             get_worker_overlay,
             update_worker_overlay,
+            get_remote_access_status,
+            update_remote_access_settings,
+            create_remote_pairing_code,
+            revoke_remote_device,
             get_session_prompt_settings,
             update_session_prompt_settings,
             get_task_automation_settings,

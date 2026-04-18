@@ -452,10 +452,6 @@ impl SessionRuntime {
     }
 
     fn emit_stream_event(&self, event: Value) {
-        if !self.is_subscribed() {
-            return;
-        }
-
         let payload = SessionStreamEnvelope {
             session_id: self.session_id.clone(),
             run_id: self.current_run_id(),
@@ -476,6 +472,25 @@ impl SessionRuntime {
                 return;
             }
         };
+
+        let _ = self.app.state::<crate::state::AppState>().publish_remote_event(
+            "session.stream",
+            None,
+            Some(self.session_id.clone()),
+            None,
+            None,
+            &payload,
+        );
+
+        let emit_desktop = self
+            .app
+            .state::<crate::state::AppState>()
+            .subscribed_session_ids()
+            .map(|session_ids| session_ids.contains(&self.session_id))
+            .unwrap_or(false);
+        if !emit_desktop {
+            return;
+        }
 
         let script = format!(
             "window.dispatchEvent(new CustomEvent('orchestra:session-stream', {{ detail: {serialized} }}));"

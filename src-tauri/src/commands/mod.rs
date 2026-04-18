@@ -7,6 +7,7 @@ pub mod messages;
 pub mod policies;
 pub mod projects;
 pub mod project_settings;
+pub mod remote;
 pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;

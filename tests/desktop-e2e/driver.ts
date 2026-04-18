@@ -40,10 +40,27 @@ async function webdriverRequest(path: string, init?: RequestInit) {
   throw new Error(lastError || `Unable to reach webdriver at ${webdriverUrl}${path}`);
 }
 
+async function listWebdriverSessions() {
+  const response = await webdriverRequest("/sessions", { method: "GET" }).catch(() => null);
+  const sessions = Array.isArray(response?.value) ? response.value : [];
+  return sessions
+    .map((entry: { id?: string; sessionId?: string }) => entry.id ?? entry.sessionId ?? null)
+    .filter((value: string | null): value is string => Boolean(value));
+}
+
+async function cleanupWebdriverSessions() {
+  const sessions = await listWebdriverSessions();
+  for (const sessionId of sessions) {
+    await deleteWebdriverSession(sessionId).catch(() => undefined);
+  }
+}
+
 export async function createWebdriverSession(timeoutMs = 45_000) {
   if (!tauriBinary) {
     throw new Error("ORCHESTRA_TAURI_BINARY is required for desktop E2E runs.");
   }
+
+  await cleanupWebdriverSessions();
 
   const deadline = Date.now() + timeoutMs;
   let lastError = "Unable to create WebDriver session before timeout.";

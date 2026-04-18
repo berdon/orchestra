@@ -97,3 +97,13 @@ The built app will be at `src-tauri/target/debug/bundle/macos/Orchestra.app`.
 See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adhoc-signing.md](docs/adhoc-signing.md) for complete documentation on adhoc signing.
 
 Until then, the frontend can be exercised in browser mode with the built-in mock session adapter.
+
+### Mobile client
+
+The cross-platform remote mobile client lives under `mobile/`.
+
+```bash
+cd mobile
+npm install
+npm run start
+```
