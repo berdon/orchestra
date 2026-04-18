@@ -67,4 +67,33 @@ For containerized runs, use the Podman wrappers:
 
 The repository includes a `src-tauri/` scaffold and matching session command surface, but building/running the desktop app requires a Rust toolchain and Tauri system prerequisites to be installed locally.
 
+#### Prerequisites
+
+- Rust toolchain (`cargo install tauri-cli`)
+- macOS: Xcode Command Line Tools (`xcode-select --install`)
+
+#### Running the dev app
+
+```bash
+source "$HOME/.cargo/env"
+cargo tauri dev
+```
+
+#### Building with adhoc signing (notifications enabled)
+
+Orchestra is configured to build with adhoc signing, which enables system notifications without requiring a paid Apple Developer account.
+
+```bash
+# Quick build with adhoc signing
+./scripts/build-adhoc.sh
+
+# Or manually
+source "$HOME/.cargo/env"
+cargo tauri build --debug
+```
+
+The built app will be at `src-tauri/target/debug/bundle/macos/Orchestra.app`.
+
+See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adhoc-signing.md](docs/adhoc-signing.md) for complete documentation on adhoc signing.
+
 Until then, the frontend can be exercised in browser mode with the built-in mock session adapter.

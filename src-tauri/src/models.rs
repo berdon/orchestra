@@ -29,6 +29,7 @@ pub struct SystemNotificationRequest {
     pub title: String,
     pub body: String,
     pub tag: Option<String>,
+    pub icon_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
