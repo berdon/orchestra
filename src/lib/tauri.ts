@@ -2461,8 +2461,9 @@ export async function setSessionModel(sessionId: string, provider: string, model
 }
 
 export async function compactSession(sessionId: string, customInstructions?: string | null): Promise<SessionRecord> {
+  const timestamp = nowIso();
+
   if (!isTauriAvailable()) {
-    const timestamp = nowIso();
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
       updatedAt: timestamp,
@@ -2487,7 +2488,21 @@ export async function compactSession(sessionId: string, customInstructions?: str
     return session;
   }
 
-  return invoke<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null });
+  const session = await invoke<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null });
+  return {
+    ...session,
+    updatedAt: timestamp,
+    events: [
+      ...session.events,
+      createEvent(
+        "system",
+        customInstructions?.trim()
+          ? `Session compacted. ${customInstructions.trim()}`
+          : "Session compacted.",
+        { id: `compact-${sessionId}-${timestamp}`, timestamp },
+      ),
+    ],
+  };
 }
 
 export async function sendSessionMessage(sessionId: string, message: string, runId: string): Promise<QueuedSessionMessage> {

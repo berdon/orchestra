@@ -73,7 +73,6 @@ test("settings projects panel deletes a repository and falls back the project de
 test("settings projects panel deletes a non-default project and falls back cleanly", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
-    window.confirm = () => true;
   });
 
   await page.goto("/");
@@ -84,6 +83,8 @@ test("settings projects panel deletes a non-default project and falls back clean
   await page.getByRole("button", { name: /Create project/i }).click();
   await expect(page.getByRole("heading", { name: "Disposable Project" })).toBeVisible();
 
+  await page.locator('[data-role="delete-project"]').click();
+  await expect(page.locator('[data-role="delete-project"]')).toHaveText("Confirm delete");
   await page.locator('[data-role="delete-project"]').click();
   await expect(page.getByRole("heading", { name: "Orchestra" })).toBeVisible();
   await expect(page.locator('nav[aria-label="Projects"]')).not.toContainText("Disposable Project");
