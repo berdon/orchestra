@@ -98,12 +98,13 @@ See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adho
 
 Until then, the frontend can be exercised in browser mode with the built-in mock session adapter.
 
-### Mobile client
+### Mobile and web remote client
 
-The cross-platform remote mobile client lives under `mobile/`.
+The shared cross-platform remote client lives under `mobile/` and can run as Android, iOS, or web.
 
 ```bash
 cd mobile
 npm install
-npm run start
+npm run start   # native Expo dev
+npm run web     # shared web frontend
 ```

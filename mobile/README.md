@@ -1,6 +1,6 @@
 # Orchestra Mobile
 
-Cross-platform Android/iOS client for Orchestra's remote driver API.
+Cross-platform Android/iOS/web client for Orchestra's remote driver API.
 
 ## What it does
 
@@ -14,6 +14,8 @@ Cross-platform Android/iOS client for Orchestra's remote driver API.
 
 ## Run locally
 
+### Native development
+
 ```bash
 cd mobile
 npm install
@@ -21,6 +23,23 @@ npm run start
 ```
 
 Then use Expo to launch on Android or iOS.
+
+### Shared web frontend
+
+```bash
+cd mobile
+npm install
+npm run web
+```
+
+To produce a static web build from the shared codebase:
+
+```bash
+cd mobile
+npm run web:build
+```
+
+That writes the exported web app to `mobile/dist-web/`.
 
 ## Pairing flow
 
