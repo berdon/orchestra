@@ -687,3 +687,80 @@ impl AppState {
         Ok(count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::tool_bridge::ToolBridgeConfig;
+
+    fn test_state() -> AppState {
+        AppState::new(Arc::new(ToolBridgeConfig::test_config()))
+    }
+
+    #[test]
+    fn remote_event_bus_publishes_sequence_numbers() {
+        let state = test_state();
+        let mut receiver = state.subscribe_remote_events();
+        let first = state
+            .publish_remote_event_value(
+                "session.updated",
+                None,
+                Some("session-1".into()),
+                None,
+                None,
+                serde_json::json!({ "reason": "test" }),
+            )
+            .expect("first event should publish");
+        let second = state
+            .publish_remote_event_value(
+                "task.updated",
+                Some("project-1".into()),
+                None,
+                Some("task-1".into()),
+                None,
+                serde_json::json!({ "reason": "test-2" }),
+            )
+            .expect("second event should publish");
+
+        assert_eq!(first.sequence + 1, second.sequence);
+        let received = receiver.try_recv().expect("event should be delivered");
+        assert_eq!(received.topic, "session.updated");
+        assert_eq!(received.session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn remote_client_session_subscriptions_are_tracked() {
+        let state = test_state();
+        state
+            .register_remote_client(
+                "client-1",
+                "remote_driver",
+                Some("device-1".into()),
+                Some("Phone".into()),
+                Some("project-1".into()),
+            )
+            .expect("client should register");
+        state
+            .set_remote_session_subscription("client-1", "session-1", true)
+            .expect("subscription should succeed");
+
+        assert!(state
+            .remote_client_is_subscribed_to_session("client-1", "session-1")
+            .expect("subscription lookup should succeed"));
+        assert!(state
+            .has_session_subscribers("session-1")
+            .expect("subscriber count should include remote client"));
+
+        let clients = state.list_remote_clients().expect("clients should list");
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].subscribed_session_count, 1);
+
+        let removed = state
+            .unregister_remote_client("client-1")
+            .expect("client should unregister");
+        assert_eq!(removed, vec!["session-1".to_string()]);
+        assert!(!state
+            .has_session_subscribers("session-1")
+            .expect("no subscribers should remain"));
+    }
+}
