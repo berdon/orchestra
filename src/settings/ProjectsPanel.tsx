@@ -49,6 +49,7 @@ export function ProjectsPanel() {
   const [taskAutomationSettings, setTaskAutomationSettings] = useState<ProjectTaskAutomationSettings | null>(null);
   const [autoDispatchOnBlockerCompletion, setAutoDispatchOnBlockerCompletion] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [deleteProjectConfirmationArmed, setDeleteProjectConfirmationArmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +96,7 @@ export function ProjectsPanel() {
   }, []);
 
   useEffect(() => {
+    setDeleteProjectConfirmationArmed(false);
     if (selectedProject?.id) {
       void loadProjectDetail(selectedProject.id);
     }
@@ -222,8 +224,8 @@ export function ProjectsPanel() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete project "${selectedProject.name}"? This removes its Orchestra-managed project data.`);
-    if (!confirmed) {
+    if (!deleteProjectConfirmationArmed) {
+      setDeleteProjectConfirmationArmed(true);
       return;
     }
 
@@ -236,6 +238,7 @@ export function ProjectsPanel() {
       setRepositoryDraft(createBlankRepositoryDraft());
       setSelectedProjectId(null);
       setIsCreatingProject(false);
+      setDeleteProjectConfirmationArmed(false);
       await loadProjects();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to delete project.");
@@ -303,9 +306,29 @@ export function ProjectsPanel() {
             </div>
             <div className="row-actions">
               {selectedProject && selectedProject.id !== "orchestra" ? (
-                <button className="secondary-button" data-role="delete-project" type="button" disabled={saving} onClick={() => void handleDeleteProject()}>
-                  Delete project
-                </button>
+                <>
+                  <button
+                    className={deleteProjectConfirmationArmed ? "secondary-button secondary-button--danger" : "secondary-button"}
+                    data-role="delete-project"
+                    data-confirmation-armed={deleteProjectConfirmationArmed ? "true" : "false"}
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleDeleteProject()}
+                  >
+                    {deleteProjectConfirmationArmed ? "Confirm delete" : "Delete project"}
+                  </button>
+                  {deleteProjectConfirmationArmed ? (
+                    <button
+                      className="secondary-button"
+                      data-role="cancel-delete-project"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => setDeleteProjectConfirmationArmed(false)}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+                </>
               ) : null}
               <button className="primary-button" type="button" disabled={saving} onClick={() => void handleSaveProject()}>
                 {saving ? "Saving…" : selectedProject ? "Save project" : "Create project"}

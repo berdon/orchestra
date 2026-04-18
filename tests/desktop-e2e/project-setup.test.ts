@@ -143,7 +143,6 @@ describe("desktop project and workflow setup", () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
-      await executeScript(sessionId, "window.confirm = () => true;");
 
       await clickByText(sessionId, "button", "Settings");
       await waitForText(sessionId, "Project catalog");
@@ -159,6 +158,8 @@ describe("desktop project and workflow setup", () => {
       expect(createdProjects.some((project) => project.name === 'Delete Me Project')).toBe(true);
       expect(existsSync(projectRoot)).toBe(true);
 
+      await clickSelector(sessionId, '[data-role="delete-project"]');
+      await waitForText(sessionId, 'Confirm delete');
       await clickSelector(sessionId, '[data-role="delete-project"]');
       await waitForText(sessionId, 'Orchestra');
 
