@@ -33,7 +33,13 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../extensions/orchestra-tools.ts": "extensions/orchestra-tools.ts"
+      "../extensions/orchestra-tools.ts": "extensions/orchestra-tools.ts",
+      "icons/icon.png": "icon.png"
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": false
     }
   }
 }

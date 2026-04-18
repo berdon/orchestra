@@ -154,6 +154,7 @@ bool orchestra_macos_notifications_send(
     const char *title,
     const char *body,
     const char *thread_identifier,
+    const char *icon_path,
     char **error_out
 ) {
   @autoreleasepool {
@@ -161,6 +162,7 @@ bool orchestra_macos_notifications_send(
     NSString *titleString = orchestra_string_from_c_string(title) ?: @"";
     NSString *bodyString = orchestra_string_from_c_string(body) ?: @"";
     NSString *threadIdentifierString = orchestra_string_from_c_string(thread_identifier);
+    NSString *iconPathString = orchestra_string_from_c_string(icon_path);
 
     if (identifierString == nil || identifierString.length == 0) {
       identifierString = [[NSUUID UUID] UUIDString];
@@ -172,6 +174,16 @@ bool orchestra_macos_notifications_send(
     content.sound = [UNNotificationSound defaultSound];
     if (threadIdentifierString != nil && threadIdentifierString.length > 0) {
       content.threadIdentifier = threadIdentifierString;
+    }
+    
+    // Add icon if path is provided
+    if (iconPathString != nil && iconPathString.length > 0) {
+      NSURL *iconURL = [NSURL fileURLWithPath:iconPathString];
+      NSError *attachmentError = nil;
+      UNNotificationAttachment *attachment = [UNNotificationAttachment attachmentWithIdentifier:@"icon" URL:iconURL options:nil error:&attachmentError];
+      if (attachment != nil && attachmentError == nil) {
+        content.attachments = @[attachment];
+      }
     }
 
     UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifierString content:content trigger:nil];

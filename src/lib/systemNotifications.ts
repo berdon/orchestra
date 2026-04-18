@@ -10,6 +10,7 @@ export interface SystemNotificationInput {
   title: string;
   body: string;
   tag?: string;
+  iconPath?: string;
 }
 
 interface SystemNotificationTestDriver {
@@ -194,6 +195,7 @@ export async function sendSystemNotification(input: SystemNotificationInput) {
           title: input.title,
           body: input.body,
           tag: input.tag ?? null,
+          iconPath: input.iconPath ?? "icon.png",
         },
       });
       return delivered;

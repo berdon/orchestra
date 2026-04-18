@@ -26,6 +26,7 @@ mod macos {
             title: *const c_char,
             body: *const c_char,
             thread_identifier: *const c_char,
+            icon_path: *const c_char,
             error_out: *mut *mut c_char,
         ) -> bool;
         fn orchestra_macos_notifications_free_string(value: *mut c_char);
@@ -172,6 +173,22 @@ mod macos {
         let title = into_c_string(&request.title, "title")?;
         let body = into_c_string(&request.body, "body")?;
         let thread_identifier = optional_c_string(request.tag.as_deref(), "tag")?;
+        
+        // Resolve icon path relative to app bundle resources
+        let resolved_icon_path = request.icon_path.as_ref().and_then(|path| {
+            if let Some(bundle_path) = detect_app_bundle_path() {
+                let resource_path = bundle_path.join("Contents").join("Resources").join(path);
+                if resource_path.exists() {
+                    Some(resource_path.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        let icon_path = optional_c_string(resolved_icon_path.as_deref(), "icon_path")?;
+        
         let mut error_ptr: *mut c_char = std::ptr::null_mut();
         let ok = unsafe {
             orchestra_macos_notifications_send(
@@ -179,6 +196,10 @@ mod macos {
                 title.as_ptr(),
                 body.as_ptr(),
                 thread_identifier
+                    .as_ref()
+                    .map(|value| value.as_ptr())
+                    .unwrap_or(std::ptr::null()),
+                icon_path
                     .as_ref()
                     .map(|value| value.as_ptr())
                     .unwrap_or(std::ptr::null()),
