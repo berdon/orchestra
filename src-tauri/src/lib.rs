@@ -54,8 +54,8 @@ use commands::{
     sessions::{
         compact_session, create_contextual_session, create_session, delete_session,
         get_session_model_state, get_session_record, get_session_runtime_details,
-        list_sessions, resume_session, send_session_message, set_session_model,
-        stop_session_runtime, subscribe_session, unsubscribe_session,
+        get_session_stats, list_sessions, resume_session, send_session_message,
+        set_session_model, stop_session_runtime, subscribe_session, unsubscribe_session,
     },
     task_schedules::{
         create_task_schedule, delete_task_schedule, get_task_schedule, list_task_schedules,
@@ -237,6 +237,7 @@ pub fn run() {
             unsubscribe_session,
             stop_session_runtime,
             get_session_model_state,
+            get_session_stats,
             set_session_model,
             compact_session,
             send_session_message,

@@ -105,6 +105,21 @@ test("sessions secondary nav width is resizable and persists", async ({ page }) 
   expect(Number(storedWidth)).toBeGreaterThan(initialWidth + 40);
 });
 
+test("sessions chat shows compact context usage stats for the selected session", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  await expect(page.locator('[data-role="session-context-stats"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-context-percent"]')).toContainText("context");
+  await expect(page.locator('[data-role="session-context-window"]')).toContainText("Window");
+  await expect(page.locator('[data-role="session-total-token-usage"]')).toContainText("Used");
+  await expect(page.locator('[data-role="session-message-count"]')).toContainText("messages");
+});
+
 test("sessions composer model selector is compact, fixed-width, and unlabeled", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

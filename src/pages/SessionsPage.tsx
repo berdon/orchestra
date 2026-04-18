@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
-import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
@@ -46,8 +46,10 @@ interface SessionsPageProps {
   selectedSessionPending: boolean;
   selectedSessionDisplayStatus: SessionStatus;
   selectedModelState?: SessionModelState;
+  selectedSessionStats?: SessionStats;
   selectedSessionReadOnly?: boolean;
   loadingSessions: boolean;
+  loadingStatsSessionId: string | null;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   loadingRuntimeDetailsSessionId: string | null;
@@ -89,8 +91,10 @@ export function SessionsPage({
   selectedSessionPending,
   selectedSessionDisplayStatus,
   selectedModelState,
+  selectedSessionStats,
   selectedSessionReadOnly = false,
   loadingSessions,
+  loadingStatsSessionId,
   loadingModelSessionId,
   changingModelSessionId,
   loadingRuntimeDetailsSessionId,
@@ -287,7 +291,9 @@ export function SessionsPage({
             sessionPending={selectedSessionPending}
             sessionDisplayStatus={selectedSessionDisplayStatus}
             selectedModelState={selectedModelState}
+            selectedSessionStats={selectedSessionStats}
             sessionReadOnly={selectedSessionReadOnly}
+            loadingStatsSessionId={loadingStatsSessionId}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             draftMessage={draftMessage}

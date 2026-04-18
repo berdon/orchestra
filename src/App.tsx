@@ -16,6 +16,7 @@ import {
   getSessionModelState,
   getSessionRecord,
   getSessionRuntimeDetails,
+  getSessionStats,
   getCurrentAgentTerminalSessionId,
   getTask,
   isCurrentAgentTerminalWindow,
@@ -85,6 +86,7 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
+  SessionStats,
   SessionScrollState,
   SessionStatus,
   SessionStreamEnvelope,
@@ -634,7 +636,9 @@ export function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingSessionRun>>({});
   const [modelStates, setModelStates] = useState<Record<string, SessionModelState>>({});
+  const [sessionStats, setSessionStats] = useState<Record<string, SessionStats>>({});
   const [loadingModelSessionId, setLoadingModelSessionId] = useState<string | null>(null);
+  const [loadingStatsSessionId, setLoadingStatsSessionId] = useState<string | null>(null);
   const [changingModelSessionId, setChangingModelSessionId] = useState<string | null>(null);
   const [loadingRuntimeDetailsSessionId, setLoadingRuntimeDetailsSessionId] = useState<string | null>(null);
   const [sessionScrollState, setSessionScrollState] = useState<SessionScrollState>({ lockedToBottom: true });
@@ -740,6 +744,7 @@ export function App() {
   const viewedSession = activePage === "chat" ? chatSession : selectedSession;
   const viewedSessionPendingRun = viewedSession ? pendingRuns[viewedSession.id] : undefined;
   const viewedModelState = viewedSession ? modelStates[viewedSession.id] : undefined;
+  const viewedSessionStats = viewedSession ? sessionStats[viewedSession.id] : undefined;
   const displayedEvents = viewedSession?.events ?? [];
   const viewedSessionDraftMessage = viewedSession ? draftMessages[viewedSession.id] ?? "" : "";
   const supervisorSession = useMemo(
@@ -759,6 +764,42 @@ export function App() {
       lastKnownChatSessionRef.current = liveChatSession;
     }
   }, [liveChatSession, selectedChatAgentId]);
+
+  useEffect(() => {
+    if (isDetachedWindow || !viewedSession?.id || viewedSessionPendingRun) {
+      return;
+    }
+
+    let cancelled = false;
+    const sessionId = viewedSession.id;
+    const timeoutId = window.setTimeout(() => {
+      setLoadingStatsSessionId(sessionId);
+      void getSessionStats(sessionId)
+        .then((stats) => {
+          if (!cancelled) {
+            setSessionStats((current) => ({
+              ...current,
+              [sessionId]: stats,
+            }));
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load session stats."));
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoadingStatsSessionId((current) => (current === sessionId ? null : current));
+          }
+        });
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [isDetachedWindow, viewedSession?.id, viewedSession?.updatedAt, Boolean(viewedSessionPendingRun)]);
 
   useEffect(() => {
     const rememberedSessionId = chatSessionId ?? lastKnownChatSessionIdRef.current;
@@ -1281,6 +1322,11 @@ export function App() {
         delete next[sessionId];
         return next;
       });
+      setSessionStats((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
       await loadSessions({ background: true });
     } catch (error) {
       setSessionActionError(await reportClientError("ui.sessions.dismiss", error, "Unable to dismiss session."));
@@ -1312,6 +1358,13 @@ export function App() {
         return next;
       });
       setModelStates((current) => {
+        const next = { ...current };
+        for (const session of closedSessions) {
+          delete next[session.id];
+        }
+        return next;
+      });
+      setSessionStats((current) => {
         const next = { ...current };
         for (const session of closedSessions) {
           delete next[session.id];
@@ -2697,7 +2750,9 @@ export function App() {
             sessionPending={Boolean(chatSessionPendingRun)}
             sessionDisplayStatus={chatSessionDisplayStatus}
             selectedModelState={chatModelState}
+            selectedSessionStats={viewedSession?.id === chatSession?.id ? viewedSessionStats : undefined}
             sessionReadOnly={Boolean(chatSession?.terminalAttached)}
+            loadingStatsSessionId={loadingStatsSessionId}
             loadingAgents={loadingChatAgents}
             loadingSession={Boolean(selectedChatAgent && loadingChatSessionAgentId === selectedChatAgent.id && !chatSession)}
             loadingModelSessionId={loadingModelSessionId}
@@ -2755,8 +2810,10 @@ export function App() {
             selectedSessionPending={Boolean(selectedSessionPendingRun)}
             selectedSessionDisplayStatus={selectedSessionDisplayStatus}
             selectedModelState={selectedModelState}
+            selectedSessionStats={viewedSession?.id === selectedSession?.id ? viewedSessionStats : undefined}
             selectedSessionReadOnly={Boolean(selectedSession?.terminalAttached)}
             loadingSessions={loadingSessions}
+            loadingStatsSessionId={loadingStatsSessionId}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             loadingRuntimeDetailsSessionId={loadingRuntimeDetailsSessionId}

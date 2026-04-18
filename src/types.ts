@@ -198,6 +198,33 @@ export interface SessionRuntimeDetails {
   notes: string[];
 }
 
+export interface SessionTokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+export interface SessionContextUsage {
+  tokens?: number | null;
+  contextWindow: number;
+  percent?: number | null;
+}
+
+export interface SessionStats {
+  sessionId: string;
+  sessionFile?: string | null;
+  userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
+  totalMessages: number;
+  tokens: SessionTokenUsage;
+  cost: number;
+  contextUsage?: SessionContextUsage | null;
+}
+
 export interface SessionRecord {
   id: string;
   title: string;

@@ -8,6 +8,7 @@ import type {
   SessionEvent,
   SessionModelState,
   SessionRecord,
+  SessionStats,
   SessionScrollState,
   SessionStatus,
   TaskSummary,
@@ -23,7 +24,9 @@ interface AgentChatPageProps {
   sessionPending: boolean;
   sessionDisplayStatus: SessionStatus;
   selectedModelState?: SessionModelState;
+  selectedSessionStats?: SessionStats;
   sessionReadOnly?: boolean;
+  loadingStatsSessionId: string | null;
   loadingAgents: boolean;
   loadingSession: boolean;
   loadingModelSessionId: string | null;
@@ -60,7 +63,9 @@ export function AgentChatPage({
   sessionPending,
   sessionDisplayStatus,
   selectedModelState,
+  selectedSessionStats,
   sessionReadOnly = false,
+  loadingStatsSessionId,
   loadingAgents,
   loadingSession,
   loadingModelSessionId,
@@ -114,7 +119,9 @@ export function AgentChatPage({
           sessionPending={sessionPending}
           sessionDisplayStatus={sessionDisplayStatus}
           selectedModelState={selectedModelState}
+          selectedSessionStats={selectedSessionStats}
           sessionReadOnly={sessionReadOnly}
+          loadingStatsSessionId={loadingStatsSessionId}
           loadingModelSessionId={loadingModelSessionId}
           changingModelSessionId={changingModelSessionId}
           draftMessage={draftMessage}

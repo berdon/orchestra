@@ -11,8 +11,8 @@ use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{
-        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord,
-        SessionRuntimeDetails,
+        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord, SessionRuntimeDetails,
+        SessionStats,
     },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
@@ -20,6 +20,7 @@ use crate::{
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
+            get_session_stats as load_session_stats_from_file,
             list_sessions as list_real_sessions, session_context_for_project_id,
             set_session_model as apply_session_model,
         },
@@ -1428,6 +1429,57 @@ pub async fn get_session_model_state(
             "sessions.model_state.failed",
             &session_id,
             "load model state",
+            error,
+        );
+    }
+
+    result
+}
+
+#[tauri::command]
+pub async fn get_session_stats(
+    _app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionStats, String> {
+    let result: Result<SessionStats, String> = async {
+        let session_id_for_task = session_id.clone();
+        let (project_root, session_dir) =
+            spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+                .await
+                .map_err(|error| {
+                    format!("Unable to join get_session_stats context task: {error}")
+                })??;
+
+        if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+            spawn_blocking(move || runtime.get_stats())
+                .await
+                .map_err(|error| {
+                    format!("Unable to join get_session_stats runtime task: {error}")
+                })?
+        } else {
+            let project_root_for_task = project_root.clone();
+            let session_dir_for_task = session_dir.clone();
+            let session_id_for_task = session_id.clone();
+            spawn_blocking(move || {
+                load_session_stats_from_file(
+                    &project_root_for_task,
+                    &session_dir_for_task,
+                    &session_id_for_task,
+                )
+            })
+            .await
+            .map_err(|error| format!("Unable to join get_session_stats file task: {error}"))?
+        }
+    }
+    .await;
+
+    if let Err(error) = &result {
+        log_session_command_failure(
+            &state,
+            "sessions.stats.failed",
+            &session_id,
+            "load session stats",
             error,
         );
     }

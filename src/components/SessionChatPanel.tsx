@@ -3,7 +3,7 @@ import { memo, useEffect, useMemo, useState, type FormEvent, type RefObject, typ
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
-import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
@@ -37,6 +37,33 @@ function getActivityTone(activityState?: SessionActivityState) {
 function formatSessionStatusLabel(status: SessionStatus) {
   const label = status.replace(/_/g, " ");
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function formatCompactNumber(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return "—";
+  }
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`;
+  }
+  return value.toLocaleString();
+}
+
+function formatContextPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return "Context unknown";
+  }
+  return `${Math.max(0, Math.round(value))}% context`;
+}
+
+function formatCost(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value) || value <= 0) {
+    return "$0.00";
+  }
+  return value < 0.01 ? `<$${value.toFixed(2)}` : `$${value.toFixed(2)}`;
 }
 
 function resolveMentionAction(
@@ -88,7 +115,9 @@ interface SessionChatPanelProps {
   sessionPending: boolean;
   sessionDisplayStatus: SessionStatus;
   selectedModelState?: SessionModelState;
+  selectedSessionStats?: SessionStats;
   sessionReadOnly?: boolean;
+  loadingStatsSessionId?: string | null;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   draftMessage: string;
@@ -146,6 +175,47 @@ interface SessionTranscriptProps {
   onScrollLockChange: (lockedToBottom: boolean) => void;
   formatTimestamp: (timestamp: string) => string;
   getEventTone: (kind: SessionEvent["kind"]) => string;
+}
+
+function SessionStatsStrip({
+  stats,
+  loading,
+}: {
+  stats?: SessionStats;
+  loading: boolean;
+}) {
+  if (!stats && !loading) {
+    return null;
+  }
+
+  const contextPercent = stats?.contextUsage?.percent ?? null;
+  const progressWidth = contextPercent == null ? 0 : Math.min(100, Math.max(0, contextPercent));
+  const contextTone = contextPercent != null && contextPercent >= 85
+    ? "warning"
+    : contextPercent != null && contextPercent >= 60
+      ? "accent"
+      : "neutral";
+
+  return (
+    <section className="session-stats-strip" data-role="session-context-stats">
+      <div className="session-stats-strip__header">
+        <span className={`status-badge status-badge--${contextTone}`} data-role="session-context-percent">
+          {loading && !stats ? "Loading context…" : formatContextPercent(contextPercent)}
+        </span>
+        <div className="session-stats-strip__progress" aria-hidden="true">
+          <div className="session-stats-strip__progress-fill" style={{ width: `${progressWidth}%` }} />
+        </div>
+      </div>
+      <div className="session-stats-strip__metrics muted-copy">
+        <span data-role="session-context-window">
+          Window {formatCompactNumber(stats?.contextUsage?.tokens)} / {formatCompactNumber(stats?.contextUsage?.contextWindow)} tokens
+        </span>
+        <span data-role="session-total-token-usage">Used {formatCompactNumber(stats?.tokens.total)} tokens total</span>
+        <span data-role="session-message-count">{formatCompactNumber(stats?.totalMessages)} messages</span>
+        <span data-role="session-cost">Cost {formatCost(stats?.cost)}</span>
+      </div>
+    </section>
+  );
 }
 
 const SessionComposer = memo(function SessionComposer({
@@ -494,7 +564,9 @@ export function SessionChatPanel({
   sessionPending,
   sessionDisplayStatus,
   selectedModelState,
+  selectedSessionStats,
   sessionReadOnly = false,
+  loadingStatsSessionId,
   loadingModelSessionId,
   changingModelSessionId,
   draftMessage,
@@ -556,6 +628,11 @@ export function SessionChatPanel({
               {sessionReadOnly ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
             </div>
           </div>
+
+          <SessionStatsStrip
+            stats={selectedSessionStats}
+            loading={loadingStatsSessionId === session.id || !selectedSessionStats}
+          />
 
           <SessionTranscript
             sessionId={session.id}

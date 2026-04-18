@@ -24,6 +24,7 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
+  SessionStats,
   SessionStreamEnvelope,
   TaskAttachment,
   TaskAttachmentInput,
@@ -2075,6 +2076,48 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
   }
 
   return invoke<SessionRuntimeDetails>("get_session_runtime_details", { sessionId });
+}
+
+export async function getSessionStats(sessionId: string): Promise<SessionStats> {
+  if (!isTauriAvailable()) {
+    const session = ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
+    if (!session) {
+      throw new Error(`Unable to find session ${sessionId}`);
+    }
+
+    const allText = session.events.map((event) => event.message).join("\n");
+    const approxTokens = Math.max(0, Math.round(allText.length / 4));
+    const userMessages = session.events.filter((event) => event.kind === "user").length;
+    const assistantMessages = session.events.filter((event) => event.kind === "assistant").length;
+    const totalMessages = userMessages + assistantMessages;
+    const contextWindow = 200000;
+    const contextTokens = totalMessages === 0 ? null : Math.max(approxTokens, 1200);
+
+    return {
+      sessionId,
+      sessionFile: `/mock/orchestra/sessions/${sessionId}.jsonl`,
+      userMessages,
+      assistantMessages,
+      toolCalls: session.events.filter((event) => event.presentation === "tool_call").length,
+      toolResults: 0,
+      totalMessages,
+      tokens: {
+        input: Math.round(approxTokens * 0.6),
+        output: Math.round(approxTokens * 0.25),
+        cacheRead: Math.round(approxTokens * 0.1),
+        cacheWrite: Math.round(approxTokens * 0.05),
+        total: approxTokens,
+      },
+      cost: 0,
+      contextUsage: {
+        tokens: contextTokens,
+        contextWindow,
+        percent: contextTokens == null ? null : (contextTokens / contextWindow) * 100,
+      },
+    };
+  }
+
+  return invoke<SessionStats>("get_session_stats", { sessionId });
 }
 
 function cloneMockSessionModel(sourceSessionId: string, targetSessionId: string) {

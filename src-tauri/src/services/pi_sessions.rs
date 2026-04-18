@@ -13,7 +13,10 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    models::{SessionEvent, SessionModel, SessionModelState, SessionRecord, SessionStreamEvent},
+    models::{
+        SessionContextUsage, SessionEvent, SessionModel, SessionModelState, SessionRecord,
+        SessionStats, SessionStreamEvent, SessionTokenUsage,
+    },
     services::{
         database,
         orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
@@ -25,6 +28,7 @@ const DEFAULT_EMPTY_SESSION_MESSAGE: &str = "Real pi session ready. Send a messa
 const PROMPT_REQUEST_ID: &str = "prompt-1";
 const GET_STATE_REQUEST_ID: &str = "get-state-1";
 const GET_MODELS_REQUEST_ID: &str = "get-models-1";
+const GET_SESSION_STATS_REQUEST_ID: &str = "get-session-stats-1";
 const SET_MODEL_REQUEST_ID: &str = "set-model-1";
 
 #[derive(Debug, Clone)]
@@ -278,6 +282,14 @@ pub fn get_session_model_state(
     session_id: &str,
 ) -> Result<SessionModelState, String> {
     get_session_model_state_with_executable(project_root, session_dir, session_id, Path::new("pi"))
+}
+
+pub fn get_session_stats(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+) -> Result<SessionStats, String> {
+    get_session_stats_with_executable(project_root, session_dir, session_id, Path::new("pi"))
 }
 
 pub fn set_session_model(
@@ -1258,6 +1270,107 @@ fn get_session_model_state_with_executable(
     })
 }
 
+pub(crate) fn parse_session_stats_payload(payload: &Value, session_id: &str) -> Result<SessionStats, String> {
+    let data = payload
+        .get("data")
+        .ok_or_else(|| format!("Session stats response for {session_id} is missing data"))?;
+
+    let session_file = data
+        .get("sessionFile")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+
+    let tokens_payload = data
+        .get("tokens")
+        .ok_or_else(|| format!("Session stats response for {session_id} is missing token totals"))?;
+
+    let token_total = tokens_payload
+        .get("total")
+        .or_else(|| tokens_payload.get("totalTokens"));
+
+    let tokens = SessionTokenUsage {
+        input: tokens_payload.get("input").and_then(Value::as_i64).unwrap_or_default(),
+        output: tokens_payload.get("output").and_then(Value::as_i64).unwrap_or_default(),
+        cache_read: tokens_payload
+            .get("cacheRead")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        cache_write: tokens_payload
+            .get("cacheWrite")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        total: token_total.and_then(Value::as_i64).unwrap_or_default(),
+    };
+
+    let context_usage = data.get("contextUsage").and_then(|usage| {
+        let context_window = usage.get("contextWindow").and_then(Value::as_i64)?;
+        Some(SessionContextUsage {
+            tokens: usage.get("tokens").and_then(Value::as_i64),
+            context_window,
+            percent: usage.get("percent").and_then(Value::as_f64).or_else(|| {
+                usage.get("percent").and_then(Value::as_i64).map(|value| value as f64)
+            }),
+        })
+    });
+
+    Ok(SessionStats {
+        session_id: data
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or(session_id)
+            .to_string(),
+        session_file,
+        user_messages: data
+            .get("userMessages")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        assistant_messages: data
+            .get("assistantMessages")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        tool_calls: data
+            .get("toolCalls")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        tool_results: data
+            .get("toolResults")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        total_messages: data
+            .get("totalMessages")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        tokens,
+        cost: data.get("cost").and_then(Value::as_f64).unwrap_or_default(),
+        context_usage,
+    })
+}
+
+fn get_session_stats_with_executable(
+    project_root: &Path,
+    session_dir: &Path,
+    session_id: &str,
+    executable: &Path,
+) -> Result<SessionStats, String> {
+    let stored = resolve_session(session_dir, session_id, true)?;
+    let payloads = run_rpc_query_process(
+        executable,
+        project_root,
+        session_dir,
+        &stored.path,
+        &[json!({ "id": GET_SESSION_STATS_REQUEST_ID, "type": "get_session_stats" })],
+        |_| {},
+    )?;
+
+    let stats_payload = require_successful_response(
+        &payloads,
+        GET_SESSION_STATS_REQUEST_ID,
+        "get_session_stats",
+    )?;
+
+    parse_session_stats_payload(stats_payload, session_id)
+}
+
 fn set_session_model_with_executable(
     project_root: &Path,
     session_dir: &Path,
@@ -1972,6 +2085,46 @@ function handleCommand(command) {
         command: 'get_available_models',
         success: true,
         data: { models: MODELS },
+      }) + '\n'
+    );
+    return;
+  }
+
+  if (command.type === 'get_session_stats') {
+    const entries = readSessionEntries();
+    const userMessages = entries.filter((entry) => entry.type === 'message' && entry.message?.role === 'user').length;
+    const assistantMessages = entries.filter((entry) => entry.type === 'message' && entry.message?.role === 'assistant').length;
+    const totalMessages = userMessages + assistantMessages;
+    const contextWindow = 200000;
+    const contextTokens = totalMessages === 0 ? null : 60000;
+    process.stdout.write(
+      JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'get_session_stats',
+        success: true,
+        data: {
+          sessionFile: sessionFile,
+          sessionId: 'session-test',
+          userMessages,
+          assistantMessages,
+          toolCalls: 0,
+          toolResults: 0,
+          totalMessages,
+          tokens: {
+            input: usage.input,
+            output: usage.output,
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            total: usage.totalTokens,
+          },
+          cost: usage.cost.total,
+          contextUsage: {
+            tokens: contextTokens,
+            contextWindow,
+            percent: contextTokens == null ? null : (contextTokens / contextWindow) * 100,
+          },
+        },
       }) + '\n'
     );
     return;
