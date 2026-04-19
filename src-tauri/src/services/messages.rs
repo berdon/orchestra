@@ -1341,8 +1341,8 @@ mod tests {
             &now,
         );
 
-        let inbox =
-            list_user_messages(&connection, Some("orchestra"), false).expect("user inbox should load");
+        let inbox = list_user_messages(&connection, Some("orchestra"), false)
+            .expect("user inbox should load");
         assert_eq!(inbox.len(), 1);
         assert!(inbox[0].read_at.is_none());
 
@@ -1351,8 +1351,8 @@ mod tests {
         assert_eq!(read.len(), 1);
         assert_eq!(read[0].read_session_id.as_deref(), Some("desktop-user"));
 
-        let inbox_after =
-            list_user_messages(&connection, Some("orchestra"), false).expect("user inbox should reload");
+        let inbox_after = list_user_messages(&connection, Some("orchestra"), false)
+            .expect("user inbox should reload");
         assert!(inbox_after[0].read_at.is_some());
     }
 

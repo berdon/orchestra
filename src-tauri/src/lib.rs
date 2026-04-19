@@ -39,14 +39,14 @@ use commands::{
         get_session_prompt_settings, get_task_automation_settings, get_worker_overlay,
         update_session_prompt_settings, update_task_automation_settings, update_worker_overlay,
     },
-    remote::{
-        create_remote_pairing_code, get_remote_access_status, revoke_remote_device,
-        update_remote_access_settings,
-    },
     projects::{
         attach_repository_remote, create_project, create_repository, delete_project,
         delete_repository, get_project, get_repository, list_projects, list_repositories,
         set_project_default_repository, update_project, update_repository,
+    },
+    remote::{
+        create_remote_pairing_code, get_remote_access_status, revoke_remote_device,
+        update_remote_access_settings,
     },
     role_dispatch::{
         dispatch_role_queue, dispose_role_instance, release_role_instance, reset_role_assignments,
@@ -58,8 +58,8 @@ use commands::{
     sessions::{
         compact_session, create_contextual_session, create_session, delete_session,
         get_session_model_state, get_session_record, get_session_runtime_details,
-        get_session_stats, list_sessions, resume_session, send_session_message,
-        set_session_model, stop_session_runtime, subscribe_session, unsubscribe_session,
+        get_session_stats, list_sessions, resume_session, send_session_message, set_session_model,
+        stop_session_runtime, subscribe_session, unsubscribe_session,
     },
     task_schedules::{
         create_task_schedule, delete_task_schedule, get_task_schedule, list_task_schedules,
@@ -127,8 +127,13 @@ pub fn run() {
         &format!("Started Orchestra tool bridge at {}", tool_bridge.url),
     );
 
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
+    #[cfg(all(debug_assertions, target_os = "macos"))]
+    {
+        builder = builder.plugin(tauri_plugin_webdriver_automation::init());
+    }
+
+    let app = builder
         .manage(app_state)
         .setup(|app| {
             let state = app.state::<AppState>();

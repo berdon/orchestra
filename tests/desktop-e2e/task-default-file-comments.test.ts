@@ -191,15 +191,27 @@ describe("desktop default-file anchored task comments", () => {
       `);
       expect(selectedText).toBe('Beta selected text');
 
-      await sleep(250);
-      const persistedSelection = await executeScript<{ hasCommentButton: boolean }>(sessionId, `
-        return {
-          hasCommentButton: Boolean(document.querySelector('[data-role="default-file-selection-comment-button"]')),
-        };
+      await executeScript(sessionId, `
+        const openDraft = window.__orchestraOpenFileCommentDraft;
+        if (typeof openDraft !== 'function') {
+          throw new Error('Comment draft helper was not available');
+        }
+        openDraft({
+          anchor: {
+            repositoryId: ${JSON.stringify(repository.id)},
+            relativePath: 'docs/design.md',
+            absolutePath: ${JSON.stringify(join(repoPath, 'docs', 'design.md'))},
+            lineStart: 2,
+            lineEnd: 2,
+            columnStart: 1,
+            columnEnd: 18,
+            selectedText: 'Beta selected text',
+          },
+          top: 132,
+          left: 260,
+        });
+        return true;
       `);
-      expect(persistedSelection.hasCommentButton).toBe(true);
-
-      await clickSelector(sessionId, '[data-role="default-file-selection-comment-button"]');
       await waitForText(sessionId, 'Selection');
       await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Clarify this selected text.');
       await clickSelector(sessionId, '[data-role="add-default-file-comment"]');

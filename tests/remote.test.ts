@@ -49,12 +49,15 @@ describe("remote access helpers", () => {
 
     const updated = await updateRemoteAccessSettings({
       enabled: true,
+      useTailscale: true,
       bindHost: "0.0.0.0",
       port: 49500,
     });
 
     expect(updated.settings.enabled).toBe(true);
+    expect(updated.settings.useTailscale).toBe(true);
     expect(updated.settings.baseUrl).toContain("127.0.0.1:49500");
+    expect(updated.settings.tailscaleWebUrl).toContain(":9443");
 
     const pairingCode = await createRemotePairingCode();
     expect(pairingCode.displayCode).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
@@ -71,9 +74,9 @@ describe("remote access helpers", () => {
     await getRemoteAccessStatus();
     expect(invokeMock).toHaveBeenCalledWith("get_remote_access_status");
 
-    await updateRemoteAccessSettings({ enabled: true, bindHost: "0.0.0.0", port: 49500 });
+    await updateRemoteAccessSettings({ enabled: true, useTailscale: true, bindHost: "0.0.0.0", port: 49500 });
     expect(invokeMock).toHaveBeenCalledWith("update_remote_access_settings", {
-      input: { enabled: true, bindHost: "0.0.0.0", port: 49500 },
+      input: { enabled: true, useTailscale: true, bindHost: "0.0.0.0", port: 49500 },
     });
   });
 });

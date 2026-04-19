@@ -3,9 +3,8 @@ use tauri::State;
 
 use crate::{
     models::{
-        WorkflowDefinition, WorkflowLaneInput, WorkflowLanePatchInput,
-        WorkflowLaneReorderInput, WorkflowSummary, WorkflowUpsertInput,
-        WorkflowValidationResult,
+        WorkflowDefinition, WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
+        WorkflowSummary, WorkflowUpsertInput, WorkflowValidationResult,
     },
     services::{database, domain_events, workflows},
     state::AppState,

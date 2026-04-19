@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::AppState;
 
+const TERMINAL_BOOTSTRAP_TEXT: &str = "[Orchestra embedded terminal attached]\r\n";
+
 pub struct AgentTerminalSession {
     session_id: String,
     window_label: Mutex<String>,
@@ -85,7 +87,7 @@ impl AgentTerminalSession {
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
             child: Mutex::new(child),
-            buffer: Mutex::new(String::new()),
+            buffer: Mutex::new(TERMINAL_BOOTSTRAP_TEXT.to_string()),
             temp_home_dir,
             app: app.clone(),
         });
@@ -120,7 +122,20 @@ impl AgentTerminalSession {
             .map_err(|error| format!("Unable to write to terminal PTY: {error}"))?;
         writer
             .flush()
-            .map_err(|error| format!("Unable to flush terminal PTY input: {error}"))
+            .map_err(|error| format!("Unable to flush terminal PTY input: {error}"))?;
+
+        if let Ok(mut buffer) = self.buffer.lock() {
+            buffer.push_str(data);
+        }
+        if let Ok(window_label) = self.window_label.lock() {
+            if let Some(window) = self.app.get_webview_window(window_label.as_str()) {
+                let _ = window.emit(
+                    "agent-terminal-output",
+                    serde_json::json!({ "sessionId": self.session_id, "data": data }),
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {

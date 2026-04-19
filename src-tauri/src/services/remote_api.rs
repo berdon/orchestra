@@ -1,4 +1,10 @@
-use std::net::TcpListener;
+use std::{
+    env,
+    ffi::OsStr,
+    net::TcpListener,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use axum::{
     extract::{
@@ -7,14 +13,18 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, get_service, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tauri::{AppHandle, Manager};
+use serde_json::{json, Value};
+use tauri::{path::BaseDirectory, AppHandle, Manager};
 use tokio::sync::oneshot;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    services::{ServeDir, ServeFile},
+};
 
 use crate::{
     commands::app::get_app_info,
@@ -24,11 +34,10 @@ use crate::{
         RemotePushTokenInput, SendMailboxMessageInput, SessionRecord, TaskDetail, TaskSummary,
     },
     services::{
-        agent_dispatch, app_events, database,
-        live_sessions::ensure_runtime,
-        messages, pi_sessions, projects, remote_access, task_runtime, tasks,
+        agent_dispatch, app_events, database, live_sessions::ensure_runtime, messages, pi_sessions,
+        projects, remote_access, task_runtime, tasks,
     },
-    state::{generate_id, now_iso, AppState, RemoteApiServerHandle},
+    state::{generate_id, now_iso, AppState, RemoteApiServerHandle, RemoteWebServerHandle},
 };
 
 #[derive(Clone)]
@@ -82,6 +91,17 @@ struct WsAuthQuery {
     token: Option<String>,
 }
 
+const REMOTE_WEB_BIND_HOST: &str = "127.0.0.1";
+const REMOTE_WEB_PORT: u16 = 8788;
+const REMOTE_WEB_TAILSCALE_PORT: u16 = 9443;
+
+#[derive(Debug)]
+struct TailscaleServeInfo {
+    active: bool,
+    url: Option<String>,
+    had_any_web_config_on_port: bool,
+}
+
 fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<ApiError>) {
     (
         status,
@@ -89,6 +109,378 @@ fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Jso
             error: message.into(),
         }),
     )
+}
+
+fn remote_api_target_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+fn remote_web_target_url(port: u16) -> String {
+    format!("http://{REMOTE_WEB_BIND_HOST}:{port}")
+}
+
+fn command_output_message(stderr: &[u8], stdout: &[u8], fallback: impl Into<String>) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    fallback.into()
+}
+
+fn is_matching_serve_port(host_port: &str, serve_port: u16) -> bool {
+    host_port
+        .rsplit(':')
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        == Some(serve_port)
+}
+
+fn get_serve_web_configs(payload: &Value) -> Vec<(String, Value)> {
+    let mut configs = Vec::new();
+
+    if let Some(web) = payload.get("Web").and_then(Value::as_object) {
+        for (host_port, config) in web {
+            configs.push((host_port.clone(), config.clone()));
+        }
+    }
+
+    if let Some(services) = payload.get("Services").and_then(Value::as_object) {
+        for service in services.values() {
+            if let Some(web) = service.get("Web").and_then(Value::as_object) {
+                for (host_port, config) in web {
+                    configs.push((host_port.clone(), config.clone()));
+                }
+            }
+        }
+    }
+
+    configs
+}
+
+fn tailscale_fallback_paths() -> Vec<PathBuf> {
+    let executable = format!("tailscale{}", env::consts::EXE_SUFFIX);
+    vec![
+        PathBuf::from("/opt/homebrew/bin").join(&executable),
+        PathBuf::from("/opt/homebrew/sbin").join(&executable),
+        PathBuf::from("/usr/local/bin").join(&executable),
+        PathBuf::from("/usr/local/sbin").join(&executable),
+        PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+    ]
+}
+
+fn tailscale_search_paths(path_var: Option<&OsStr>) -> Vec<PathBuf> {
+    let executable = format!("tailscale{}", env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+
+    if let Some(path_var) = path_var {
+        for directory in env::split_paths(path_var) {
+            let candidate = directory.join(&executable);
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    for candidate in tailscale_fallback_paths() {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
+}
+
+fn resolve_tailscale_executable() -> Option<PathBuf> {
+    let path_var = env::var_os("PATH");
+    tailscale_search_paths(path_var.as_deref())
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+fn tailscale_missing_message() -> String {
+    let checked_locations = tailscale_fallback_paths()
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Tailscale CLI is not installed or not available on PATH. Also checked common install locations: {checked_locations}. Install Tailscale or disable `Use Tailscale Serve`."
+    )
+}
+
+fn tailscale_command() -> Result<Command, String> {
+    let executable = resolve_tailscale_executable().ok_or_else(tailscale_missing_message)?;
+    Ok(Command::new(executable))
+}
+
+fn tailscale_dns_name() -> Result<Option<String>, String> {
+    let mut command = tailscale_command()?;
+    let output = command
+        .args(["status", "--json"])
+        .output()
+        .map_err(|error| format!("Unable to run `tailscale status --json`: {error}"))?;
+    if !output.status.success() {
+        return Err(command_output_message(
+            &output.stderr,
+            &output.stdout,
+            "`tailscale status --json` failed",
+        ));
+    }
+    let payload: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Unable to parse `tailscale status --json`: {error}"))?;
+    Ok(payload
+        .get("Self")
+        .and_then(|value| value.get("DNSName"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim_end_matches('.').to_string())
+        .filter(|value| !value.is_empty()))
+}
+
+fn tailscale_url_for_port(port: u16) -> Result<Option<String>, String> {
+    Ok(tailscale_dns_name()?.map(|dns_name| {
+        if port == 443 {
+            format!("https://{dns_name}/")
+        } else {
+            format!("https://{dns_name}:{port}")
+        }
+    }))
+}
+
+fn tailscale_cli_available() -> bool {
+    let Ok(mut command) = tailscale_command() else {
+        return false;
+    };
+
+    command
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
+fn ensure_tailscale_cli_available() -> Result<(), String> {
+    if tailscale_cli_available() {
+        Ok(())
+    } else {
+        Err(tailscale_missing_message())
+    }
+}
+
+fn get_tailscale_serve_info(target: &str, serve_port: u16) -> Result<TailscaleServeInfo, String> {
+    let url = tailscale_url_for_port(serve_port)?;
+    let mut command = tailscale_command()?;
+    let output = command
+        .args(["serve", "status", "--json"])
+        .output()
+        .map_err(|error| format!("Unable to run `tailscale serve status --json`: {error}"))?;
+    if !output.status.success() {
+        return Err(command_output_message(
+            &output.stderr,
+            &output.stdout,
+            "`tailscale serve status --json` failed",
+        ));
+    }
+
+    let payload: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Unable to parse `tailscale serve status --json`: {error}"))?;
+    let matching_configs = get_serve_web_configs(&payload)
+        .into_iter()
+        .filter(|(host_port, _)| is_matching_serve_port(host_port, serve_port))
+        .collect::<Vec<_>>();
+
+    let active = matching_configs.iter().any(|(_, config)| {
+        config
+            .get("Handlers")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|handlers| handlers.values())
+            .any(|handler| handler.get("Proxy").and_then(Value::as_str) == Some(target))
+    });
+
+    Ok(TailscaleServeInfo {
+        active,
+        url,
+        had_any_web_config_on_port: !matching_configs.is_empty(),
+    })
+}
+
+fn ensure_tailscale_serve(target: &str, serve_port: u16) -> Result<Option<String>, String> {
+    let info = get_tailscale_serve_info(target, serve_port)?;
+    if info.active {
+        return Ok(info.url);
+    }
+
+    let mut command = tailscale_command()?;
+    let output = command
+        .args([
+            "serve",
+            "--bg",
+            "--yes",
+            &format!("--https={serve_port}"),
+            target,
+        ])
+        .output()
+        .map_err(|error| format!("Unable to run `tailscale serve` for {target}: {error}"))?;
+    if !output.status.success() {
+        let prefix = if info.had_any_web_config_on_port {
+            format!("Unable to replace existing Tailscale Serve route on HTTPS port {serve_port}")
+        } else {
+            format!("Unable to enable Tailscale Serve on HTTPS port {serve_port}")
+        };
+        return Err(format!(
+            "{prefix}: {}",
+            command_output_message(
+                &output.stderr,
+                &output.stdout,
+                format!("`tailscale serve` exited with {}", output.status),
+            )
+        ));
+    }
+
+    Ok(tailscale_url_for_port(serve_port)?)
+}
+
+fn disable_matching_tailscale_serve(target: &str, serve_port: u16) -> Result<(), String> {
+    let info = get_tailscale_serve_info(target, serve_port)?;
+    if !info.active {
+        return Ok(());
+    }
+
+    let mut command = tailscale_command()?;
+    let output = command
+        .args(["serve", "--yes", &format!("--https={serve_port}"), "off"])
+        .output()
+        .map_err(|error| {
+            format!("Unable to disable Tailscale Serve on HTTPS port {serve_port}: {error}")
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(command_output_message(
+        &output.stderr,
+        &output.stdout,
+        format!("`tailscale serve off` exited with {}", output.status),
+    ))
+}
+
+fn disable_any_tailscale_serve_on_port(serve_port: u16) -> Result<(), String> {
+    let info = get_tailscale_serve_info("", serve_port)?;
+    if !info.had_any_web_config_on_port {
+        return Ok(());
+    }
+
+    let mut command = tailscale_command()?;
+    let output = command
+        .args(["serve", "--yes", &format!("--https={serve_port}"), "off"])
+        .output()
+        .map_err(|error| {
+            format!("Unable to disable Tailscale Serve on HTTPS port {serve_port}: {error}")
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(command_output_message(
+        &output.stderr,
+        &output.stdout,
+        format!("`tailscale serve off` exited with {}", output.status),
+    ))
+}
+
+fn forwarded_request_base_url(headers: &HeaderMap) -> Option<String> {
+    let forwarded = headers.get("forwarded")?.to_str().ok()?;
+    let mut proto = None;
+    let mut host = None;
+    for segment in forwarded.split(';') {
+        let (key, value) = segment.trim().split_once('=')?;
+        let normalized = value.trim().trim_matches('"');
+        if key.eq_ignore_ascii_case("proto") {
+            proto = Some(normalized);
+        } else if key.eq_ignore_ascii_case("host") {
+            host = Some(normalized);
+        }
+    }
+    Some(format!("{}://{}", proto?, host?))
+}
+
+fn request_base_url_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(base_url) = forwarded_request_base_url(headers) {
+        return Some(base_url);
+    }
+
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get("origin")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    value
+                        .split_once("://")
+                        .map(|(scheme, _)| scheme.to_string())
+                })
+        })
+        .unwrap_or_else(|| "http".to_string());
+
+    Some(format!("{}://{}", scheme, host))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tailscale_search_paths_include_path_and_common_fallback_locations() {
+        let paths = tailscale_search_paths(Some(OsStr::new("/tmp/custom/bin:/usr/local/bin")));
+        let executable = format!("tailscale{}", env::consts::EXE_SUFFIX);
+
+        assert_eq!(
+            paths.first(),
+            Some(&PathBuf::from("/tmp/custom/bin").join(&executable))
+        );
+        assert!(paths.contains(&PathBuf::from("/opt/homebrew/bin").join(&executable)));
+        assert!(paths.contains(&PathBuf::from("/usr/local/bin").join(&executable)));
+    }
+
+    #[test]
+    fn tailscale_search_paths_do_not_duplicate_common_locations() {
+        let paths = tailscale_search_paths(Some(OsStr::new("/opt/homebrew/bin:/usr/local/bin")));
+        let executable = format!("tailscale{}", env::consts::EXE_SUFFIX);
+
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|path| **path == PathBuf::from("/opt/homebrew/bin").join(&executable))
+                .count(),
+            1
+        );
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|path| **path == PathBuf::from("/usr/local/bin").join(&executable))
+                .count(),
+            1
+        );
+    }
 }
 
 fn detect_lan_base_url(port: u16) -> Option<String> {
@@ -100,24 +492,38 @@ fn detect_lan_base_url(port: u16) -> Option<String> {
 
 fn build_remote_api_context(app: AppHandle) -> Router {
     let context = RemoteApiContext { app };
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/api/v1/health", get(get_health))
         .route("/api/v1/app-info", get(get_remote_app_info))
         .route("/api/v1/pair/complete", post(post_pair_complete))
         .route("/api/v1/projects", get(get_projects))
         .route("/api/v1/projects/:project_id/tasks", get(get_project_tasks))
-        .route("/api/v1/projects/:project_id/supervisor", get(get_supervisor_session))
+        .route(
+            "/api/v1/projects/:project_id/supervisor",
+            get(get_supervisor_session),
+        )
         .route(
             "/api/v1/projects/:project_id/supervisor/message",
             post(post_supervisor_message),
         )
         .route("/api/v1/tasks/:task_id", get(get_task_detail))
         .route("/api/v1/tasks/:task_id/approve", post(post_task_approve))
-        .route("/api/v1/tasks/:task_id/needs-work", post(post_task_needs_work))
+        .route(
+            "/api/v1/tasks/:task_id/needs-work",
+            post(post_task_needs_work),
+        )
         .route("/api/v1/inbox", get(get_inbox_messages))
         .route("/api/v1/devices/push-token", post(post_register_push_token))
         .route("/api/v1/inbox/send", post(post_send_inbox_message))
-        .route("/api/v1/inbox/:delivery_id/read", post(post_mark_inbox_read))
+        .route(
+            "/api/v1/inbox/:delivery_id/read",
+            post(post_mark_inbox_read),
+        )
         .route(
             "/api/v1/inbox/:delivery_id/archive",
             post(post_archive_inbox_message),
@@ -129,7 +535,150 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             post(post_session_message),
         )
         .route("/api/v1/ws", get(ws_handler))
+        .layer(cors)
         .with_state(context)
+}
+
+fn resolve_mobile_web_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let bundled = app
+        .path()
+        .resolve("mobile-web", BaseDirectory::Resource)
+        .map_err(|error| format!("Unable to resolve packaged mobile web assets: {error}"))?;
+    if bundled.exists() {
+        return Ok(bundled);
+    }
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mobile/dist-web");
+    if repo.exists() {
+        return Ok(repo);
+    }
+
+    Err(format!(
+        "Unable to locate Orchestra web driver assets. Expected {} or {}. Run `cd mobile && npm install && npm run web:build` before enabling Tailscale support.",
+        bundled.display(),
+        repo.display()
+    ))
+}
+
+fn build_remote_web_context(root: PathBuf) -> Router {
+    let index_file = root.join("index.html");
+    Router::new().fallback_service(get_service(
+        ServeDir::new(root).not_found_service(ServeFile::new(index_file)),
+    ))
+}
+
+pub fn stop_remote_web_server(state: &AppState) -> Result<(), String> {
+    if let Some(mut current) = state.take_remote_web_server()? {
+        if let Some(shutdown) = current.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+    state.clear_remote_web_server()?;
+    Ok(())
+}
+
+fn start_remote_web_server(app: AppHandle, state: &AppState) -> Result<(), String> {
+    stop_remote_web_server(state)?;
+
+    let root = resolve_mobile_web_root(&app)?;
+    let bind_address = format!("{REMOTE_WEB_BIND_HOST}:{REMOTE_WEB_PORT}");
+    let listener = TcpListener::bind(&bind_address).map_err(|error| {
+        format!("Unable to bind Orchestra web driver server on {bind_address}: {error}")
+    })?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("Unable to configure Orchestra web driver listener: {error}"))?;
+    let router = build_remote_web_context(root.clone());
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let app_for_task = app.clone();
+
+    std::thread::spawn(move || {
+        let state = app_for_task.state::<AppState>();
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let message =
+                    format!("Unable to create Orchestra web driver Tokio runtime: {error}");
+                let _ = state.clear_remote_web_server();
+                let _ = state.set_remote_server_error(message.clone());
+                state.log("error", "remote.web.server", &message);
+                return;
+            }
+        };
+
+        let result = runtime.block_on(async move {
+            let tokio_listener = tokio::net::TcpListener::from_std(listener).map_err(|error| {
+                format!("Unable to create async Orchestra web driver listener: {error}")
+            })?;
+            axum::serve(tokio_listener, router)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .map_err(|error| {
+                    format!("Orchestra web driver server stopped unexpectedly: {error}")
+                })
+        });
+        if let Err(message) = result {
+            let _ = state.clear_remote_web_server();
+            let _ = state.set_remote_server_error(message.clone());
+            state.log("error", "remote.web.server", &message);
+        }
+    });
+
+    state.set_remote_web_server(RemoteWebServerHandle {
+        bind_host: REMOTE_WEB_BIND_HOST.to_string(),
+        port: REMOTE_WEB_PORT,
+        base_url: remote_web_target_url(REMOTE_WEB_PORT),
+        started_at: now_iso(),
+        shutdown: Some(shutdown_tx),
+    })?;
+    state.log(
+        "info",
+        "remote.web.server",
+        &format!(
+            "Orchestra web driver server listening on {bind_address} from {}",
+            root.display()
+        ),
+    );
+    Ok(())
+}
+
+pub fn disable_remote_tailscale_api_route(api_port: u16) -> Result<(), String> {
+    if !tailscale_cli_available() {
+        return Ok(());
+    }
+    disable_matching_tailscale_serve(&remote_api_target_url(api_port), api_port)
+}
+
+fn sync_tailscale_routes(settings: &RemoteAccessSettings, state: &AppState) -> Result<(), String> {
+    let api_target = remote_api_target_url(settings.port);
+    if !tailscale_cli_available() {
+        if settings.use_tailscale {
+            return ensure_tailscale_cli_available();
+        }
+        stop_remote_web_server(state)?;
+        return Ok(());
+    }
+
+    if settings.use_tailscale {
+        ensure_tailscale_serve(&api_target, settings.port)?;
+        ensure_tailscale_serve(
+            &remote_web_target_url(REMOTE_WEB_PORT),
+            REMOTE_WEB_TAILSCALE_PORT,
+        )?;
+    } else {
+        disable_matching_tailscale_serve(&api_target, settings.port)?;
+        disable_matching_tailscale_serve(
+            &remote_web_target_url(REMOTE_WEB_PORT),
+            REMOTE_WEB_TAILSCALE_PORT,
+        )?;
+        stop_remote_web_server(state)?;
+    }
+    Ok(())
 }
 
 pub fn stop_remote_api_server(state: &AppState) -> Result<(), String> {
@@ -148,17 +697,67 @@ pub fn ensure_remote_api_server(app: AppHandle, state: &AppState) -> Result<(), 
     drop(connection);
 
     if !settings.enabled {
+        let api_target = remote_api_target_url(settings.port);
+        if tailscale_cli_available() {
+            let _ = disable_matching_tailscale_serve(&api_target, settings.port);
+            let _ = disable_matching_tailscale_serve(
+                &remote_web_target_url(REMOTE_WEB_PORT),
+                REMOTE_WEB_TAILSCALE_PORT,
+            );
+        }
+        stop_remote_web_server(state)?;
         stop_remote_api_server(state)?;
         state.clear_remote_server_error()?;
         return Ok(());
     }
 
-    start_remote_api_server(app, state, &settings)
+    let mut runtime_settings = settings.clone();
+    runtime_settings.bind_host = remote_access::effective_bind_host(&settings);
+
+    if settings.use_tailscale && runtime_settings.port == REMOTE_WEB_PORT {
+        return Err(format!(
+            "Remote API port {} conflicts with the internal web driver port {} used for Tailscale Serve.",
+            runtime_settings.port, REMOTE_WEB_PORT
+        ));
+    }
+    if settings.use_tailscale && runtime_settings.port == REMOTE_WEB_TAILSCALE_PORT {
+        return Err(format!(
+            "Remote API port {} conflicts with the fixed Tailscale web driver HTTPS port {}.",
+            runtime_settings.port, REMOTE_WEB_TAILSCALE_PORT
+        ));
+    }
+
+    let api_matches =
+        state
+            .remote_server_snapshot()?
+            .is_some_and(|(bind_host, port, _, _, _, _)| {
+                bind_host == runtime_settings.bind_host && port == runtime_settings.port
+            });
+    if !api_matches {
+        start_remote_api_server(app.clone(), state, &runtime_settings)?;
+    }
+
+    if settings.use_tailscale {
+        let web_matches =
+            state
+                .remote_web_server_snapshot()?
+                .is_some_and(|(bind_host, port, _, _)| {
+                    bind_host == REMOTE_WEB_BIND_HOST && port == REMOTE_WEB_PORT
+                });
+        if !web_matches {
+            start_remote_web_server(app, state)?;
+        }
+    }
+
+    sync_tailscale_routes(&runtime_settings, state)?;
+    state.clear_remote_server_error()?;
+    Ok(())
 }
 
 pub fn build_remote_access_status(state: &AppState) -> Result<RemoteAccessStatus, String> {
     let connection = database::open_connection()?;
     let mut settings = remote_access::load_settings(&connection)?;
+    settings.bind_host = remote_access::effective_bind_host(&settings);
     if let Some((_, _, base_url, websocket_url, lan_base_url, started_at)) =
         state.remote_server_snapshot()?
     {
@@ -167,9 +766,19 @@ pub fn build_remote_access_status(state: &AppState) -> Result<RemoteAccessStatus
         settings.lan_base_url = lan_base_url;
         settings.started_at = Some(started_at);
     }
+    if let Some((_, _, web_url, _)) = state.remote_web_server_snapshot()? {
+        settings.web_url = Some(web_url);
+    }
+    if settings.use_tailscale {
+        settings.tailscale_url = tailscale_url_for_port(settings.port).ok().flatten();
+        settings.tailscale_web_url = tailscale_url_for_port(REMOTE_WEB_TAILSCALE_PORT)
+            .ok()
+            .flatten();
+    }
     settings.last_error = state.remote_server_error()?;
     let pairing_codes = remote_access::list_pairing_codes(&connection)?;
-    let devices = state.with_remote_device_client_counts(remote_access::list_devices(&connection)?)?;
+    let devices =
+        state.with_remote_device_client_counts(remote_access::list_devices(&connection)?)?;
     let active_clients = state.list_remote_clients()?;
     Ok(RemoteAccessStatus {
         settings,
@@ -195,9 +804,6 @@ pub fn start_remote_api_server(
     let local_addr = listener
         .local_addr()
         .map_err(|error| format!("Unable to read remote API listener address: {error}"))?;
-    let tokio_listener = tokio::net::TcpListener::from_std(listener)
-        .map_err(|error| format!("Unable to create async remote API listener: {error}"))?;
-
     let local_host = if settings.bind_host == "0.0.0.0" {
         "127.0.0.1".to_string()
     } else {
@@ -211,13 +817,34 @@ pub fn start_remote_api_server(
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let app_for_task = app.clone();
 
-    tauri::async_runtime::spawn(async move {
-        let server = axum::serve(tokio_listener, router).with_graceful_shutdown(async move {
-            let _ = shutdown_rx.await;
+    std::thread::spawn(move || {
+        let state = app_for_task.state::<AppState>();
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let message = format!("Unable to create remote API Tokio runtime: {error}");
+                let _ = state.clear_remote_server();
+                let _ = state.set_remote_server_error(message.clone());
+                state.log("error", "remote.api.server", &message);
+                return;
+            }
+        };
+
+        let result = runtime.block_on(async move {
+            let tokio_listener = tokio::net::TcpListener::from_std(listener)
+                .map_err(|error| format!("Unable to create async remote API listener: {error}"))?;
+            axum::serve(tokio_listener, router)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .map_err(|error| format!("Remote API server stopped unexpectedly: {error}"))
         });
-        if let Err(error) = server.await {
-            let state = app_for_task.state::<AppState>();
-            let message = format!("Remote API server stopped unexpectedly: {error}");
+        if let Err(message) = result {
+            let _ = state.clear_remote_server();
             let _ = state.set_remote_server_error(message.clone());
             state.log("error", "remote.api.server", &message);
         }
@@ -253,7 +880,12 @@ fn resolve_remote_auth(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .or_else(|| query_token.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string))
+        .or_else(|| {
+            query_token
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
         .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "Missing remote device token"))?;
 
     let connection = database::open_connection()
@@ -264,7 +896,10 @@ fn resolve_remote_auth(
             app.state::<AppState>().log(
                 "info",
                 "remote.api.auth",
-                &format!("Authenticated remote device {} ({})", device.label, device.id),
+                &format!(
+                    "Authenticated remote device {} ({})",
+                    device.label, device.id
+                ),
             );
             device
         })
@@ -272,11 +907,18 @@ fn resolve_remote_auth(
 
 fn attach_remote_urls(
     state: &AppState,
+    headers: Option<&HeaderMap>,
     mut response: RemoteAuthResponse,
 ) -> Result<RemoteAuthResponse, String> {
-    if let Some((_, _, base_url, websocket_url, lan_base_url, _)) = state.remote_server_snapshot()? {
-        let chosen_base_url = lan_base_url.unwrap_or(base_url);
-        let chosen_websocket_url = format!("{}/api/v1/ws", chosen_base_url.replacen("http", "ws", 1));
+    if let Some((_, _, base_url, websocket_url, lan_base_url, _)) =
+        state.remote_server_snapshot()?
+    {
+        let chosen_base_url = headers
+            .and_then(request_base_url_from_headers)
+            .or(lan_base_url)
+            .unwrap_or(base_url);
+        let chosen_websocket_url =
+            format!("{}/api/v1/ws", chosen_base_url.replacen("http", "ws", 1));
         response.base_url = Some(chosen_base_url);
         response.websocket_url = Some(if chosen_websocket_url.is_empty() {
             websocket_url
@@ -287,7 +929,9 @@ fn attach_remote_urls(
     Ok(response)
 }
 
-fn resolve_session_runtime_root(session_id: &str) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+fn resolve_session_runtime_root(
+    session_id: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let context = pi_sessions::find_session_context_for_session(session_id)?;
     let runtime_root = pi_sessions::get_session_header_cwd(&context.session_dir, session_id)?
         .filter(|path| path.is_dir())
@@ -303,7 +947,10 @@ fn load_remote_session_record(state: &AppState, session_id: &str) -> Result<Sess
     Ok(record)
 }
 
-fn list_remote_sessions(state: &AppState, project_id: Option<&str>) -> Result<Vec<SessionRecord>, String> {
+fn list_remote_sessions(
+    state: &AppState,
+    project_id: Option<&str>,
+) -> Result<Vec<SessionRecord>, String> {
     let project_slug = if let Some(project_id) = project_id {
         let connection = database::open_connection()?;
         Some(projects::get_project(&connection, project_id)?.slug)
@@ -427,20 +1074,25 @@ async fn get_health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn get_remote_app_info() -> Json<AppInfo> {
-    Json(get_app_info())
+async fn get_remote_app_info(AxumState(context): AxumState<RemoteApiContext>) -> Json<AppInfo> {
+    Json(get_app_info(context.app.state::<AppState>()))
 }
 
 async fn post_pair_complete(
     AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
     Json(input): Json<RemotePairingCompleteInput>,
 ) -> Result<Json<RemoteAuthResponse>, (StatusCode, Json<ApiError>)> {
     let connection = database::open_connection()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     let response = remote_access::consume_pairing_code(&connection, input)
         .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
-    let response = attach_remote_urls(context.app.state::<AppState>().inner(), response)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let response = attach_remote_urls(
+        context.app.state::<AppState>().inner(),
+        Some(&headers),
+        response,
+    )
+    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(response))
 }
 
@@ -490,9 +1142,13 @@ async fn post_task_approve(
     let device = resolve_remote_auth(&context.app, &headers, None)?;
     let state = context.app.state::<AppState>();
     let session_context = pi_sessions::session_context_for_project_id(
-        &tasks::get_task_context(&database::open_connection().map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?, &task_id)
-            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
-            .project_id,
+        &tasks::get_task_context(
+            &database::open_connection()
+                .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
+            &task_id,
+        )
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
+        .project_id,
     )
     .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     let mut connection = database::open_connection()
@@ -505,8 +1161,9 @@ async fn post_task_approve(
     )
     .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
 
-    let auto_dispatches = task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let auto_dispatches =
+        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)
+            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     for outcome in &auto_dispatches {
         task_runtime::start_assignment_run(
             context.app.clone(),
@@ -527,7 +1184,11 @@ async fn post_task_approve(
         task = tasks::get_task_context(&connection, &task_id)
             .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
         let mut changed_task_ids = vec![task.id.clone()];
-        changed_task_ids.extend(auto_dispatches.iter().map(|outcome| outcome.task_id.clone()));
+        changed_task_ids.extend(
+            auto_dispatches
+                .iter()
+                .map(|outcome| outcome.task_id.clone()),
+        );
         let _ = app_events::emit_task_change(
             &context.app,
             "task.transition.auto_dispatch",
@@ -554,9 +1215,13 @@ async fn post_task_needs_work(
 ) -> Result<Json<TaskDetail>, (StatusCode, Json<ApiError>)> {
     let device = resolve_remote_auth(&context.app, &headers, None)?;
     let state = context.app.state::<AppState>();
-    let project_id = tasks::get_task_context(&database::open_connection().map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?, &task_id)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
-        .project_id;
+    let project_id = tasks::get_task_context(
+        &database::open_connection()
+            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
+        &task_id,
+    )
+    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
+    .project_id;
     let session_context = pi_sessions::session_context_for_project_id(&project_id)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     let connection = database::open_connection()
@@ -572,11 +1237,16 @@ async fn post_task_needs_work(
     )
     .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     if let Some(session_id) = assignment.session_id.clone() {
-        let _ = app_events::emit_session_change(&context.app, "task.transition.rework", [session_id]);
+        let _ =
+            app_events::emit_session_change(&context.app, "task.transition.rework", [session_id]);
     }
     let task = tasks::get_task_context(&connection, &task_id)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let _ = app_events::emit_task_change(&context.app, "task.transition.needs_work", [task.id.clone()]);
+    let _ = app_events::emit_task_change(
+        &context.app,
+        "task.transition.needs_work",
+        [task.id.clone()],
+    );
     state.log(
         "info",
         "remote.api.task.needs_work",
@@ -648,7 +1318,8 @@ async fn post_send_inbox_message(
         },
     )
     .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
-    let _ = app_events::emit_inbox_change(&context.app, "mailbox.sent", [message.delivery_id.clone()]);
+    let _ =
+        app_events::emit_inbox_change(&context.app, "mailbox.sent", [message.delivery_id.clone()]);
     if let Some(task_id) = message.task_id.clone() {
         let _ = app_events::emit_task_change(&context.app, "mailbox.sent", [task_id]);
     }
@@ -663,12 +1334,9 @@ async fn post_register_push_token(
     let device = resolve_remote_auth(&context.app, &headers, None)?;
     let connection = database::open_connection()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let updated = remote_access::set_device_push_token(
-        &connection,
-        &device.id,
-        input.push_token.as_deref(),
-    )
-    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    let updated =
+        remote_access::set_device_push_token(&connection, &device.id, input.push_token.as_deref())
+            .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
     Ok(Json(updated))
 }
 
@@ -678,9 +1346,12 @@ async fn get_sessions(
     Query(query): Query<SessionListQuery>,
 ) -> Result<Json<Vec<SessionRecord>>, (StatusCode, Json<ApiError>)> {
     let _device = resolve_remote_auth(&context.app, &headers, None)?;
-    list_remote_sessions(context.app.state::<AppState>().inner(), query.project_id.as_deref())
-        .map(Json)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))
+    list_remote_sessions(
+        context.app.state::<AppState>().inner(),
+        query.project_id.as_deref(),
+    )
+    .map(Json)
+    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))
 }
 
 async fn get_session_record(
@@ -868,14 +1539,11 @@ fn should_deliver_event(
     event: &RemoteEventEnvelope,
 ) -> Result<bool, String> {
     if event.topic == "session.stream" {
-        return Ok(event
-            .session_id
-            .as_deref()
-            .is_some_and(|session_id| {
-                state
-                    .remote_client_is_subscribed_to_session(client_id, session_id)
-                    .unwrap_or(false)
-            }));
+        return Ok(event.session_id.as_deref().is_some_and(|session_id| {
+            state
+                .remote_client_is_subscribed_to_session(client_id, session_id)
+                .unwrap_or(false)
+        }));
     }
     Ok(true)
 }

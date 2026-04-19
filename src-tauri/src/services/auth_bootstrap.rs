@@ -268,7 +268,9 @@ mod tests {
         assert!(agent.system);
         assert!(agent.immutable);
         assert_eq!(agent.policy_ids, vec![policy.id.clone()]);
-        assert!(agent.system_prompt.as_deref().unwrap_or_default().contains("Orchestra is the source of truth for tasks, workflows, lanes, runtime sessions"));
+        assert!(agent.system_prompt.as_deref().unwrap_or_default().contains(
+            "Orchestra is the source of truth for tasks, workflows, lanes, runtime sessions"
+        ));
         let agent_context = std::fs::read_to_string(root.join("agents/supervisor/AGENTS.md"))
             .expect("supervisor context file should be readable");
         assert!(agent_context.contains("## What Orchestra Is"));
@@ -307,7 +309,11 @@ mod tests {
         assert!(agent.immutable);
         assert!(!agent.archived);
         assert_eq!(agent.policy_ids, vec![policy.id.clone()]);
-        assert!(agent.system_prompt.as_deref().unwrap_or_default().contains("You should be able to explain and use the full Orchestra tool surface"));
+        assert!(agent
+            .system_prompt
+            .as_deref()
+            .unwrap_or_default()
+            .contains("You should be able to explain and use the full Orchestra tool surface"));
         assert_eq!(agent.provider.as_deref(), Some("anthropic"));
         assert_eq!(agent.model.as_deref(), Some("claude"));
         assert_eq!(agent.thinking_level, "off");

@@ -107,6 +107,16 @@ export async function createReadyWebdriverSession(timeoutMs = 90_000) {
     try {
       sessionId = await createWebdriverSession(30_000);
       await ensureReactReady(sessionId, 30_000);
+      await executeScript(sessionId, `
+        try {
+          window.localStorage?.clear?.();
+          window.sessionStorage?.clear?.();
+        } catch (_) {}
+        window.location.reload();
+        return true;
+      `);
+      await sleep(1_000);
+      await ensureReactReady(sessionId, 30_000);
       return sessionId;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);

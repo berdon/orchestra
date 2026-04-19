@@ -15,13 +15,11 @@ pub fn get_remote_access_status(
     state: State<'_, AppState>,
 ) -> Result<RemoteAccessStatus, String> {
     let connection = database::open_connection()?;
-    let settings = remote_access::load_settings(&connection)?;
+    let _settings = remote_access::load_settings(&connection)?;
     drop(connection);
-    if settings.enabled && state.remote_server_snapshot()?.is_none() {
-        if let Err(error) = remote_api::ensure_remote_api_server(app, &state) {
-            let _ = state.set_remote_server_error(error.clone());
-            state.log("error", "remote.api.server", &error);
-        }
+    if let Err(error) = remote_api::ensure_remote_api_server(app, &state) {
+        let _ = state.set_remote_server_error(error.clone());
+        state.log("error", "remote.api.server", &error);
     }
     remote_api::build_remote_access_status(&state)
 }
@@ -33,8 +31,13 @@ pub fn update_remote_access_settings(
     input: RemoteAccessSettingsInput,
 ) -> Result<RemoteAccessStatus, String> {
     let connection = database::open_connection()?;
+    let previous_settings = remote_access::load_settings(&connection)?;
     let settings = remote_access::update_settings(&connection, input)?;
     drop(connection);
+
+    if previous_settings.use_tailscale && previous_settings.port != settings.port {
+        let _ = remote_api::disable_remote_tailscale_api_route(previous_settings.port);
+    }
 
     if settings.enabled {
         if let Err(error) = remote_api::ensure_remote_api_server(app, &state) {
@@ -56,7 +59,7 @@ pub fn create_remote_pairing_code(
 ) -> Result<RemotePairingCode, String> {
     let connection = database::open_connection()?;
     let settings = remote_access::load_settings(&connection)?;
-    if settings.enabled && state.remote_server_snapshot()?.is_none() {
+    if settings.enabled {
         drop(connection);
         remote_api::ensure_remote_api_server(app, &state)?;
         let connection = database::open_connection()?;

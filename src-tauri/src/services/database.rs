@@ -312,6 +312,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS remote_access_settings (
                 id TEXT PRIMARY KEY,
                 enabled INTEGER NOT NULL DEFAULT 0,
+                use_tailscale INTEGER NOT NULL DEFAULT 0,
                 bind_host TEXT NOT NULL DEFAULT '0.0.0.0',
                 port INTEGER NOT NULL DEFAULT 49500,
                 created_at TEXT NOT NULL,
@@ -830,9 +831,27 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_task_file_references_table_columns(connection)?;
     ensure_domain_events_tables(connection)?;
     ensure_task_schedule_tables(connection)?;
+    ensure_remote_access_settings_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
+    Ok(())
+}
+
+fn ensure_remote_access_settings_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "remote_access_settings")?;
+
+    if !columns.contains("use_tailscale") {
+        connection
+            .execute(
+                "ALTER TABLE remote_access_settings ADD COLUMN use_tailscale INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add use_tailscale column to remote_access_settings: {error}")
+            })?;
+    }
+
     Ok(())
 }
 

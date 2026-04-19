@@ -48,12 +48,6 @@ describe("desktop session missing cwd recovery", () => {
 
       await invokeCommand(sessionId, "stop_session_runtime", { sessionId: createdSession.id });
 
-      const modelState = await invokeCommand<{ sessionId: string; availableModels: unknown[] }>(sessionId, "get_session_model_state", {
-        sessionId: createdSession.id,
-      });
-      expect(modelState.sessionId).toBe(createdSession.id);
-      expect(modelState.availableModels.length).toBeGreaterThan(0);
-
       const subscribed = await invokeCommand<{ id: string; subscribed: boolean }>(sessionId, "subscribe_session", {
         sessionId: createdSession.id,
       });

@@ -346,7 +346,9 @@ pub fn update_workflow_lane(
     }
 
     if !found {
-        return Err(format!("Workflow lane {lane_id} was not found in workflow {workflow_id}"));
+        return Err(format!(
+            "Workflow lane {lane_id} was not found in workflow {workflow_id}"
+        ));
     }
 
     renumber_lane_orders(&mut input.lanes);
@@ -361,9 +363,13 @@ pub fn delete_workflow_lane(
     let workflow = get_workflow(connection, workflow_id)?;
     let mut input = workflow_to_input(workflow);
     let initial_count = input.lanes.len();
-    input.lanes.retain(|lane| lane.id.as_deref() != Some(lane_id));
+    input
+        .lanes
+        .retain(|lane| lane.id.as_deref() != Some(lane_id));
     if input.lanes.len() == initial_count {
-        return Err(format!("Workflow lane {lane_id} was not found in workflow {workflow_id}"));
+        return Err(format!(
+            "Workflow lane {lane_id} was not found in workflow {workflow_id}"
+        ));
     }
     renumber_lane_orders(&mut input.lanes);
     update_workflow(connection, workflow_id, input)
@@ -387,7 +393,9 @@ pub fn reorder_workflow_lanes(
         .collect::<HashSet<_>>();
     let requested_lane_ids = input.lane_ids.iter().cloned().collect::<HashSet<_>>();
     if existing_lane_ids != requested_lane_ids {
-        return Err("Lane reorder must reference every existing workflow lane exactly once.".into());
+        return Err(
+            "Lane reorder must reference every existing workflow lane exactly once.".into(),
+        );
     }
 
     workflow_input.lanes.sort_by_key(|lane| {
@@ -906,7 +914,8 @@ fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLane
         assigned_entity_type: assigned_entity_type.clone(),
         assigned_entity_id: normalized_optional_string(lane.assigned_entity_id),
         entry_prompt_template: normalized_optional_string(lane.entry_prompt_template),
-        use_separate_worktree: lane.use_separate_worktree && matches!(assigned_entity_type.as_str(), "agent" | "role"),
+        use_separate_worktree: lane.use_separate_worktree
+            && matches!(assigned_entity_type.as_str(), "agent" | "role"),
         require_user_approval_on_success: lane.require_user_approval_on_success,
         success_transition_type: normalize_transition_type(&lane.success_transition_type),
         success_target_lane_id: normalize_transition_target(

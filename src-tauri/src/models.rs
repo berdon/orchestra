@@ -45,11 +45,15 @@ pub struct SystemNotificationEnvironmentStatus {
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAccessSettings {
     pub enabled: bool,
+    pub use_tailscale: bool,
     pub bind_host: String,
     pub port: u16,
     pub base_url: Option<String>,
     pub websocket_url: Option<String>,
     pub lan_base_url: Option<String>,
+    pub web_url: Option<String>,
+    pub tailscale_url: Option<String>,
+    pub tailscale_web_url: Option<String>,
     pub started_at: Option<String>,
     pub last_error: Option<String>,
 }
@@ -58,6 +62,7 @@ pub struct RemoteAccessSettings {
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAccessSettingsInput {
     pub enabled: bool,
+    pub use_tailscale: bool,
     pub bind_host: Option<String>,
     pub port: Option<u16>,
 }

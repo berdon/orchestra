@@ -11,21 +11,83 @@ function formatDateTime(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
+async function copyTextToClipboard(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is not available.");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "absolute";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
 export function RemotePanel() {
   const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingPairingCode, setCreatingPairingCode] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [lastCreatedCode, setLastCreatedCode] = useState<string | null>(null);
   const [bindHostDraft, setBindHostDraft] = useState("0.0.0.0");
   const [portDraft, setPortDraft] = useState("49500");
   const [enabledDraft, setEnabledDraft] = useState(false);
+  const [useTailscaleDraft, setUseTailscaleDraft] = useState(false);
 
   const activePairingCodes = useMemo(
     () => status?.pairingCodes.filter((code) => !code.consumedAt) ?? [],
     [status?.pairingCodes],
   );
+  const endpointCards = useMemo(() => {
+    const settings = status?.settings;
+    if (!settings) {
+      return [] as Array<{ key: string; label: string; hint: string; url?: string | null; recommended?: boolean }>;
+    }
+
+    return [
+      {
+        key: "pairing",
+        label: "Pairing API URL",
+        hint: settings.useTailscale
+          ? "Enter this in the mobile or shared web driver pairing screen."
+          : "Use this when pairing from the mobile app on your LAN.",
+        url: settings.useTailscale ? settings.tailscaleUrl : (settings.lanBaseUrl ?? settings.baseUrl),
+        recommended: true,
+      },
+      {
+        key: "web-driver",
+        label: "Shared web driver URL",
+        hint: settings.useTailscale
+          ? "Open this in a browser, then pair against the API URL above."
+          : "Available locally when the shared web driver is running.",
+        url: settings.useTailscale ? settings.tailscaleWebUrl : settings.webUrl,
+        recommended: true,
+      },
+      {
+        key: "local-api",
+        label: "Local API URL",
+        hint: "Useful for local debugging on this machine.",
+        url: settings.baseUrl,
+      },
+      {
+        key: "websocket",
+        label: "WebSocket URL",
+        hint: "Live session and inbox updates for paired clients.",
+        url: settings.websocketUrl,
+      },
+    ];
+  }, [status?.settings]);
 
   async function loadStatus() {
     setLoading(true);
@@ -36,6 +98,7 @@ export function RemotePanel() {
       setBindHostDraft(nextStatus.settings.bindHost);
       setPortDraft(String(nextStatus.settings.port));
       setEnabledDraft(nextStatus.settings.enabled);
+      setUseTailscaleDraft(nextStatus.settings.useTailscale);
     } catch (nextError) {
       setError(await reportClientError("ui.remote.status", nextError, "Unable to load remote access status."));
     } finally {
@@ -54,6 +117,7 @@ export function RemotePanel() {
       const parsedPort = Number.parseInt(portDraft, 10);
       const nextStatus = await updateRemoteAccessSettings({
         enabled: enabledDraft,
+        useTailscale: useTailscaleDraft,
         bindHost: bindHostDraft,
         port: Number.isFinite(parsedPort) ? parsedPort : 49500,
       });
@@ -92,6 +156,18 @@ export function RemotePanel() {
     }
   }
 
+  async function handleCopyEndpoint(label: string, value?: string | null) {
+    if (!value) {
+      return;
+    }
+    try {
+      await copyTextToClipboard(value);
+      setCopyStatus(`${label} copied.`);
+    } catch (nextError) {
+      setError(await reportClientError("ui.remote.endpoint.copy", nextError, `Unable to copy ${label}.`));
+    }
+  }
+
   return (
     <section className="task-shell">
       <aside className="task-nav-panel">
@@ -113,6 +189,7 @@ export function RemotePanel() {
 
         {loading ? <p className="muted-copy">Loading remote access status…</p> : null}
         {error ? <p className="error-copy">{error}</p> : null}
+        {copyStatus ? <p className="success-copy" data-role="remote-copy-status">{copyStatus}</p> : null}
 
         <div className="task-section-list">
           <section className="task-section task-section--compact">
@@ -130,17 +207,49 @@ export function RemotePanel() {
               </label>
             </label>
             <label className="field-group">
+              <span className="field-group__label">Use Tailscale Serve</span>
+              <label className="checkbox-row">
+                <input type="checkbox" data-role="remote-use-tailscale" checked={useTailscaleDraft} onChange={(event) => setUseTailscaleDraft(event.target.checked)} />
+                <span>Automatically expose the backend on HTTPS port {portDraft || "49500"} and the web driver on HTTPS port 9443 via Tailscale Serve.</span>
+              </label>
+            </label>
+            <label className="field-group">
               <span className="field-group__label">Bind host</span>
-              <input className="text-input" data-role="remote-bind-host" value={bindHostDraft} onChange={(event) => setBindHostDraft(event.target.value)} />
+              <input className="text-input" data-role="remote-bind-host" value={useTailscaleDraft ? "127.0.0.1" : bindHostDraft} onChange={(event) => setBindHostDraft(event.target.value)} disabled={useTailscaleDraft} />
             </label>
             <label className="field-group">
               <span className="field-group__label">Port</span>
               <input className="text-input" data-role="remote-port" value={portDraft} onChange={(event) => setPortDraft(event.target.value)} />
             </label>
+            <div className="remote-panel__endpoint-grid">
+              {endpointCards.map((endpoint) => (
+                <section className="remote-panel__endpoint-card" key={endpoint.key} data-role={`remote-endpoint-${endpoint.key}`}>
+                  <div className="remote-panel__endpoint-header">
+                    <div>
+                      <p className="eyebrow">Endpoint</p>
+                      <h5>{endpoint.label}</h5>
+                    </div>
+                    {endpoint.recommended ? <span className="status-badge status-badge--accent">Recommended</span> : null}
+                  </div>
+                  <p className="muted-copy">{endpoint.hint}</p>
+                  <code className="remote-panel__endpoint-url">{endpoint.url ?? "—"}</code>
+                  <div className="action-cluster action-cluster--wrap">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void handleCopyEndpoint(endpoint.label, endpoint.url)}
+                      disabled={!endpoint.url}
+                      data-role={`copy-remote-endpoint-${endpoint.key}`}
+                    >
+                      Copy URL
+                    </button>
+                  </div>
+                </section>
+              ))}
+            </div>
             <div className="workforce-meta-grid muted-copy">
-              <span>Local URL: {status?.settings.baseUrl ?? "—"}</span>
-              <span>LAN URL: {status?.settings.lanBaseUrl ?? "—"}</span>
-              <span>WebSocket: {status?.settings.websocketUrl ?? "—"}</span>
+              <span>Bind host: {useTailscaleDraft ? "127.0.0.1 (managed by Tailscale)" : (status?.settings.bindHost ?? "—")}</span>
+              <span>Configured port: {status?.settings.port ?? "—"}</span>
               <span>Started: {formatDateTime(status?.settings.startedAt)}</span>
             </div>
             {status?.settings.lastError ? <p className="error-copy">{status.settings.lastError}</p> : null}
@@ -271,9 +380,10 @@ export function RemotePanel() {
           </div>
           <ol className="muted-copy remote-panel__steps">
             <li>Enable remote access and save the server settings.</li>
+            <li>Optional: turn on Tailscale Serve to expose the backend and shared web driver automatically.</li>
             <li>Create a pairing code.</li>
-            <li>Open the Orchestra mobile app and enter the LAN URL plus the pairing code.</li>
-            <li>The device becomes trusted and can use the remote driver API over HTTP + WebSocket.</li>
+            <li>Open the shared web driver URL in a browser when you want the browser-based remote.</li>
+            <li>On the mobile app or shared web driver pairing screen, paste the Pairing API URL shown above.</li>
           </ol>
         </section>
       </section>

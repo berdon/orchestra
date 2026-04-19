@@ -9,11 +9,15 @@ test("remote settings panel enables remote access, creates pairing codes, and re
       JSON.stringify({
         settings: {
           enabled: false,
+          useTailscale: false,
           bindHost: "0.0.0.0",
           port: 49500,
           baseUrl: null,
           websocketUrl: null,
           lanBaseUrl: null,
+          webUrl: null,
+          tailscaleUrl: null,
+          tailscaleWebUrl: null,
           startedAt: null,
           lastError: null,
         },
@@ -54,7 +58,9 @@ test("remote settings panel enables remote access, creates pairing codes, and re
   await expect(page.getByRole("heading", { name: "Remote API host" })).toBeVisible();
   await page.locator('[data-role="remote-enabled"]').check();
   await page.locator('[data-role="save-remote-settings"]').click();
-  await expect(page.locator("text=Local URL:")).toContainText("http://127.0.0.1:49500");
+  await expect(page.locator('[data-role="remote-endpoint-local-api"]')).toContainText("http://127.0.0.1:49500");
+  await expect(page.locator('[data-role="remote-endpoint-pairing"]')).toContainText("Pairing API URL");
+  await expect(page.locator('[data-role="copy-remote-endpoint-pairing"]')).toBeVisible();
 
   await page.locator('[data-role="create-remote-pairing-code"]').click();
   await expect(page.locator('[data-role="latest-remote-pairing-code"]')).toBeVisible();

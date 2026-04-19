@@ -24,6 +24,7 @@ import {
   createRoleViaSettings,
   createTaskViaTasks,
   createWorkflowViaSettings,
+  dispatchTaskViaUi,
   switchProject,
 } from "./ui-flows";
 
@@ -143,7 +144,7 @@ describe("desktop task detail reorganization", () => {
         }
       `);
       await sleep(300);
-      await clickByText(sessionId, "button", "Back to tasks");
+      await clickByText(sessionId, "button", "Tasks");
       await clickByText(sessionId, '[data-role="task-card"]', "Task detail redesign");
 
       const persistedHistoryLimit = await executeScript<string>(sessionId, `
@@ -212,7 +213,7 @@ describe("desktop task detail reorganization", () => {
       await clickByText(sessionId, '[data-role="task-card"]', "Task detail action coverage");
 
       await waitForText(sessionId, "Dispatch");
-      await clickSelector(sessionId, '[data-role="dispatch-task-lane"]');
+      await dispatchTaskViaUi(sessionId);
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
       await waitForText(sessionId, "Lane execution");
       await waitForText(sessionId, "Whips: 0 / 10");

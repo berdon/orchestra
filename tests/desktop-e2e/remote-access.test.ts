@@ -33,11 +33,11 @@ describe("desktop remote access", () => {
         await clickSelector(sessionId, '[data-role="remote-enabled"]');
       }
       await clickSelector(sessionId, '[data-role="save-remote-settings"]');
-      await waitForText(sessionId, "Local URL:");
+      await waitForSelector(sessionId, '[data-role="remote-endpoint-local-api"]');
 
       const localUrl = await executeScript<string>(sessionId, `
-        const hostSection = document.body.textContent || '';
-        return hostSection;
+        const card = document.querySelector('[data-role="remote-endpoint-local-api"]');
+        return card ? card.textContent || '' : '';
       `);
       expect(localUrl).toContain("http://127.0.0.1:");
 

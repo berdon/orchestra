@@ -3568,6 +3568,42 @@ strong {
   gap: 10px;
 }
 
+.remote-panel__endpoint-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.remote-panel__endpoint-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-subtle) 88%, transparent);
+}
+
+.remote-panel__endpoint-card h5,
+.remote-panel__endpoint-card p {
+  margin: 0;
+}
+
+.remote-panel__endpoint-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.remote-panel__endpoint-url {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--color-code-background);
+  color: var(--color-code-text);
+  overflow-wrap: anywhere;
+}
+
 .empty-state {
   display: grid;
   gap: 10px;

@@ -13,8 +13,7 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::{
     models::{
-        AuthorizationContext, LogEntry, RemoteClientRecord, RemoteDeviceRecord,
-        RemoteEventEnvelope,
+        AuthorizationContext, LogEntry, RemoteClientRecord, RemoteDeviceRecord, RemoteEventEnvelope,
     },
     services::{
         agent_terminal::AgentTerminalSession, channels::ChannelRuntimeHandle,
@@ -29,6 +28,15 @@ pub struct RemoteApiServerHandle {
     pub base_url: String,
     pub websocket_url: String,
     pub lan_base_url: Option<String>,
+    pub started_at: String,
+    pub shutdown: Option<oneshot::Sender<()>>,
+}
+
+#[derive(Debug)]
+pub struct RemoteWebServerHandle {
+    pub bind_host: String,
+    pub port: u16,
+    pub base_url: String,
     pub started_at: String,
     pub shutdown: Option<oneshot::Sender<()>>,
 }
@@ -58,6 +66,7 @@ pub struct AppState {
     pub tool_bridge: Arc<ToolBridgeConfig>,
     remote_clients: Mutex<HashMap<String, RemoteClientState>>,
     remote_server: Mutex<Option<RemoteApiServerHandle>>,
+    remote_web_server: Mutex<Option<RemoteWebServerHandle>>,
     remote_server_last_error: Mutex<Option<String>>,
     remote_event_tx: broadcast::Sender<RemoteEventEnvelope>,
     next_remote_event_sequence: AtomicU64,
@@ -112,6 +121,7 @@ impl AppState {
             tool_bridge,
             remote_clients: Mutex::new(HashMap::new()),
             remote_server: Mutex::new(None),
+            remote_web_server: Mutex::new(None),
             remote_server_last_error: Mutex::new(None),
             remote_event_tx,
             next_remote_event_sequence: AtomicU64::new(1),
@@ -165,7 +175,14 @@ impl AppState {
     ) -> Result<RemoteEventEnvelope, String> {
         let payload = serde_json::to_value(payload)
             .map_err(|error| format!("Unable to serialize remote event payload: {error}"))?;
-        self.publish_remote_event_value(topic, project_id, session_id, task_id, delivery_id, payload)
+        self.publish_remote_event_value(
+            topic,
+            project_id,
+            session_id,
+            task_id,
+            delivery_id,
+            payload,
+        )
     }
 
     pub fn publish_remote_event_value(
@@ -179,7 +196,9 @@ impl AppState {
     ) -> Result<RemoteEventEnvelope, String> {
         let event = RemoteEventEnvelope {
             id: generate_id("remote-event"),
-            sequence: self.next_remote_event_sequence.fetch_add(1, Ordering::Relaxed),
+            sequence: self
+                .next_remote_event_sequence
+                .fetch_add(1, Ordering::Relaxed),
             topic: topic.to_string(),
             timestamp: now_iso(),
             project_id,
@@ -224,10 +243,7 @@ impl AppState {
 
     pub fn remote_server_snapshot(
         &self,
-    ) -> Result<
-        Option<(String, u16, String, String, Option<String>, String)>,
-        String,
-    > {
+    ) -> Result<Option<(String, u16, String, String, Option<String>, String)>, String> {
         self.remote_server
             .lock()
             .map_err(|_| "Unable to access remote server state".to_string())
@@ -268,6 +284,49 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access remote server error state".to_string())
             .map(|current| current.clone())
+    }
+
+    pub fn set_remote_web_server(&self, server: RemoteWebServerHandle) -> Result<(), String> {
+        let mut current = self
+            .remote_web_server
+            .lock()
+            .map_err(|_| "Unable to access remote web server state".to_string())?;
+        *current = Some(server);
+        Ok(())
+    }
+
+    pub fn clear_remote_web_server(&self) -> Result<(), String> {
+        let mut current = self
+            .remote_web_server
+            .lock()
+            .map_err(|_| "Unable to access remote web server state".to_string())?;
+        *current = None;
+        Ok(())
+    }
+
+    pub fn take_remote_web_server(&self) -> Result<Option<RemoteWebServerHandle>, String> {
+        self.remote_web_server
+            .lock()
+            .map_err(|_| "Unable to access remote web server state".to_string())
+            .map(|mut current| current.take())
+    }
+
+    pub fn remote_web_server_snapshot(
+        &self,
+    ) -> Result<Option<(String, u16, String, String)>, String> {
+        self.remote_web_server
+            .lock()
+            .map_err(|_| "Unable to access remote web server state".to_string())
+            .map(|current| {
+                current.as_ref().map(|server| {
+                    (
+                        server.bind_host.clone(),
+                        server.port,
+                        server.base_url.clone(),
+                        server.started_at.clone(),
+                    )
+                })
+            })
     }
 
     pub fn register_remote_client(
@@ -347,21 +406,23 @@ impl AppState {
         session_id: &str,
         subscribed: bool,
     ) -> Result<(), String> {
-        let mut found = false;
-        if let Some(client) = self
-            .remote_clients
-            .lock()
-            .map_err(|_| "Unable to access remote client state".to_string())?
-            .get_mut(client_id)
-        {
-            found = true;
-            if subscribed {
-                client.subscribed_sessions.insert(session_id.to_string());
+        let found = {
+            let mut clients = self
+                .remote_clients
+                .lock()
+                .map_err(|_| "Unable to access remote client state".to_string())?;
+            if let Some(client) = clients.get_mut(client_id) {
+                if subscribed {
+                    client.subscribed_sessions.insert(session_id.to_string());
+                } else {
+                    client.subscribed_sessions.remove(session_id);
+                }
+                client.last_seen_at = now_iso();
+                true
             } else {
-                client.subscribed_sessions.remove(session_id);
+                false
             }
-            client.last_seen_at = now_iso();
-        }
+        };
         if !found {
             return Err(format!("Remote client {client_id} is not registered"));
         }
@@ -426,7 +487,11 @@ impl AppState {
             .collect())
     }
 
-    pub fn set_session_subscription(&self, session_id: &str, subscribed: bool) -> Result<(), String> {
+    pub fn set_session_subscription(
+        &self,
+        session_id: &str,
+        subscribed: bool,
+    ) -> Result<(), String> {
         let mut sessions = self
             .desktop_subscribed_sessions
             .lock()
@@ -467,13 +532,14 @@ impl AppState {
 
     pub fn sync_session_runtime_subscription(&self, session_id: &str) -> Result<(), String> {
         let subscribed = self.has_session_subscribers(session_id)?;
-        if let Some(runtime) = self
+        let runtime = self
             .session_runtimes
             .lock()
             .map_err(|_| "Unable to access session runtime state".to_string())?
             .get(session_id)
-            .cloned()
-        {
+            .cloned();
+
+        if let Some(runtime) = runtime {
             runtime.set_subscribed(subscribed);
         }
         Ok(())

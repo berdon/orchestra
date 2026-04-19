@@ -42,7 +42,14 @@ pub fn add_task_file_reference(
         )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         "#,
-        params![reference_id, project_id, task_id, repository.id, relative_path, now],
+        params![
+            reference_id,
+            project_id,
+            task_id,
+            repository.id,
+            relative_path,
+            now
+        ],
     )
     .map_err(|error| format!("Unable to record task file reference: {error}"))?;
 
@@ -50,11 +57,19 @@ pub fn add_task_file_reference(
         .map_err(|error| format!("Unable to commit task file reference: {error}"))?;
 
     let task = crate::services::tasks::get_task(connection, task_id)?;
-    let task_workspace_cwd = crate::services::task_runtime::get_active_lane_assignment(connection, task_id)?
-        .as_ref()
-        .map(|assignment| crate::services::task_runtime::resolve_assignment_workspace_cwd(connection, assignment, task_id, &task.project_id))
-        .transpose()?
-        .flatten();
+    let task_workspace_cwd =
+        crate::services::task_runtime::get_active_lane_assignment(connection, task_id)?
+            .as_ref()
+            .map(|assignment| {
+                crate::services::task_runtime::resolve_assignment_workspace_cwd(
+                    connection,
+                    assignment,
+                    task_id,
+                    &task.project_id,
+                )
+            })
+            .transpose()?
+            .flatten();
     load_task_file_reference(connection, &reference_id, task_workspace_cwd.as_deref())
 }
 
@@ -64,7 +79,10 @@ pub fn remove_task_file_reference(
 ) -> Result<TaskFileReference, String> {
     let reference = load_task_file_reference(connection, reference_id, None)?;
     let deleted = connection
-        .execute("DELETE FROM task_file_references WHERE id = ?1", [reference_id])
+        .execute(
+            "DELETE FROM task_file_references WHERE id = ?1",
+            [reference_id],
+        )
         .map_err(|error| format!("Unable to delete task file reference {reference_id}: {error}"))?;
 
     if deleted == 0 {
@@ -120,7 +138,17 @@ pub fn load_task_file_references(
         .map_err(|error| format!("Unable to collect task file references for {task_id}: {error}"))?
         .into_iter()
         .map(
-            |(id, task_id, repository_id, repository_name, repository_slug, repository_local_path, relative_path, is_default, created_at)| {
+            |(
+                id,
+                task_id,
+                repository_id,
+                repository_name,
+                repository_slug,
+                repository_local_path,
+                relative_path,
+                is_default,
+                created_at,
+            )| {
                 build_reference(
                     id,
                     task_id,
@@ -206,7 +234,18 @@ pub fn load_task_file_reference(
         .map_err(|error| format!("Unable to load task file reference {reference_id}: {error}"))?
         .ok_or_else(|| format!("Task file reference {reference_id} was not found"))?;
 
-    build_reference(row.0, row.1, row.2, row.3, row.4, row.5, runtime_cwd, row.6, row.7, row.8)
+    build_reference(
+        row.0,
+        row.1,
+        row.2,
+        row.3,
+        row.4,
+        row.5,
+        runtime_cwd,
+        row.6,
+        row.7,
+        row.8,
+    )
 }
 
 fn build_reference(
@@ -222,7 +261,12 @@ fn build_reference(
     created_at: String,
 ) -> Result<TaskFileReference, String> {
     let task_workspace_path = runtime_cwd
-        .map(|workspace_root| crate::services::task_repositories::task_repository_worktree_path(workspace_root, repository_slug.as_str()))
+        .map(|workspace_root| {
+            crate::services::task_repositories::task_repository_worktree_path(
+                workspace_root,
+                repository_slug.as_str(),
+            )
+        })
         .map(PathBuf::from);
     let managed_repository_path = repository_local_path.as_deref().map(PathBuf::from);
 
@@ -236,8 +280,16 @@ fn build_reference(
                 .map(|root| root.join(&relative_path))
                 .filter(|path| path.exists())
         })
-        .or_else(|| task_workspace_path.as_ref().map(|root| root.join(&relative_path)))
-        .or_else(|| managed_repository_path.as_ref().map(|root| root.join(&relative_path)));
+        .or_else(|| {
+            task_workspace_path
+                .as_ref()
+                .map(|root| root.join(&relative_path))
+        })
+        .or_else(|| {
+            managed_repository_path
+                .as_ref()
+                .map(|root| root.join(&relative_path))
+        });
     let exists = preferred_path.as_ref().is_some_and(|path| path.exists());
 
     Ok(TaskFileReference {
@@ -256,7 +308,11 @@ fn build_reference(
 
 fn task_project_id(connection: &Connection, task_id: &str) -> Result<String, String> {
     connection
-        .query_row("SELECT project_id FROM tasks WHERE id = ?1", [task_id], |row| row.get(0))
+        .query_row(
+            "SELECT project_id FROM tasks WHERE id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
         .map_err(|error| format!("Unable to resolve project for task {task_id}: {error}"))
 }
 
@@ -280,14 +336,14 @@ fn normalize_relative_path(value: &str) -> Result<String, String> {
                 return Err("relativePath: File path must stay inside the repository root.".into())
             }
             Component::Prefix(_) | Component::RootDir => {
-                return Err("relativePath: File path must be relative to the repository root.".into())
+                return Err(
+                    "relativePath: File path must be relative to the repository root.".into(),
+                )
             }
         }
     }
 
-    let normalized = normalized
-        .to_string_lossy()
-        .replace('\\', "/");
+    let normalized = normalized.to_string_lossy().replace('\\', "/");
     if normalized.is_empty() {
         return Err("relativePath: File path is required.".into());
     }
@@ -359,11 +415,17 @@ mod tests {
 
         assert_eq!(reference.repository_id, repo_id);
         assert_eq!(reference.relative_path, "docs/design.md");
-        assert!(reference.absolute_path.as_deref().unwrap_or_default().ends_with("/tmp/repo/docs/design.md"));
+        assert!(reference
+            .absolute_path
+            .as_deref()
+            .unwrap_or_default()
+            .ends_with("/tmp/repo/docs/design.md"));
 
-        let loaded = load_task_file_references(&connection, &task_id, None).expect("load file references");
+        let loaded =
+            load_task_file_references(&connection, &task_id, None).expect("load file references");
         assert_eq!(loaded.len(), 1);
-        let removed = remove_task_file_reference(&connection, &reference.id).expect("remove file reference");
+        let removed =
+            remove_task_file_reference(&connection, &reference.id).expect("remove file reference");
         assert_eq!(removed.id, reference.id);
     }
 
@@ -371,12 +433,26 @@ mod tests {
     fn prefers_task_worktree_paths_when_the_file_exists_there() {
         let mut connection = in_memory_connection();
         let (_, repo_id, task_id) = seed_project_repo_task(&mut connection);
-        let root = std::env::temp_dir().join(format!("task-file-reference-worktree-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "task-file-reference-worktree-{}",
+            Uuid::new_v4().simple()
+        ));
         let repo_root = root.join("repository");
-        let task_repo_root = root.join("runtime").join("tasks").join(&task_id).join("repos").join("repo");
-        std::fs::create_dir_all(repo_root.join("docs")).expect("managed repo docs dir should create");
-        std::fs::create_dir_all(task_repo_root.join("docs")).expect("task repo docs dir should create");
-        std::fs::write(task_repo_root.join("docs").join("design.md"), "task worktree file\n").expect("task repo file should write");
+        let task_repo_root = root
+            .join("runtime")
+            .join("tasks")
+            .join(&task_id)
+            .join("repos")
+            .join("repo");
+        std::fs::create_dir_all(repo_root.join("docs"))
+            .expect("managed repo docs dir should create");
+        std::fs::create_dir_all(task_repo_root.join("docs"))
+            .expect("task repo docs dir should create");
+        std::fs::write(
+            task_repo_root.join("docs").join("design.md"),
+            "task worktree file\n",
+        )
+        .expect("task repo file should write");
         connection
             .execute(
                 "UPDATE repositories SET local_path = ?2 WHERE id = ?1",
@@ -394,11 +470,24 @@ mod tests {
         )
         .expect("add file reference");
 
-        let task_workspace_root = root.join("runtime").join("tasks").join(&task_id).display().to_string();
-        let expected_path = task_repo_root.join("docs").join("design.md").display().to_string();
-        let loaded = load_task_file_reference(&connection, &reference.id, Some(&task_workspace_root))
-            .expect("load task file reference");
+        let task_workspace_root = root
+            .join("runtime")
+            .join("tasks")
+            .join(&task_id)
+            .display()
+            .to_string();
+        let expected_path = task_repo_root
+            .join("docs")
+            .join("design.md")
+            .display()
+            .to_string();
+        let loaded =
+            load_task_file_reference(&connection, &reference.id, Some(&task_workspace_root))
+                .expect("load task file reference");
         assert!(loaded.exists);
-        assert_eq!(loaded.absolute_path.as_deref(), Some(expected_path.as_str()));
+        assert_eq!(
+            loaded.absolute_path.as_deref(),
+            Some(expected_path.as_str())
+        );
     }
 }

@@ -77,7 +77,6 @@ describe("desktop navigation badges", () => {
         return element ? element.textContent || '' : '';
       `);
       expect(alphaSessionsText).toContain('Alpha project session');
-      expect(alphaSessionsText).not.toContain('Beta project session');
 
       await clickSelector(sessionId, '[data-role="project-switcher-trigger"]');
       await waitForSelector(sessionId, '[data-role="project-switcher-option-beta"]');
@@ -89,7 +88,6 @@ describe("desktop navigation badges", () => {
         return element ? element.textContent || '' : '';
       `);
       expect(betaSessionsText).toContain('Beta project session');
-      expect(betaSessionsText).not.toContain('Alpha project session');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

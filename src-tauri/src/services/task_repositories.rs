@@ -1,10 +1,7 @@
 use chrono::Utc;
 use rusqlite::Connection;
 
-use crate::{
-    models::TaskRepository,
-    services::projects,
-};
+use crate::{models::TaskRepository, services::projects};
 
 pub fn load_task_repositories(
     connection: &Connection,
@@ -48,9 +45,18 @@ pub fn load_task_repositories(
         .map_err(|error| format!("Unable to collect task repositories for {task_id}: {error}"))?
         .into_iter()
         .map(
-            |(task_id, repository_id, repository_name, repository_slug, managed_repository_path, source_path, created_at)| {
-                let task_worktree_path = task_workspace_root
-                    .map(|workspace_root| task_repository_worktree_path(workspace_root, repository_slug.as_str()));
+            |(
+                task_id,
+                repository_id,
+                repository_name,
+                repository_slug,
+                managed_repository_path,
+                source_path,
+                created_at,
+            )| {
+                let task_worktree_path = task_workspace_root.map(|workspace_root| {
+                    task_repository_worktree_path(workspace_root, repository_slug.as_str())
+                });
                 Ok(TaskRepository {
                     task_id,
                     repository_id,
@@ -59,7 +65,13 @@ pub fn load_task_repositories(
                     managed_repository_path,
                     source_kind: source_path
                         .as_deref()
-                        .map(|value| if projects::is_remote_repository_path(value) { "remote" } else { "local" })
+                        .map(|value| {
+                            if projects::is_remote_repository_path(value) {
+                                "remote"
+                            } else {
+                                "local"
+                            }
+                        })
                         .map(str::to_string),
                     source_path,
                     task_worktree_path,

@@ -45,5 +45,9 @@ That writes the exported web app to `mobile/dist-web/`.
 
 1. In the Orchestra desktop app, open **Settings → Remote**.
 2. Enable remote access and save the settings.
-3. Create a pairing code.
-4. Enter the Orchestra host LAN URL and pairing code in the mobile app.
+3. Optional: enable **Use Tailscale Serve** to have Orchestra expose the backend and shared web driver automatically.
+4. Create a pairing code.
+5. Enter the Orchestra Tailscale API URL and pairing code in the mobile app when Tailscale is enabled; otherwise use the LAN URL.
+6. Open the shared web driver from the Tailscale web URL shown in the Remote settings panel when needed.
+
+On the shared web driver, the pairing screen now shows both the current browser URL and the suggested API URL, plus a shortcut to reuse the current page host when the browser and API are on the same machine.

@@ -102,6 +102,32 @@ async function dispatchTaskLaneWhenReady(sessionId: string, taskId: string, time
   throw new Error(`Timed out waiting to dispatch task ${taskId}: ${lastError}`);
 }
 
+async function waitForTaskAwaitingApproval(sessionId: string, taskId: string, timeoutMs = 90_000) {
+  const task = await waitForCondition(
+    () => invokeCommand<any>(sessionId, "get_task", { taskId }),
+    (entry) => entry.status === "in_review" || entry.activeLaneAssignment?.status === "active",
+    timeoutMs,
+  );
+
+  if (task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval") {
+    return task;
+  }
+
+  try {
+    await invokeCommand(sessionId, "complete_lane_as_success", { taskId, notes: null });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("paused for user review")) {
+      throw error;
+    }
+  }
+  return waitForCondition(
+    () => invokeCommand<any>(sessionId, "get_task", { taskId }),
+    (entry) => entry.status === "in_review" && entry.activeLaneAssignment?.status === "awaiting_user_approval",
+    timeoutMs,
+  );
+}
+
 describe("desktop channels telegram flow", () => {
   it.skipIf(!isDesktopE2E)("supports Telegram project switching buttons and task commands on the canonical supervisor session", async () => {
     const harness = await createTelegramHarness();
@@ -244,15 +270,7 @@ describe("desktop channels telegram flow", () => {
       );
 
       await dispatchTaskLaneWhenReady(sessionId, approvalTask.id);
-      await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
-        (task) => Boolean(task.activeLaneAssignment?.sessionId),
-      );
-      await invokeCommand(sessionId, "complete_lane_as_success", { taskId: approvalTask.id, notes: null });
-      await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
-        (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
-      );
+      await waitForTaskAwaitingApproval(sessionId, approvalTask.id);
 
       await harness.pushUpdate({ chatId, title: chatTitle, text: `/needs-work ${approvalTask.number}` });
       await waitForSentMessage(
@@ -295,11 +313,7 @@ describe("desktop channels telegram flow", () => {
         (message) => message.text.includes("Archived") && message.text.includes(inboxIdPrefix),
       );
 
-      await invokeCommand(sessionId, "complete_lane_as_success", { taskId: approvalTask.id, notes: null });
-      await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: approvalTask.id }),
-        (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
-      );
+      await waitForTaskAwaitingApproval(sessionId, approvalTask.id);
 
       await harness.pushUpdate({ chatId, title: chatTitle, text: `/approve ${approvalTask.number}` });
       await waitForSentMessage(

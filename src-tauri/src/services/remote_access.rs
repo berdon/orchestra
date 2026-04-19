@@ -14,7 +14,16 @@ use crate::{
 pub const REMOTE_SETTINGS_ID: &str = "singleton";
 pub const DEFAULT_REMOTE_BIND_HOST: &str = "0.0.0.0";
 pub const DEFAULT_REMOTE_PORT: u16 = 49500;
+pub const DEFAULT_REMOTE_TAILSCALE_ENABLED: bool = false;
 const PAIRING_TTL_MINUTES: i64 = 15;
+
+pub fn effective_bind_host(settings: &RemoteAccessSettings) -> String {
+    if settings.use_tailscale {
+        "127.0.0.1".to_string()
+    } else {
+        settings.bind_host.clone()
+    }
+}
 
 fn hash_secret(secret: &str) -> String {
     let mut hasher = Sha256::new();
@@ -50,11 +59,17 @@ fn ensure_settings_row(connection: &Connection) -> Result<(), String> {
     connection
         .execute(
             r#"
-            INSERT INTO remote_access_settings (id, enabled, bind_host, port, created_at, updated_at)
-            VALUES (?1, 0, ?2, ?3, ?4, ?4)
+            INSERT INTO remote_access_settings (id, enabled, use_tailscale, bind_host, port, created_at, updated_at)
+            VALUES (?1, 0, ?2, ?3, ?4, ?5, ?5)
             ON CONFLICT(id) DO NOTHING
             "#,
-            params![REMOTE_SETTINGS_ID, DEFAULT_REMOTE_BIND_HOST, DEFAULT_REMOTE_PORT, now],
+            params![
+                REMOTE_SETTINGS_ID,
+                if DEFAULT_REMOTE_TAILSCALE_ENABLED { 1 } else { 0 },
+                DEFAULT_REMOTE_BIND_HOST,
+                DEFAULT_REMOTE_PORT,
+                now,
+            ],
         )
         .map_err(|error| format!("Unable to ensure remote access settings row: {error}"))?;
     Ok(())
@@ -65,7 +80,7 @@ pub fn load_settings(connection: &Connection) -> Result<RemoteAccessSettings, St
     connection
         .query_row(
             r#"
-            SELECT enabled, bind_host, port
+            SELECT enabled, use_tailscale, bind_host, port
             FROM remote_access_settings
             WHERE id = ?1
             LIMIT 1
@@ -74,11 +89,15 @@ pub fn load_settings(connection: &Connection) -> Result<RemoteAccessSettings, St
             |row| {
                 Ok(RemoteAccessSettings {
                     enabled: row.get::<_, i64>(0)? != 0,
-                    bind_host: row.get(1)?,
-                    port: row.get::<_, i64>(2)? as u16,
+                    use_tailscale: row.get::<_, i64>(1)? != 0,
+                    bind_host: row.get(2)?,
+                    port: row.get::<_, i64>(3)? as u16,
                     base_url: None,
                     websocket_url: None,
                     lan_base_url: None,
+                    web_url: None,
+                    tailscale_url: None,
+                    tailscale_web_url: None,
                     started_at: None,
                     last_error: None,
                 })
@@ -100,6 +119,12 @@ pub fn update_settings(
         .filter(|value| !value.is_empty())
         .unwrap_or(current.bind_host.as_str())
         .to_string();
+    let use_tailscale = input.use_tailscale;
+    let bind_host = if use_tailscale {
+        "127.0.0.1".to_string()
+    } else {
+        bind_host
+    };
     let port = input.port.unwrap_or(current.port).clamp(1, u16::MAX as u16);
     let now = now_iso();
     connection
@@ -107,14 +132,16 @@ pub fn update_settings(
             r#"
             UPDATE remote_access_settings
             SET enabled = ?2,
-                bind_host = ?3,
-                port = ?4,
-                updated_at = ?5
+                use_tailscale = ?3,
+                bind_host = ?4,
+                port = ?5,
+                updated_at = ?6
             WHERE id = ?1
             "#,
             params![
                 REMOTE_SETTINGS_ID,
                 if input.enabled { 1 } else { 0 },
+                if use_tailscale { 1 } else { 0 },
                 bind_host,
                 i64::from(port),
                 now,
@@ -255,7 +282,10 @@ pub fn list_devices(connection: &Connection) -> Result<Vec<RemoteDeviceRecord>, 
         .map_err(|error| format!("Unable to read remote devices: {error}"))
 }
 
-pub fn revoke_device(connection: &Connection, device_id: &str) -> Result<RemoteDeviceRecord, String> {
+pub fn revoke_device(
+    connection: &Connection,
+    device_id: &str,
+) -> Result<RemoteDeviceRecord, String> {
     let now = now_iso();
     connection
         .execute(
@@ -281,9 +311,15 @@ pub fn set_device_push_token(
     connection
         .execute(
             "UPDATE remote_devices SET push_token = ?2, updated_at = ?3 WHERE id = ?1",
-            params![device_id, push_token.map(str::trim).filter(|value| !value.is_empty()), now],
+            params![
+                device_id,
+                push_token.map(str::trim).filter(|value| !value.is_empty()),
+                now
+            ],
         )
-        .map_err(|error| format!("Unable to update push token for remote device {device_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to update push token for remote device {device_id}: {error}")
+        })?;
     read_device(connection, device_id)
 }
 
@@ -436,7 +472,10 @@ mod tests {
         let auth = consume_pairing_code(
             &connection,
             RemotePairingCompleteInput {
-                code: pairing.code.clone().expect("pairing code should be returned once"),
+                code: pairing
+                    .code
+                    .clone()
+                    .expect("pairing code should be returned once"),
                 label: Some("Test phone".into()),
                 platform: Some("ios".into()),
                 push_token: Some("push-token".into()),
@@ -466,7 +505,10 @@ mod tests {
         let auth = consume_pairing_code(
             &connection,
             RemotePairingCompleteInput {
-                code: pairing.code.clone().expect("pairing code should be returned once"),
+                code: pairing
+                    .code
+                    .clone()
+                    .expect("pairing code should be returned once"),
                 label: Some("Android phone".into()),
                 platform: Some("android".into()),
                 push_token: None,

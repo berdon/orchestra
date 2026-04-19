@@ -46,17 +46,22 @@ export interface PiExecutableDiagnostic {
 
 export interface RemoteAccessSettings {
   enabled: boolean;
+  useTailscale: boolean;
   bindHost: string;
   port: number;
   baseUrl?: string | null;
   websocketUrl?: string | null;
   lanBaseUrl?: string | null;
+  webUrl?: string | null;
+  tailscaleUrl?: string | null;
+  tailscaleWebUrl?: string | null;
   startedAt?: string | null;
   lastError?: string | null;
 }
 
 export interface RemoteAccessSettingsInput {
   enabled: boolean;
+  useTailscale: boolean;
   bindHost?: string | null;
   port?: number | null;
 }

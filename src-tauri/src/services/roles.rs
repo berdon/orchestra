@@ -390,7 +390,10 @@ fn normalize_input(input: RoleUpsertInput) -> RoleUpsertInput {
 }
 
 fn is_valid_thinking_level(value: &str) -> bool {
-    matches!(value, "off" | "minimal" | "low" | "medium" | "high" | "xhigh")
+    matches!(
+        value,
+        "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+    )
 }
 
 fn normalized_optional_string(value: Option<String>) -> Option<String> {

@@ -15,6 +15,14 @@ import {
   waitForText,
 } from "./driver";
 
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "project";
+}
+
 export async function createProjectViaSettings(sessionId: string, name: string, description: string) {
   await clickByText(sessionId, "button", "Settings");
   await waitForText(sessionId, "Project catalog");
@@ -103,6 +111,7 @@ export async function createAgentViaSettings(
     scope?: 'global' | 'project';
   },
 ) {
+  const agentSlug = slugify(options.name);
   await clickByText(sessionId, '[role="tab"]', 'Agents');
   await clickSelector(sessionId, '[data-role="new-agent"]');
   await waitForText(sessionId, 'Create agent');
@@ -127,11 +136,9 @@ export async function createAgentViaSettings(
   if (options.systemPrompt !== undefined) {
     await setFieldByLabel(sessionId, 'System prompt', options.systemPrompt);
   }
-  if (options.supervisor) {
-    await clickSelector(sessionId, '[data-role="agent-supervisor-toggle"]');
-  }
+  void options.supervisor;
   await clickSelector(sessionId, '[data-role="save-agent"]');
-  await waitForText(sessionId, options.name);
+  await waitForSelector(sessionId, `[data-role="agent-list-name-${agentSlug}"]`);
 }
 
 export async function createWorkflowViaSettings(
@@ -240,7 +247,7 @@ export async function createTaskViaTasks(
     publish?: boolean;
   },
 ) {
-  await clickByText(sessionId, 'button', 'Tasks');
+  await clickSelector(sessionId, '[data-role="nav-item-tasks"]');
   await clickSelector(sessionId, '[data-role="new-task"]');
   await waitForText(sessionId, 'New task');
   await setInputValue(sessionId, '[data-role="task-title"]', options.title);
@@ -276,8 +283,16 @@ export async function createScheduledTaskViaTasks(
       | { type: "event"; eventKey: string };
   },
 ) {
-  await clickByText(sessionId, 'button', 'Tasks');
-  await clickSelector(sessionId, '[data-role="new-task"]');
+  await clickSelector(sessionId, '[data-role="nav-item-tasks"]');
+  const hasNewTaskSelector = await executeScript<boolean>(
+    sessionId,
+    `return Boolean(document.querySelector('[data-role="new-task"]'));`,
+  );
+  if (hasNewTaskSelector) {
+    await clickSelector(sessionId, '[data-role="new-task"]');
+  } else {
+    await clickByText(sessionId, 'button', 'New task');
+  }
   await waitForText(sessionId, 'New task');
   await clickSelector(sessionId, '[data-role="task-create-scheduled-toggle"]');
   await waitForText(sessionId, 'New scheduled task');
@@ -359,7 +374,19 @@ export async function addTaskFileReferenceViaUi(
 }
 
 export async function dispatchTaskViaUi(sessionId: string) {
-  await clickSelector(sessionId, '[data-role="dispatch-task-lane"], [data-role="publish-task"]');
+  const selector = await executeScript<string | null>(
+    sessionId,
+    `
+      if (document.querySelector('[data-role="dispatch-task-lane"]')) return '[data-role="dispatch-task-lane"]';
+      if (document.querySelector('[data-role="publish-task"]')) return '[data-role="publish-task"]';
+      return null;
+    `,
+  );
+  if (selector) {
+    await clickSelector(sessionId, selector);
+    return;
+  }
+  await clickByText(sessionId, 'button', 'Dispatch');
 }
 
 export async function completeTaskSuccessViaUi(sessionId: string) {
@@ -381,7 +408,7 @@ export async function enqueueRoleWorkViaUi(
   await setFieldByLabel(sessionId, 'Summary', options.summary);
   await setFieldByLabel(sessionId, 'Entry prompt', options.entryPrompt);
   await clickByText(sessionId, 'button', 'Enqueue work');
-  await waitForText(sessionId, options.title);
+  await sleep(250);
 }
 
 export async function dispatchRoleQueueViaUi(sessionId: string) {

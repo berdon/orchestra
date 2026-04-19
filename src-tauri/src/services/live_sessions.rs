@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
@@ -15,8 +16,8 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, SessionModel, SessionModelState, SessionRuntimeDetails,
-        SessionStats, SessionStreamEnvelope,
+        AuthorizationContext, SessionModel, SessionModelState, SessionRuntimeDetails, SessionStats,
+        SessionStreamEnvelope,
     },
     services::{
         app_events, database, harness_settings, pi_sessions::get_session_path, task_runtime,
@@ -33,13 +34,20 @@ fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> 
         .map_err(|error| format!("Unable to resolve packaged Orchestra extension path: {error}"))?;
 
     if path.exists() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "Packaged Orchestra extension path does not exist: {}",
-            path.display()
-        ))
+        return Ok(path);
     }
+
+    if let Ok(project_root) = env::var("ORCHESTRA_PROJECT_ROOT") {
+        let fallback = Path::new(&project_root).join("extensions/orchestra-tools.ts");
+        if fallback.exists() {
+            return Ok(fallback);
+        }
+    }
+
+    Err(format!(
+        "Packaged Orchestra extension path does not exist: {}",
+        path.display()
+    ))
 }
 
 fn build_runtime_pi_args(
@@ -473,14 +481,17 @@ impl SessionRuntime {
             }
         };
 
-        let _ = self.app.state::<crate::state::AppState>().publish_remote_event(
-            "session.stream",
-            None,
-            Some(self.session_id.clone()),
-            None,
-            None,
-            &payload,
-        );
+        let _ = self
+            .app
+            .state::<crate::state::AppState>()
+            .publish_remote_event(
+                "session.stream",
+                None,
+                Some(self.session_id.clone()),
+                None,
+                None,
+                &payload,
+            );
 
         let emit_desktop = self
             .app
@@ -751,9 +762,10 @@ impl SessionRuntime {
     }
 
     pub fn runtime_details(&self) -> SessionRuntimeDetails {
-        let loaded_extensions = std::iter::once(self.orchestra_extension_path.display().to_string())
-            .chain(self.extra_extensions.iter().cloned())
-            .collect::<Vec<_>>();
+        let loaded_extensions =
+            std::iter::once(self.orchestra_extension_path.display().to_string())
+                .chain(self.extra_extensions.iter().cloned())
+                .collect::<Vec<_>>();
 
         SessionRuntimeDetails {
             session_id: self.session_id.clone(),

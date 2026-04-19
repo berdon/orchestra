@@ -43,10 +43,37 @@ function formatTime(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
+function defaultHostUrlDraft() {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    const url = new URL(window.location.href);
+    url.port = "49500";
+    url.protocol = url.protocol === "https:" ? "https:" : "http:";
+    url.pathname = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  }
+  return "http://192.168.1.10:49500";
+}
+
+function normalizePairedBaseUrlForWeb(enteredBaseUrl: string, pairedBaseUrl?: string | null) {
+  if (Platform.OS !== "web") {
+    return pairedBaseUrl ?? enteredBaseUrl;
+  }
+  return enteredBaseUrl;
+}
+
+function currentWebDriverUrl() {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return null;
+}
+
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [connection, setConnection] = useState<StoredConnection | null>(null);
-  const [hostUrlDraft, setHostUrlDraft] = useState("http://192.168.1.10:49500");
+  const [hostUrlDraft, setHostUrlDraft] = useState(defaultHostUrlDraft);
   const [pairingCodeDraft, setPairingCodeDraft] = useState("");
   const [deviceLabelDraft, setDeviceLabelDraft] = useState("My phone");
   const [pairingError, setPairingError] = useState<string | null>(null);
@@ -76,6 +103,8 @@ export default function App() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [projects, activeProjectId],
   );
+  const webDriverUrl = useMemo(() => currentWebDriverUrl(), []);
+  const suggestedApiUrl = useMemo(() => defaultHostUrlDraft(), []);
 
   useEffect(() => {
     void (async () => {
@@ -243,9 +272,10 @@ export default function App() {
     setPairingBusy(true);
     setPairingError(null);
     try {
-      const response = await pairDevice(hostUrlDraft.trim(), pairingCodeDraft.trim(), deviceLabelDraft.trim(), Platform.OS);
+      const enteredBaseUrl = hostUrlDraft.trim();
+      const response = await pairDevice(enteredBaseUrl, pairingCodeDraft.trim(), deviceLabelDraft.trim(), Platform.OS);
       const nextConnection: StoredConnection = {
-        baseUrl: response.baseUrl ?? hostUrlDraft.trim(),
+        baseUrl: normalizePairedBaseUrlForWeb(enteredBaseUrl, response.baseUrl),
         token: response.token,
         deviceLabel: deviceLabelDraft.trim() || "Mobile device",
       };
@@ -345,11 +375,52 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.connectContainer}>
           <Text style={styles.title}>Connect to Orchestra</Text>
           <Text style={styles.subtitle}>Pair this Android/iOS client with an Orchestra host using the remote driver API.</Text>
-          <TextInput style={styles.input} value={hostUrlDraft} onChangeText={setHostUrlDraft} placeholder="Host URL" autoCapitalize="none" />
-          <TextInput style={styles.input} value={pairingCodeDraft} onChangeText={setPairingCodeDraft} placeholder="Pairing code" autoCapitalize="characters" />
-          <TextInput style={styles.input} value={deviceLabelDraft} onChangeText={setDeviceLabelDraft} placeholder="Device label" />
+          {Platform.OS === "web" ? (
+            <View style={styles.helperCard} testID="web-driver-helper-card">
+              <Text style={styles.helperTitle}>Shared web driver</Text>
+              <Text style={styles.helperText}>Keep this page open on the web driver URL, then pair against the API URL below. The page URL and API URL use the same host but different ports.</Text>
+              {webDriverUrl ? <Text style={styles.helperText} testID="web-driver-current-url">Current web driver URL: {webDriverUrl}</Text> : null}
+              <Text style={styles.helperText} testID="web-driver-suggested-api-url">Suggested API URL: {suggestedApiUrl}</Text>
+              <Pressable style={styles.secondaryButton} onPress={() => setHostUrlDraft(suggestedApiUrl)} testID="web-driver-use-current-host">
+                <Text style={styles.secondaryButtonText}>Use current page host</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>API host URL</Text>
+            <TextInput
+              style={styles.input}
+              value={hostUrlDraft}
+              onChangeText={setHostUrlDraft}
+              placeholder="Host URL"
+              autoCapitalize="none"
+              testID="connect-host-url"
+            />
+          </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Pairing code</Text>
+            <TextInput
+              style={styles.input}
+              value={pairingCodeDraft}
+              onChangeText={setPairingCodeDraft}
+              placeholder="Pairing code"
+              autoCapitalize="characters"
+              testID="connect-pairing-code"
+            />
+          </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Device label</Text>
+            <TextInput
+              style={styles.input}
+              value={deviceLabelDraft}
+              onChangeText={setDeviceLabelDraft}
+              placeholder="Device label"
+              testID="connect-device-label"
+            />
+          </View>
           {pairingError ? <Text style={styles.errorText}>{pairingError}</Text> : null}
-          <Pressable style={styles.primaryButton} onPress={() => void handlePair()}>
+          <Pressable style={styles.primaryButton} onPress={() => void handlePair()} testID="connect-pair-device">
             <Text style={styles.primaryButtonText}>{pairingBusy ? "Pairing…" : "Pair device"}</Text>
           </Pressable>
         </ScrollView>
@@ -534,6 +605,23 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: "center",
   },
+  helperCard: {
+    backgroundColor: "#e8f0ff",
+    borderRadius: 16,
+    padding: 16,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
+  helperTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#1d4ed8",
+  },
+  helperText: {
+    color: "#1f2937",
+    lineHeight: 20,
+  },
   header: {
     paddingHorizontal: 20,
     paddingTop: 16,
@@ -556,6 +644,14 @@ const styles = StyleSheet.create({
   subtitle: {
     color: "#4b5563",
     fontSize: 15,
+  },
+  fieldGroup: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
   },
   tabBar: {
     maxHeight: 56,
