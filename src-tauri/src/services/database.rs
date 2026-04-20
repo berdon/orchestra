@@ -379,6 +379,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 repository_id TEXT,
                 parent_task_id TEXT,
                 whip_max_attempts INTEGER NOT NULL DEFAULT 10,
+                auto_blocked_by_dependencies INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER NOT NULL DEFAULT 0,
                 source_schedule_id TEXT,
                 source_schedule_occurrence_id TEXT,
@@ -1179,6 +1180,30 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_max_attempts for tasks: {error}"))?;
+
+    if !columns.contains("auto_blocked_by_dependencies") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN auto_blocked_by_dependencies INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add auto_blocked_by_dependencies column to tasks table: {error}"
+                )
+            })?;
+    }
+
+    connection
+        .execute(
+            "UPDATE tasks SET auto_blocked_by_dependencies = 0 WHERE auto_blocked_by_dependencies IS NULL",
+            [],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to backfill auto_blocked_by_dependencies for tasks: {error}"
+            )
+        })?;
 
     if !columns.contains("source_schedule_id") {
         connection

@@ -608,12 +608,6 @@ pub fn cancel_dispatch_for_dependency_block(
     .map_err(|error| format!("Unable to clear open task lane assignments for dependency-blocked task {task_id}: {error}"))?;
 
     tx.execute(
-        "UPDATE tasks SET status = 'ready', updated_at = ?2 WHERE id = ?1 AND status IN ('in_progress', 'blocked')",
-        params![task_id, now],
-    )
-    .map_err(|error| format!("Unable to reset dependency-blocked task status for {task_id}: {error}"))?;
-
-    tx.execute(
         "UPDATE agent_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched')",
         params![task_id, now],
     )
@@ -3395,6 +3389,11 @@ fn transition_task_after_completion(
                 task.id
             )
         })?;
+    tasks::reconcile_dependency_statuses(
+        connection,
+        tasks::collect_task_refresh_ids(connection, &task.id)?,
+        now,
+    )?;
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use serde_json::json;
 use tauri::{AppHandle, State};
@@ -317,6 +317,7 @@ pub fn create_task(
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
     let task = tasks::create_task(&mut connection, project_id.as_deref(), input)?;
+    let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
     state.log("info", "task.created", &format!("Created task {}", task.id));
     state.log_authorized_action("auth.audit", "create_task", None, None, &task.id, "success");
     record_task_domain_event(
@@ -331,7 +332,7 @@ pub fn create_task(
             "laneId": task.current_lane_id.clone(),
         }),
     );
-    emit_task_change(&app, "task.created", [task.id.clone()]);
+    emit_task_change(&app, "task.created", changed_task_ids);
     Ok(task)
 }
 
@@ -344,6 +345,7 @@ pub fn create_subtask(
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
     let task = tasks::create_subtask(&mut connection, &parent_task_id, input)?;
+    let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
     state.log(
         "info",
         "task.created",
@@ -370,7 +372,7 @@ pub fn create_subtask(
             "parentTaskId": task.parent_task_id.clone(),
         }),
     );
-    emit_task_change(&app, "task.created", [task.id.clone(), parent_task_id]);
+    emit_task_change(&app, "task.created", changed_task_ids);
     Ok(task)
 }
 
@@ -382,7 +384,20 @@ pub fn update_task(
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
+    let existing = tasks::get_task_context(&connection, &task_id)?;
     let task = tasks::update_task(&mut connection, &task_id, input)?;
+    let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+    changed_task_ids.extend(tasks::collect_parent_chain_task_ids(
+        &connection,
+        existing.parent_task_id.as_deref(),
+    )?);
+    let changed_task_ids = {
+        let mut seen = HashSet::new();
+        changed_task_ids
+            .into_iter()
+            .filter(|task_id| seen.insert(task_id.clone()))
+            .collect::<Vec<_>>()
+    };
     state.log("info", "task.updated", &format!("Updated task {}", task.id));
     state.log_authorized_action("auth.audit", "update_task", None, None, &task_id, "success");
     record_task_domain_event(
@@ -397,7 +412,7 @@ pub fn update_task(
             "laneId": task.current_lane_id.clone(),
         }),
     );
-    emit_task_change(&app, "task.updated", [task.id.clone()]);
+    emit_task_change(&app, "task.updated", changed_task_ids);
     Ok(task)
 }
 
@@ -592,6 +607,15 @@ pub fn add_task_dependency(
     let mut connection = database::open_connection()?;
     let dependency =
         tasks::add_task_dependency(&mut connection, &blocker_task_id, &blocked_task_id)?;
+    let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &blocked_task_id)?;
+    changed_task_ids.push(blocker_task_id.clone());
+    let changed_task_ids = {
+        let mut seen = HashSet::new();
+        changed_task_ids
+            .into_iter()
+            .filter(|task_id| seen.insert(task_id.clone()))
+            .collect::<Vec<_>>()
+    };
     let canceled_assignment =
         task_runtime::cancel_dispatch_for_dependency_block(&mut connection, &blocked_task_id)?;
     state.log(
@@ -636,13 +660,9 @@ pub fn add_task_dependency(
         &dependency.id,
         "success",
     );
-    emit_task_change(
-        &app,
-        "task.dependency.added",
-        [blocker_task_id, blocked_task_id.clone()],
-    );
+    emit_task_change(&app, "task.dependency.added", changed_task_ids.clone());
     if canceled_assignment_present {
-        emit_task_change(&app, "task.dependency.blocked", [blocked_task_id]);
+        emit_task_change(&app, "task.dependency.blocked", changed_task_ids);
     }
     Ok(dependency)
 }
@@ -655,6 +675,16 @@ pub fn remove_task_dependency(
 ) -> Result<TaskDependency, String> {
     let connection = database::open_connection()?;
     let dependency = tasks::remove_task_dependency(&connection, &dependency_id)?;
+    let mut changed_task_ids =
+        tasks::collect_task_refresh_ids(&connection, &dependency.blocked_task_id)?;
+    changed_task_ids.push(dependency.blocker_task_id.clone());
+    let changed_task_ids = {
+        let mut seen = HashSet::new();
+        changed_task_ids
+            .into_iter()
+            .filter(|task_id| seen.insert(task_id.clone()))
+            .collect::<Vec<_>>()
+    };
     state.log(
         "info",
         "task.dependency.removed",
@@ -668,14 +698,7 @@ pub fn remove_task_dependency(
         &dependency_id,
         "success",
     );
-    emit_task_change(
-        &app,
-        "task.dependency.removed",
-        [
-            dependency.blocker_task_id.clone(),
-            dependency.blocked_task_id.clone(),
-        ],
-    );
+    emit_task_change(&app, "task.dependency.removed", changed_task_ids);
     Ok(dependency)
 }
 
@@ -965,15 +988,26 @@ pub async fn approve_lane_completion(
             emit_session_change(&app, "task.transition.next_assignment", [session_id]);
         }
     }
+    let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+    changed_task_ids.extend(
+        auto_dispatches
+            .iter()
+            .map(|outcome| outcome.task_id.clone()),
+    );
+    let changed_task_ids = {
+        let mut seen = HashSet::new();
+        changed_task_ids
+            .into_iter()
+            .filter(|task_id| seen.insert(task_id.clone()))
+            .collect::<Vec<_>>()
+    };
     if !auto_dispatches.is_empty() {
         task = tasks::get_task_context(&connection, &task_id)?;
-        let mut changed_task_ids = vec![task.id.clone()];
-        changed_task_ids.extend(
-            auto_dispatches
-                .iter()
-                .map(|outcome| outcome.task_id.clone()),
+        emit_task_change(
+            &app,
+            "task.transition.auto_dispatch",
+            changed_task_ids.clone(),
         );
-        emit_task_change(&app, "task.transition.auto_dispatch", changed_task_ids);
     }
 
     state.log(
@@ -981,7 +1015,7 @@ pub async fn approve_lane_completion(
         "task.transition",
         &format!("Approved pending lane completion for task {}", task_id),
     );
-    emit_task_change(&app, "task.transition.approved_success", [task.id.clone()]);
+    emit_task_change(&app, "task.transition.approved_success", changed_task_ids);
     if let Some(session_id) =
         task_runtime::transitioned_assignment_session_to_retire(previous_assignment.as_ref(), &task)
     {
@@ -1291,26 +1325,33 @@ async fn complete_lane_command(
             }),
         );
 
-        Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
-            task,
+        let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+        changed_task_ids.extend(
             auto_dispatches
                 .iter()
-                .map(|outcome| outcome.task_id.clone())
-                .collect(),
+                .map(|outcome| outcome.task_id.clone()),
+        );
+        let mut seen = HashSet::new();
+        let changed_task_ids = changed_task_ids
+            .into_iter()
+            .filter(|task_id| seen.insert(task_id.clone()))
+            .collect::<Vec<_>>();
+
+        Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
+            task,
+            changed_task_ids,
             retired_session_id,
         ))
     }
     .await;
 
     match result {
-        Ok((task, auto_dispatched_task_ids, retired_session_id)) => {
+        Ok((task, changed_task_ids, retired_session_id)) => {
             state.log(
                 "info",
                 "task.transition",
                 &format!("Completed task lane {} with outcome {}", task_id, outcome),
             );
-            let mut changed_task_ids = vec![task.id.clone()];
-            changed_task_ids.extend(auto_dispatched_task_ids);
             emit_task_change(
                 &app,
                 task_runtime::task_transition_event_reason(outcome, &task),
