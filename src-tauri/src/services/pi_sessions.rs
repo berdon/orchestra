@@ -9,7 +9,7 @@ use std::{
 };
 
 use chrono::{DateTime, TimeZone, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
@@ -687,6 +687,9 @@ fn fallback_session_file_summary(
             task_id: None,
             task_number: None,
             task_title: None,
+            active_task_id: None,
+            active_task_number: None,
+            active_task_title: None,
             worker_type: None,
             worker_name: None,
         },
@@ -888,6 +891,9 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
             task_id: None,
             task_number: None,
             task_title: None,
+            active_task_id: None,
+            active_task_number: None,
+            active_task_title: None,
             worker_type: None,
             worker_name: None,
         },
@@ -1031,6 +1037,9 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
             task_id: None,
             task_number: None,
             task_title: None,
+            active_task_id: None,
+            active_task_number: None,
+            active_task_title: None,
             worker_type: None,
             worker_name: None,
         },
@@ -2467,9 +2476,11 @@ process.stdin.on('end', () => {
         assert_eq!(full_session.events.len(), 1);
         assert_eq!(full_session.events[0].kind, "system");
         assert!(full_session.events[0].message.contains("Session compacted"));
-        assert!(full_session.events[0]
-            .message
-            .contains("Earlier discussion summarized"));
+        assert!(
+            full_session.events[0]
+                .message
+                .contains("Earlier discussion summarized")
+        );
     }
 
     #[test]
@@ -2581,14 +2592,18 @@ process.stdin.on('end', () => {
         let parsed = parse_session_file(&session_path, true).expect("session should parse");
         assert_eq!(parsed.record.events.len(), 3);
         assert_eq!(parsed.record.events[0].kind, "system");
-        assert!(parsed.record.events[0]
-            .message
-            .contains("Tool call: complete_lane_as_success"));
+        assert!(
+            parsed.record.events[0]
+                .message
+                .contains("Tool call: complete_lane_as_success")
+        );
         assert!(parsed.record.events[0].message.contains("task-1"));
         assert_eq!(parsed.record.events[1].kind, "system");
-        assert!(parsed.record.events[1]
-            .message
-            .contains("complete_lane_as_success tool result"));
+        assert!(
+            parsed.record.events[1]
+                .message
+                .contains("complete_lane_as_success tool result")
+        );
         assert_eq!(parsed.record.events[2].kind, "assistant");
         assert_eq!(parsed.record.events[2].message, "Task completed.");
     }
@@ -2786,17 +2801,22 @@ process.stdin.on('end', () => {
 
         assert_eq!(updated.title, "RPC session");
         assert!(events.iter().any(|event| event.event == "text_start"));
-        assert!(events
-            .iter()
-            .any(|event| event.delta.as_deref() == Some("Echo: ")));
-        assert!(updated
-            .events
-            .iter()
-            .any(|event| event.kind == "user" && event.message == "Hello from the UI"));
-        assert!(updated
-            .events
-            .iter()
-            .any(|event| event.kind == "assistant" && event.message == "Echo: Hello from the UI"));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.delta.as_deref() == Some("Echo: "))
+        );
+        assert!(
+            updated
+                .events
+                .iter()
+                .any(|event| event.kind == "user" && event.message == "Hello from the UI")
+        );
+        assert!(
+            updated.events.iter().any(
+                |event| event.kind == "assistant" && event.message == "Echo: Hello from the UI"
+            )
+        );
     }
 
     #[test]

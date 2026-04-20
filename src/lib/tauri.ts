@@ -566,9 +566,32 @@ function attachMockSessionTaskMetadata(session: SessionRecord, task: Pick<TaskDe
     taskId: task.id,
     taskNumber: task.number,
     taskTitle: task.title,
+    activeTaskId: task.id,
+    activeTaskNumber: task.number,
+    activeTaskTitle: task.title,
     workerType,
     workerName: workerName ?? null,
   } satisfies SessionRecord;
+}
+
+function clearMockSessionActiveTaskMetadata(session: SessionRecord) {
+  return {
+    ...session,
+    activeTaskId: null,
+    activeTaskNumber: null,
+    activeTaskTitle: null,
+  } satisfies SessionRecord;
+}
+
+function syncMockSessionTaskActivity(previousAssignment?: TaskDetail["activeLaneAssignment"] | null, nextAssignment?: TaskDetail["activeLaneAssignment"] | null) {
+  const previousSessionId = previousAssignment?.sessionId ?? null;
+  const nextSessionId = nextAssignment?.sessionId ?? null;
+  if (!previousSessionId || previousSessionId === nextSessionId) {
+    return;
+  }
+
+  updateMockSession(previousSessionId, (current) => clearMockSessionActiveTaskMetadata(current));
+  emitMockSessionChange({ sessionIds: [previousSessionId], reason: "task.assignment.cleared" });
 }
 
 export function upsertMockSession(session: SessionRecord) {
@@ -3229,6 +3252,7 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
     assignment.sessionId = agentSession.id;
     updateMockSession(agentSession.id, (current) => attachMockSessionTaskMetadata(current, task, "agent", lane.assignedEntityId ?? "Agent"));
+    emitMockSessionChange({ sessionIds: [agentSession.id], reason: "task.transition.next_assignment" });
   }
 
   if (lane.assignedEntityType === "role") {
@@ -3261,7 +3285,7 @@ function closeMockTaskSessionIfNeeded(task: TaskDetail, nextStatus: string, upda
 
   if (!isPersistentAgentMainSession) {
     updateMockSession(activeSessionId, (current) => ({
-      ...current,
+      ...clearMockSessionActiveTaskMetadata(current),
       status: "closed",
       updatedAt,
     }));
@@ -3592,6 +3616,7 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   const reconciled = reconcileStoredMockTasks(updatedTasks, dependencies, refreshTaskIds, updatedAt);
   saveMockTasks(reconciled.tasks);
 
+  syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
   finalizeMockAgentState(
     {
       ...task,
@@ -3714,6 +3739,7 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
   const reconciled = reconcileStoredMockTasks(updatedTasks, dependencies, refreshTaskIds, updatedAt);
   saveMockTasks(reconciled.tasks);
 
+  syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
   finalizeMockAgentState(task, "success", updatedAt, autoAssignment);
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
@@ -3840,6 +3866,7 @@ async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: st
       : entry,
   ));
 
+  syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
   finalizeMockAgentState(
     {
       ...task,
@@ -3996,6 +4023,10 @@ export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
     }
 
     saveMockTasks(ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)));
+    if (activeAssignment?.sessionId) {
+      updateMockSession(activeAssignment.sessionId, (current) => clearMockSessionActiveTaskMetadata(current));
+      emitMockSessionChange({ sessionIds: [activeAssignment.sessionId], reason: "task.runtime.reset" });
+    }
     emitMockTaskChange({ taskIds: [taskId], reason: "task.runtime.reset" });
     return getTask(taskId);
   }

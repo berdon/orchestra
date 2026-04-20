@@ -1028,6 +1028,173 @@ test("task comment unread badges track non-user comments and clear when the comm
   await expect(page.locator('[data-role="nav-badge-tasks"]')).toHaveCount(0);
 });
 
+test("task detail only shows session navigation when the task has an active session", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-session-linked",
+          projectId: "orchestra",
+          number: "ORC-201",
+          title: "Task with active session",
+          description: null,
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: "lane-implementation",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: {
+            id: "assignment-session-linked",
+            taskId: "task-session-linked",
+            workflowId: "workflow-dev",
+            laneId: "lane-implementation",
+            workerType: "role",
+            workerId: "developer",
+            status: "active",
+            sessionId: "session-task-linked",
+            runtimeCwd: "/tmp/orchestra/task-session-linked",
+            roleQueueEntryId: null,
+            roleInstanceId: null,
+            prompt: "Implement the active session task.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: timestamp,
+            completedAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        {
+          id: "task-session-missing",
+          projectId: "orchestra",
+          number: "ORC-202",
+          title: "Task without active session",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: null,
+          currentLaneId: "lane-implementation",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-task-linked",
+          title: "Active task session",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [{ id: "session-event", kind: "assistant", message: "Ready for direct navigation.", timestamp }],
+          taskId: "task-session-linked",
+          taskNumber: "ORC-201",
+          taskTitle: "Task with active session",
+          activeTaskId: "task-session-linked",
+          activeTaskNumber: "ORC-201",
+          activeTaskTitle: "Task with active session",
+          workerType: "role",
+          workerName: "Developer",
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestOpenTaskDetail?: (taskId: string) => void;
+    };
+    testWindow.__orchestraTestOpenTaskDetail?.("task-session-linked");
+  });
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with active session");
+  await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
+  await page.locator('[data-role="task-open-session"]').click();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-linked");
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Active task session");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestOpenTaskDetail?: (taskId: string) => void;
+    };
+    testWindow.__orchestraTestOpenTaskDetail?.("task-session-missing");
+  });
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task without active session");
+  await expect(page.locator('[data-role="task-open-session"]')).toHaveCount(0);
+});
+
 test("task detail dispatches a role-owned lane and shows its runtime assignment", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -528,6 +528,9 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     taskId: session.taskId ?? null,
     taskNumber: session.taskNumber ?? null,
     taskTitle: session.taskTitle ?? null,
+    activeTaskId: session.activeTaskId ?? null,
+    activeTaskNumber: session.activeTaskNumber ?? null,
+    activeTaskTitle: session.activeTaskTitle ?? null,
     workerType: session.workerType ?? null,
     workerName: session.workerName ?? null,
   };
@@ -565,6 +568,9 @@ function areSessionMetadataEqual(left: SessionRecord, right: SessionRecord) {
   return left.taskId === right.taskId
     && left.taskNumber === right.taskNumber
     && left.taskTitle === right.taskTitle
+    && left.activeTaskId === right.activeTaskId
+    && left.activeTaskNumber === right.activeTaskNumber
+    && left.activeTaskTitle === right.activeTaskTitle
     && left.workerType === right.workerType
     && left.workerName === right.workerName;
 }
@@ -2127,6 +2133,13 @@ export function App() {
     setTasksOpenRequest((current) => ({ taskId, token: (current?.token ?? 0) + 1, projectId: activeProjectId }));
   }
 
+  function navigateToSession(sessionId: string) {
+    const session = sessions.find((entry) => entry.id === sessionId) ?? null;
+    setActivePage("sessions");
+    setSessionFilter(session?.status === "closed" ? "closed" : "active");
+    setSelectedSessionId(sessionId);
+  }
+
   function navigateToTasksOverview() {
     setActivePage("tasks");
     setTasksOverviewToken((current) => current + 1);
@@ -2235,8 +2248,7 @@ export function App() {
         navigateToTask(item.action.taskId);
         return;
       case "open-session":
-        setActivePage("sessions");
-        setSelectedSessionId(item.action.sessionId);
+        navigateToSession(item.action.sessionId);
         return;
       case "open-agent":
         navigateToAgent(item.action.agentId);
@@ -2858,6 +2870,7 @@ export function App() {
             onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
+            onOpenSession={navigateToSession}
           />
         )}
         </div>
