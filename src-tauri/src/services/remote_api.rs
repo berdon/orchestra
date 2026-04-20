@@ -27,7 +27,7 @@ use tower_http::{
 };
 
 use crate::{
-    commands::app::get_app_info,
+    commands::app::build_app_info,
     models::{
         AppInfo, MailboxMessage, QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus,
         RemoteAuthResponse, RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput,
@@ -1075,7 +1075,7 @@ async fn get_health() -> Json<HealthResponse> {
 }
 
 async fn get_remote_app_info(AxumState(context): AxumState<RemoteApiContext>) -> Json<AppInfo> {
-    Json(get_app_info(context.app.state::<AppState>()))
+    Json(build_app_info(context.app.state::<AppState>().inner()))
 }
 
 async fn post_pair_complete(

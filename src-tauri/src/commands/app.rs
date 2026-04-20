@@ -30,8 +30,7 @@ use crate::{
     state::AppState,
 };
 
-#[tauri::command]
-pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
+pub fn build_app_info(state: &AppState) -> AppInfo {
     let version = env!("CARGO_PKG_VERSION");
     let hash = option_env!("ORCHESTRA_GIT_HASH").unwrap_or("dev");
     let dispatch_blocked_reason = match state.sync_pi_runtime_health() {
@@ -46,6 +45,11 @@ pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
         dispatch_blocked: dispatch_blocked_reason.is_some(),
         dispatch_blocked_reason,
     }
+}
+
+#[tauri::command]
+pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
+    build_app_info(state.inner())
 }
 
 #[tauri::command]
