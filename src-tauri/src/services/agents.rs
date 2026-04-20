@@ -44,23 +44,26 @@ pub fn list_agents_for_project(
         .map_err(|error| format!("Unable to prepare agent list query: {error}"))?;
 
     let rows = statement
-        .query_map(params![if include_archived { 1 } else { 0 }, project_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, i64>(8)?,
-                row.get::<_, i64>(9)?,
-                row.get::<_, i64>(10)?,
-                row.get::<_, String>(11)?,
-                row.get::<_, String>(12)?,
-            ))
-        })
+        .query_map(
+            params![if include_archived { 1 } else { 0 }, project_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
+                ))
+            },
+        )
         .map_err(|error| format!("Unable to query agents: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -209,7 +212,10 @@ pub fn validate_agent(
                     "projectId",
                     "Choose a project for project-scoped agents.",
                 ));
-                return Ok(AgentValidationResult { valid: false, errors });
+                return Ok(AgentValidationResult {
+                    valid: false,
+                    errors,
+                });
             };
 
             if projects::get_project(connection, project_id).is_err() {
@@ -227,7 +233,9 @@ pub fn validate_agent(
         )),
     }
 
-    if normalized.system_prompt.as_deref().is_some() && normalized.name.eq_ignore_ascii_case("supervisor") {
+    if normalized.system_prompt.as_deref().is_some()
+        && normalized.name.eq_ignore_ascii_case("supervisor")
+    {
         if normalized.scope.as_deref() == Some(AGENT_SCOPE_PROJECT) {
             errors.push(validation_error(
                 "invalid",
@@ -328,7 +336,10 @@ fn create_agent_in(
             normalized.provider,
             normalized.model,
             normalized.role_id,
-            normalized.scope.clone().unwrap_or_else(|| AGENT_SCOPE_GLOBAL.into()),
+            normalized
+                .scope
+                .clone()
+                .unwrap_or_else(|| AGENT_SCOPE_GLOBAL.into()),
             normalized.project_id,
             normalized
                 .thinking_level
@@ -455,7 +466,10 @@ fn update_agent_in(
                 normalized.provider,
                 normalized.model,
                 normalized.role_id,
-                normalized.scope.clone().unwrap_or_else(|| AGENT_SCOPE_GLOBAL.into()),
+                normalized
+                    .scope
+                    .clone()
+                    .unwrap_or_else(|| AGENT_SCOPE_GLOBAL.into()),
                 normalized.project_id,
                 normalized
                     .thinking_level
@@ -625,7 +639,10 @@ fn normalized_optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn is_valid_thinking_level(value: &str) -> bool {
-    matches!(value, "off" | "minimal" | "low" | "medium" | "high" | "xhigh")
+    matches!(
+        value,
+        "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+    )
 }
 
 fn agent_id() -> String {
@@ -881,7 +898,10 @@ mod tests {
         .expect("protected agent runtime settings should update");
 
         assert_eq!(updated.name, "Supervisor");
-        assert_eq!(updated.description.as_deref(), Some("Built-in protected Orchestra supervisor agent."));
+        assert_eq!(
+            updated.description.as_deref(),
+            Some("Built-in protected Orchestra supervisor agent.")
+        );
         assert_eq!(updated.system_prompt.as_deref(), Some("Locked prompt"));
         assert_eq!(updated.provider.as_deref(), Some("anthropic"));
         assert_eq!(updated.model.as_deref(), Some("claude-sonnet-4-20250514"));

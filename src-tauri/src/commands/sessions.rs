@@ -11,8 +11,8 @@ use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{
-        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord, SessionRuntimeDetails,
-        SessionStats,
+        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord,
+        SessionRuntimeDetails, SessionStats,
     },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
@@ -20,9 +20,8 @@ use crate::{
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
-            get_session_stats as load_session_stats_from_file,
-            list_sessions as list_real_sessions, session_context_for_project_id,
-            set_session_model as apply_session_model,
+            get_session_stats as load_session_stats_from_file, list_sessions as list_real_sessions,
+            session_context_for_project_id, set_session_model as apply_session_model,
         },
         role_dispatch, role_runtime, roles, task_runtime,
     },
@@ -1363,9 +1362,6 @@ pub async fn unsubscribe_session(
     session_id: String,
 ) -> Result<SessionRecord, String> {
     state.set_session_subscription(&session_id, false)?;
-    if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
-        runtime.set_subscribed(false);
-    }
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();

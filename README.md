@@ -63,6 +63,28 @@ For containerized runs, use the Podman wrappers:
 ./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
 ```
 
+To fan the Podman suite out in parallel batches, set `DESKTOP_E2E_JOBS`:
+
+```bash
+DESKTOP_E2E_JOBS=2 ./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/*.test.ts
+```
+
+On macOS, first-time Podman setup may also require:
+
+```bash
+brew install podman
+/usr/sbin/softwareupdate --install-rosetta --agree-to-license
+podman machine init
+podman machine set --memory 8192 podman-machine-default
+podman machine start
+```
+
+The shared web driver now has its own browser E2E coverage:
+
+```bash
+npm run test:web-driver:e2e
+```
+
 ### Tauri desktop app
 
 The repository includes a `src-tauri/` scaffold and matching session command surface, but building/running the desktop app requires a Rust toolchain and Tauri system prerequisites to be installed locally.
@@ -97,3 +119,30 @@ The built app will be at `src-tauri/target/debug/bundle/macos/Orchestra.app`.
 See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adhoc-signing.md](docs/adhoc-signing.md) for complete documentation on adhoc signing.
 
 Until then, the frontend can be exercised in browser mode with the built-in mock session adapter.
+
+### Mobile and web remote client
+
+The shared cross-platform remote client lives under `mobile/` and can run as Android, iOS, or web.
+
+```bash
+cd mobile
+npm install
+npm run start   # native Expo dev
+npm run web     # shared web frontend
+```
+
+### Remote access + Tailscale Serve
+
+In **Settings → Remote**, Orchestra can now optionally manage Tailscale Serve for the remote driver:
+
+- backend/API served on the configured remote API HTTPS port (default `49500`)
+- shared web driver served on Tailscale HTTPS port `9443`
+- when **Use Tailscale Serve** is enabled, Orchestra binds the backend to `127.0.0.1` and keeps both Serve routes pointed at the local backend/web driver automatically
+
+For packaged builds, the Tauri bundle now includes the exported `mobile/dist-web` assets. During local development, build them once with:
+
+```bash
+cd mobile
+npm install
+npm run web:build
+```

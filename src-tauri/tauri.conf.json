@@ -5,7 +5,7 @@
   "identifier": "dev.guppy.orchestra",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && cd mobile && npm run web:build",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
@@ -34,6 +34,7 @@
     ],
     "resources": {
       "../extensions/orchestra-tools.ts": "extensions/orchestra-tools.ts",
+      "../mobile/dist-web": "mobile-web",
       "icons/icon.png": "icon.png"
     },
     "macOS": {

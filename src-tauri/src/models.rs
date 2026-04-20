@@ -43,6 +43,125 @@ pub struct SystemNotificationEnvironmentStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RemoteAccessSettings {
+    pub enabled: bool,
+    pub use_tailscale: bool,
+    pub bind_host: String,
+    pub port: u16,
+    pub base_url: Option<String>,
+    pub websocket_url: Option<String>,
+    pub lan_base_url: Option<String>,
+    pub web_url: Option<String>,
+    pub tailscale_url: Option<String>,
+    pub tailscale_web_url: Option<String>,
+    pub started_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAccessSettingsInput {
+    pub enabled: bool,
+    pub use_tailscale: bool,
+    pub bind_host: Option<String>,
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairingCode {
+    pub id: String,
+    pub code: Option<String>,
+    pub display_code: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub consumed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairingCodeInput {
+    pub label: Option<String>,
+    pub platform: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDeviceRecord {
+    pub id: String,
+    pub label: String,
+    pub platform: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_seen_at: Option<String>,
+    pub revoked_at: Option<String>,
+    pub push_token_configured: bool,
+    pub active_client_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteClientRecord {
+    pub client_id: String,
+    pub client_kind: String,
+    pub device_id: Option<String>,
+    pub device_label: Option<String>,
+    pub active_project_id: Option<String>,
+    pub connected_at: String,
+    pub last_seen_at: String,
+    pub subscribed_session_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAccessStatus {
+    pub settings: RemoteAccessSettings,
+    pub pairing_codes: Vec<RemotePairingCode>,
+    pub devices: Vec<RemoteDeviceRecord>,
+    pub active_clients: Vec<RemoteClientRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAuthResponse {
+    pub device: RemoteDeviceRecord,
+    pub token: String,
+    pub base_url: Option<String>,
+    pub websocket_url: Option<String>,
+    pub default_project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairingCompleteInput {
+    pub code: String,
+    pub label: Option<String>,
+    pub platform: Option<String>,
+    pub push_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePushTokenInput {
+    pub push_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteEventEnvelope {
+    pub id: String,
+    pub sequence: u64,
+    pub topic: String,
+    pub timestamp: String,
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+    pub task_id: Option<String>,
+    pub delivery_id: Option<String>,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
     pub id: String,
     pub slug: String,

@@ -40,7 +40,9 @@ fn run_resume_active_session_work_on_startup(
     let mut resumed = 0;
     for candidate in candidates {
         let connection = database::open_connection()?;
-        let Some(assignment) = task_runtime::get_assignment_by_id(&connection, &candidate.assignment_id)? else {
+        let Some(assignment) =
+            task_runtime::get_assignment_by_id(&connection, &candidate.assignment_id)?
+        else {
             continue;
         };
         if assignment.status != "active" {

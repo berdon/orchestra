@@ -1361,20 +1361,137 @@ function processMockTaskSchedules(projectId?: string | null) {
   };
 }
 
+type StoredMockTask = TaskDetail & { autoBlockedByDependencies?: boolean };
+
+function dedupeMockTaskIds(taskIds: string[]) {
+  return [...new Set(taskIds)];
+}
+
+function ensureStoredMockTask(task: TaskDetail | StoredMockTask): StoredMockTask {
+  return {
+    ...task,
+    autoBlockedByDependencies: (task as StoredMockTask).autoBlockedByDependencies ?? false,
+  };
+}
+
+function collectMockParentChainTaskIds(tasks: StoredMockTask[], parentTaskId?: string | null) {
+  const taskIds: string[] = [];
+  let currentParentId = parentTaskId ?? null;
+
+  while (currentParentId) {
+    taskIds.push(currentParentId);
+    currentParentId = tasks.find((task) => task.id === currentParentId)?.parentTaskId ?? null;
+  }
+
+  return taskIds;
+}
+
+function collectMockDependentTaskIds(dependencies: TaskDependency[], blockerTaskId: string) {
+  return dependencies
+    .filter((dependency) => dependency.blockerTaskId === blockerTaskId)
+    .map((dependency) => dependency.blockedTaskId);
+}
+
+function collectMockRefreshTaskIds(
+  tasks: StoredMockTask[],
+  dependencies: TaskDependency[],
+  taskId: string,
+  oldParentTaskId?: string | null,
+  newParentTaskId?: string | null,
+) {
+  return dedupeMockTaskIds([
+    taskId,
+    ...collectMockDependentTaskIds(dependencies, taskId),
+    ...collectMockParentChainTaskIds(tasks, oldParentTaskId),
+    ...collectMockParentChainTaskIds(tasks, newParentTaskId),
+  ]);
+}
+
+function mockTaskHasUnresolvedDependencyBlockers(
+  taskId: string,
+  tasks: StoredMockTask[],
+  dependencies: TaskDependency[],
+) {
+  return dependencies.some((dependency) => {
+    if (dependency.blockedTaskId !== taskId) {
+      return false;
+    }
+    const blocker = tasks.find((task) => task.id === dependency.blockerTaskId);
+    return blocker ? !["completed", "canceled"].includes(blocker.status) : false;
+  });
+}
+
+function mockTaskHasUnfinishedChildren(taskId: string, tasks: StoredMockTask[]) {
+  return tasks.some((task) => task.parentTaskId === taskId && !task.archived && !["completed", "canceled"].includes(task.status));
+}
+
+function reconcileStoredMockTasks(
+  tasks: StoredMockTask[],
+  dependencies: TaskDependency[],
+  taskIds: string[],
+  updatedAt = nowIso(),
+) {
+  const nextTasks = tasks.map((task) => ensureStoredMockTask(task));
+  const changedTaskIds = new Set<string>();
+
+  for (const taskId of dedupeMockTaskIds(taskIds)) {
+    const index = nextTasks.findIndex((task) => task.id === taskId);
+    if (index < 0) {
+      continue;
+    }
+
+    const task = nextTasks[index];
+    const hasBlockers = mockTaskHasUnresolvedDependencyBlockers(taskId, nextTasks, dependencies)
+      || mockTaskHasUnfinishedChildren(taskId, nextTasks);
+
+    if (["completed", "canceled"].includes(task.status)) {
+      if (task.autoBlockedByDependencies) {
+        nextTasks[index] = { ...task, autoBlockedByDependencies: false, updatedAt };
+        changedTaskIds.add(taskId);
+      }
+      continue;
+    }
+
+    if (hasBlockers) {
+      if (["ready", "in_progress", "in_review"].includes(task.status)) {
+        nextTasks[index] = { ...task, status: "blocked", autoBlockedByDependencies: true, updatedAt };
+        changedTaskIds.add(taskId);
+      } else if (!["blocked"].includes(task.status) && task.autoBlockedByDependencies) {
+        nextTasks[index] = { ...task, autoBlockedByDependencies: false, updatedAt };
+        changedTaskIds.add(taskId);
+      }
+      continue;
+    }
+
+    if (task.status === "blocked" && task.autoBlockedByDependencies) {
+      nextTasks[index] = { ...task, status: "ready", autoBlockedByDependencies: false, updatedAt };
+      changedTaskIds.add(taskId);
+      continue;
+    }
+
+    if (task.autoBlockedByDependencies) {
+      nextTasks[index] = { ...task, autoBlockedByDependencies: false, updatedAt };
+      changedTaskIds.add(taskId);
+    }
+  }
+
+  return { tasks: nextTasks, changedTaskIds: [...changedTaskIds] };
+}
+
 function ensureMockTasks() {
-  const existing = getStoredValue<TaskDetail[]>(TASK_STORAGE_KEY);
+  const existing = getStoredValue<StoredMockTask[]>(TASK_STORAGE_KEY);
   const dependencies = ensureMockTaskDependencies();
   if (existing) {
     return enrichMockTasks(existing, dependencies);
   }
 
-  const seeded = seedMockTasks();
+  const seeded = seedMockTasks().map((task) => ensureStoredMockTask(task));
   setStoredValue(TASK_STORAGE_KEY, seeded);
   return seeded;
 }
 
-function saveMockTasks(tasks: TaskDetail[]) {
-  setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks, ensureMockTaskDependencies()));
+function saveMockTasks(tasks: StoredMockTask[]) {
+  setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks.map((task) => ensureStoredMockTask(task)), ensureMockTaskDependencies()));
 }
 
 function hasUnfinishedChildBlockers(children: Array<{ status: string; archived?: boolean | null }>) {
@@ -1513,7 +1630,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
-function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetail, projectId?: string | null): TaskDetail {
+function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMockTask, projectId?: string | null): StoredMockTask {
   const timestamp = nowIso();
   const previousTasks = ensureMockTasks();
   const workflow = input.workflowId ? ensureMockWorkflows().find((entry) => entry.id === input.workflowId) : null;
@@ -1565,6 +1682,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: TaskDetai
     taskRepositories: existingTask?.taskRepositories ?? [],
     fileReferences: existingTask?.fileReferences ?? [],
     activeLaneAssignment: existingTask?.activeLaneAssignment ?? null,
+    autoBlockedByDependencies: existingTask?.autoBlockedByDependencies ?? false,
     createdAt: existingTask?.createdAt ?? timestamp,
     updatedAt: timestamp,
     comments: existingTask?.comments ?? [],
@@ -2852,12 +2970,18 @@ export async function createTask(input: TaskUpsertInput, projectId?: string | nu
       throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
     }
 
+    const existingTasks = ensureMockTasks().map((task) => ensureStoredMockTask(task));
     const task = normalizeMockTaskInput(input, undefined, activeProjectId ?? undefined);
-    saveMockTasks([task, ...ensureMockTasks()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+    const dependencies = ensureMockTaskDependencies();
+    const nextTasks = [task, ...existingTasks].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    const refreshTaskIds = collectMockRefreshTaskIds(nextTasks, dependencies, task.id, task.parentTaskId, task.parentTaskId);
+    const reconciled = reconcileStoredMockTasks(nextTasks, dependencies, refreshTaskIds, task.updatedAt);
+    saveMockTasks(reconciled.tasks);
     appendMockLog("info", "task.created", `Created task ${task.id}`);
-    appendMockDomainEvent("task.created", "task", task.id, { taskId: task.id, taskNumber: task.number, status: task.status }, task.projectId);
-    emitMockTaskChange({ taskIds: [task.id], reason: "task.created" });
-    return task;
+    const createdTask = await getTask(task.id);
+    appendMockDomainEvent("task.created", "task", task.id, { taskId: task.id, taskNumber: task.number, status: createdTask.status }, task.projectId);
+    emitMockTaskChange({ taskIds: refreshTaskIds, reason: "task.created" });
+    return createdTask;
   }
 
   const resolvedProjectId = await resolveTauriProjectId(projectId);
@@ -2872,22 +2996,31 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
       throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
     }
 
-    const tasks = ensureMockTasks();
+    const tasks = ensureMockTasks().map((task) => ensureStoredMockTask(task));
     const existing = tasks.find((task) => task.id === taskId);
     if (!existing) {
       throw new Error(`Task ${taskId} was not found`);
     }
 
     const updated = normalizeMockTaskInput(input, existing);
-    saveMockTasks(
+    if (updated.status !== existing.status) {
+      updated.autoBlockedByDependencies = false;
+    }
+    const dependencies = ensureMockTaskDependencies();
+    const refreshTaskIds = collectMockRefreshTaskIds(tasks, dependencies, taskId, existing.parentTaskId, updated.parentTaskId);
+    const reconciled = reconcileStoredMockTasks(
       tasks
         .map((task) => (task.id === taskId ? updated : task))
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+      dependencies,
+      refreshTaskIds,
+      updated.updatedAt,
     );
+    saveMockTasks(reconciled.tasks);
     appendMockLog("info", "task.updated", `Updated task ${taskId}`);
     const updatedTask = await getTask(taskId);
     appendMockDomainEvent("task.updated", "task", taskId, { taskId, taskNumber: updatedTask.number, status: updatedTask.status }, updatedTask.projectId);
-    emitMockTaskChange({ taskIds: [taskId], reason: "task.updated" });
+    emitMockTaskChange({ taskIds: refreshTaskIds, reason: "task.updated" });
     return updatedTask;
   }
 
@@ -3422,15 +3555,18 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
       )
     : task.laneRuns;
 
-  saveMockTasks(tasks.map((entry) =>
+  const updatedTasks = tasks.map((entry) =>
     entry.id === taskId
       ? {
-          ...entry,
+          ...ensureStoredMockTask(entry),
           currentLaneId: nextLaneId,
           status: nextStatus,
           assigneeType: nextAssigneeType,
           assigneeId: nextAssigneeId,
           activeLaneAssignment: autoAssignment,
+          autoBlockedByDependencies: ["completed", "canceled"].includes(nextStatus)
+            ? false
+            : ensureStoredMockTask(entry).autoBlockedByDependencies,
           laneRuns:
             autoAssignment && nextLane
               ? [
@@ -3449,8 +3585,12 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
               : laneRuns,
           updatedAt,
         }
-      : entry,
-  ));
+      : ensureStoredMockTask(entry),
+  );
+  const dependencies = ensureMockTaskDependencies();
+  const refreshTaskIds = collectMockRefreshTaskIds(updatedTasks, dependencies, taskId, task.parentTaskId, task.parentTaskId);
+  const reconciled = reconcileStoredMockTasks(updatedTasks, dependencies, refreshTaskIds, updatedAt);
+  saveMockTasks(reconciled.tasks);
 
   finalizeMockAgentState(
     {
@@ -3484,7 +3624,7 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
     { taskId, status: updatedTask.status, outcome, workflowId: updatedTask.workflowId ?? null, laneId: updatedTask.currentLaneId ?? null },
     updatedTask.projectId,
   );
-  emitMockTaskChange({ taskIds: [taskId, ...autoDispatchedDependentTaskIds], reason: `task.transition.${outcome}` });
+  emitMockTaskChange({ taskIds: dedupeMockTaskIds([...refreshTaskIds, ...autoDispatchedDependentTaskIds]), reason: `task.transition.${outcome}` });
   return updatedTask;
 }
 
@@ -3537,15 +3677,18 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
       : run,
   );
 
-  saveMockTasks(tasks.map((entry) =>
+  const updatedTasks = tasks.map((entry) =>
     entry.id === taskId
       ? {
-          ...entry,
+          ...ensureStoredMockTask(entry),
           currentLaneId: nextLaneId,
           status: nextStatus,
           assigneeType: nextAssigneeType,
           assigneeId: nextAssigneeId,
           activeLaneAssignment: autoAssignment,
+          autoBlockedByDependencies: ["completed", "canceled"].includes(nextStatus)
+            ? false
+            : ensureStoredMockTask(entry).autoBlockedByDependencies,
           laneRuns:
             autoAssignment && nextLane
               ? [
@@ -3564,8 +3707,12 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
               : laneRuns,
           updatedAt,
         }
-      : entry,
-  ));
+      : ensureStoredMockTask(entry),
+  );
+  const dependencies = ensureMockTaskDependencies();
+  const refreshTaskIds = collectMockRefreshTaskIds(updatedTasks, dependencies, taskId, task.parentTaskId, task.parentTaskId);
+  const reconciled = reconcileStoredMockTasks(updatedTasks, dependencies, refreshTaskIds, updatedAt);
+  saveMockTasks(reconciled.tasks);
 
   finalizeMockAgentState(task, "success", updatedAt, autoAssignment);
   queueMockAutoAssignment(task, workflow, autoAssignment);
@@ -3575,7 +3722,7 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
     : [];
 
   appendMockLog("info", "task.transition", `Approved pending lane completion for task ${taskId}`);
-  emitMockTaskChange({ taskIds: [taskId, ...autoDispatchedDependentTaskIds], reason: "task.transition.approved_success" });
+  emitMockTaskChange({ taskIds: dedupeMockTaskIds([...refreshTaskIds, ...autoDispatchedDependentTaskIds]), reason: "task.transition.approved_success" });
   return getTask(taskId);
 }
 
@@ -3897,10 +4044,13 @@ export async function addTaskDependency(blockerTaskId: string, blockedTaskId: st
       blocked: summarizeTask(blocked),
       createdAt: nowIso(),
     };
-    saveMockTaskDependencies([...dependencies, dependency]);
-    saveMockTasks(tasks);
+    const nextDependencies = [...dependencies, dependency];
+    saveMockTaskDependencies(nextDependencies);
+    const refreshTaskIds = collectMockRefreshTaskIds(tasks.map((task) => ensureStoredMockTask(task)), nextDependencies, blockedTaskId, blocked.parentTaskId, blocked.parentTaskId);
+    const reconciled = reconcileStoredMockTasks(tasks.map((task) => ensureStoredMockTask(task)), nextDependencies, refreshTaskIds, dependency.createdAt);
+    saveMockTasks(reconciled.tasks);
     appendMockLog("info", "task.dependency.added", `Added dependency ${blockerTaskId} -> ${blockedTaskId}`);
-    emitMockTaskChange({ taskIds: [blockerTaskId, blockedTaskId], reason: "task.dependency.added" });
+    emitMockTaskChange({ taskIds: dedupeMockTaskIds([blockerTaskId, ...refreshTaskIds]), reason: "task.dependency.added" });
     return dependency;
   }
 
@@ -3915,10 +4065,15 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
       throw new Error(`Task dependency ${dependencyId} was not found`);
     }
 
-    saveMockTaskDependencies(dependencies.filter((entry) => entry.id !== dependencyId));
-    saveMockTasks(ensureMockTasks());
+    const nextDependencies = dependencies.filter((entry) => entry.id !== dependencyId);
+    saveMockTaskDependencies(nextDependencies);
+    const tasks = ensureMockTasks().map((task) => ensureStoredMockTask(task));
+    const blockedTask = tasks.find((task) => task.id === dependency.blockedTaskId) ?? null;
+    const refreshTaskIds = collectMockRefreshTaskIds(tasks, nextDependencies, dependency.blockedTaskId, blockedTask?.parentTaskId, blockedTask?.parentTaskId);
+    const reconciled = reconcileStoredMockTasks(tasks, nextDependencies, refreshTaskIds);
+    saveMockTasks(reconciled.tasks);
     appendMockLog("info", "task.dependency.removed", `Removed dependency ${dependencyId}`);
-    emitMockTaskChange({ taskIds: [dependency.blockerTaskId, dependency.blockedTaskId], reason: "task.dependency.removed" });
+    emitMockTaskChange({ taskIds: dedupeMockTaskIds([dependency.blockerTaskId, ...refreshTaskIds]), reason: "task.dependency.removed" });
     return dependency;
   }
 

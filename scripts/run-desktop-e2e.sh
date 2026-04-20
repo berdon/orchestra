@@ -8,6 +8,9 @@ mkdir -p "${LOG_ROOT}"
 RUN_DIR="$(mktemp -d "${LOG_ROOT}/run-XXXXXX")"
 TEST_HOME="${RUN_DIR}/home"
 mkdir -p "${RUN_DIR}" "${TEST_HOME}"
+PREVIEW_URL="${ORCHESTRA_DESKTOP_E2E_PREVIEW_URL:-http://127.0.0.1:1420}"
+PREVIEW_PORT="${ORCHESTRA_DESKTOP_E2E_PREVIEW_PORT:-1420}"
+REUSE_PREVIEW="${ORCHESTRA_DESKTOP_E2E_REUSE_PREVIEW:-0}"
 
 choose_unused_port() {
   local base="$1"
@@ -20,12 +23,37 @@ choose_unused_port() {
   done
 }
 
+ensure_port_available() {
+  local port="$1"
+  if lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Port ${port} is already in use. Stop the conflicting process before running desktop E2E." >&2
+    lsof -nP -iTCP:"${port}" -sTCP:LISTEN >&2 || true
+    exit 1
+  fi
+}
+
+start_detached() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" &
+    return
+  fi
+
+  python3 - "$@" <<'PY' &
+import os
+import sys
+
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+PY
+}
+
 SCRIPT_LOG="${RUN_DIR}/runner.log"
 DRIVER_LOG="${RUN_DIR}/tauri-driver.log"
 PREVIEW_LOG="${RUN_DIR}/vite-preview.log"
 BINARY_PATH="${ROOT_DIR}/src-tauri/target/debug/orchestra"
 WEBDRIVER_PORT="$(choose_unused_port 30000)"
 NATIVE_WEBDRIVER_PORT="$(choose_unused_port 45000)"
+PLATFORM="$(uname -s)"
 TEST_FILE="${1:-tests/desktop-e2e/desktop-harness.test.ts}"
 shift || true
 if [[ "$#" -gt 0 ]]; then
@@ -39,6 +67,7 @@ echo "[desktop-e2e-runner] root_dir=${ROOT_DIR}"
 echo "[desktop-e2e-runner] run_dir=${RUN_DIR}"
 echo "[desktop-e2e-runner] test_file=${TEST_FILE}"
 echo "[desktop-e2e-runner] webdriver_port=${WEBDRIVER_PORT} native_port=${NATIVE_WEBDRIVER_PORT}"
+echo "[desktop-e2e-runner] preview_url=${PREVIEW_URL} reuse_preview=${REUSE_PREVIEW}"
 
 run_inner() {
   cd "${ROOT_DIR}"
@@ -50,36 +79,55 @@ run_inner() {
   export RUSTUP_HOME="${REAL_HOME}/.rustup"
   export CARGO_HOME="${REAL_HOME}/.cargo"
   export NPM_CONFIG_CACHE="${TEST_HOME}/.npm"
-  export PATH="/workspace/orchestra/node_modules/.bin:${PATH}"
+  export PATH="${REAL_HOME}/.cargo/bin:/workspace/orchestra/node_modules/.bin:${PATH}"
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
   rm -rf "${TEST_HOME}/.pi"
   if [[ -d "${REAL_HOME}/.pi" ]]; then
     ln -s "${REAL_HOME}/.pi" "${TEST_HOME}/.pi"
   fi
 
-  setsid npx vite preview --host 127.0.0.1 --port 1420 --strictPort >"${PREVIEW_LOG}" 2>&1 &
-  PREVIEW_PID=$!
-  PREVIEW_PGID="${PREVIEW_PID}"
+  if [[ "${REUSE_PREVIEW}" == "1" ]]; then
+    for _ in $(seq 1 60); do
+      if curl -sf "${PREVIEW_URL}" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
 
-  for _ in $(seq 1 60); do
-    if curl -sf "http://127.0.0.1:1420" >/dev/null 2>&1; then
-      break
+    if ! curl -sf "${PREVIEW_URL}" >/dev/null 2>&1; then
+      echo "shared vite preview did not become ready at ${PREVIEW_URL}" >&2
+      exit 1
     fi
-    if ! kill -0 "${PREVIEW_PID}" 2>/dev/null; then
-      echo "vite preview exited unexpectedly" >&2
+  else
+    ensure_port_available "${PREVIEW_PORT}"
+    start_detached npx vite preview --host 127.0.0.1 --port "${PREVIEW_PORT}" --strictPort >"${PREVIEW_LOG}" 2>&1
+    PREVIEW_PID=$!
+    PREVIEW_PGID="${PREVIEW_PID}"
+
+    for _ in $(seq 1 60); do
+      if ! kill -0 "${PREVIEW_PID}" 2>/dev/null; then
+        echo "vite preview exited unexpectedly" >&2
+        cat "${PREVIEW_LOG}" >&2 || true
+        exit 1
+      fi
+      if curl -sf "${PREVIEW_URL}" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+
+    if ! curl -sf "${PREVIEW_URL}" >/dev/null 2>&1; then
+      echo "vite preview did not become ready at ${PREVIEW_URL}" >&2
       cat "${PREVIEW_LOG}" >&2 || true
       exit 1
     fi
-    sleep 1
-  done
-
-  if ! curl -sf "http://127.0.0.1:1420" >/dev/null 2>&1; then
-    echo "vite preview did not become ready" >&2
-    cat "${PREVIEW_LOG}" >&2 || true
-    exit 1
   fi
 
-  setsid tauri-driver --port "${WEBDRIVER_PORT}" --native-port "${NATIVE_WEBDRIVER_PORT}" --native-driver /usr/bin/WebKitWebDriver >"${DRIVER_LOG}" 2>&1 &
+  if [[ "${PLATFORM}" == "Darwin" ]]; then
+    start_detached tauri-wd --port "${WEBDRIVER_PORT}" --log-level debug >"${DRIVER_LOG}" 2>&1
+  else
+    start_detached tauri-driver --port "${WEBDRIVER_PORT}" --native-port "${NATIVE_WEBDRIVER_PORT}" --native-driver /usr/bin/WebKitWebDriver >"${DRIVER_LOG}" 2>&1
+  fi
   DRIVER_PID=$!
   DRIVER_PGID="${DRIVER_PID}"
 

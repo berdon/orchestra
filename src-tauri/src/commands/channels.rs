@@ -91,7 +91,11 @@ pub fn list_telegram_chat_candidates(
     match channels::list_telegram_chat_candidates(&bot_token, api_base_url.as_deref()) {
         Ok(candidates) => Ok(candidates),
         Err(error) => {
-            state.log("error", "channels.telegram.list_chat_candidates.failed", &error);
+            state.log(
+                "error",
+                "channels.telegram.list_chat_candidates.failed",
+                &error,
+            );
             Err(error)
         }
     }

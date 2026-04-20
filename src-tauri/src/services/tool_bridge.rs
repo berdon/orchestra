@@ -205,6 +205,22 @@ const BRIDGE_RECENT_REQUEST_LIMIT: usize = 50;
 const BRIDGE_RECENT_CLEANUP_LIMIT: usize = 50;
 
 impl ToolBridgeConfig {
+    #[cfg(test)]
+    pub fn test_config() -> Self {
+        Self {
+            url: "http://127.0.0.1:1".into(),
+            token: "token".into(),
+            instance_id: "bridge-test".into(),
+            started_at: crate::state::now_iso(),
+            metadata_path: PathBuf::from("/tmp/orchestra-bridge-test.json"),
+            owner_pid: 1,
+            app_handle: Mutex::new(None),
+            clients: Mutex::new(HashMap::new()),
+            recent_requests: Mutex::new(VecDeque::new()),
+            recent_cleanup_events: Mutex::new(VecDeque::new()),
+        }
+    }
+
     pub fn attach_app_handle(&self, app: AppHandle) {
         if let Ok(mut current) = self.app_handle.lock() {
             *current = Some(app);

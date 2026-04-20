@@ -21,18 +21,16 @@ use crate::{
     services::{
         database, harness_settings,
         orchestra_paths::default_orchestra_root,
-        system_notifications,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
         },
-        projects, roles, tasks, workflows,
+        projects, roles, system_notifications, tasks, workflows,
     },
     state::AppState,
 };
 
-#[tauri::command]
-pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
+pub fn build_app_info(state: &AppState) -> AppInfo {
     let version = env!("CARGO_PKG_VERSION");
     let hash = option_env!("ORCHESTRA_GIT_HASH").unwrap_or("dev");
     let dispatch_blocked_reason = match state.sync_pi_runtime_health() {
@@ -47,6 +45,11 @@ pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
         dispatch_blocked: dispatch_blocked_reason.is_some(),
         dispatch_blocked_reason,
     }
+}
+
+#[tauri::command]
+pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
+    build_app_info(state.inner())
 }
 
 #[tauri::command]
@@ -458,7 +461,10 @@ pub async fn request_system_notification_permission(
         Ok(permission) => state.log(
             "info",
             "notifications.permission_request",
-            &format!("System notification permission request resolved to {:?}", permission),
+            &format!(
+                "System notification permission request resolved to {:?}",
+                permission
+            ),
         ),
         Err(error) => state.log(
             "error",
@@ -476,9 +482,12 @@ pub async fn send_system_notification(
     request: SystemNotificationRequest,
 ) -> Result<bool, String> {
     let request_for_task = request.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || system_notifications::send(&request_for_task))
-        .await
-        .map_err(|error| format!("Unable to join system notification delivery task: {error}"))?;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || system_notifications::send(&request_for_task))
+            .await
+            .map_err(|error| {
+                format!("Unable to join system notification delivery task: {error}")
+            })?;
 
     match &result {
         Ok(true) => state.log(
@@ -489,12 +498,18 @@ pub async fn send_system_notification(
         Ok(false) => state.log(
             "info",
             "notifications.send",
-            &format!("System notification transport unavailable for {:?}", request.tag),
+            &format!(
+                "System notification transport unavailable for {:?}",
+                request.tag
+            ),
         ),
         Err(error) => state.log(
             "error",
             "notifications.send",
-            &format!("Unable to deliver system notification {:?}: {error}", request.tag),
+            &format!(
+                "Unable to deliver system notification {:?}: {error}",
+                request.tag
+            ),
         ),
     }
 

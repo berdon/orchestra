@@ -90,17 +90,23 @@ pub fn remove_task_attachment(
     let attachment = load_attachment(connection, attachment_id)?;
 
     let deleted = connection
-        .execute("DELETE FROM task_attachments WHERE id = ?1", [attachment_id])
+        .execute(
+            "DELETE FROM task_attachments WHERE id = ?1",
+            [attachment_id],
+        )
         .map_err(|error| format!("Unable to delete task attachment {attachment_id}: {error}"))?;
 
     if deleted == 0 {
-      return Err(format!("Task attachment {attachment_id} was not found"));
+        return Err(format!("Task attachment {attachment_id} was not found"));
     }
 
     let path = PathBuf::from(&attachment.stored_path);
     if path.exists() {
         fs::remove_file(&path).map_err(|error| {
-            format!("Unable to remove task attachment file {}: {error}", path.display())
+            format!(
+                "Unable to remove task attachment file {}: {error}",
+                path.display()
+            )
         })?;
     }
 
@@ -140,22 +146,27 @@ pub fn load_task_attachments(
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect task attachments for {task_id}: {error}"))?
         .into_iter()
-        .map(|(id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at)| {
-            build_attachment(
-                id,
-                task_id,
-                file_name,
-                media_type,
-                byte_size,
-                stored_path,
-                caption,
-                created_at,
-            )
-        })
+        .map(
+            |(id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at)| {
+                build_attachment(
+                    id,
+                    task_id,
+                    file_name,
+                    media_type,
+                    byte_size,
+                    stored_path,
+                    caption,
+                    created_at,
+                )
+            },
+        )
         .collect()
 }
 
-pub fn load_attachment(connection: &Connection, attachment_id: &str) -> Result<TaskAttachment, String> {
+pub fn load_attachment(
+    connection: &Connection,
+    attachment_id: &str,
+) -> Result<TaskAttachment, String> {
     let row = connection
         .query_row(
             r#"
@@ -199,8 +210,9 @@ fn build_attachment(
     let mut image_data_url = None;
 
     if path.exists() {
-        let bytes = fs::read(path)
-            .map_err(|error| format!("Unable to read task attachment {}: {error}", path.display()))?;
+        let bytes = fs::read(path).map_err(|error| {
+            format!("Unable to read task attachment {}: {error}", path.display())
+        })?;
 
         if is_text_media_type(&media_type) && bytes.len() <= MAX_TEXT_PREVIEW_BYTES {
             preview_text = Some(String::from_utf8_lossy(&bytes).to_string());
@@ -231,7 +243,11 @@ fn build_attachment(
 
 fn task_project_id(connection: &Connection, task_id: &str) -> Result<String, String> {
     connection
-        .query_row("SELECT project_id FROM tasks WHERE id = ?1", [task_id], |row| row.get(0))
+        .query_row(
+            "SELECT project_id FROM tasks WHERE id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
         .map_err(|error| format!("Unable to resolve project for task {task_id}: {error}"))
 }
 
@@ -333,12 +349,16 @@ mod tests {
         .expect("add attachment");
 
         assert_eq!(attachment.file_name, "notes.txt");
-        assert_eq!(attachment.preview_text.as_deref(), Some("hello attachments"));
+        assert_eq!(
+            attachment.preview_text.as_deref(),
+            Some("hello attachments")
+        );
         assert!(PathBuf::from(&attachment.stored_path).exists());
 
         let attachments = load_task_attachments(&connection, &task_id).expect("load attachments");
         assert_eq!(attachments.len(), 1);
-        let removed = remove_task_attachment(&connection, &attachment.id).expect("remove attachment");
+        let removed =
+            remove_task_attachment(&connection, &attachment.id).expect("remove attachment");
         assert_eq!(removed.id, attachment.id);
         assert!(!PathBuf::from(&removed.stored_path).exists());
     }

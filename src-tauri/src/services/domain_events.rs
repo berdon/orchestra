@@ -15,7 +15,10 @@ pub struct DomainEventInput {
     pub payload: Value,
 }
 
-pub fn record_event(connection: &Connection, input: DomainEventInput) -> Result<DomainEvent, String> {
+pub fn record_event(
+    connection: &Connection,
+    input: DomainEventInput,
+) -> Result<DomainEvent, String> {
     let topic = input.topic.trim();
     if topic.is_empty() {
         return Err("topic: Domain event topic is required.".into());
@@ -150,7 +153,10 @@ mod tests {
         assert_eq!(created.topic, "task.created");
         assert_eq!(created.entity_type, "task");
         assert_eq!(created.project_id.as_deref(), Some("project-1"));
-        assert_eq!(created.payload.get("taskId").and_then(Value::as_str), Some("task-1"));
+        assert_eq!(
+            created.payload.get("taskId").and_then(Value::as_str),
+            Some("task-1")
+        );
 
         let events = list_events(&connection).expect("events should list");
         assert_eq!(events.len(), 1);

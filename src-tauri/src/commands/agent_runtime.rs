@@ -10,12 +10,17 @@ use crate::{
     services::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
-        pi_sessions::{detect_session_context, find_session_context_for_session, get_session, get_session_path},
+        pi_sessions::{
+            detect_session_context, find_session_context_for_session, get_session, get_session_path,
+        },
     },
     state::AppState,
 };
 
-fn decorate_runtime_state(state: &AppState, mut detail: AgentOperationsDetail) -> Result<AgentOperationsDetail, String> {
+fn decorate_runtime_state(
+    state: &AppState,
+    mut detail: AgentOperationsDetail,
+) -> Result<AgentOperationsDetail, String> {
     detail.runtime_state.terminal_attached = detail
         .runtime_state
         .main_session_id
@@ -27,7 +32,10 @@ fn decorate_runtime_state(state: &AppState, mut detail: AgentOperationsDetail) -
     Ok(detail)
 }
 
-fn decorate_snapshot(state: &AppState, mut snapshot: AgentOperationsSnapshot) -> Result<AgentOperationsSnapshot, String> {
+fn decorate_snapshot(
+    state: &AppState,
+    mut snapshot: AgentOperationsSnapshot,
+) -> Result<AgentOperationsSnapshot, String> {
     snapshot.runtime_state.terminal_attached = snapshot
         .runtime_state
         .main_session_id
@@ -52,7 +60,9 @@ pub fn list_agent_operations(
             project_id,
             include_archived.unwrap_or(false),
         ),
-        None => agent_runtime::list_agent_operations(&connection, include_archived.unwrap_or(false)),
+        None => {
+            agent_runtime::list_agent_operations(&connection, include_archived.unwrap_or(false))
+        }
     }?;
     snapshots
         .into_iter()
@@ -68,7 +78,9 @@ pub fn get_agent_operations(
 ) -> Result<AgentOperationsDetail, String> {
     let connection = database::open_connection()?;
     let detail = match project_id.as_deref() {
-        Some(project_id) => agent_runtime::get_agent_operations_for_project(&connection, project_id, &agent_id),
+        Some(project_id) => {
+            agent_runtime::get_agent_operations_for_project(&connection, project_id, &agent_id)
+        }
         None => agent_runtime::get_agent_operations(&connection, &agent_id),
     }?;
     decorate_runtime_state(&state, detail)
@@ -81,7 +93,11 @@ pub fn enqueue_agent_work(
 ) -> Result<AgentQueueEntry, String> {
     let connection = database::open_connection()?;
     let entry = agent_runtime::enqueue_agent_work(&connection, input)?;
-    state.log("info", "agent.queue.updated", &format!("Queued agent work {}", entry.id));
+    state.log(
+        "info",
+        "agent.queue.updated",
+        &format!("Queued agent work {}", entry.id),
+    );
     Ok(entry)
 }
 
@@ -92,7 +108,11 @@ pub fn delete_agent_queue_entry(
 ) -> Result<AgentQueueEntry, String> {
     let connection = database::open_connection()?;
     let entry = agent_runtime::delete_agent_queue_entry(&connection, &queue_entry_id)?;
-    state.log("info", "agent.queue.updated", &format!("Deleted queued agent work {}", entry.id));
+    state.log(
+        "info",
+        "agent.queue.updated",
+        &format!("Deleted queued agent work {}", entry.id),
+    );
     Ok(entry)
 }
 
@@ -103,9 +123,9 @@ pub async fn ensure_agent_session(
     agent_id: String,
     project_id: Option<String>,
 ) -> Result<SessionRecord, String> {
-    state
-        .sync_pi_runtime_health()
-        .map_err(|error| format!("Unable to open agent session because PI is unavailable: {error}"))?;
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to open agent session because PI is unavailable: {error}")
+    })?;
     let (context, resolved_project_id) = if let Some(project_id) = project_id {
         (
             crate::services::pi_sessions::session_context_for_project_id(&project_id)?,
@@ -155,9 +175,9 @@ pub async fn open_agent_session_terminal(
     agent_id: String,
     project_id: Option<String>,
 ) -> Result<SessionRecord, String> {
-    state
-        .sync_pi_runtime_health()
-        .map_err(|error| format!("Unable to open agent terminal because PI is unavailable: {error}"))?;
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to open agent terminal because PI is unavailable: {error}")
+    })?;
     let (context, resolved_project_id) = if let Some(project_id) = project_id {
         (
             crate::services::pi_sessions::session_context_for_project_id(&project_id)?,
@@ -170,9 +190,15 @@ pub async fn open_agent_session_terminal(
     let connection = database::open_connection()?;
     let detail = decorate_runtime_state(
         &state,
-        agent_runtime::get_agent_operations_for_project(&connection, &resolved_project_id, &agent_id)?,
+        agent_runtime::get_agent_operations_for_project(
+            &connection,
+            &resolved_project_id,
+            &agent_id,
+        )?,
     )?;
-    if detail.runtime_state.status == "running" || detail.runtime_state.current_queue_entry_id.is_some() {
+    if detail.runtime_state.status == "running"
+        || detail.runtime_state.current_queue_entry_id.is_some()
+    {
         return Err("Only idle agent sessions can be opened in a terminal window.".into());
     }
 
@@ -192,7 +218,6 @@ pub async fn open_agent_session_terminal(
             return Err("This agent session is still processing a message. Wait for it to go idle before opening it in a terminal window.".into());
         }
         state.set_session_subscription(&session_id, false)?;
-        runtime.set_subscribed(false);
     } else {
         state.set_session_subscription(&session_id, false)?;
     }
@@ -219,21 +244,29 @@ pub async fn open_agent_session_terminal(
         serde_json::to_string(&session_id).map_err(|error| format!("Unable to serialize agent terminal session id: {error}"))?
     );
 
-    let window = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App(PathBuf::from("index.html")))
-        .initialization_script(initialization_script)
-        .title(&format!("{} · Terminal", detail.agent.name))
-        .inner_size(1180.0, 820.0)
-        .resizable(true)
-        .visible(true)
-        .build()
-        .map_err(|error| format!("Unable to create agent terminal window: {error}"))?;
+    let window = WebviewWindowBuilder::new(
+        &app,
+        &window_label,
+        WebviewUrl::App(PathBuf::from("index.html")),
+    )
+    .initialization_script(initialization_script)
+    .title(&format!("{} · Terminal", detail.agent.name))
+    .inner_size(1180.0, 820.0)
+    .resizable(true)
+    .visible(true)
+    .build()
+    .map_err(|error| format!("Unable to create agent terminal window: {error}"))?;
 
     let app_for_window_events = app.clone();
     let session_id_for_window_events = session_id.clone();
     window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed | WindowEvent::CloseRequested { .. }) {
+        if matches!(
+            event,
+            WindowEvent::Destroyed | WindowEvent::CloseRequested { .. }
+        ) {
             let state = app_for_window_events.state::<AppState>();
-            if let Ok(Some(session)) = state.remove_terminal_session(&session_id_for_window_events) {
+            if let Ok(Some(session)) = state.remove_terminal_session(&session_id_for_window_events)
+            {
                 session.shutdown();
             }
             let _ = state.clear_terminal_window(&session_id_for_window_events);
@@ -273,7 +306,9 @@ pub fn write_agent_terminal_input(
     data: String,
 ) -> Result<(), String> {
     let Some(session) = state.get_terminal_session(&session_id)? else {
-        return Err(format!("No terminal session is attached for session {session_id}"));
+        return Err(format!(
+            "No terminal session is attached for session {session_id}"
+        ));
     };
     session.write_input(&data)
 }
@@ -286,7 +321,9 @@ pub fn resize_agent_terminal(
     rows: u16,
 ) -> Result<(), String> {
     let Some(session) = state.get_terminal_session(&session_id)? else {
-        return Err(format!("No terminal session is attached for session {session_id}"));
+        return Err(format!(
+            "No terminal session is attached for session {session_id}"
+        ));
     };
     session.resize(cols, rows)
 }

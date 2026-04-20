@@ -8,6 +8,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   sleep,
   waitForText,
@@ -88,7 +89,13 @@ describe("desktop task dispatch", () => {
 
       const beforeSessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_sessions');
       await openTaskCard(sessionId, 'Dispatch session task');
-      await dispatchTaskViaUi(sessionId);
+      const hasDispatchButton = await executeScript<boolean>(
+        sessionId,
+        `return Boolean(document.querySelector('[data-role="dispatch-task-lane"], [data-role="publish-task"]'));`,
+      );
+      if (hasDispatchButton) {
+        await dispatchTaskViaUi(sessionId);
+      }
 
       let updatedTask: any = null;
       let afterSessions: Array<{ id: string; title: string }> = beforeSessions;

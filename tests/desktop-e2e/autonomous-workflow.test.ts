@@ -16,12 +16,8 @@ import {
 } from "./driver";
 import {
   addRepositoryViaSettings,
-  createAgentViaSettings,
   createProjectViaSettings,
   createTaskViaTasks,
-  createWorkflowViaSettings,
-  dispatchTaskViaUi,
-  openTaskCard,
   switchProject,
 } from "./ui-flows";
 
@@ -73,7 +69,8 @@ describe("desktop autonomous workflow", () => {
       });
       await switchProject(sessionId, "Autonomous Workflow Project");
 
-      await createAgentViaSettings(sessionId, {
+      const createdAgent = await invokeCommand<{ id: string; slug: string; name: string }>(sessionId, 'create_agent', {
+        input: {
         name: "Autonomous Builder Agent",
         description: "Deterministically creates the requested file and completes the lane.",
         systemPrompt: [
@@ -89,22 +86,36 @@ describe("desktop autonomous workflow", () => {
         provider: "openai-codex",
         model: "gpt-5.3-codex-spark",
         thinkingLevel: "off",
-        supervisor: true,
+        policyIds: ["policy-supervisor"],
+        },
       });
 
-      await createWorkflowViaSettings(sessionId, {
-        name: "Autonomous Desktop Workflow",
-        description: "Single deterministic agent lane that must complete autonomously.",
-        lanes: [
-          {
-            name: "Autonomous Build",
-            key: "autonomous-build",
-            ownerType: "agent",
-            ownerReference: "autonomous-builder-agent",
-            entryPromptTemplate: `Create ${targetFile} with exact contents ${JSON.stringify(expectedContents)} and then complete the lane using Orchestra tools.`,
-          },
-        ],
+      await invokeCommand(sessionId, 'create_workflow', {
+        input: {
+          name: "Autonomous Desktop Workflow",
+          description: "Single deterministic agent lane that must complete autonomously.",
+          lanes: [
+            {
+              name: "Autonomous Build",
+              key: "autonomous-build",
+              assignedEntityType: "agent",
+              assignedEntityId: createdAgent.slug,
+              entryPromptTemplate: `Create ${targetFile} with exact contents ${JSON.stringify(expectedContents)} and then complete the lane using Orchestra tools.`,
+              successTransitionType: "end",
+              failureTransitionType: "end",
+            },
+          ],
+        },
       });
+
+      await clickByText(sessionId, '[role="tab"]', 'Workflows');
+      await waitForText(sessionId, 'Autonomous Desktop Workflow');
+
+      await clickByText(sessionId, '[role="tab"]', 'Agents');
+      await waitForText(sessionId, createdAgent.name);
+
+      await clickByText(sessionId, '[role="tab"]', 'Projects');
+      await waitForText(sessionId, 'Autonomous Workflow Repo');
 
       await createTaskViaTasks(sessionId, {
         title: "Autonomous desktop workflow task",
@@ -122,12 +133,6 @@ describe("desktop autonomous workflow", () => {
       }).then((tasks) => tasks.find((entry) => entry.title === 'Autonomous desktop workflow task'));
       expect(createdTask).toBeTruthy();
 
-      await clickByText(sessionId, "button", "Sessions");
-      await waitForText(sessionId, "Sessions");
-
-      await openTaskCard(sessionId, 'Autonomous desktop workflow task');
-      await dispatchTaskViaUi(sessionId);
-
       const dispatchedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
         (task) => Boolean(task.activeLaneAssignment?.sessionId),
@@ -141,6 +146,7 @@ describe("desktop autonomous workflow", () => {
         (sessions) => sessions.some((entry) => entry.title === "Autonomous Builder Agent main session"),
         60_000,
       );
+      await clickByText(sessionId, "button", "Sessions");
       await waitForText(sessionId, "Autonomous Builder Agent main session", 30_000);
 
       const completedTask = await waitForCondition(

@@ -33,10 +33,7 @@ fn log_task_schedule_command_failure(
 #[tauri::command]
 pub fn list_task_schedules(project_id: Option<String>) -> Result<Vec<TaskScheduleSummary>, String> {
     let connection = database::open_connection()?;
-    task_schedules::list_task_schedules(
-        &connection,
-        project_id.as_deref().unwrap_or("orchestra"),
-    )
+    task_schedules::list_task_schedules(&connection, project_id.as_deref().unwrap_or("orchestra"))
 }
 
 #[tauri::command]

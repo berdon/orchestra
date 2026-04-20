@@ -13,7 +13,6 @@ import {
   executeScript,
   invokeCommand,
   selectByLabel,
-  selectValue,
   setFieldByLabel,
   setInputValue,
   sleep,
@@ -101,25 +100,45 @@ describe("desktop file workflow", () => {
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'File Workflow Project');
       await sleep(1_500);
 
-      await clickByText(sessionId, '[role="tab"]', 'Roles');
-      await clickSelector(sessionId, '[data-role="new-role"]');
-      await setInputValue(sessionId, '[data-role="role-name"]', 'File Builder');
-      await setFieldByLabel(sessionId, 'Capacity', '1');
-      await setFieldByLabel(sessionId, 'Description', 'Creates the requested file and closes the task automatically.');
-      await setFieldByLabel(sessionId, 'System prompt', 'Read the referenced project files carefully, follow their instructions exactly, create the requested file for real, and mark the lane as success when the work is done.');
-      await clickSelector(sessionId, '[data-role="role-supervisor-toggle"]');
-      await clickSelector(sessionId, '[data-role="save-role"]');
-      await waitForText(sessionId, 'File Builder');
+      const agent = await invokeCommand<{ id: string; slug: string; name: string }>(sessionId, 'create_agent', {
+        input: {
+          name: 'File Builder',
+          description: 'Creates the requested file and closes the task automatically.',
+          systemPrompt: [
+            'You are a deterministic Orchestra agent.',
+            'Read the task description and any referenced project files carefully.',
+            `Create the exact file ${targetFile} with exactly ${JSON.stringify(targetContents)}.`,
+            'Verify the file contents exactly match the request.',
+            'Do not ask questions.',
+            'When the work is complete, call complete_lane_as_success with concise notes.',
+            'If anything fails, call request_user_intervention.',
+          ].join(' '),
+          provider: 'openai-codex',
+          model: 'gpt-5.3-codex-spark',
+          thinkingLevel: 'off',
+          policyIds: ['policy-supervisor'],
+        },
+      });
+
+      await invokeCommand(sessionId, 'create_workflow', {
+        input: {
+          name: 'File Creation Flow',
+          description: 'Single deterministic agent lane for file creation.',
+          lanes: [
+            {
+              name: 'Create File',
+              key: 'create-file',
+              assignedEntityType: 'agent',
+              assignedEntityId: agent.slug,
+              entryPromptTemplate: 'Read the task description and referenced project files, perform the required file creation for real, and mark success when complete.',
+              successTransitionType: 'end',
+              failureTransitionType: 'end',
+            },
+          ],
+        },
+      });
 
       await clickByText(sessionId, '[role="tab"]', 'Workflows');
-      await clickByText(sessionId, 'button', 'New workflow');
-      await setFieldByLabel(sessionId, 'Workflow name', 'File Creation Flow');
-      await setFieldByLabel(sessionId, 'Lane name', 'Create File');
-      await setFieldByLabel(sessionId, 'Lane key', 'create-file');
-      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
-      await selectValue(sessionId, '[data-role="lane-owner-reference"]', 'file-builder');
-      await setFieldByLabel(sessionId, 'Entry prompt template', 'Read the task description and referenced project files, perform the required file creation for real, and mark success when complete.');
-      await clickSelector(sessionId, '[data-role="save-workflow"]');
       await waitForText(sessionId, 'File Creation Flow');
 
       await clickByText(sessionId, 'button', 'Tasks');
@@ -165,7 +184,7 @@ describe("desktop file workflow", () => {
       expect(readFileSync(targetFile, 'utf8').trimEnd()).toBe(targetContents.trimEnd());
 
       await clickByText(sessionId, 'button', 'Sessions');
-      await waitForText(sessionId, 'File Builder · ORC-1 · Create /tmp/file.md');
+      await waitForText(sessionId, 'File Builder main session');
     } finally {
       await deleteWebdriverSession(sessionId);
       rmSync(targetFile, { force: true });

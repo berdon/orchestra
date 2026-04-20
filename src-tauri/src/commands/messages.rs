@@ -35,11 +35,15 @@ pub fn send_mailbox_message(
     input: SendMailboxMessageInput,
 ) -> Result<MailboxMessage, String> {
     let connection = database::open_connection()?;
-    let message = messages::send_mailbox_message_from_user(app.clone(), &state, &connection, input)?;
+    let message =
+        messages::send_mailbox_message_from_user(app.clone(), &state, &connection, input)?;
     state.log(
         "info",
         "mailbox.sent",
-        &format!("Sent mailbox delivery {} to {}", message.delivery_id, message.recipient_label),
+        &format!(
+            "Sent mailbox delivery {} to {}",
+            message.delivery_id, message.recipient_label
+        ),
     );
     let _ = app_events::emit_inbox_change(&app, "mailbox.sent", [message.delivery_id.clone()]);
     if let Some(task_id) = message.task_id.clone() {

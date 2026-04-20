@@ -1,7 +1,5 @@
 use crate::{
-    models::{
-        ProjectSessionPromptSettings, ProjectTaskAutomationSettings, ProjectWorkerOverlay,
-    },
+    models::{ProjectSessionPromptSettings, ProjectTaskAutomationSettings, ProjectWorkerOverlay},
     services::project_settings,
 };
 
@@ -17,7 +15,10 @@ pub fn update_session_prompt_settings(
     project_slug: Option<String>,
     template: Option<String>,
 ) -> Result<ProjectSessionPromptSettings, String> {
-    project_settings::update_session_prompt_settings(project_slug.as_deref().unwrap_or("orchestra"), template)
+    project_settings::update_session_prompt_settings(
+        project_slug.as_deref().unwrap_or("orchestra"),
+        template,
+    )
 }
 
 #[tauri::command]

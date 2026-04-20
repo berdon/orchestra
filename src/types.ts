@@ -1,5 +1,5 @@
 export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
-export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "general";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "remote" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -42,6 +42,103 @@ export interface SystemNotificationEnvironmentStatus {
 export interface PiExecutableDiagnostic {
   resolvedPath?: string | null;
   error?: string | null;
+}
+
+export interface RemoteAccessSettings {
+  enabled: boolean;
+  useTailscale: boolean;
+  bindHost: string;
+  port: number;
+  baseUrl?: string | null;
+  websocketUrl?: string | null;
+  lanBaseUrl?: string | null;
+  webUrl?: string | null;
+  tailscaleUrl?: string | null;
+  tailscaleWebUrl?: string | null;
+  startedAt?: string | null;
+  lastError?: string | null;
+}
+
+export interface RemoteAccessSettingsInput {
+  enabled: boolean;
+  useTailscale: boolean;
+  bindHost?: string | null;
+  port?: number | null;
+}
+
+export interface RemotePairingCode {
+  id: string;
+  code?: string | null;
+  displayCode: string;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt?: string | null;
+}
+
+export interface RemotePairingCodeInput {
+  label?: string | null;
+  platform?: string | null;
+}
+
+export interface RemoteDeviceRecord {
+  id: string;
+  label: string;
+  platform: string;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt?: string | null;
+  revokedAt?: string | null;
+  pushTokenConfigured: boolean;
+  activeClientCount: number;
+}
+
+export interface RemoteClientRecord {
+  clientId: string;
+  clientKind: string;
+  deviceId?: string | null;
+  deviceLabel?: string | null;
+  activeProjectId?: string | null;
+  connectedAt: string;
+  lastSeenAt: string;
+  subscribedSessionCount: number;
+}
+
+export interface RemoteAccessStatus {
+  settings: RemoteAccessSettings;
+  pairingCodes: RemotePairingCode[];
+  devices: RemoteDeviceRecord[];
+  activeClients: RemoteClientRecord[];
+}
+
+export interface RemoteAuthResponse {
+  device: RemoteDeviceRecord;
+  token: string;
+  baseUrl?: string | null;
+  websocketUrl?: string | null;
+  defaultProjectId?: string | null;
+}
+
+export interface RemotePairingCompleteInput {
+  code: string;
+  label?: string | null;
+  platform?: string | null;
+  pushToken?: string | null;
+}
+
+export interface RemotePushTokenInput {
+  pushToken?: string | null;
+}
+
+export interface RemoteEventEnvelope {
+  id: string;
+  sequence: number;
+  topic: string;
+  timestamp: string;
+  projectId?: string | null;
+  sessionId?: string | null;
+  taskId?: string | null;
+  deliveryId?: string | null;
+  payload: JsonValue;
 }
 
 export interface BridgeClientDiagnostics {

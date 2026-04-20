@@ -66,11 +66,10 @@ mod macos {
         })
     }
 
-    fn optional_c_string(
-        value: Option<&str>,
-        field_name: &str,
-    ) -> Result<Option<CString>, String> {
-        value.map(|entry| into_c_string(entry, field_name)).transpose()
+    fn optional_c_string(value: Option<&str>, field_name: &str) -> Result<Option<CString>, String> {
+        value
+            .map(|entry| into_c_string(entry, field_name))
+            .transpose()
     }
 
     fn detect_app_bundle_path() -> Option<PathBuf> {
@@ -173,7 +172,7 @@ mod macos {
         let title = into_c_string(&request.title, "title")?;
         let body = into_c_string(&request.body, "body")?;
         let thread_identifier = optional_c_string(request.tag.as_deref(), "tag")?;
-        
+
         // Resolve icon path relative to app bundle resources
         let resolved_icon_path = request.icon_path.as_ref().and_then(|path| {
             if let Some(bundle_path) = detect_app_bundle_path() {
@@ -188,7 +187,7 @@ mod macos {
             }
         });
         let icon_path = optional_c_string(resolved_icon_path.as_deref(), "icon_path")?;
-        
+
         let mut error_ptr: *mut c_char = std::ptr::null_mut();
         let ok = unsafe {
             orchestra_macos_notifications_send(

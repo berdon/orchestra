@@ -65,6 +65,7 @@ import { ChannelsPanel } from "./settings/ChannelsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
+import { RemotePanel } from "./settings/RemotePanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AgentOperationsSnapshot,
@@ -110,6 +111,7 @@ const SETTINGS_TABS = [
   { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
   { id: "channels", label: "Channels" },
+  { id: "remote", label: "Remote" },
   { id: "general", label: "General" },
 ] as const;
 
@@ -2689,6 +2691,8 @@ export function App() {
             <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
           ) : settingsTab === "channels" ? (
             <ChannelsPanel />
+          ) : settingsTab === "remote" ? (
+            <RemotePanel />
           ) : (
             <GeneralPanel
               availableThemes={BUILT_IN_ORCHESTRA_THEMES}

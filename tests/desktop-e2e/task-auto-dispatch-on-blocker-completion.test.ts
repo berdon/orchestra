@@ -178,7 +178,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       const blockedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: activeTask.id }),
-        (task) => task.dependencyBlocked === true && task.activeLaneAssignment == null,
+        (task) => task.status === "blocked" && task.dependencyBlocked === true && task.activeLaneAssignment == null,
         30_000,
       );
       expect(blockedTask.readyForDispatch).toBe(false);
@@ -317,6 +317,13 @@ describe("desktop auto dispatch on blocker completion", () => {
         blockerTaskId: blockerTask.id,
         blockedTaskId: dependentTask.id,
       });
+
+      const blockedDependent = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: dependentTask.id }),
+        (task) => task.status === "blocked" && task.dependencyBlocked === true,
+        30_000,
+      );
+      expect(blockedDependent.readyForDispatch).toBe(false);
 
       await invokeCommand(sessionId, "set_project_default_repository", { projectId: project.id, repositoryId: repository.id });
       writeFileSync(
@@ -471,6 +478,7 @@ describe("desktop auto dispatch on blocker completion", () => {
       await waitForText(sessionId, "Parent task");
 
       const blockedParent = await invokeCommand<any>(sessionId, "get_task", { taskId: parentTask.id });
+      expect(blockedParent.status).toBe("blocked");
       expect(blockedParent.dependencyBlocked).toBe(true);
       expect(blockedParent.readyForDispatch).toBe(false);
       expect(blockedParent.blockedChildCount).toBe(1);

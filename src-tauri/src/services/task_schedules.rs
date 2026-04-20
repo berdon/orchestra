@@ -1,6 +1,5 @@
 use chrono::{
-    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
-    Utc,
+    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
 };
 use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -110,7 +109,8 @@ pub fn get_task_schedule(
     schedule_id: &str,
 ) -> Result<TaskScheduleDetail, String> {
     let schedule = load_schedule(connection, schedule_id)?;
-    let recent_occurrences = list_schedule_occurrences(connection, schedule_id, RECENT_OCCURRENCE_LIMIT)?;
+    let recent_occurrences =
+        list_schedule_occurrences(connection, schedule_id, RECENT_OCCURRENCE_LIMIT)?;
     let recent_materialized_tasks =
         tasks::list_tasks_materialized_from_schedule(connection, schedule_id, RECENT_TASK_LIMIT)?;
     Ok(TaskScheduleDetail {
@@ -307,30 +307,68 @@ fn process_due_time_schedule(
         return Ok(None);
     };
     let scheduled_at = chrono::DateTime::parse_from_rfc3339(&next_fire_at)
-        .map_err(|error| format!("Unable to parse next_fire_at for schedule {schedule_id}: {error}"))?
+        .map_err(|error| {
+            format!("Unable to parse next_fire_at for schedule {schedule_id}: {error}")
+        })?
         .with_timezone(&Utc);
     if scheduled_at > now {
         return Ok(None);
     }
 
     let occurrence_key = format!("time:{}", scheduled_at.to_rfc3339());
-    let occurrence = get_or_create_occurrence(connection, &schedule.id, &occurrence_key, Some(next_fire_at.clone()), None)?;
-    if matches!(occurrence.status.as_str(), OCCURRENCE_MATERIALIZED | OCCURRENCE_SKIPPED) {
-        update_schedule_post_time_trigger(connection, &schedule, now, None, None, occurrence.status == OCCURRENCE_SKIPPED)?;
+    let occurrence = get_or_create_occurrence(
+        connection,
+        &schedule.id,
+        &occurrence_key,
+        Some(next_fire_at.clone()),
+        None,
+    )?;
+    if matches!(
+        occurrence.status.as_str(),
+        OCCURRENCE_MATERIALIZED | OCCURRENCE_SKIPPED
+    ) {
+        update_schedule_post_time_trigger(
+            connection,
+            &schedule,
+            now,
+            None,
+            None,
+            occurrence.status == OCCURRENCE_SKIPPED,
+        )?;
         return Ok(occurrence.task_id);
     }
 
     match materialize_occurrence(connection, &schedule, &occurrence, None)? {
         MaterializationOutcome::Materialized(task_id) => {
-            update_schedule_post_time_trigger(connection, &schedule, now, Some(&task_id), None, false)?;
+            update_schedule_post_time_trigger(
+                connection,
+                &schedule,
+                now,
+                Some(&task_id),
+                None,
+                false,
+            )?;
             Ok(Some(task_id))
         }
         MaterializationOutcome::Skipped(reason) => {
-            update_schedule_post_time_trigger(connection, &schedule, now, None, Some(&reason), true)?;
+            update_schedule_post_time_trigger(
+                connection,
+                &schedule,
+                now,
+                None,
+                Some(&reason),
+                true,
+            )?;
             Ok(None)
         }
         MaterializationOutcome::Failed(error) => {
-            mark_occurrence(connection, &occurrence.id, OCCURRENCE_FAILED, None, Some(&error))?;
+            mark_occurrence(
+                connection,
+                &occurrence.id,
+                OCCURRENCE_FAILED,
+                None,
+                Some(&error),
+            )?;
             update_schedule_error(connection, &schedule.id, &error)?;
             Ok(None)
         }
@@ -362,27 +400,56 @@ fn process_event_schedule(
             Some(event.created_at.clone()),
             Some(event.id.clone()),
         )?;
-        if matches!(occurrence.status.as_str(), OCCURRENCE_MATERIALIZED | OCCURRENCE_SKIPPED) {
+        if matches!(
+            occurrence.status.as_str(),
+            OCCURRENCE_MATERIALIZED | OCCURRENCE_SKIPPED
+        ) {
             continue;
         }
 
         match materialize_occurrence(connection, &schedule, &occurrence, Some(&event))? {
             MaterializationOutcome::Materialized(task_id) => {
-                mark_schedule_fired(connection, &schedule.id, Some(&task_id), None, schedule.one_shot, now)?;
+                mark_schedule_fired(
+                    connection,
+                    &schedule.id,
+                    Some(&task_id),
+                    None,
+                    schedule.one_shot,
+                    now,
+                )?;
                 materialized_task_ids.push(task_id);
                 if schedule.one_shot {
                     break;
                 }
             }
             MaterializationOutcome::Skipped(reason) => {
-                mark_occurrence(connection, &occurrence.id, OCCURRENCE_SKIPPED, None, Some(&reason))?;
-                mark_schedule_fired(connection, &schedule.id, None, Some(&reason), schedule.one_shot, now)?;
+                mark_occurrence(
+                    connection,
+                    &occurrence.id,
+                    OCCURRENCE_SKIPPED,
+                    None,
+                    Some(&reason),
+                )?;
+                mark_schedule_fired(
+                    connection,
+                    &schedule.id,
+                    None,
+                    Some(&reason),
+                    schedule.one_shot,
+                    now,
+                )?;
                 if schedule.one_shot {
                     break;
                 }
             }
             MaterializationOutcome::Failed(error) => {
-                mark_occurrence(connection, &occurrence.id, OCCURRENCE_FAILED, None, Some(&error))?;
+                mark_occurrence(
+                    connection,
+                    &occurrence.id,
+                    OCCURRENCE_FAILED,
+                    None,
+                    Some(&error),
+                )?;
                 update_schedule_error(connection, &schedule.id, &error)?;
             }
         }
@@ -403,7 +470,9 @@ fn materialize_occurrence(
     occurrence: &TaskScheduleOccurrence,
     _event: Option<&DomainEvent>,
 ) -> Result<MaterializationOutcome, String> {
-    if schedule.overlap_policy == OVERLAP_SKIP && schedule_has_open_materialized_task(connection, &schedule.id)? {
+    if schedule.overlap_policy == OVERLAP_SKIP
+        && schedule_has_open_materialized_task(connection, &schedule.id)?
+    {
         mark_occurrence(
             connection,
             &occurrence.id,
@@ -464,7 +533,11 @@ fn mark_schedule_fired(
     fired_at: chrono::DateTime<Utc>,
 ) -> Result<(), String> {
     let fired_at_iso = fired_at.to_rfc3339();
-    let consumed_at = if one_shot { Some(fired_at_iso.clone()) } else { None };
+    let consumed_at = if one_shot {
+        Some(fired_at_iso.clone())
+    } else {
+        None
+    };
     connection
         .execute(
             r#"
@@ -498,7 +571,11 @@ fn update_schedule_post_time_trigger(
     error: Option<&str>,
     skipped: bool,
 ) -> Result<(), String> {
-    let single_fire = schedule.one_shot || matches!(schedule.trigger, TaskScheduleTrigger::Time(TaskScheduleTimeTrigger::Once { .. }));
+    let single_fire = schedule.one_shot
+        || matches!(
+            schedule.trigger,
+            TaskScheduleTrigger::Time(TaskScheduleTimeTrigger::Once { .. })
+        );
     let next_fire_at = if single_fire {
         None
     } else {
@@ -531,7 +608,11 @@ fn update_schedule_post_time_trigger(
     Ok(())
 }
 
-fn update_schedule_error(connection: &Connection, schedule_id: &str, error: &str) -> Result<(), String> {
+fn update_schedule_error(
+    connection: &Connection,
+    schedule_id: &str,
+    error: &str,
+) -> Result<(), String> {
     connection
         .execute(
             "UPDATE task_schedules SET last_error = ?2 WHERE id = ?1",
@@ -594,7 +675,8 @@ fn matching_domain_events(
     schedule: &PersistedTaskSchedule,
     trigger: &TaskScheduleEventTrigger,
 ) -> Result<Vec<DomainEvent>, String> {
-    let existing_occurrence_event_ids = list_schedule_occurrence_event_ids(connection, &schedule.id)?;
+    let existing_occurrence_event_ids =
+        list_schedule_occurrence_event_ids(connection, &schedule.id)?;
     let events = domain_events::list_events(connection)?;
     let minimum_created_at = parse_rfc3339_timestamp(&schedule.updated_at)?;
     Ok(events
@@ -645,15 +727,11 @@ fn list_schedule_occurrence_event_ids(
     let rows = statement
         .query_map([schedule_id], |row| row.get::<_, String>(0))
         .map_err(|error| {
-            format!(
-                "Unable to query task schedule occurrence events for {schedule_id}: {error}"
-            )
+            format!("Unable to query task schedule occurrence events for {schedule_id}: {error}")
         })?;
     rows.collect::<Result<std::collections::HashSet<_>, _>>()
         .map_err(|error| {
-            format!(
-                "Unable to read task schedule occurrence events for {schedule_id}: {error}"
-            )
+            format!("Unable to read task schedule occurrence events for {schedule_id}: {error}")
         })
 }
 
@@ -770,7 +848,10 @@ fn mark_occurrence(
     Ok(())
 }
 
-fn schedule_has_open_materialized_task(connection: &Connection, schedule_id: &str) -> Result<bool, String> {
+fn schedule_has_open_materialized_task(
+    connection: &Connection,
+    schedule_id: &str,
+) -> Result<bool, String> {
     let count = connection
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE source_schedule_id = ?1 AND status NOT IN ('completed', 'canceled')",
@@ -783,7 +864,10 @@ fn schedule_has_open_materialized_task(connection: &Connection, schedule_id: &st
     Ok(count > 0)
 }
 
-fn load_schedule(connection: &Connection, schedule_id: &str) -> Result<PersistedTaskSchedule, String> {
+fn load_schedule(
+    connection: &Connection,
+    schedule_id: &str,
+) -> Result<PersistedTaskSchedule, String> {
     connection
         .query_row(
             r#"
@@ -841,10 +925,9 @@ fn list_schedule_occurrences(
         .map_err(|error| {
             format!("Unable to query task schedule occurrences for {schedule_id}: {error}")
         })?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            format!("Unable to read task schedule occurrences for {schedule_id}: {error}")
-        })
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        format!("Unable to read task schedule occurrences for {schedule_id}: {error}")
+    })
 }
 
 struct PreparedTaskScheduleInput {
@@ -871,13 +954,15 @@ fn prepare_schedule_input(
     input.task.status = "ready".into();
     input.task.archived = Some(false);
 
-    let task_blueprint = tasks::prepare_task_input_for_project(connection, project_id, input.task, None)?;
+    let task_blueprint =
+        tasks::prepare_task_input_for_project(connection, project_id, input.task, None)?;
     validate_trigger(&input.trigger)?;
     let task_blueprint_json = serde_json::to_string(&task_blueprint)
         .map_err(|error| format!("Unable to serialize task schedule blueprint: {error}"))?;
     let trigger_json = serde_json::to_string(&input.trigger)
         .map_err(|error| format!("Unable to serialize task schedule trigger: {error}"))?;
-    let next_fire_at = next_time_fire_at(&input.trigger, Utc::now())?.map(|value| value.to_rfc3339());
+    let next_fire_at =
+        next_time_fire_at(&input.trigger, Utc::now())?.map(|value| value.to_rfc3339());
 
     Ok(PreparedTaskScheduleInput {
         title: task_blueprint.title.clone(),
@@ -928,7 +1013,10 @@ fn validate_time_trigger(trigger: &TaskScheduleTimeTrigger) -> Result<(), String
             }
             Ok(())
         }
-        TaskScheduleTimeTrigger::Daily { time_of_day, timezone } => {
+        TaskScheduleTimeTrigger::Daily {
+            time_of_day,
+            timezone,
+        } => {
             parse_time_of_day(time_of_day)?;
             parse_timezone(timezone)?;
             Ok(())
@@ -973,7 +1061,9 @@ fn next_time_fire_at(
 ) -> Result<Option<chrono::DateTime<Utc>>, String> {
     match trigger {
         TaskScheduleTrigger::Event(_) => Ok(None),
-        TaskScheduleTrigger::Time(time_trigger) => next_time_fire_at_for_trigger(time_trigger, now).map(Some),
+        TaskScheduleTrigger::Time(time_trigger) => {
+            next_time_fire_at_for_trigger(time_trigger, now).map(Some)
+        }
     }
 }
 
@@ -985,8 +1075,13 @@ fn next_time_fire_at_for_trigger(
         TaskScheduleTimeTrigger::Once { at, .. } => chrono::DateTime::parse_from_rfc3339(at)
             .map(|value| value.with_timezone(&Utc))
             .map_err(|error| format!("trigger.at: Expected an RFC3339 datetime: {error}")),
-        TaskScheduleTimeTrigger::EveryMinutes { every_minutes } => Ok(now + Duration::minutes(*every_minutes)),
-        TaskScheduleTimeTrigger::Daily { time_of_day, timezone } => {
+        TaskScheduleTimeTrigger::EveryMinutes { every_minutes } => {
+            Ok(now + Duration::minutes(*every_minutes))
+        }
+        TaskScheduleTimeTrigger::Daily {
+            time_of_day,
+            timezone,
+        } => {
             let tz = parse_timezone(timezone)?;
             let time = parse_time_of_day(time_of_day)?;
             next_daily_fire_at(tz, time, now)
@@ -1059,8 +1154,9 @@ fn next_monthly_fire_at(
     for offset_months in 0..=24 {
         let (year, month) = add_months(now_local.year(), now_local.month(), offset_months)?;
         let day = day_of_month.min(days_in_month(year, month)?);
-        let date = NaiveDate::from_ymd_opt(year, month, day)
-            .ok_or_else(|| format!("Unable to build monthly schedule date for {year}-{month}-{day}"))?;
+        let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| {
+            format!("Unable to build monthly schedule date for {year}-{month}-{day}")
+        })?;
         let candidate = resolve_local_datetime(tz, date.and_time(time))?;
         if candidate > now_local {
             return Ok(candidate.with_timezone(&Utc));
@@ -1099,7 +1195,9 @@ fn resolve_local_datetime(tz: Tz, naive: NaiveDateTime) -> Result<chrono::DateTi
                     LocalResult::None => continue,
                 }
             }
-            Err(format!("Unable to resolve local datetime {naive} in timezone {tz}"))
+            Err(format!(
+                "Unable to resolve local datetime {naive} in timezone {tz}"
+            ))
         }
     }
 }
@@ -1119,9 +1217,14 @@ fn parse_time_of_day(value: &str) -> Result<NaiveTime, String> {
 fn read_schedule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersistedTaskSchedule> {
     let task_blueprint_json = row.get::<_, String>(7)?;
     let trigger_json = row.get::<_, String>(8)?;
-    let task_blueprint = serde_json::from_str::<TaskUpsertInput>(&task_blueprint_json).map_err(
-        |error| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error)),
-    )?;
+    let task_blueprint =
+        serde_json::from_str::<TaskUpsertInput>(&task_blueprint_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                7,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
     let trigger = serde_json::from_str::<TaskScheduleTrigger>(&trigger_json).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error))
     })?;
@@ -1318,7 +1421,9 @@ mod tests {
 
         let occurrences = list_schedule_occurrences(&connection, &created.id, 10)
             .expect("occurrences should list");
-        assert!(occurrences.iter().any(|occurrence| occurrence.status == OCCURRENCE_SKIPPED));
+        assert!(occurrences
+            .iter()
+            .any(|occurrence| occurrence.status == OCCURRENCE_SKIPPED));
     }
 
     #[test]
@@ -1351,11 +1456,14 @@ mod tests {
         )
         .expect("domain event should record");
 
-        let result = process_due_task_schedules(&mut connection).expect("event schedules should process");
+        let result =
+            process_due_task_schedules(&mut connection).expect("event schedules should process");
         assert_eq!(result.materialized_task_ids.len(), 1);
         let occurrences = list_schedule_occurrences(&connection, &created.id, 10)
             .expect("occurrences should list");
-        assert!(occurrences.iter().any(|occurrence| occurrence.status == OCCURRENCE_MATERIALIZED));
+        assert!(occurrences
+            .iter()
+            .any(|occurrence| occurrence.status == OCCURRENCE_MATERIALIZED));
     }
 
     #[test]
@@ -1389,7 +1497,8 @@ mod tests {
         )
         .expect("schedule should create");
 
-        let result = process_due_task_schedules(&mut connection).expect("event schedules should process");
+        let result =
+            process_due_task_schedules(&mut connection).expect("event schedules should process");
         assert!(result.materialized_task_ids.is_empty());
         let occurrences = list_schedule_occurrences(&connection, &created.id, 10)
             .expect("occurrences should list");
@@ -1485,23 +1594,28 @@ mod tests {
         )
         .expect("domain event should record");
 
-        let first_result = process_due_task_schedules(&mut connection).expect("first processing should run");
+        let first_result =
+            process_due_task_schedules(&mut connection).expect("first processing should run");
         assert!(first_result.materialized_task_ids.is_empty());
         let failed_occurrences = list_schedule_occurrences(&connection, &created.id, 10)
             .expect("failed occurrences should list");
-        assert!(failed_occurrences.iter().any(|occurrence| occurrence.status == OCCURRENCE_FAILED));
+        assert!(failed_occurrences
+            .iter()
+            .any(|occurrence| occurrence.status == OCCURRENCE_FAILED));
 
         connection
             .execute(
                 "UPDATE task_schedules SET task_blueprint_json = ?2 WHERE id = ?1",
                 params![
                     created.id,
-                    serde_json::to_string(&sample_task_input()).expect("fixed blueprint should serialize"),
+                    serde_json::to_string(&sample_task_input())
+                        .expect("fixed blueprint should serialize"),
                 ],
             )
             .expect("schedule blueprint should be fixed");
 
-        let retried = process_due_task_schedules(&mut connection).expect("second processing should retry failed event occurrence");
+        let retried = process_due_task_schedules(&mut connection)
+            .expect("second processing should retry failed event occurrence");
         assert_eq!(retried.materialized_task_ids.len(), 1);
     }
 
@@ -1530,7 +1644,8 @@ mod tests {
             )
             .expect("schedule should become overdue");
 
-        let result = process_due_task_schedules(&mut connection).expect("overdue recurring schedule should process");
+        let result = process_due_task_schedules(&mut connection)
+            .expect("overdue recurring schedule should process");
         assert_eq!(result.materialized_task_ids.len(), 1);
         let occurrences = list_schedule_occurrences(&connection, &created.id, 10)
             .expect("occurrences should list");
@@ -1569,10 +1684,12 @@ mod tests {
         )
         .expect("manual task.created event should record");
 
-        let first_pass = process_due_task_schedules(&mut connection).expect("first pass should process external event");
+        let first_pass = process_due_task_schedules(&mut connection)
+            .expect("first pass should process external event");
         assert_eq!(first_pass.materialized_task_ids.len(), 2);
 
-        let second_pass = process_due_task_schedules(&mut connection).expect("second pass should ignore schedule-originated task.created events");
+        let second_pass = process_due_task_schedules(&mut connection)
+            .expect("second pass should ignore schedule-originated task.created events");
         assert!(second_pass.materialized_task_ids.is_empty());
     }
 }

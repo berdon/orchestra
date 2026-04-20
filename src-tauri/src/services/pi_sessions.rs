@@ -1270,7 +1270,10 @@ fn get_session_model_state_with_executable(
     })
 }
 
-pub(crate) fn parse_session_stats_payload(payload: &Value, session_id: &str) -> Result<SessionStats, String> {
+pub(crate) fn parse_session_stats_payload(
+    payload: &Value,
+    session_id: &str,
+) -> Result<SessionStats, String> {
     let data = payload
         .get("data")
         .ok_or_else(|| format!("Session stats response for {session_id} is missing data"))?;
@@ -1280,17 +1283,23 @@ pub(crate) fn parse_session_stats_payload(payload: &Value, session_id: &str) -> 
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
 
-    let tokens_payload = data
-        .get("tokens")
-        .ok_or_else(|| format!("Session stats response for {session_id} is missing token totals"))?;
+    let tokens_payload = data.get("tokens").ok_or_else(|| {
+        format!("Session stats response for {session_id} is missing token totals")
+    })?;
 
     let token_total = tokens_payload
         .get("total")
         .or_else(|| tokens_payload.get("totalTokens"));
 
     let tokens = SessionTokenUsage {
-        input: tokens_payload.get("input").and_then(Value::as_i64).unwrap_or_default(),
-        output: tokens_payload.get("output").and_then(Value::as_i64).unwrap_or_default(),
+        input: tokens_payload
+            .get("input")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        output: tokens_payload
+            .get("output")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
         cache_read: tokens_payload
             .get("cacheRead")
             .and_then(Value::as_i64)
@@ -1308,7 +1317,10 @@ pub(crate) fn parse_session_stats_payload(payload: &Value, session_id: &str) -> 
             tokens: usage.get("tokens").and_then(Value::as_i64),
             context_window,
             percent: usage.get("percent").and_then(Value::as_f64).or_else(|| {
-                usage.get("percent").and_then(Value::as_i64).map(|value| value as f64)
+                usage
+                    .get("percent")
+                    .and_then(Value::as_i64)
+                    .map(|value| value as f64)
             }),
         })
     });
@@ -1362,11 +1374,8 @@ fn get_session_stats_with_executable(
         |_| {},
     )?;
 
-    let stats_payload = require_successful_response(
-        &payloads,
-        GET_SESSION_STATS_REQUEST_ID,
-        "get_session_stats",
-    )?;
+    let stats_payload =
+        require_successful_response(&payloads, GET_SESSION_STATS_REQUEST_ID, "get_session_stats")?;
 
     parse_session_stats_payload(stats_payload, session_id)
 }

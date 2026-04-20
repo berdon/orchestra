@@ -14,18 +14,26 @@ echo "[desktop-e2e] test_file=${TEST_FILE}"
 
 WORKSPACE_ROOT="/tmp/workspace"
 WORKSPACE_DIR="${WORKSPACE_ROOT}/orchestra"
+TARGET_DIR="${ORCHESTRA_DESKTOP_E2E_TARGET_DIR:-/workspace-target}"
+BUILD_LOCK_DIR="${TARGET_DIR}/.orchestra-build-lock"
+TARGET_BINARY_PATH="${TARGET_DIR}/debug/orchestra"
+TARGET_SOURCE_HASH_FILE="${TARGET_DIR}/orchestra-source.sha256"
 
 echo "[desktop-e2e] preparing workspace copy"
 rm -rf "${WORKSPACE_ROOT}"
 mkdir -p "${WORKSPACE_DIR}/src-tauri"
 cp -a /src/package.json /src/package-lock.json /src/index.html /src/tsconfig.json /src/vite.config.ts /src/playwright.config.ts /src/README.md /src/.gitignore "${WORKSPACE_DIR}/"
-cp -a /src/node_modules "${WORKSPACE_DIR}/node_modules"
+cp -a /workspace/orchestra/node_modules "${WORKSPACE_DIR}/node_modules"
 cp -a /src/src "${WORKSPACE_DIR}/src"
 cp -a /src/tests "${WORKSPACE_DIR}/tests"
 cp -a /src/scripts "${WORKSPACE_DIR}/scripts"
 cp -a /src/extensions "${WORKSPACE_DIR}/extensions"
 cp -a /src/docs "${WORKSPACE_DIR}/docs"
 cp -a /src/dist "${WORKSPACE_DIR}/dist"
+mkdir -p "${WORKSPACE_DIR}/mobile"
+if [[ -d /src/mobile/dist-web ]]; then
+  cp -a /src/mobile/dist-web "${WORKSPACE_DIR}/mobile/dist-web"
+fi
 cp -a /src/src-tauri/Cargo.toml /src/src-tauri/Cargo.lock /src/src-tauri/build.rs /src/src-tauri/tauri.conf.json "${WORKSPACE_DIR}/src-tauri/"
 cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
 cp -a /src/src-tauri/icons "${WORKSPACE_DIR}/src-tauri/icons"
@@ -74,14 +82,47 @@ cargo --version
 tauri-driver --help >/dev/null
 WebKitWebDriver --help >/dev/null
 
-HOST_BUILD_ROOT="/build"
-HOST_BINARY_PATH="${HOST_BUILD_ROOT}/src-tauri/target/debug/orchestra"
-if [[ ! -x "${HOST_BINARY_PATH}" ]]; then
-  echo "[desktop-e2e] expected host-built binary is missing: ${HOST_BINARY_PATH}" >&2
-  exit 1
+mkdir -p "${TARGET_DIR}"
+export CARGO_TARGET_DIR="${TARGET_DIR}"
+
+compute_source_hash() {
+  find "${WORKSPACE_DIR}/src-tauri" -type f -print0 \
+    | sort -z \
+    | xargs -0 sha256sum \
+    | sha256sum \
+    | awk '{print $1}'
+}
+
+CURRENT_SOURCE_HASH="$(compute_source_hash)"
+EXISTING_SOURCE_HASH="$(cat "${TARGET_SOURCE_HASH_FILE}" 2>/dev/null || true)"
+
+if [[ ! -x "${TARGET_BINARY_PATH}" || "${CURRENT_SOURCE_HASH}" != "${EXISTING_SOURCE_HASH}" ]]; then
+  echo "[desktop-e2e] ensuring Linux debug binary is built in ${TARGET_DIR}"
+  while ! mkdir "${BUILD_LOCK_DIR}" 2>/dev/null; do
+    echo "[desktop-e2e] waiting for shared target lock ${BUILD_LOCK_DIR}"
+    sleep 2
+  done
+
+  release_build_lock() {
+    rmdir "${BUILD_LOCK_DIR}" 2>/dev/null || true
+  }
+
+  trap 'release_build_lock; type cleanup >/dev/null 2>&1 && cleanup || true' EXIT
+
+  CURRENT_SOURCE_HASH="$(compute_source_hash)"
+  EXISTING_SOURCE_HASH="$(cat "${TARGET_SOURCE_HASH_FILE}" 2>/dev/null || true)"
+  if [[ ! -x "${TARGET_BINARY_PATH}" || "${CURRENT_SOURCE_HASH}" != "${EXISTING_SOURCE_HASH}" ]]; then
+    cargo build -j "${ORCHESTRA_DESKTOP_E2E_CARGO_JOBS:-2}" --manifest-path "${WORKSPACE_DIR}/src-tauri/Cargo.toml"
+    printf '%s\n' "${CURRENT_SOURCE_HASH}" > "${TARGET_SOURCE_HASH_FILE}"
+  fi
+
+  release_build_lock
+  trap cleanup EXIT
 fi
+
+HOST_BINARY_PATH="${TARGET_BINARY_PATH}"
 mkdir -p "${WORKSPACE_DIR}/src-tauri/target/debug"
-ln -s "${HOST_BINARY_PATH}" "${WORKSPACE_DIR}/src-tauri/target/debug/orchestra"
+ln -sf "${HOST_BINARY_PATH}" "${WORKSPACE_DIR}/src-tauri/target/debug/orchestra"
 
 XVFB_DISPLAY=":99"
 XVFB_LOG="/tmp/xvfb.log"

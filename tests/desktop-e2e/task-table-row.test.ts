@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
-  clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   waitForText,
 } from "./driver";
 import { createProjectViaSettings, createTaskViaTasks, createWorkflowViaSettings, switchProject } from "./ui-flows";
@@ -27,7 +27,8 @@ describe("desktop task table rows", () => {
           {
             name: 'Build',
             key: 'build',
-            ownerType: 'user',
+            ownerType: 'agent',
+            ownerReference: 'supervisor',
             entryPromptTemplate: 'Build it.',
           },
         ],
@@ -36,14 +37,29 @@ describe("desktop task table rows", () => {
         title: 'Clickable workflow row',
         description: 'Verify whole table row opens detail.',
         workflowName: 'Task Table Flow',
+        publish: true,
       });
 
       await clickByText(sessionId, "button", "Tasks");
-      await clickByText(sessionId, "button", "Table");
-      await waitForText(sessionId, "Lane");
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="task-view-table"]');
+        if (!(button instanceof HTMLElement)) {
+          throw new Error('Table view toggle was not available');
+        }
+        button.click();
+        return true;
+      `);
       await waitForText(sessionId, 'Clickable workflow row');
+      await waitForText(sessionId, 'Supervisor');
 
-      await clickSelector(sessionId, '[data-role="task-table-row"]');
+      await executeScript(sessionId, `
+        const row = document.querySelector('[data-role="task-table-row"]');
+        if (!(row instanceof HTMLElement)) {
+          throw new Error('Task table row was not available');
+        }
+        row.click();
+        return true;
+      `);
       await waitForText(sessionId, "Task detail");
       await waitForText(sessionId, 'Clickable workflow row');
     } finally {

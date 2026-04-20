@@ -11,9 +11,9 @@ pub fn dispatch_role_queue(
     state: State<'_, AppState>,
     role_id: String,
 ) -> Result<RoleOperationsDetail, String> {
-    state
-        .sync_pi_runtime_health()
-        .map_err(|error| format!("Unable to dispatch role queue because PI is unavailable: {error}"))?;
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to dispatch role queue because PI is unavailable: {error}")
+    })?;
     let context = pi_sessions::detect_session_context(None)?;
     let mut connection = database::open_connection()?;
     let detail = role_dispatch::dispatch_role_queue(

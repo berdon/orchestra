@@ -40,10 +40,27 @@ async function webdriverRequest(path: string, init?: RequestInit) {
   throw new Error(lastError || `Unable to reach webdriver at ${webdriverUrl}${path}`);
 }
 
+async function listWebdriverSessions() {
+  const response = await webdriverRequest("/sessions", { method: "GET" }).catch(() => null);
+  const sessions = Array.isArray(response?.value) ? response.value : [];
+  return sessions
+    .map((entry: { id?: string; sessionId?: string }) => entry.id ?? entry.sessionId ?? null)
+    .filter((value: string | null): value is string => Boolean(value));
+}
+
+async function cleanupWebdriverSessions() {
+  const sessions = await listWebdriverSessions();
+  for (const sessionId of sessions) {
+    await deleteWebdriverSession(sessionId).catch(() => undefined);
+  }
+}
+
 export async function createWebdriverSession(timeoutMs = 45_000) {
   if (!tauriBinary) {
     throw new Error("ORCHESTRA_TAURI_BINARY is required for desktop E2E runs.");
   }
+
+  await cleanupWebdriverSessions();
 
   const deadline = Date.now() + timeoutMs;
   let lastError = "Unable to create WebDriver session before timeout.";
@@ -89,6 +106,16 @@ export async function createReadyWebdriverSession(timeoutMs = 90_000) {
     let sessionId: string | null = null;
     try {
       sessionId = await createWebdriverSession(30_000);
+      await ensureReactReady(sessionId, 30_000);
+      await executeScript(sessionId, `
+        try {
+          window.localStorage?.clear?.();
+          window.sessionStorage?.clear?.();
+        } catch (_) {}
+        window.location.reload();
+        return true;
+      `);
+      await sleep(1_000);
       await ensureReactReady(sessionId, 30_000);
       return sessionId;
     } catch (error) {

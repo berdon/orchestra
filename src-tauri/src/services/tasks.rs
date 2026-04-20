@@ -393,6 +393,16 @@ pub fn create_task_from_blueprint(
     .map_err(|error| format!("Unable to create task: {error}"))?;
 
     sync_task_repository_links(&tx, &task_id, project_id, &normalized.repository_ids, &now)?;
+    reconcile_dependency_statuses(
+        &tx,
+        collect_task_refresh_ids_with_parent_overrides(
+            &tx,
+            &task_id,
+            normalized.parent_task_id.as_deref(),
+            normalized.parent_task_id.as_deref(),
+        )?,
+        &now,
+    )?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit task creation: {error}"))?;
@@ -490,11 +500,31 @@ pub fn update_task(
     )
     .map_err(|error| format!("Unable to update task {task_id}: {error}"))?;
 
+    if normalized.status != existing.status {
+        tx.execute(
+            "UPDATE tasks SET auto_blocked_by_dependencies = 0 WHERE id = ?1",
+            [task_id],
+        )
+        .map_err(|error| {
+            format!("Unable to clear dependency auto-block provenance for task {task_id}: {error}")
+        })?;
+    }
+
     sync_task_repository_links(
         &tx,
         task_id,
         &existing.project_id,
         &normalized.repository_ids,
+        &now,
+    )?;
+    reconcile_dependency_statuses(
+        &tx,
+        collect_task_refresh_ids_with_parent_overrides(
+            &tx,
+            task_id,
+            existing.parent_task_id.as_deref(),
+            normalized.parent_task_id.as_deref(),
+        )?,
         &now,
     )?;
 
@@ -577,6 +607,7 @@ pub fn add_task_dependency(
         ],
     )
     .map_err(|error| format!("Unable to add task dependency: {error}"))?;
+    reconcile_dependency_statuses(&tx, collect_task_refresh_ids(&tx, blocked_task_id)?, &now)?;
 
     tx.commit()
         .map_err(|error| format!("Unable to commit task dependency: {error}"))?;
@@ -600,7 +631,255 @@ pub fn remove_task_dependency(
         return Err(format!("Task dependency {dependency_id} was not found"));
     }
 
+    reconcile_dependency_statuses(
+        connection,
+        collect_task_refresh_ids(connection, &dependency.blocked_task_id)?,
+        &now_iso(),
+    )?;
+
     Ok(dependency)
+}
+
+pub fn collect_task_refresh_ids(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<String>, String> {
+    let current_parent_task_id = connection
+        .query_row(
+            "SELECT parent_task_id FROM tasks WHERE id = ?1",
+            [task_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to resolve current parent task for refresh collection on {task_id}: {error}"
+            )
+        })?
+        .flatten();
+    collect_task_refresh_ids_with_parent_overrides(
+        connection,
+        task_id,
+        current_parent_task_id.as_deref(),
+        current_parent_task_id.as_deref(),
+    )
+}
+
+pub fn collect_parent_chain_task_ids(
+    connection: &Connection,
+    parent_task_id: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut task_ids = Vec::new();
+    let mut current_parent_id = parent_task_id.map(|value| value.to_string());
+
+    while let Some(parent_id) = current_parent_id {
+        task_ids.push(parent_id.clone());
+        current_parent_id = connection
+            .query_row(
+                "SELECT parent_task_id FROM tasks WHERE id = ?1",
+                [parent_id.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to resolve parent task chain for task {}: {error}",
+                    task_ids.last().cloned().unwrap_or_default()
+                )
+            })?
+            .flatten();
+    }
+
+    Ok(task_ids)
+}
+
+pub fn reconcile_dependency_statuses(
+    connection: &Connection,
+    task_ids: impl IntoIterator<Item = String>,
+    now: &str,
+) -> Result<Vec<String>, String> {
+    let mut changed_task_ids = Vec::new();
+
+    for task_id in unique_task_ids(task_ids) {
+        if reconcile_dependency_status(connection, &task_id, now)? {
+            changed_task_ids.push(task_id);
+        }
+    }
+
+    Ok(changed_task_ids)
+}
+
+fn collect_task_refresh_ids_with_parent_overrides(
+    connection: &Connection,
+    task_id: &str,
+    old_parent_task_id: Option<&str>,
+    new_parent_task_id: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut task_ids = vec![task_id.to_string()];
+    task_ids.extend(load_dependent_task_ids(connection, task_id)?);
+    task_ids.extend(collect_parent_chain_task_ids(
+        connection,
+        old_parent_task_id,
+    )?);
+    task_ids.extend(collect_parent_chain_task_ids(
+        connection,
+        new_parent_task_id,
+    )?);
+    Ok(unique_task_ids(task_ids))
+}
+
+fn load_dependent_task_ids(
+    connection: &Connection,
+    blocker_task_id: &str,
+) -> Result<Vec<String>, String> {
+    connection
+        .prepare(
+            r#"
+            SELECT blocked_task_id
+            FROM task_dependencies
+            WHERE blocker_task_id = ?1
+            ORDER BY blocked_task_id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare dependent task query: {error}"))?
+        .query_map([blocker_task_id], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query dependent tasks for {blocker_task_id}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read dependent tasks for {blocker_task_id}: {error}"))
+}
+
+fn reconcile_dependency_status(
+    connection: &Connection,
+    task_id: &str,
+    now: &str,
+) -> Result<bool, String> {
+    let Some((status, auto_blocked_by_dependencies, has_blockers)) = connection
+        .query_row(
+            &format!(
+                r#"
+                SELECT
+                    t.status,
+                    t.auto_blocked_by_dependencies,
+                    CASE
+                        WHEN {unresolved_blockers} > 0 OR {unfinished_child_blockers} > 0 THEN 1
+                        ELSE 0
+                    END AS has_blockers
+                FROM tasks t
+                WHERE t.id = ?1
+                "#,
+                unresolved_blockers = unresolved_blocker_sql("t"),
+                unfinished_child_blockers = unfinished_child_blocker_sql("t"),
+            ),
+            [task_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)? != 0,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to inspect dependency status for task {task_id}: {error}")
+        })?
+    else {
+        return Ok(false);
+    };
+
+    if TERMINAL_TASK_STATUSES.contains(&status.as_str()) {
+        if auto_blocked_by_dependencies {
+            connection
+                .execute(
+                    "UPDATE tasks SET auto_blocked_by_dependencies = 0, updated_at = ?2 WHERE id = ?1",
+                    params![task_id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to clear dependency auto-block provenance for terminal task {task_id}: {error}"
+                    )
+                })?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+
+    if has_blockers {
+        return match status.as_str() {
+            "ready" | "in_progress" | "in_review" => {
+                connection
+                    .execute(
+                        "UPDATE tasks SET status = 'blocked', auto_blocked_by_dependencies = 1, updated_at = ?2 WHERE id = ?1",
+                        params![task_id, now],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Unable to auto-block dependency-blocked task {task_id}: {error}"
+                        )
+                    })?;
+                Ok(true)
+            }
+            "blocked" => Ok(false),
+            _ => {
+                if auto_blocked_by_dependencies {
+                    connection
+                        .execute(
+                            "UPDATE tasks SET auto_blocked_by_dependencies = 0, updated_at = ?2 WHERE id = ?1",
+                            params![task_id, now],
+                        )
+                        .map_err(|error| {
+                            format!(
+                                "Unable to clear stale dependency auto-block provenance for task {task_id}: {error}"
+                            )
+                        })?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+        };
+    }
+
+    if status == "blocked" && auto_blocked_by_dependencies {
+        connection
+            .execute(
+                "UPDATE tasks SET status = 'ready', auto_blocked_by_dependencies = 0, updated_at = ?2 WHERE id = ?1",
+                params![task_id, now],
+            )
+            .map_err(|error| {
+                format!("Unable to restore fully unblocked task {task_id} to ready: {error}")
+            })?;
+        return Ok(true);
+    }
+
+    if auto_blocked_by_dependencies {
+        connection
+            .execute(
+                "UPDATE tasks SET auto_blocked_by_dependencies = 0, updated_at = ?2 WHERE id = ?1",
+                params![task_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to clear dependency auto-block provenance for task {task_id}: {error}"
+                )
+            })?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn unique_task_ids(task_ids: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+
+    for task_id in task_ids {
+        if seen.insert(task_id.clone()) {
+            unique.push(task_id);
+        }
+    }
+
+    unique
 }
 
 pub fn add_task_comment(
@@ -3311,7 +3590,7 @@ mod tests {
     }
 
     #[test]
-    fn adds_dependencies_and_computes_blocked_state() {
+    fn dependency_add_auto_blocks_ready_task_and_completion_restores_ready() {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
 
@@ -3321,6 +3600,7 @@ mod tests {
         add_task_dependency(&mut connection, &blocker.id, &blocked.id).expect("add dependency");
 
         let loaded = get_task(&connection, &blocked.id).expect("load blocked task");
+        assert_eq!(loaded.status, "blocked");
         assert_eq!(loaded.blocked_by_count, 1);
         assert!(loaded.dependency_blocked);
         assert!(!loaded.ready_for_dispatch);
@@ -3350,8 +3630,66 @@ mod tests {
 
         assert_eq!(updated_blocker.status, "completed");
         let unblocked = get_task(&connection, &blocked.id).expect("reload blocked task");
+        assert_eq!(unblocked.status, "ready");
         assert!(!unblocked.dependency_blocked);
         assert!(unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn removing_final_dependency_restores_ready_but_partial_unblock_stays_blocked() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let blocker_a = create_named_task(&mut connection, "Blocker A", "in_progress", None);
+        let blocker_b = create_named_task(&mut connection, "Blocker B", "in_progress", None);
+        let blocked = create_named_task(&mut connection, "Blocked", "ready", None);
+
+        let dependency_a = add_task_dependency(&mut connection, &blocker_a.id, &blocked.id)
+            .expect("add first dependency");
+        let dependency_b = add_task_dependency(&mut connection, &blocker_b.id, &blocked.id)
+            .expect("add second dependency");
+
+        let initially_blocked =
+            get_task(&connection, &blocked.id).expect("load initially blocked task");
+        assert_eq!(initially_blocked.status, "blocked");
+        assert!(initially_blocked.dependency_blocked);
+
+        remove_task_dependency(&connection, &dependency_a.id).expect("remove first dependency");
+        let partially_unblocked =
+            get_task(&connection, &blocked.id).expect("reload partially unblocked task");
+        assert_eq!(partially_unblocked.status, "blocked");
+        assert!(partially_unblocked.dependency_blocked);
+        assert_eq!(partially_unblocked.blocked_by_count, 1);
+
+        remove_task_dependency(&connection, &dependency_b.id).expect("remove final dependency");
+        let fully_unblocked =
+            get_task(&connection, &blocked.id).expect("reload fully unblocked task");
+        assert_eq!(fully_unblocked.status, "ready");
+        assert!(!fully_unblocked.dependency_blocked);
+        assert!(fully_unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn manual_blocked_state_is_not_auto_restored_when_dependencies_clear() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let blocker = create_named_task(&mut connection, "Blocker", "in_progress", None);
+        let blocked = create_named_task(&mut connection, "Blocked", "blocked", None);
+
+        let dependency =
+            add_task_dependency(&mut connection, &blocker.id, &blocked.id).expect("add dependency");
+
+        let still_manually_blocked = get_task(&connection, &blocked.id).expect("load blocked task");
+        assert_eq!(still_manually_blocked.status, "blocked");
+        assert!(still_manually_blocked.dependency_blocked);
+
+        remove_task_dependency(&connection, &dependency.id).expect("remove dependency");
+        let after_unblock =
+            get_task(&connection, &blocked.id).expect("reload blocked task after unblocking");
+        assert_eq!(after_unblock.status, "blocked");
+        assert!(!after_unblock.dependency_blocked);
+        assert!(!after_unblock.ready_for_dispatch);
     }
 
     #[test]
@@ -3363,6 +3701,7 @@ mod tests {
         let child = create_named_task(&mut connection, "Child", "ready", Some(parent.id.clone()));
 
         let loaded_parent = get_task(&connection, &parent.id).expect("load parent task");
+        assert_eq!(loaded_parent.status, "blocked");
         assert_eq!(loaded_parent.child_count, 1);
         assert_eq!(loaded_parent.blocked_child_count, 1);
         assert!(loaded_parent.dependency_blocked);
@@ -3392,6 +3731,7 @@ mod tests {
 
         assert_eq!(completed_child.status, "completed");
         let unblocked_parent = get_task(&connection, &parent.id).expect("reload parent task");
+        assert_eq!(unblocked_parent.status, "ready");
         assert_eq!(unblocked_parent.blocked_child_count, 0);
         assert!(!unblocked_parent.dependency_blocked);
         assert!(unblocked_parent.ready_for_dispatch);

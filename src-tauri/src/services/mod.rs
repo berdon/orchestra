@@ -22,6 +22,8 @@ pub mod policies;
 pub mod project_settings;
 pub mod projects;
 pub mod reminders;
+pub mod remote_access;
+pub mod remote_api;
 pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;

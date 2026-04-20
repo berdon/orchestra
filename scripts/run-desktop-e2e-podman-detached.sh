@@ -61,6 +61,7 @@ RUN_ARGS=(
   -v orchestra-desktop-e2e-cargo-registry:/root/.cargo/registry
   -v orchestra-desktop-e2e-cargo-git:/root/.cargo/git
   -v orchestra-desktop-e2e-npm-cache:/root/.npm
+  -v orchestra-desktop-e2e-target:/workspace-target
   "${SEED_MOUNT_ARGS[@]}"
   --workdir /workspace
 )

@@ -18,7 +18,11 @@ pub fn list_agents(
 ) -> Result<Vec<AgentSummary>, String> {
     let connection = database::open_connection()?;
     command_authorization::require_permission(&connection, authorization.as_ref(), "agents.read")?;
-    agents::list_agents_for_project(&connection, include_archived.unwrap_or(false), project_id.as_deref())
+    agents::list_agents_for_project(
+        &connection,
+        include_archived.unwrap_or(false),
+        project_id.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -48,7 +52,11 @@ pub fn create_agent(
     authorization: Option<AuthorizationContext>,
 ) -> Result<AgentDefinition, String> {
     let mut connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "agents.create")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "agents.create",
+    )?;
     let agent = agents::create_agent(&mut connection, input)?;
     state.log_authorized_action(
         "auth.audit",
@@ -79,7 +87,11 @@ pub fn update_agent(
     authorization: Option<AuthorizationContext>,
 ) -> Result<AgentDefinition, String> {
     let mut connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "agents.update")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "agents.update",
+    )?;
     let agent = agents::update_agent(&mut connection, &agent_id, input)?;
     state.log_authorized_action(
         "auth.audit",
@@ -109,7 +121,11 @@ pub fn archive_agent(
     authorization: Option<AuthorizationContext>,
 ) -> Result<AgentDefinition, String> {
     let connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "agents.archive")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "agents.archive",
+    )?;
     let agent = agents::archive_agent(&connection, &agent_id)?;
     state.log_authorized_action(
         "auth.audit",

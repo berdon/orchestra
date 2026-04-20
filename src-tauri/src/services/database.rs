@@ -309,6 +309,59 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_worker_reminders_actor
                 ON worker_reminders(actor_type, actor_id, due_at ASC);
 
+            CREATE TABLE IF NOT EXISTS remote_access_settings (
+                id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                use_tailscale INTEGER NOT NULL DEFAULT 0,
+                bind_host TEXT NOT NULL DEFAULT '0.0.0.0',
+                port INTEGER NOT NULL DEFAULT 49500,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS remote_pairing_codes (
+                id TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                display_code TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                consumed_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_remote_pairing_codes_expires
+                ON remote_pairing_codes(expires_at ASC, consumed_at ASC);
+
+            CREATE TABLE IF NOT EXISTS remote_devices (
+                id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                push_token TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                revoked_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_remote_devices_revoked
+                ON remote_devices(revoked_at ASC, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS remote_device_tokens (
+                id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_used_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY(device_id) REFERENCES remote_devices(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_remote_device_tokens_hash
+                ON remote_device_tokens(token_hash);
+
+            CREATE INDEX IF NOT EXISTS idx_remote_device_tokens_device
+                ON remote_device_tokens(device_id, revoked_at ASC, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -326,6 +379,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 repository_id TEXT,
                 parent_task_id TEXT,
                 whip_max_attempts INTEGER NOT NULL DEFAULT 10,
+                auto_blocked_by_dependencies INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER NOT NULL DEFAULT 0,
                 source_schedule_id TEXT,
                 source_schedule_occurrence_id TEXT,
@@ -778,9 +832,27 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_task_file_references_table_columns(connection)?;
     ensure_domain_events_tables(connection)?;
     ensure_task_schedule_tables(connection)?;
+    ensure_remote_access_settings_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
+    Ok(())
+}
+
+fn ensure_remote_access_settings_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "remote_access_settings")?;
+
+    if !columns.contains("use_tailscale") {
+        connection
+            .execute(
+                "ALTER TABLE remote_access_settings ADD COLUMN use_tailscale INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add use_tailscale column to remote_access_settings: {error}")
+            })?;
+    }
+
     Ok(())
 }
 
@@ -1108,6 +1180,30 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_max_attempts for tasks: {error}"))?;
+
+    if !columns.contains("auto_blocked_by_dependencies") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN auto_blocked_by_dependencies INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add auto_blocked_by_dependencies column to tasks table: {error}"
+                )
+            })?;
+    }
+
+    connection
+        .execute(
+            "UPDATE tasks SET auto_blocked_by_dependencies = 0 WHERE auto_blocked_by_dependencies IS NULL",
+            [],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to backfill auto_blocked_by_dependencies for tasks: {error}"
+            )
+        })?;
 
     if !columns.contains("source_schedule_id") {
         connection
