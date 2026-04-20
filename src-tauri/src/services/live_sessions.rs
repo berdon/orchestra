@@ -28,6 +28,13 @@ const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const NON_PROMPT_DELIVERY_GRACE: Duration = Duration::from_secs(90);
 
 fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(project_root) = env::var("ORCHESTRA_PROJECT_ROOT") {
+        let fallback = Path::new(&project_root).join("extensions/orchestra-tools.ts");
+        if fallback.exists() {
+            return Ok(fallback);
+        }
+    }
+
     let path = app
         .path()
         .resolve("extensions/orchestra-tools.ts", BaseDirectory::Resource)
@@ -35,13 +42,6 @@ fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> 
 
     if path.exists() {
         return Ok(path);
-    }
-
-    if let Ok(project_root) = env::var("ORCHESTRA_PROJECT_ROOT") {
-        let fallback = Path::new(&project_root).join("extensions/orchestra-tools.ts");
-        if fallback.exists() {
-            return Ok(fallback);
-        }
     }
 
     Err(format!(

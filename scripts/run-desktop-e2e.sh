@@ -79,6 +79,7 @@ run_inner() {
   export RUSTUP_HOME="${REAL_HOME}/.rustup"
   export CARGO_HOME="${REAL_HOME}/.cargo"
   export NPM_CONFIG_CACHE="${TEST_HOME}/.npm"
+  export ORCHESTRA_PROJECT_ROOT="${ROOT_DIR}"
   export PATH="${REAL_HOME}/.cargo/bin:/workspace/orchestra/node_modules/.bin:${PATH}"
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
   rm -rf "${TEST_HOME}/.pi"
