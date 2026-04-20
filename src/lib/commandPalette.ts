@@ -1,6 +1,7 @@
 import type {
   AgentOperationsSnapshot,
   PrimaryPage,
+  ProjectSummary,
   RoleOperationsSnapshot,
   SessionRecord,
   SettingsTab,
@@ -17,6 +18,7 @@ export type CommandPaletteAction =
   | { type: "open-agent"; agentId: string }
   | { type: "open-role"; roleId: string }
   | { type: "open-workflow"; workflowId: string }
+  | { type: "switch-project"; projectId: string }
   | { type: "create-task" }
   | { type: "create-session" }
   | { type: "open-logs" }
@@ -37,6 +39,8 @@ interface BuildCommandPaletteItemsOptions {
   agents: AgentOperationsSnapshot[];
   roles: RoleOperationsSnapshot[];
   workflows: WorkflowSummary[];
+  projects: ProjectSummary[];
+  activeProjectId?: string | null;
 }
 
 function commandItem(input: Omit<CommandPaletteItem, "label">): CommandPaletteItem {
@@ -46,7 +50,7 @@ function commandItem(input: Omit<CommandPaletteItem, "label">): CommandPaletteIt
   };
 }
 
-export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workflows }: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
+export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workflows, projects, activeProjectId }: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
   const pageItems: CommandPaletteItem[] = [
     commandItem({
       id: "page-tasks",
@@ -230,5 +234,18 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
     }),
   );
 
-  return [...actionItems, ...pageItems, ...taskItems, ...sessionItems, ...agentItems, ...roleItems, ...workflowItems];
+  const projectItems = projects
+    .filter((project) => project.id !== activeProjectId)
+    .map((project) =>
+      commandItem({
+        id: `project-switch-${project.id}`,
+        title: `Switch to project ${project.name}`,
+        subtitle: project.description ? `Project · ${project.slug} · ${project.description}` : `Project · ${project.slug}`,
+        group: "Projects",
+        keywords: [project.name, project.slug, project.description ?? "", "project", "switch"],
+        action: { type: "switch-project", projectId: project.id },
+      }),
+    );
+
+  return [...actionItems, ...pageItems, ...taskItems, ...sessionItems, ...agentItems, ...roleItems, ...workflowItems, ...projectItems];
 }

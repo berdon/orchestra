@@ -2199,14 +2199,16 @@ export function App() {
   async function refreshCommandPaletteItems() {
     setCommandPaletteLoading(true);
     try {
-      const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows] = await Promise.all([
+      const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows, nextProjects] = await Promise.all([
         listSessions(activeProjectId),
         listTasks(false, activeProjectId),
         listAgentOperations(false, activeProjectId),
         listRoleOperations(false),
         listWorkflows(false),
+        listProjects(),
       ]);
       setSessions(nextSessions);
+      setProjects(nextProjects);
       setCommandPaletteItems(
         buildCommandPaletteItems({
           sessions: nextSessions,
@@ -2214,6 +2216,8 @@ export function App() {
           agents: nextAgents,
           roles: nextRoles,
           workflows: nextWorkflows,
+          projects: nextProjects,
+          activeProjectId,
         }),
       );
     } catch (error) {
@@ -2258,6 +2262,9 @@ export function App() {
         return;
       case "open-workflow":
         navigateToWorkflow(item.action.workflowId);
+        return;
+      case "switch-project":
+        setActiveProjectIdState(item.action.projectId);
         return;
       case "create-task":
         setActivePage("tasks");

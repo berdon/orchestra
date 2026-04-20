@@ -61,7 +61,7 @@ export function CommandPalette({ open, items, loading, onClose, onSelect }: Comm
             ref={inputRef}
             className="command-palette__input"
             data-role="command-palette-input"
-            placeholder="Search pages, workers, workflows, sessions, and actions…"
+            placeholder="Search pages, projects, workers, workflows, sessions, and actions…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {

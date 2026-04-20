@@ -94,6 +94,51 @@ test("command palette can open the new task flow and closes with escape", async 
   await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
 });
 
+test("ctrl+o can fuzzy-match a project and switch the active project", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.locator('[data-role="project-name"]').fill("Second Project");
+  await page.getByRole("button", { name: /Create project/i }).click();
+
+  await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Orchestra");
+
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Project one task");
+  await page.locator('[data-role="save-task"]').click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project one task");
+
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("snd prj");
+  await expect(page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Second Project" })).toBeVisible();
+  await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Second Project" }).first().click();
+
+  await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Second Project");
+  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
+
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Project two task");
+  await page.locator('[data-role="save-task"]').click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project two task");
+  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
+
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("orch");
+  await expect(page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Orchestra" })).toBeVisible();
+  await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Orchestra" }).first().click();
+
+  await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Orchestra");
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project one task");
+  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project two task");
+});
+
 test("keyboard navigation scrolls the active command into view", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

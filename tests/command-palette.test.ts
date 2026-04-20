@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildCommandPaletteItems } from "../src/lib/commandPalette";
+import { fuzzySearch } from "../src/lib/fuzzy";
 
 describe("command palette items", () => {
   it("builds navigation, entity, and action commands", () => {
@@ -114,6 +115,17 @@ describe("command palette items", () => {
           updatedAt: "2026-01-01T00:00:00Z",
         },
       ],
+      projects: [
+        {
+          id: "orchestra",
+          slug: "orchestra",
+          name: "Orchestra",
+          description: "Default project",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      activeProjectId: "orchestra",
     });
 
     expect(items.some((item) => item.action.type === "create-task")).toBe(true);
@@ -122,5 +134,40 @@ describe("command palette items", () => {
     expect(items.some((item) => item.action.type === "open-role" && item.action.roleId === "role-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-workflow" && item.action.workflowId === "workflow-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-session" && item.action.sessionId === "session-1")).toBe(true);
+  });
+
+  it("adds fuzzy project-switch commands for non-active projects", () => {
+    const items = buildCommandPaletteItems({
+      sessions: [],
+      tasks: [],
+      agents: [],
+      roles: [],
+      workflows: [],
+      projects: [
+        {
+          id: "orchestra",
+          slug: "orchestra",
+          name: "Orchestra",
+          description: "Default project",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "project-2",
+          slug: "second-project",
+          name: "Second Project",
+          description: "Customer delivery work",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      activeProjectId: "orchestra",
+    });
+
+    expect(items.some((item) => item.action.type === "switch-project" && item.action.projectId === "orchestra")).toBe(false);
+
+    const rankedMatches = fuzzySearch("snd prj", items, 5);
+    expect(rankedMatches[0]?.item.title).toBe("Switch to project Second Project");
+    expect(rankedMatches[0]?.item.action).toEqual({ type: "switch-project", projectId: "project-2" });
   });
 });
