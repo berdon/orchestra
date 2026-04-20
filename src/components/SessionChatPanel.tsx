@@ -605,6 +605,7 @@ export function SessionChatPanel({
     }),
     [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
   );
+  const activeTaskId = session?.activeTaskId ?? null;
 
   return (
     <section
@@ -619,6 +620,19 @@ export function SessionChatPanel({
             <h3 data-role="selected-session-title">{title ?? session.title}</h3>
 
             <div className="action-cluster action-cluster--session-tools">
+              {activeTaskId ? (
+                <button
+                  className="secondary-button"
+                  data-role="session-open-task"
+                  type="button"
+                  title={session.activeTaskNumber && session.activeTaskTitle
+                    ? `Open ${session.activeTaskNumber} · ${session.activeTaskTitle}`
+                    : "Open active task"}
+                  onClick={() => onOpenTask(activeTaskId)}
+                >
+                  Open task
+                </button>
+              ) : null}
               <span className={`status-badge status-badge--${getStatusTone(sessionDisplayStatus)}`}>
                 {formatSessionStatusLabel(sessionDisplayStatus)}
               </span>

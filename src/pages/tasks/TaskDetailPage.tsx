@@ -65,6 +65,7 @@ interface TaskDetailPageProps {
   onClose: (reason?: string) => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
+  onOpenSession: (sessionId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onDispatch: () => void;
@@ -309,6 +310,7 @@ export function TaskDetailPage({
   onClose,
   onDelete,
   onOpenTask,
+  onOpenSession,
   onOpenAgent,
   onOpenRole,
   onDispatch,
@@ -386,6 +388,7 @@ export function TaskDetailPage({
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
   const canClose = !["completed", "canceled"].includes(task.status);
+  const activeSessionId = task.activeLaneAssignment?.sessionId ?? null;
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
 
@@ -1562,6 +1565,16 @@ export function TaskDetailPage({
           </div>
 
           <div className="action-cluster action-cluster--wrap">
+            {activeSessionId ? (
+              <button
+                className="secondary-button"
+                data-role="task-open-session"
+                type="button"
+                onClick={() => onOpenSession(activeSessionId)}
+              >
+                Open session
+              </button>
+            ) : null}
             {canRelane ? <TaskRelaneMenu lanes={availableRelaneTargets} disabled={Boolean(pendingActionId)} onChoose={openRelaneConfirm} /> : null}
             <TaskActionMenu actions={buildHeaderActions()} pendingActionId={pendingActionId} />
           </div>

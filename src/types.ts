@@ -333,6 +333,9 @@ export interface SessionRecord {
   taskId?: string | null;
   taskNumber?: string | null;
   taskTitle?: string | null;
+  activeTaskId?: string | null;
+  activeTaskNumber?: string | null;
+  activeTaskTitle?: string | null;
   workerType?: string | null;
   workerName?: string | null;
 }

@@ -188,6 +188,7 @@ interface TasksPageProps {
   onTaskBoardViewModeChange?: (viewMode: TaskBoardViewMode) => void;
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
 }
 
 function sameData<T>(current: T, next: T) {
@@ -245,6 +246,7 @@ export function TasksPage({
   onTaskBoardViewModeChange,
   onOpenAgent,
   onOpenRole,
+  onOpenSession,
 }: TasksPageProps) {
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -279,6 +281,7 @@ export function TasksPage({
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
   const tasksOverviewTokenRef = useRef(0);
+  const lastProjectIdRef = useRef<string | null>(projectId);
   const routeRef = useRef<TaskDetailRouteState>({ kind: "overview" });
   const taskDetailLoadRequestRef = useRef(0);
   const taskScheduleLoadRequestRef = useRef(0);
@@ -634,6 +637,11 @@ export function TasksPage({
   }, [tasksOverviewToken]);
 
   useEffect(() => {
+    if (lastProjectIdRef.current === projectId) {
+      return;
+    }
+
+    lastProjectIdRef.current = projectId;
     taskDetailLoadRequestRef.current += 1;
     taskScheduleLoadRequestRef.current += 1;
     setRoute({ kind: "overview" });
@@ -1392,6 +1400,7 @@ export function TasksPage({
           }}
           onFileReferenceDraftChange={setFileReferenceDraft}
           onOpenTask={openTaskDetail}
+          onOpenSession={onOpenSession ?? (() => {})}
           onOpenAgent={onOpenAgent ?? (() => {})}
           onOpenRole={onOpenRole ?? (() => {})}
           onPublish={() => void handlePublishDetailTask()}

@@ -279,6 +279,14 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     terminalAttached: session.terminalAttached ?? false,
     activityState: session.activityState ?? deriveSessionActivityState(session),
     lastActivityAt: session.lastActivityAt ?? session.updatedAt,
+    taskId: session.taskId ?? null,
+    taskNumber: session.taskNumber ?? null,
+    taskTitle: session.taskTitle ?? null,
+    activeTaskId: session.activeTaskId ?? null,
+    activeTaskNumber: session.activeTaskNumber ?? null,
+    activeTaskTitle: session.activeTaskTitle ?? null,
+    workerType: session.workerType ?? null,
+    workerName: session.workerName ?? null,
   };
 }
 

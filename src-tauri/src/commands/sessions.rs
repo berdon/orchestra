@@ -5,14 +5,14 @@ use std::{
 };
 
 use chrono::{Duration, Utc};
-use rusqlite::{params, OptionalExtension};
-use serde_json::{json, Value};
-use tauri::{async_runtime::spawn_blocking, AppHandle, State};
+use rusqlite::{OptionalExtension, params};
+use serde_json::{Value, json};
+use tauri::{AppHandle, State, async_runtime::spawn_blocking};
 
 use crate::{
     models::{
-        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord, SessionRuntimeDetails,
-        SessionStats,
+        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord,
+        SessionRuntimeDetails, SessionStats,
     },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
@@ -20,9 +20,8 @@ use crate::{
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
-            get_session_stats as load_session_stats_from_file,
-            list_sessions as list_real_sessions, session_context_for_project_id,
-            set_session_model as apply_session_model,
+            get_session_stats as load_session_stats_from_file, list_sessions as list_real_sessions,
+            session_context_for_project_id, set_session_model as apply_session_model,
         },
         role_dispatch, role_runtime, roles, task_runtime,
     },
@@ -250,6 +249,9 @@ fn load_session_list_metadata(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
     ),
     String,
 > {
@@ -298,8 +300,47 @@ fn load_session_list_metadata(
         .optional()
         .map_err(|error| format!("Unable to load session list metadata {session_id}: {error}"))?;
 
-    if let Some(metadata) = assignment_metadata {
-        return Ok(metadata);
+    let active_assignment_metadata =
+        task_runtime::get_active_assignment_for_session(connection, session_id)?
+            .map(|assignment| {
+                connection
+                    .query_row(
+                        r#"
+                    SELECT id, number, title
+                    FROM tasks
+                    WHERE id = ?1
+                    LIMIT 1
+                    "#,
+                        [assignment.task_id.as_str()],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<String>>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        format!("Unable to load active session task metadata {session_id}: {error}")
+                    })
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or((None, None, None));
+
+    if let Some((task_id, task_number, task_title, worker_type, worker_name)) = assignment_metadata
+    {
+        return Ok((
+            task_id,
+            task_number,
+            task_title,
+            active_assignment_metadata.0,
+            active_assignment_metadata.1,
+            active_assignment_metadata.2,
+            worker_type,
+            worker_name,
+        ));
     }
 
     let agent_metadata = connection
@@ -319,7 +360,16 @@ fn load_session_list_metadata(
         .flatten();
 
     if let Some(worker_name) = agent_metadata {
-        return Ok((None, None, None, Some("agent".into()), Some(worker_name)));
+        return Ok((
+            None,
+            None,
+            None,
+            active_assignment_metadata.0,
+            active_assignment_metadata.1,
+            active_assignment_metadata.2,
+            Some("agent".into()),
+            Some(worker_name),
+        ));
     }
 
     let role_metadata = connection
@@ -339,10 +389,28 @@ fn load_session_list_metadata(
         .flatten();
 
     if let Some(worker_name) = role_metadata {
-        return Ok((None, None, None, Some("role".into()), Some(worker_name)));
+        return Ok((
+            None,
+            None,
+            None,
+            active_assignment_metadata.0,
+            active_assignment_metadata.1,
+            active_assignment_metadata.2,
+            Some("role".into()),
+            Some(worker_name),
+        ));
     }
 
-    Ok((None, None, None, None, None))
+    Ok((
+        None,
+        None,
+        None,
+        active_assignment_metadata.0,
+        active_assignment_metadata.1,
+        active_assignment_metadata.2,
+        None,
+        None,
+    ))
 }
 
 fn decorate_session_record_with_connection(
@@ -355,11 +423,22 @@ fn decorate_session_record_with_connection(
         record.debug_info = load_session_debug_info(connection, &record.id)?;
     }
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
-    let (task_id, task_number, task_title, worker_type, worker_name) =
-        load_session_list_metadata(connection, &record.id)?;
+    let (
+        task_id,
+        task_number,
+        task_title,
+        active_task_id,
+        active_task_number,
+        active_task_title,
+        worker_type,
+        worker_name,
+    ) = load_session_list_metadata(connection, &record.id)?;
     record.task_id = task_id;
     record.task_number = task_number;
     record.task_title = task_title;
+    record.active_task_id = active_task_id;
+    record.active_task_number = active_task_number;
+    record.active_task_title = active_task_title;
     record.worker_type = worker_type;
     record.worker_name = worker_name;
 
@@ -1796,6 +1875,9 @@ mod tests {
             task_id: None,
             task_number: None,
             task_title: None,
+            active_task_id: None,
+            active_task_number: None,
+            active_task_title: None,
             worker_type: None,
             worker_name: None,
         }
