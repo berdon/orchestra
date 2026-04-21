@@ -1,5 +1,65 @@
 import { expect, test } from "@playwright/test";
 
+async function measureSessionLayout(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const contentBody = document.querySelector('.content__body') as HTMLDivElement | null;
+    const stack = document.querySelector('.panel-stack--sessions') as HTMLElement | null;
+    const detailColumn = document.querySelector('.session-detail-column') as HTMLElement | null;
+    const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
+    const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
+    const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
+
+    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
+      return null;
+    }
+
+    return {
+      contentBodyHeight: contentBody.getBoundingClientRect().height,
+      stackHeight: stack.getBoundingClientRect().height,
+      detailHeight: detailColumn.getBoundingClientRect().height,
+      panelHeight: panel.getBoundingClientRect().height,
+      transcriptHeight: transcript.getBoundingClientRect().height,
+      transcriptClientHeight: transcript.clientHeight,
+      transcriptScrollHeight: transcript.scrollHeight,
+      composerInputHeight: composerInput.getBoundingClientRect().height,
+      panelResize: window.getComputedStyle(panel).resize,
+      composerResize: window.getComputedStyle(composerInput).resize,
+    };
+  });
+}
+
+async function appendMockSessionEvents(page: import("@playwright/test").Page, sessionId: string, count = 80) {
+  await page.evaluate(({ nextSessionId, nextCount }) => {
+    const storageKey = "orchestra.mock.sessions.orchestra";
+    const sessions = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    const baseTime = Date.now();
+    const nextSessions = sessions.map((session: { id: string; events: unknown[]; updatedAt: string }) => {
+      if (session.id !== nextSessionId) {
+        return session;
+      }
+      const extraEvents = Array.from({ length: nextCount }, (_, index) => ({
+        id: `layout-event-${index}`,
+        kind: index % 2 === 0 ? "user" : "assistant",
+        message: `Layout resize event ${index}\n${"chat ".repeat(40)}`,
+        timestamp: new Date(baseTime + index * 1000).toISOString(),
+      }));
+      return {
+        ...session,
+        events: [...session.events, ...extraEvents],
+        updatedAt: new Date(baseTime + nextCount * 1000).toISOString(),
+      };
+    });
+    window.localStorage.setItem(storageKey, JSON.stringify(nextSessions));
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: [nextSessionId],
+        reason: "test.session_layout_resize",
+      },
+    }));
+    window.dispatchEvent(new Event("focus"));
+  }, { nextSessionId: sessionId, nextCount: count });
+}
+
 async function triggerShortcut(page: import("@playwright/test").Page, key: string) {
   await page.evaluate((nextKey) => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: nextKey, ctrlKey: true, bubbles: true }));
@@ -26,6 +86,60 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from Playwright", { timeout: 10_000 });
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
+});
+
+test("sessions transcript fills the available page height while the composer remains the resizable surface", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  const panel = page.locator('[data-role="session-chat-panel"]');
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const composerInput = page.locator('[data-role="composer-input"]');
+
+  await expect(panel).toBeVisible();
+  await expect(transcript).toBeVisible();
+
+  const initialLayout = await measureSessionLayout(page);
+  expect(initialLayout).not.toBeNull();
+  expect(initialLayout?.stackHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) - 24);
+  expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan((initialLayout?.stackHeight ?? 0) - 24);
+  expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) * 0.85);
+  expect(initialLayout?.transcriptHeight ?? 0).toBeGreaterThan(400);
+  expect(initialLayout?.panelResize).toBe("none");
+  expect(initialLayout?.composerResize).toBe("vertical");
+
+  const sessionId = await panel.getAttribute("data-session-id");
+  expect(sessionId).toBeTruthy();
+  await appendMockSessionEvents(page, sessionId ?? "");
+  await expect(transcript).toContainText("Layout resize event 79");
+
+  const beforeResize = await measureSessionLayout(page);
+  expect(beforeResize).not.toBeNull();
+  expect((beforeResize?.transcriptScrollHeight ?? 0) - (beforeResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
+
+  await composerInput.evaluate((element) => {
+    (element as HTMLTextAreaElement).style.height = "240px";
+  });
+  await page.waitForTimeout(100);
+
+  const afterResize = await measureSessionLayout(page);
+  expect(afterResize).not.toBeNull();
+  expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((beforeResize?.composerInputHeight ?? 0) + 100);
+  expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((beforeResize?.transcriptHeight ?? 0) - 100);
+  expect(Math.abs((afterResize?.panelHeight ?? 0) - (beforeResize?.panelHeight ?? 0))).toBeLessThan(8);
+  expect((afterResize?.transcriptScrollHeight ?? 0) - (afterResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
+
+  await transcript.evaluate((element) => {
+    const log = element as HTMLDivElement;
+    log.scrollTop = 0;
+    log.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(transcript).toHaveAttribute("data-scroll-locked", "false");
 });
 
 test("sessions list uses deterministic task ordering and delays the dismiss affordance until hover settles", async ({ page }) => {
@@ -1180,11 +1294,11 @@ test("sessions page hides debug paths behind a dev-only toggle below the chat pa
 
   expect(chatPanelMetrics).not.toBeNull();
   expect(debugToggleMetrics.y).toBeGreaterThanOrEqual(chatPanelMetrics!.bottom - 1);
-  expect(chatPanelMetrics!.resize).toBe("vertical");
-  expect(Number.parseFloat(chatPanelMetrics!.minHeight)).toBeGreaterThanOrEqual(560);
+  expect(chatPanelMetrics!.resize).toBe("none");
+  expect(chatPanelMetrics!.height).toBeGreaterThan(400);
 
   const transcriptWrapMinHeight = await transcript.evaluate((node) => window.getComputedStyle(node.parentElement as HTMLElement).minHeight);
-  expect(Number.parseFloat(transcriptWrapMinHeight)).toBeGreaterThanOrEqual(240);
+  expect(Number.parseFloat(transcriptWrapMinHeight)).toBe(0);
 
   await debugToggle.click();
   await expect(debugToggle).toHaveCount(0);

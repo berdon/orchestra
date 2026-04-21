@@ -105,8 +105,12 @@ export function AgentChatPage({
     emptyStateDescription = "Loading the agent’s main session…";
   }
 
+  const panelStackClassName = error
+    ? "panel-stack panel-stack--sessions panel-stack--sessions-layout panel-stack--sessions-layout--with-error"
+    : "panel-stack panel-stack--sessions panel-stack--sessions-layout";
+
   return (
-    <section className="panel-stack panel-stack--sessions">
+    <section className={panelStackClassName}>
       {error ? <p className="error-copy">{error}</p> : null}
       <div className="session-detail-column session-detail-column--standalone">
         <SessionChatPanel

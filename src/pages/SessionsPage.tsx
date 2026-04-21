@@ -180,7 +180,7 @@ export function SessionsPage({
   }
 
   return (
-    <section className="panel-stack panel-stack--sessions">
+    <section className="panel-stack panel-stack--sessions panel-stack--sessions-layout">
       <ResizableSidebarLayout
         className="session-shell"
         storageKey="orchestra.layout.sessions.secondary-nav-width"

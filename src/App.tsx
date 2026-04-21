@@ -2642,7 +2642,7 @@ export function App() {
         </div>
       </aside>
 
-      <main className="content">
+      <main className={activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}>
         <header className="page-header page-header--compact">
           <div className="page-header__leading">
             <p className="page-version-label muted-copy" data-role="app-version-label">
@@ -2687,7 +2687,7 @@ export function App() {
           </div>
         </header>
 
-        <div className="content__body">
+        <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
           {appInfo?.dispatchBlockedReason ? (
           <div className="session-readonly-banner app-status-banner" data-role="dispatch-blocked-banner">
             <div>

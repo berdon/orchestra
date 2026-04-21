@@ -1,5 +1,31 @@
 import { expect, test } from "@playwright/test";
 
+async function measureChatLayout(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const contentBody = document.querySelector('.content__body') as HTMLDivElement | null;
+    const stack = document.querySelector('.panel-stack--sessions') as HTMLElement | null;
+    const detailColumn = document.querySelector('.session-detail-column') as HTMLElement | null;
+    const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
+    const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
+    const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
+
+    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
+      return null;
+    }
+
+    return {
+      contentBodyHeight: contentBody.getBoundingClientRect().height,
+      stackHeight: stack.getBoundingClientRect().height,
+      detailHeight: detailColumn.getBoundingClientRect().height,
+      panelHeight: panel.getBoundingClientRect().height,
+      transcriptHeight: transcript.getBoundingClientRect().height,
+      composerInputHeight: composerInput.getBoundingClientRect().height,
+      panelResize: window.getComputedStyle(panel).resize,
+      composerResize: window.getComputedStyle(composerInput).resize,
+    };
+  });
+}
+
 test("chat nav lists named agents and excludes roles", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -140,6 +166,43 @@ test("chat page opens an agent main session with focused chat controls while Ses
   const secondSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
 
   expect(secondSessionId).toBe(firstSessionId);
+});
+
+test("chat page fills the available height while keeping the composer resizable", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const composerInput = page.locator('[data-role="composer-input"]');
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await expect(transcript).toBeVisible();
+
+  const initialLayout = await measureChatLayout(page);
+  expect(initialLayout).not.toBeNull();
+  expect(initialLayout?.stackHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) - 24);
+  expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan((initialLayout?.stackHeight ?? 0) - 24);
+  expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) - 24);
+  expect(initialLayout?.transcriptHeight ?? 0).toBeGreaterThan(400);
+  expect(initialLayout?.panelResize).toBe("none");
+  expect(initialLayout?.composerResize).toBe("vertical");
+
+  await composerInput.evaluate((element) => {
+    (element as HTMLTextAreaElement).style.height = "240px";
+  });
+  await page.waitForTimeout(100);
+
+  const afterResize = await measureChatLayout(page);
+  expect(afterResize).not.toBeNull();
+  expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((initialLayout?.composerInputHeight ?? 0) + 100);
+  expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((initialLayout?.transcriptHeight ?? 0) - 100);
+  expect(Math.abs((afterResize?.panelHeight ?? 0) - (initialLayout?.panelHeight ?? 0))).toBeLessThan(8);
 });
 
 test("chat page session actions can reload the current agent chat and rotate a new session in place", async ({ page }) => {
