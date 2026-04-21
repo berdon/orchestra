@@ -336,9 +336,11 @@ export interface SessionRecord {
   lastActivityAt?: string | null;
   debugInfo?: SessionDebugInfo | null;
   taskId?: string | null;
+  taskProjectId?: string | null;
   taskNumber?: string | null;
   taskTitle?: string | null;
   activeTaskId?: string | null;
+  activeTaskProjectId?: string | null;
   activeTaskNumber?: string | null;
   activeTaskTitle?: string | null;
   workerType?: string | null;

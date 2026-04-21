@@ -70,7 +70,7 @@ interface SessionsPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
-  onOpenTask: (taskId: string) => void;
+  onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
@@ -315,6 +315,11 @@ export function SessionsPage({
             onCreateNewSession={onCreateNewSession}
             onCompactSession={onCompactSession}
             onReloadSession={onReloadSession}
+            emptyStateEyebrow={selectedSessionPending ? "Opening session" : undefined}
+            emptyStateTitle={selectedSessionPending ? "Loading exact session detail" : undefined}
+            emptyStateDescription={selectedSessionPending
+              ? "Waiting for the selected session record to hydrate so the requested session can open."
+              : undefined}
           />
 
           {selectedSession ? (

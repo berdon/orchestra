@@ -186,9 +186,10 @@ interface TasksPageProps {
   taskBoardViewMode?: TaskBoardViewMode;
   tasksOverviewToken?: number;
   onTaskBoardViewModeChange?: (viewMode: TaskBoardViewMode) => void;
+  onSelectedTaskIdChange?: (taskId: string | null) => void;
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
-  onOpenSession?: (sessionId: string) => void;
+  onOpenSession?: (sessionId: string, projectId?: string | null) => void;
 }
 
 function sameData<T>(current: T, next: T) {
@@ -244,6 +245,7 @@ export function TasksPage({
   taskBoardViewMode = "cards",
   tasksOverviewToken = 0,
   onTaskBoardViewModeChange,
+  onSelectedTaskIdChange,
   onOpenAgent,
   onOpenRole,
   onOpenSession,
@@ -524,6 +526,10 @@ export function TasksPage({
       void loadTaskScheduleDetail(route.scheduleId, { preserveDraft: taskScheduleDraftDirty });
     }
   }, [route.kind === "detail" ? route.taskId : null, route.kind === "schedule" ? route.scheduleId : null]);
+
+  useEffect(() => {
+    onSelectedTaskIdChange?.(route.kind === "detail" ? route.taskId : null);
+  }, [onSelectedTaskIdChange, route]);
 
   useEffect(() => {
     if (route.kind === "create") {

@@ -45,7 +45,7 @@ interface AgentChatPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
-  onOpenTask: (taskId: string) => void;
+  onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;

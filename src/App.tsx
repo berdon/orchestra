@@ -119,6 +119,66 @@ const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
+const APP_ROUTE_PAGES = new Set<PrimaryPage>(["tasks", "inbox", "agents", "chat", "sessions", "settings"]);
+const APP_ROUTE_SETTINGS_TABS = new Set<SettingsTab>(SETTINGS_TABS.map((tab) => tab.id));
+
+type AppSelectionRouteState = {
+  page: PrimaryPage;
+  projectId: string | null;
+  selectedTaskId: string | null;
+  selectedSessionId: string | null;
+  settingsTab: SettingsTab | null;
+};
+
+function getInitialAppSelectionRouteState(): AppSelectionRouteState {
+  const defaultRoute: AppSelectionRouteState = {
+    page: "sessions",
+    projectId: getActiveProjectId(),
+    selectedTaskId: null,
+    selectedSessionId: null,
+    settingsTab: null,
+  };
+
+  if (typeof window === "undefined") {
+    return defaultRoute;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get("view");
+  if (view === "logs" || view === "agent-terminal") {
+    return defaultRoute;
+  }
+
+  const pageParam = params.get("page");
+  const selectedTaskId = params.get("selectedTaskId");
+  const selectedSessionId = params.get("selectedSessionId");
+  const settingsTabParam = params.get("settingsTab");
+  const page = pageParam && APP_ROUTE_PAGES.has(pageParam as PrimaryPage)
+    ? pageParam as PrimaryPage
+    : selectedTaskId
+      ? "tasks"
+      : selectedSessionId
+        ? "sessions"
+        : "sessions";
+
+  return {
+    page,
+    projectId: params.get("projectId") ?? defaultRoute.projectId,
+    selectedTaskId,
+    selectedSessionId,
+    settingsTab: settingsTabParam && APP_ROUTE_SETTINGS_TABS.has(settingsTabParam as SettingsTab)
+      ? settingsTabParam as SettingsTab
+      : null,
+  };
+}
+
+function setSearchParam(params: URLSearchParams, key: string, value: string | null | undefined) {
+  if (value && value.length > 0) {
+    params.set(key, value);
+    return;
+  }
+  params.delete(key);
+}
 
 function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
   const stored = window.localStorage.getItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY);
@@ -526,9 +586,11 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     activityState: session.activityState ?? deriveSessionActivityState(session),
     lastActivityAt: session.lastActivityAt ?? session.updatedAt,
     taskId: session.taskId ?? null,
+    taskProjectId: session.taskProjectId ?? null,
     taskNumber: session.taskNumber ?? null,
     taskTitle: session.taskTitle ?? null,
     activeTaskId: session.activeTaskId ?? null,
+    activeTaskProjectId: session.activeTaskProjectId ?? null,
     activeTaskNumber: session.activeTaskNumber ?? null,
     activeTaskTitle: session.activeTaskTitle ?? null,
     workerType: session.workerType ?? null,
@@ -566,9 +628,11 @@ function areSessionDebugInfoEqual(left?: SessionRecord["debugInfo"], right?: Ses
 
 function areSessionMetadataEqual(left: SessionRecord, right: SessionRecord) {
   return left.taskId === right.taskId
+    && left.taskProjectId === right.taskProjectId
     && left.taskNumber === right.taskNumber
     && left.taskTitle === right.taskTitle
     && left.activeTaskId === right.activeTaskId
+    && left.activeTaskProjectId === right.activeTaskProjectId
     && left.activeTaskNumber === right.activeTaskNumber
     && left.activeTaskTitle === right.activeTaskTitle
     && left.workerType === right.workerType
@@ -598,11 +662,17 @@ function areSessionListsEqual(left: SessionRecord[], right: SessionRecord[]) {
 }
 
 export function App() {
-  const [activePage, setActivePage] = useState<PrimaryPage>("sessions");
+  const initialRouteStateRef = useRef<AppSelectionRouteState | null>(null);
+  if (!initialRouteStateRef.current) {
+    initialRouteStateRef.current = getInitialAppSelectionRouteState();
+  }
+  const initialRouteState = initialRouteStateRef.current as AppSelectionRouteState;
+
+  const [activePage, setActivePage] = useState<PrimaryPage>(initialRouteState.page);
   const [sessionFilter, setSessionFilter] = useState<"active" | "closed">("active");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("projects");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialRouteState.settingsTab ?? "projects");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(getActiveProjectId());
+  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(initialRouteState.projectId);
   const [projectUnreadCounts, setProjectUnreadCounts] = useState<Record<string, number>>({});
   const [projectTaskCommentUnreadCounts, setProjectTaskCommentUnreadCounts] = useState<Record<string, number>>({});
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -627,7 +697,7 @@ export function App() {
   const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(() => getInitialAgentTerminalWindowFlag());
   const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(() => getInitialAgentTerminalSessionId());
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialRouteState.selectedSessionId);
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
   const [referenceTasks, setReferenceTasks] = useState<TaskSummary[]>([]);
   const [referenceAgents, setReferenceAgents] = useState<AgentSummary[]>([]);
@@ -654,7 +724,17 @@ export function App() {
   const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
   const [taskBoardViewMode, setTaskBoardViewMode] = useState<TaskBoardViewMode>(() => loadStoredTaskBoardViewMode());
   const [tasksOverviewToken, setTasksOverviewToken] = useState(0);
-  const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialRouteState.selectedTaskId);
+  const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(
+    initialRouteState.selectedTaskId
+      ? { taskId: initialRouteState.selectedTaskId, token: 1, projectId: initialRouteState.projectId }
+      : null,
+  );
+  const [pendingSessionOpenRequest, setPendingSessionOpenRequest] = useState<{ sessionId: string; token: number; projectId: string | null } | null>(
+    initialRouteState.selectedSessionId
+      ? { sessionId: initialRouteState.selectedSessionId, token: 1, projectId: initialRouteState.projectId }
+      : null,
+  );
   const [agentsSelectionRequest, setAgentsSelectionRequest] = useState<{ type: "role" | "agent"; id: string; token: number } | null>(null);
   const [rolesSelectionRequest, setRolesSelectionRequest] = useState<{ roleId: string; token: number } | null>(null);
   const [workflowsSelectionRequest, setWorkflowsSelectionRequest] = useState<{ workflowId: string; token: number } | null>(null);
@@ -675,6 +755,7 @@ export function App() {
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
   const backgroundSessionRefreshInFlightRef = useRef(false);
+  const pendingSessionRecordRequestKeyRef = useRef<string | null>(null);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const notifiedInboxDeliveryIdsRef = useRef(new Set<string>());
@@ -717,10 +798,22 @@ export function App() {
     [sessions],
   );
 
-  const selectedSession = useMemo(
-    () => filteredSessions.find((session) => session.id === selectedSessionId) ?? filteredSessions[0] ?? null,
-    [filteredSessions, selectedSessionId],
-  );
+  const pendingSelectedSessionId = pendingSessionOpenRequest?.projectId === activeProjectId
+    ? pendingSessionOpenRequest.sessionId
+    : null;
+
+  const selectedSession = useMemo(() => {
+    const matchedSelectedSession = selectedSessionId
+      ? filteredSessions.find((session) => session.id === selectedSessionId) ?? null
+      : null;
+    if (matchedSelectedSession) {
+      return matchedSelectedSession;
+    }
+    if (selectedSessionId && pendingSelectedSessionId === selectedSessionId) {
+      return null;
+    }
+    return filteredSessions[0] ?? null;
+  }, [filteredSessions, pendingSelectedSessionId, selectedSessionId]);
 
   const selectedChatAgentSnapshot = useMemo(
     () => chatAgents.find((agent) => agent.agent.id === selectedChatAgentId) ?? null,
@@ -772,6 +865,52 @@ export function App() {
       lastKnownChatSessionRef.current = liveChatSession;
     }
   }, [liveChatSession, selectedChatAgentId]);
+
+  useEffect(() => {
+    if (isDetachedWindow) {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    setSearchParam(url.searchParams, "page", activePage);
+    setSearchParam(url.searchParams, "projectId", activeProjectId);
+    setSearchParam(url.searchParams, "settingsTab", activePage === "settings" ? settingsTab : null);
+    setSearchParam(url.searchParams, "selectedTaskId", activePage === "tasks" ? selectedTaskId : null);
+    setSearchParam(
+      url.searchParams,
+      "selectedSessionId",
+      activePage === "sessions"
+        ? pendingSelectedSessionId ?? selectedSessionId
+        : null,
+    );
+
+    const nextSearch = url.searchParams.toString();
+    const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+  }, [activePage, activeProjectId, isDetachedWindow, pendingSelectedSessionId, selectedSessionId, selectedTaskId, settingsTab]);
+
+  useEffect(() => {
+    if (!pendingSessionOpenRequest || pendingSessionOpenRequest.projectId !== activeProjectId) {
+      return;
+    }
+
+    const targetSession = sessions.find((session) => session.id === pendingSessionOpenRequest.sessionId) ?? null;
+    if (!targetSession) {
+      return;
+    }
+
+    setSessionFilter(targetSession.status === "closed" ? "closed" : "active");
+    setSelectedSessionId((current) => (current === targetSession.id ? current : targetSession.id));
+    setPendingSessionOpenRequest((current) => (
+      current && current.sessionId === targetSession.id && current.projectId === activeProjectId
+        ? null
+        : current
+    ));
+    pendingSessionRecordRequestKeyRef.current = null;
+  }, [activeProjectId, pendingSessionOpenRequest, sessions]);
 
   useEffect(() => {
     if (isDetachedWindow || !viewedSession?.id || viewedSessionPendingRun) {
@@ -866,6 +1005,35 @@ export function App() {
   const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
     mergeSessionRecord(updatedSession);
   }, [mergeSessionRecord]);
+
+  useEffect(() => {
+    if (!pendingSelectedSessionId || sessions.some((session) => session.id === pendingSelectedSessionId)) {
+      return;
+    }
+
+    const requestKey = `${activeProjectId ?? "default"}:${pendingSelectedSessionId}:${pendingSessionOpenRequest?.token ?? 0}`;
+    if (pendingSessionRecordRequestKeyRef.current === requestKey) {
+      return;
+    }
+    pendingSessionRecordRequestKeyRef.current = requestKey;
+
+    let cancelled = false;
+    void getSessionRecord(pendingSelectedSessionId)
+      .then((record) => {
+        if (!cancelled) {
+          mergeSessionRecord(record, { select: false });
+        }
+      })
+      .catch(() => {
+        if (!cancelled && pendingSessionRecordRequestKeyRef.current === requestKey) {
+          pendingSessionRecordRequestKeyRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, mergeSessionRecord, pendingSelectedSessionId, pendingSessionOpenRequest?.token, sessions]);
 
   const removePendingRun = useCallback((sessionId: string, runId?: string) => {
     setPendingRuns((current) => {
@@ -1241,9 +1409,13 @@ export function App() {
       sessionsRef.current = nextSessions;
       setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
       setSelectedSessionId((current) => {
-        const nextSelectedSessionId = current && nextSessions.some((session) => session.id === current)
-          ? current
-          : nextSessions[0]?.id ?? null;
+        const requestedSessionId = pendingSessionOpenRequest?.projectId === activeProjectId
+          ? pendingSessionOpenRequest.sessionId
+          : null;
+        const nextSelectedSessionId = requestedSessionId
+          ?? (current && nextSessions.some((session) => session.id === current)
+            ? current
+            : nextSessions[0]?.id ?? null);
         return current === nextSelectedSessionId ? current : nextSelectedSessionId;
       });
       const hasCurrentChatSession = Boolean(chatSessionId && nextSessions.some((session) => session.id === chatSessionId));
@@ -1487,15 +1659,16 @@ export function App() {
       setActiveProjectId(activeProjectId);
     }
     sessionsRef.current = [];
+    pendingSessionRecordRequestKeyRef.current = null;
     setSessions([]);
-    setSelectedSessionId(null);
+    setSelectedSessionId(pendingSessionOpenRequest?.projectId === activeProjectId ? pendingSessionOpenRequest.sessionId : null);
     setChatSessionId(null);
     chatSessionAgentIdRef.current = null;
     chatSessionRecoveryMissRef.current = null;
     lastKnownChatSessionIdRef.current = null;
     lastKnownChatSessionAgentIdRef.current = null;
     lastKnownChatSessionDraftRef.current = "";
-  }, [activeProjectId]);
+  }, [activeProjectId, pendingSessionOpenRequest]);
 
   useEffect(() => {
     if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
@@ -2128,20 +2301,33 @@ export function App() {
     }
   }, [sessions]);
 
-  function navigateToTask(taskId: string) {
+  function navigateToTask(taskId: string, projectId?: string | null) {
+    const targetProjectId = projectId ?? activeProjectId;
+    if (targetProjectId && targetProjectId !== activeProjectId) {
+      setActiveProjectIdState(targetProjectId);
+    }
     setActivePage("tasks");
-    setTasksOpenRequest((current) => ({ taskId, token: (current?.token ?? 0) + 1, projectId: activeProjectId }));
+    setSelectedTaskId(taskId);
+    setTasksOpenRequest((current) => ({ taskId, token: (current?.token ?? 0) + 1, projectId: targetProjectId }));
   }
 
-  function navigateToSession(sessionId: string) {
-    const session = sessions.find((entry) => entry.id === sessionId) ?? null;
+  function navigateToSession(sessionId: string, projectId?: string | null) {
+    const targetProjectId = projectId ?? activeProjectId;
+    const session = targetProjectId === activeProjectId
+      ? sessions.find((entry) => entry.id === sessionId) ?? null
+      : null;
+    if (targetProjectId && targetProjectId !== activeProjectId) {
+      setActiveProjectIdState(targetProjectId);
+    }
     setActivePage("sessions");
     setSessionFilter(session?.status === "closed" ? "closed" : "active");
     setSelectedSessionId(sessionId);
+    setPendingSessionOpenRequest((current) => ({ sessionId, token: (current?.token ?? 0) + 1, projectId: targetProjectId }));
   }
 
   function navigateToTasksOverview() {
     setActivePage("tasks");
+    setSelectedTaskId(null);
     setTasksOverviewToken((current) => current + 1);
   }
 
@@ -2177,6 +2363,7 @@ export function App() {
         setSupervisorQuickChatOpen(true);
       } else {
         setActivePage("sessions");
+        setPendingSessionOpenRequest(null);
         setSelectedSessionId(session.id);
       }
     } catch (error) {
@@ -2190,6 +2377,7 @@ export function App() {
       const session = await openAgentSessionInTerminal(agentId, activeProject?.id ?? null);
       mergeSessionRecord(session);
       setActivePage("sessions");
+      setPendingSessionOpenRequest(null);
       setSelectedSessionId(session.id);
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to open agent terminal window.");
@@ -2376,6 +2564,7 @@ export function App() {
         ? await createContextualSession(sessionId, activeProject?.slug ?? null)
         : await createSession(undefined, activeProject?.slug ?? null);
       mergeSessionRecord(nextSession, { select: false });
+      setPendingSessionOpenRequest(null);
       setSelectedSessionId(nextSession.id);
 
       if (options?.chatAgentId) {
@@ -2823,7 +3012,7 @@ export function App() {
             onSessionFilterChange={setSessionFilter}
             selectedSession={selectedSession}
             displayedEvents={selectedSession?.events ?? []}
-            selectedSessionPending={Boolean(selectedSessionPendingRun)}
+            selectedSessionPending={Boolean(selectedSessionPendingRun) || Boolean(pendingSelectedSessionId && !selectedSession)}
             selectedSessionDisplayStatus={selectedSessionDisplayStatus}
             selectedModelState={selectedModelState}
             selectedSessionStats={viewedSession?.id === selectedSession?.id ? viewedSessionStats : undefined}
@@ -2843,7 +3032,10 @@ export function App() {
             formatModelOptionLabel={formatModelOptionLabel}
             getStatusTone={getStatusTone}
             getEventTone={getEventTone}
-            onSelectSession={setSelectedSessionId}
+            onSelectSession={(sessionId) => {
+              setPendingSessionOpenRequest(null);
+              setSelectedSessionId(sessionId);
+            }}
             onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
             onDeleteClosedSessions={() => void handleDeleteClosedSessions()}
             onModelChange={handleSelectedSessionModelChange}
@@ -2868,6 +3060,7 @@ export function App() {
             taskBoardViewMode={taskBoardViewMode}
             tasksOverviewToken={tasksOverviewToken}
             onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
+            onSelectedTaskIdChange={setSelectedTaskId}
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onOpenSession={navigateToSession}
@@ -2900,6 +3093,7 @@ export function App() {
         onOpenFullSession={() => {
           if (supervisorSession) {
             setActivePage("sessions");
+            setPendingSessionOpenRequest(null);
             setSelectedSessionId(supervisorSession.id);
             setSupervisorQuickChatOpen(false);
           }

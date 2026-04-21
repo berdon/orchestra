@@ -252,6 +252,8 @@ fn load_session_list_metadata(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
+        Option<String>,
     ),
     String,
 > {
@@ -260,6 +262,7 @@ fn load_session_list_metadata(
             r#"
             SELECT
                 t.id,
+                t.project_id,
                 t.number,
                 t.title,
                 tla.worker_type,
@@ -294,6 +297,7 @@ fn load_session_list_metadata(
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
@@ -306,7 +310,7 @@ fn load_session_list_metadata(
                 connection
                     .query_row(
                         r#"
-                    SELECT id, number, title
+                    SELECT id, project_id, number, title
                     FROM tasks
                     WHERE id = ?1
                     LIMIT 1
@@ -317,6 +321,7 @@ fn load_session_list_metadata(
                                 row.get::<_, Option<String>>(0)?,
                                 row.get::<_, Option<String>>(1)?,
                                 row.get::<_, Option<String>>(2)?,
+                                row.get::<_, Option<String>>(3)?,
                             ))
                         },
                     )
@@ -327,17 +332,19 @@ fn load_session_list_metadata(
             })
             .transpose()?
             .flatten()
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None, None, None));
 
-    if let Some((task_id, task_number, task_title, worker_type, worker_name)) = assignment_metadata
+    if let Some((task_id, task_project_id, task_number, task_title, worker_type, worker_name)) = assignment_metadata
     {
         return Ok((
             task_id,
+            task_project_id,
             task_number,
             task_title,
             active_assignment_metadata.0,
             active_assignment_metadata.1,
             active_assignment_metadata.2,
+            active_assignment_metadata.3,
             worker_type,
             worker_name,
         ));
@@ -364,9 +371,11 @@ fn load_session_list_metadata(
             None,
             None,
             None,
+            None,
             active_assignment_metadata.0,
             active_assignment_metadata.1,
             active_assignment_metadata.2,
+            active_assignment_metadata.3,
             Some("agent".into()),
             Some(worker_name),
         ));
@@ -393,9 +402,11 @@ fn load_session_list_metadata(
             None,
             None,
             None,
+            None,
             active_assignment_metadata.0,
             active_assignment_metadata.1,
             active_assignment_metadata.2,
+            active_assignment_metadata.3,
             Some("role".into()),
             Some(worker_name),
         ));
@@ -405,9 +416,11 @@ fn load_session_list_metadata(
         None,
         None,
         None,
+        None,
         active_assignment_metadata.0,
         active_assignment_metadata.1,
         active_assignment_metadata.2,
+        active_assignment_metadata.3,
         None,
         None,
     ))
@@ -425,18 +438,22 @@ fn decorate_session_record_with_connection(
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
     let (
         task_id,
+        task_project_id,
         task_number,
         task_title,
         active_task_id,
+        active_task_project_id,
         active_task_number,
         active_task_title,
         worker_type,
         worker_name,
     ) = load_session_list_metadata(connection, &record.id)?;
     record.task_id = task_id;
+    record.task_project_id = task_project_id;
     record.task_number = task_number;
     record.task_title = task_title;
     record.active_task_id = active_task_id;
+    record.active_task_project_id = active_task_project_id;
     record.active_task_number = active_task_number;
     record.active_task_title = active_task_title;
     record.worker_type = worker_type;
@@ -1870,9 +1887,11 @@ mod tests {
             terminal_attached: false,
             debug_info: None,
             task_id: None,
+            task_project_id: None,
             task_number: None,
             task_title: None,
             active_task_id: None,
+            active_task_project_id: None,
             active_task_number: None,
             active_task_title: None,
             worker_type: None,

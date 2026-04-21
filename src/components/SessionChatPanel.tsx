@@ -133,7 +133,7 @@ interface SessionChatPanelProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
-  onOpenTask: (taskId: string) => void;
+  onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onCreateNewSession?: () => void;
@@ -606,6 +606,7 @@ export function SessionChatPanel({
     [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
   );
   const activeTaskId = session?.activeTaskId ?? null;
+  const activeTaskProjectId = session?.activeTaskProjectId ?? session?.taskProjectId ?? null;
 
   return (
     <section
@@ -628,7 +629,7 @@ export function SessionChatPanel({
                   title={session.activeTaskNumber && session.activeTaskTitle
                     ? `Open ${session.activeTaskNumber} · ${session.activeTaskTitle}`
                     : "Open active task"}
-                  onClick={() => onOpenTask(activeTaskId)}
+                  onClick={() => onOpenTask(activeTaskId, activeTaskProjectId)}
                 >
                   Open task
                 </button>
