@@ -159,11 +159,14 @@ Examples:
 - `sessions.message`
 - `sessions.interrupt`
 - `sessions.model`
+- `sessions.stop`
 - `tasks.read`
 - `tasks.create`
 - `tasks.update`
 - `tasks.comment`
 - `tasks.assign`
+- `tasks.review`
+- `tasks.control`
 - `tasks.transition`
 - `workflows.read`
 - `workflows.create`
@@ -183,6 +186,9 @@ Every Orchestra tool should declare:
 Examples:
 - `create_task` requires `tasks.create`
 - `comment_on_task` requires `tasks.comment`
+- `approve_task_review` requires `tasks.review`
+- `pause_task_lane` requires `tasks.control`
+- `stop_session_runtime` requires `sessions.stop`
 - `complete_lane_as_success` requires `tasks.transition`
 - `dispatch_role_queue` requires `roles.dispatch`
 - `update_workflow` requires `workflows.update`

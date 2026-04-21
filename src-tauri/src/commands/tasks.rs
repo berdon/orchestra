@@ -61,6 +61,20 @@ fn record_task_domain_event(
     );
 }
 
+fn stop_live_session_runtime_for_task_control(
+    state: &AppState,
+    session_id: &str,
+) -> Result<bool, String> {
+    let had_runtime = if let Some(runtime) = state.remove_session_runtime(session_id)? {
+        runtime.abort_active_run();
+        true
+    } else {
+        false
+    };
+    state.clear_active_session_run(session_id)?;
+    Ok(had_runtime)
+}
+
 #[tauri::command]
 pub fn list_tasks(
     project_id: Option<String>,
@@ -947,7 +961,7 @@ pub async fn request_user_intervention(
 }
 
 #[tauri::command]
-pub async fn approve_lane_completion(
+pub async fn approve_task_review(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
@@ -960,7 +974,7 @@ pub async fn approve_lane_completion(
     .map_err(|error| format!("Unable to join lane approval context task: {error}"))??;
     let mut connection = database::open_connection()?;
     let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
-    let mut task = task_runtime::approve_pending_lane_completion(
+    let mut task = task_runtime::approve_task_review(
         &mut connection,
         &context.project_root,
         &context.session_dir,
@@ -1013,12 +1027,26 @@ pub async fn approve_lane_completion(
         );
     }
 
+    record_task_domain_event(
+        &connection,
+        "task.review_approved",
+        &task,
+        json!({
+            "taskId": task.id.clone(),
+            "assignmentId": previous_assignment.as_ref().map(|assignment| assignment.id.clone()),
+            "laneId": previous_assignment.as_ref().map(|assignment| assignment.lane_id.clone()),
+            "sessionId": previous_assignment.as_ref().and_then(|assignment| assignment.session_id.clone()),
+            "onBehalfOfUser": true,
+            "action": "approve_task_review",
+        }),
+    );
+
     state.log(
         "info",
-        "task.transition",
-        &format!("Approved pending lane completion for task {}", task_id),
+        "task.review.approved",
+        &format!("Approved task review for task {}", task_id),
     );
-    emit_task_change(&app, "task.transition.approved_success", changed_task_ids);
+    emit_task_change(&app, "task.review.approved", changed_task_ids);
     if let Some(session_id) =
         task_runtime::transitioned_assignment_session_to_retire(previous_assignment.as_ref(), &task)
     {
@@ -1026,10 +1054,19 @@ pub async fn approve_lane_completion(
             app.clone(),
             session_id,
             Duration::ZERO,
-            "task.transition.approved_success",
+            "task.review.approved",
         );
     }
     Ok(task)
+}
+
+#[tauri::command]
+pub async fn approve_lane_completion(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    approve_task_review(app, state, task_id).await
 }
 
 #[tauri::command]
@@ -1144,10 +1181,11 @@ pub async fn reassign_task_to_lane(
 }
 
 #[tauri::command]
-pub async fn send_lane_back_for_work(
+pub async fn mark_task_needs_work(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
+    notes: Option<String>,
 ) -> Result<TaskDetail, String> {
     let result = async {
         let task_id_for_context = task_id.clone();
@@ -1155,21 +1193,38 @@ pub async fn send_lane_back_for_work(
             session_context_for_task_id(&task_id_for_context)
         })
         .await
-        .map_err(|error| format!("Unable to join lane rework context task: {error}"))??;
+        .map_err(|error| format!("Unable to join task review rework context task: {error}"))??;
         let connection = database::open_connection()?;
-        let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
-        let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
-        task_runtime::start_assignment_follow_up(
-            app.clone(),
-            &state,
-            context.session_dir.clone(),
-            &assignment,
-            &follow_up_prompt,
-        )?;
-        if let Some(session_id) = assignment.session_id.clone() {
-            emit_session_change(&app, "task.transition.rework", [session_id]);
+        let assignment = task_runtime::mark_task_needs_work(&connection, &task_id)?;
+        if assignment.session_id.is_some() {
+            let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+            task_runtime::start_assignment_follow_up(
+                app.clone(),
+                &state,
+                context.session_dir.clone(),
+                &assignment,
+                &follow_up_prompt,
+            )?;
         }
-        tasks::get_task_context(&connection, &task_id)
+        if let Some(session_id) = assignment.session_id.clone() {
+            emit_session_change(&app, "task.review.needs_work", [session_id]);
+        }
+        let task = tasks::get_task_context(&connection, &task_id)?;
+        record_task_domain_event(
+            &connection,
+            "task.review_needs_work",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "assignmentId": assignment.id.clone(),
+                "laneId": assignment.lane_id.clone(),
+                "sessionId": assignment.session_id.clone(),
+                "notes": notes,
+                "onBehalfOfUser": true,
+                "action": "mark_task_needs_work",
+            }),
+        );
+        Ok::<TaskDetail, String>(task)
     }
     .await;
 
@@ -1177,14 +1232,212 @@ pub async fn send_lane_back_for_work(
         Ok(task) => {
             state.log(
                 "info",
-                "task.transition",
-                &format!("Resumed task {} on the current lane session", task_id),
+                "task.review.needs_work",
+                &format!("Marked task {} as needs work after review", task_id),
             );
-            emit_task_change(&app, "task.transition.needs_work", [task.id.clone()]);
+            emit_task_change(&app, "task.review.needs_work", [task.id.clone()]);
             Ok(task)
         }
         Err(error) => {
-            log_task_command_failure(&state, "task.transition.resume.failed", &task_id, &error);
+            log_task_command_failure(&state, "task.review.needs_work.failed", &task_id, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn resume_task_lane(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    let result = async {
+        let task_id_for_context = task_id.clone();
+        let context = tauri::async_runtime::spawn_blocking(move || {
+            session_context_for_task_id(&task_id_for_context)
+        })
+        .await
+        .map_err(|error| format!("Unable to join task resume context task: {error}"))??;
+        let connection = database::open_connection()?;
+        let assignment = task_runtime::resume_task_lane(&connection, &task_id)?;
+        if assignment.session_id.is_some() {
+            let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+            task_runtime::start_assignment_follow_up(
+                app.clone(),
+                &state,
+                context.session_dir.clone(),
+                &assignment,
+                &follow_up_prompt,
+            )?;
+        }
+        if let Some(session_id) = assignment.session_id.clone() {
+            emit_session_change(&app, "task.control.resumed", [session_id]);
+        }
+        let task = tasks::get_task_context(&connection, &task_id)?;
+        record_task_domain_event(
+            &connection,
+            "task.control_resumed",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "assignmentId": assignment.id.clone(),
+                "laneId": assignment.lane_id.clone(),
+                "sessionId": assignment.session_id.clone(),
+                "notes": notes,
+                "onBehalfOfUser": true,
+                "action": "resume_task_lane",
+            }),
+        );
+        Ok::<TaskDetail, String>(task)
+    }
+    .await;
+
+    match result {
+        Ok(task) => {
+            state.log(
+                "info",
+                "task.control.resumed",
+                &format!("Resumed paused task lane for task {}", task_id),
+            );
+            emit_task_change(&app, "task.control.resumed", [task.id.clone()]);
+            Ok(task)
+        }
+        Err(error) => {
+            log_task_command_failure(&state, "task.control.resume.failed", &task_id, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn send_lane_back_for_work(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    let connection = database::open_connection()?;
+    let assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?
+        .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
+    match assignment.status.as_str() {
+        "awaiting_user_approval" => mark_task_needs_work(app, state, task_id, None).await,
+        "awaiting_user_intervention" => resume_task_lane(app, state, task_id, None).await,
+        _ => Err(format!("Task {task_id} is not paused for user review")),
+    }
+}
+
+#[tauri::command]
+pub async fn pause_task_lane(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    let result = async {
+        let connection = database::open_connection()?;
+        let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
+        let task = task_runtime::pause_task_lane(&connection, &task_id, notes.clone())?;
+        if let Some(session_id) = previous_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.session_id.as_deref())
+        {
+            let _ = stop_live_session_runtime_for_task_control(&state, session_id)?;
+            emit_session_change(&app, "task.control.paused", [session_id.to_string()]);
+        }
+        record_task_domain_event(
+            &connection,
+            "task.control_paused",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "assignmentId": previous_assignment.as_ref().map(|assignment| assignment.id.clone()),
+                "laneId": previous_assignment.as_ref().map(|assignment| assignment.lane_id.clone()),
+                "sessionId": previous_assignment.as_ref().and_then(|assignment| assignment.session_id.clone()),
+                "notes": notes,
+                "onBehalfOfUser": true,
+                "action": "pause_task_lane",
+            }),
+        );
+        Ok::<TaskDetail, String>(task)
+    }
+    .await;
+
+    match result {
+        Ok(task) => {
+            state.log(
+                "info",
+                "task.control.paused",
+                &format!("Paused task lane for task {}", task_id),
+            );
+            emit_task_change(&app, "task.control.paused", [task.id.clone()]);
+            Ok(task)
+        }
+        Err(error) => {
+            log_task_command_failure(&state, "task.control.pause.failed", &task_id, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn stop_task_activity(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    let result = async {
+        let mut connection = database::open_connection()?;
+        let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
+        if let Some(session_id) = previous_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.session_id.as_deref())
+        {
+            let _ = stop_live_session_runtime_for_task_control(&state, session_id)?;
+        }
+        let task = task_runtime::stop_task_activity(&mut connection, &task_id, notes.clone())?;
+        if let Some(session_id) = previous_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.session_id.clone())
+        {
+            emit_session_change(&app, "task.control.stopped", [session_id.clone()]);
+            crate::services::live_sessions::schedule_session_retirement(
+                app.clone(),
+                session_id,
+                Duration::ZERO,
+                "task.control.stopped",
+            );
+        }
+        record_task_domain_event(
+            &connection,
+            "task.control_stopped",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "assignmentId": previous_assignment.as_ref().map(|assignment| assignment.id.clone()),
+                "laneId": previous_assignment.as_ref().map(|assignment| assignment.lane_id.clone()),
+                "sessionId": previous_assignment.as_ref().and_then(|assignment| assignment.session_id.clone()),
+                "notes": notes,
+                "onBehalfOfUser": true,
+                "action": "stop_task_activity",
+            }),
+        );
+        Ok::<TaskDetail, String>(task)
+    }
+    .await;
+
+    match result {
+        Ok(task) => {
+            state.log(
+                "info",
+                "task.control.stopped",
+                &format!("Stopped task activity for task {}", task_id),
+            );
+            emit_task_change(&app, "task.control.stopped", [task.id.clone()]);
+            Ok(task)
+        }
+        Err(error) => {
+            log_task_command_failure(&state, "task.control.stop.failed", &task_id, &error);
             Err(error)
         }
     }

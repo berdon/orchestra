@@ -5,9 +5,9 @@ use std::{
 };
 
 use chrono::{Duration, Utc};
-use rusqlite::{OptionalExtension, params};
-use serde_json::{Value, json};
-use tauri::{AppHandle, State, async_runtime::spawn_blocking};
+use rusqlite::{params, OptionalExtension};
+use serde_json::{json, Value};
+use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{
@@ -334,7 +334,8 @@ fn load_session_list_metadata(
             .flatten()
             .unwrap_or((None, None, None, None));
 
-    if let Some((task_id, task_project_id, task_number, task_title, worker_type, worker_name)) = assignment_metadata
+    if let Some((task_id, task_project_id, task_number, task_title, worker_type, worker_name)) =
+        assignment_metadata
     {
         return Ok((
             task_id,
@@ -1710,6 +1711,7 @@ pub async fn stop_session_runtime(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    notes: Option<String>,
 ) -> Result<SessionRecord, String> {
     let had_runtime = if let Some(runtime) = state.remove_session_runtime(&session_id)? {
         runtime.abort_active_run();
@@ -1747,11 +1749,14 @@ pub async fn stop_session_runtime(
         record_session_domain_event(
             &connection,
             &session_id,
-            "session.closed",
+            "session.stopped_by_user",
             project_id,
             json!({
                 "sessionId": session_id.clone(),
                 "status": record.status.clone(),
+                "notes": notes,
+                "onBehalfOfUser": true,
+                "action": "stop_session_runtime",
             }),
         );
     }

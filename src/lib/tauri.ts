@@ -2298,7 +2298,7 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => {
     const assignment = entry.activeLaneAssignment;
-    return assignment?.sessionId === sessionId && ["queued", "active", "awaiting_user_approval", "awaiting_user_intervention"].includes(assignment.status);
+    return assignment?.sessionId === sessionId && ["queued", "active", "awaiting_user_approval", "awaiting_user_intervention", "paused_by_user"].includes(assignment.status);
   }) ?? null;
 
   if (task?.activeLaneAssignment) {
@@ -2543,7 +2543,7 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
   return invoke<SessionRecord>("unsubscribe_session", { sessionId });
 }
 
-export async function stopSessionRuntime(sessionId: string): Promise<SessionRecord> {
+export async function stopSessionRuntime(sessionId: string, notes?: string): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const activeRuns = getMockActiveSessionRuns();
     delete activeRuns[sessionId];
@@ -2553,7 +2553,7 @@ export async function stopSessionRuntime(sessionId: string): Promise<SessionReco
       ...current,
       status: "paused",
       updatedAt: nowIso(),
-      events: [...current.events, createEvent("system", "Session run stopped by operator.")],
+      events: [...current.events, createEvent("system", notes?.trim() ? `Session run stopped by operator. ${notes.trim()}` : "Session run stopped by operator.")],
     }));
 
     if (!session) {
@@ -2565,7 +2565,7 @@ export async function stopSessionRuntime(sessionId: string): Promise<SessionReco
     return session;
   }
 
-  return invoke<SessionRecord>("stop_session_runtime", { sessionId });
+  return invoke<SessionRecord>("stop_session_runtime", { sessionId, notes });
 }
 
 export async function getPiExecutableDiagnostic(): Promise<PiExecutableDiagnostic> {
@@ -3810,6 +3810,54 @@ async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
   return getTask(taskId);
 }
 
+async function pauseMockTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
+  const task = await getTask(taskId);
+  if (!task.activeLaneAssignment || !["active", "queued"].includes(task.activeLaneAssignment.status)) {
+    throw new Error(`Task ${taskId} is not active or queued and cannot be paused.`);
+  }
+
+  const updatedAt = nowIso();
+  if (task.activeLaneAssignment.sessionId) {
+    await stopSessionRuntime(task.activeLaneAssignment.sessionId, notes);
+  }
+
+  saveMockTasks(ensureMockTasks().map((entry) =>
+    entry.id === taskId
+      ? {
+          ...entry,
+          status: "in_review",
+          assigneeType: "user",
+          assigneeId: null,
+          activeLaneAssignment: entry.activeLaneAssignment
+            ? {
+                ...entry.activeLaneAssignment,
+                status: "paused_by_user",
+                pendingOutcome: "paused",
+                completionNotes: notes?.trim() || null,
+                updatedAt,
+              }
+            : null,
+          updatedAt,
+        }
+      : entry,
+  ));
+
+  appendMockLog("info", "task.control.paused", `Paused task lane for task ${taskId}`);
+  emitMockTaskChange({ taskIds: [taskId], reason: "task.control.paused" });
+  return getTask(taskId);
+}
+
+async function stopMockTaskActivity(taskId: string, notes?: string): Promise<TaskDetail> {
+  const task = await getTask(taskId);
+  if (task.activeLaneAssignment?.sessionId) {
+    await stopSessionRuntime(task.activeLaneAssignment.sessionId, notes);
+  }
+  const reset = await resetTaskRuntime(taskId);
+  appendMockLog("info", "task.control.stopped", `Stopped task activity for task ${taskId}`);
+  emitMockTaskChange({ taskIds: [taskId], reason: "task.control.stopped" });
+  return reset;
+}
+
 async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
@@ -3923,12 +3971,95 @@ export async function requestUserIntervention(taskId: string, notes?: string): P
   return invoke<TaskDetail>("request_user_intervention", { taskId, notes });
 }
 
+export async function approveTaskReview(taskId: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return approveMockLaneCompletion(taskId);
+  }
+
+  return invoke<TaskDetail>("approve_task_review", { taskId });
+}
+
 export async function approveLaneCompletion(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return approveMockLaneCompletion(taskId);
   }
 
   return invoke<TaskDetail>("approve_lane_completion", { taskId });
+}
+
+export async function markTaskNeedsWork(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const task = await getTask(taskId);
+    if (task.activeLaneAssignment?.status !== "awaiting_user_approval") {
+      throw new Error(`Task ${taskId} is not awaiting user approval.`);
+    }
+    return sendMockLaneBackForWork(taskId);
+  }
+
+  return invoke<TaskDetail>("mark_task_needs_work", { taskId, notes });
+}
+
+export async function resumeTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    const task = await getTask(taskId);
+    if (!task.activeLaneAssignment || !["awaiting_user_intervention", "paused_by_user"].includes(task.activeLaneAssignment.status)) {
+      throw new Error(`Task ${taskId} is not paused for user intervention or a user pause.`);
+    }
+    return task.activeLaneAssignment.status === "paused_by_user"
+      ? await (async () => {
+          const updatedAt = nowIso();
+          saveMockTasks(ensureMockTasks().map((entry) =>
+            entry.id === taskId
+              ? {
+                  ...entry,
+                  status: "in_progress",
+                  assigneeType: entry.activeLaneAssignment?.workerType ?? entry.assigneeType,
+                  assigneeId: entry.activeLaneAssignment?.workerId ?? entry.assigneeId,
+                  activeLaneAssignment: entry.activeLaneAssignment
+                    ? {
+                        ...entry.activeLaneAssignment,
+                        status: "active",
+                        pendingOutcome: null,
+                        completionNotes: null,
+                        updatedAt,
+                      }
+                    : null,
+                  updatedAt,
+                }
+              : entry,
+          ));
+          if (task.activeLaneAssignment?.sessionId) {
+            updateMockSession(task.activeLaneAssignment.sessionId, (current) => ({
+              ...current,
+              status: "active",
+              updatedAt,
+              events: [...current.events, createEvent("system", "The user resumed this paused lane. Reload the latest task context before continuing.")],
+            }));
+            emitMockSessionChange({ sessionIds: [task.activeLaneAssignment.sessionId], reason: "task.control.resumed" });
+          }
+          emitMockTaskChange({ taskIds: [taskId], reason: "task.control.resumed" });
+          return getTask(taskId);
+        })()
+      : sendMockLaneBackForWork(taskId);
+  }
+
+  return invoke<TaskDetail>("resume_task_lane", { taskId, notes });
+}
+
+export async function pauseTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return pauseMockTaskLane(taskId, notes);
+  }
+
+  return invoke<TaskDetail>("pause_task_lane", { taskId, notes });
+}
+
+export async function stopTaskActivity(taskId: string, notes?: string): Promise<TaskDetail> {
+  if (!isTauriAvailable()) {
+    return stopMockTaskActivity(taskId, notes);
+  }
+
+  return invoke<TaskDetail>("stop_task_activity", { taskId, notes });
 }
 
 export async function reassignTaskToLane(taskId: string, laneId: string, notes?: string): Promise<TaskDetail> {

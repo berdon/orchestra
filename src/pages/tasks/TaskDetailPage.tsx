@@ -710,13 +710,27 @@ export function TaskDetailPage({
         variant: "secondary",
         dataRole: "send-task-back-for-work",
       });
-    } else if (task.activeLaneAssignment?.status === "awaiting_user_intervention") {
+      actions.push({
+        id: "stop-pending-review",
+        label: "Stop",
+        onClick: onResetTask,
+        variant: "secondary",
+        dataRole: "stop-task-activity",
+      });
+    } else if (["awaiting_user_intervention", "paused_by_user"].includes(task.activeLaneAssignment?.status ?? "")) {
       actions.push({
         id: "resume-pending",
         label: "Resume",
         onClick: onSendBackForWork,
         variant: "primary",
         dataRole: "resume-task-lane",
+      });
+      actions.push({
+        id: "stop-paused-lane",
+        label: "Stop",
+        onClick: onResetTask,
+        variant: "secondary",
+        dataRole: "stop-task-activity",
       });
     } else if (task.status === "in_review" && !task.activeLaneAssignment && task.assigneeType === "user" && task.currentLaneId) {
       actions.push({
@@ -735,13 +749,20 @@ export function TaskDetailPage({
       });
     }
 
-    if (task.activeLaneAssignment?.status === "active" && task.activeLaneAssignment.sessionId) {
+    if (["active", "queued"].includes(task.activeLaneAssignment?.status ?? "")) {
       actions.push({
         id: "pause",
         label: "Pause",
         onClick: onPauseRuntime,
         variant: "secondary",
         dataRole: "pause-task-runtime",
+      });
+      actions.push({
+        id: "stop-active-work",
+        label: "Stop",
+        onClick: onResetTask,
+        variant: "secondary",
+        dataRole: "stop-task-activity",
       });
     }
 
@@ -894,9 +915,15 @@ export function TaskDetailPage({
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
+                {task.activeLaneAssignment.status === "paused_by_user" ? (
+                  <p className="muted-copy" data-role="task-paused-by-user-note">
+                    This lane was paused by a user or operator. Resume keeps the current lane active, while Stop ends the current assignment and returns the task to a same-lane ready state.
+                    {task.activeLaneAssignment.completionNotes ? ` Notes: ${task.activeLaneAssignment.completionNotes}` : ""}
+                  </p>
+                ) : null}
                 <div className="action-cluster">
                   <button className="secondary-button secondary-button--danger" data-role="reset-task-runtime" type="button" disabled={Boolean(pendingActionId)} onClick={onResetTask}>
-                    Reset task runtime
+                    Stop current work
                   </button>
                 </div>
 

@@ -21,6 +21,7 @@ const ASSIGNMENT_STATUS_QUEUED: &str = "queued";
 const ASSIGNMENT_STATUS_ACTIVE: &str = "active";
 const ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL: &str = "awaiting_user_approval";
 const ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION: &str = "awaiting_user_intervention";
+const ASSIGNMENT_STATUS_PAUSED_BY_USER: &str = "paused_by_user";
 const ASSIGNMENT_STATUS_COMPLETED: &str = "completed";
 const ASSIGNMENT_STATUS_FAILED: &str = "failed";
 const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
@@ -151,14 +152,15 @@ pub fn get_current_lane_assignment(
             FROM task_lane_assignments tla
             INNER JOIN tasks t ON t.id = tla.task_id
             WHERE tla.task_id = ?1
-              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
               AND t.status NOT IN ('completed', 'canceled')
               AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
             ORDER BY CASE tla.status
                      WHEN 'active' THEN 0
                      WHEN 'awaiting_user_approval' THEN 1
                      WHEN 'awaiting_user_intervention' THEN 2
-                     ELSE 3
+                     WHEN 'paused_by_user' THEN 3
+                     ELSE 4
                      END,
                      tla.created_at ASC,
                      tla.id ASC
@@ -203,12 +205,13 @@ pub fn find_open_assignment_for_task_lane(
             FROM task_lane_assignments
             WHERE task_id = ?1
               AND lane_id = ?2
-              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
             ORDER BY CASE status
                      WHEN 'active' THEN 0
                      WHEN 'awaiting_user_approval' THEN 1
                      WHEN 'awaiting_user_intervention' THEN 2
-                     ELSE 3
+                     WHEN 'paused_by_user' THEN 3
+                     ELSE 4
                      END,
                      created_at ASC,
                      id ASC
@@ -237,7 +240,7 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
             FROM task_lane_assignments
             WHERE task_id = ?1
               AND lane_id = ?2
-              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
               AND id <> ?3
             ORDER BY created_at ASC, id ASC
             "#,
@@ -282,7 +285,7 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
                     completed_at = ?3,
                     updated_at = ?3
                 WHERE id = ?1
-                  AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
+                  AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
                 "#,
                 params![duplicate_id, reason, now],
             )
@@ -446,7 +449,7 @@ pub fn list_current_role_assignments(
             FROM task_lane_assignments
             WHERE worker_type = 'role'
               AND worker_id = ?1
-              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
             ORDER BY updated_at DESC, created_at DESC
             "#,
         )
@@ -495,14 +498,15 @@ pub fn get_active_assignment_for_session(
             FROM task_lane_assignments tla
             INNER JOIN tasks t ON t.id = tla.task_id
             WHERE tla.session_id = ?1
-              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
               AND t.status NOT IN ('completed', 'canceled')
               AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
             ORDER BY CASE tla.status
                        WHEN 'active' THEN 0
                        WHEN 'awaiting_user_approval' THEN 1
                        WHEN 'awaiting_user_intervention' THEN 2
-                       ELSE 3
+                       WHEN 'paused_by_user' THEN 3
+                       ELSE 4
                      END,
                      tla.created_at ASC,
                      tla.id ASC
@@ -644,20 +648,36 @@ pub fn cancel_dispatch_for_dependency_block(
     Ok(Some(active_assignment))
 }
 
-pub fn reset_task_runtime(
+pub fn stop_task_activity(
     connection: &mut Connection,
     task_id: &str,
+    notes: Option<String>,
 ) -> Result<TaskDetail, String> {
     let task = tasks::get_task_context(connection, task_id)?;
     let assignment = get_current_lane_assignment(connection, task_id)?;
     let now = now_iso();
+    let normalized_notes = normalize_optional(notes);
     let tx = connection
         .transaction()
-        .map_err(|error| format!("Unable to start task reset transaction: {error}"))?;
+        .map_err(|error| format!("Unable to start task stop transaction: {error}"))?;
+
+    if let Some(active_assignment) = assignment.as_ref() {
+        if active_assignment.session_id.is_some() {
+            update_open_lane_run(
+                &tx,
+                task_id,
+                &active_assignment.lane_id,
+                active_assignment.session_id.as_deref(),
+                ASSIGNMENT_STATUS_CANCELED,
+                normalized_notes.clone(),
+                &now,
+            )?;
+        }
+    }
 
     tx.execute(
-        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = NULL, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention')",
-        params![task_id, ASSIGNMENT_STATUS_CANCELED, now],
+        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = ?4, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
+        params![task_id, ASSIGNMENT_STATUS_CANCELED, now, normalized_notes.as_deref()],
     )
     .map_err(|error| format!("Unable to clear task lane assignments for {task_id}: {error}"))?;
 
@@ -668,13 +688,13 @@ pub fn reset_task_runtime(
     .map_err(|error| format!("Unable to reset task status for {task_id}: {error}"))?;
 
     tx.execute(
-        "UPDATE agent_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched')",
+        "UPDATE agent_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched', 'paused_by_user')",
         params![task_id, now],
     )
     .map_err(|error| format!("Unable to clear agent queue entries for {task_id}: {error}"))?;
 
     tx.execute(
-        "UPDATE role_queue_entries SET status = 'canceled', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'assigned')",
+        "UPDATE role_queue_entries SET status = 'canceled', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'assigned', 'paused_by_user')",
         params![task_id, now],
     )
     .map_err(|error| format!("Unable to clear role queue entries for {task_id}: {error}"))?;
@@ -683,8 +703,8 @@ pub fn reset_task_runtime(
         if let Some(worker_id) = active_assignment.worker_id.as_deref() {
             if active_assignment.worker_type == "agent" {
                 tx.execute(
-                    "UPDATE agent_runtime_states SET status = 'idle', current_queue_entry_id = NULL, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
-                    params![task.project_id, worker_id, now],
+                    "UPDATE agent_runtime_states SET status = 'idle', current_queue_entry_id = NULL, last_error = ?4, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
+                    params![task.project_id, worker_id, now, normalized_notes.as_deref()],
                 )
                 .map_err(|error| format!("Unable to reset agent runtime state for task {task_id}: {error}"))?;
             }
@@ -692,17 +712,24 @@ pub fn reset_task_runtime(
 
         if let Some(role_instance_id) = active_assignment.role_instance_id.as_deref() {
             tx.execute(
-                "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, last_error = NULL, updated_at = ?2 WHERE id = ?1",
-                params![role_instance_id, now],
+                "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, last_error = ?3, updated_at = ?2 WHERE id = ?1",
+                params![role_instance_id, now, normalized_notes.as_deref()],
             )
             .map_err(|error| format!("Unable to reset role instance for task {task_id}: {error}"))?;
         }
     }
 
     tx.commit()
-        .map_err(|error| format!("Unable to commit task reset transaction: {error}"))?;
+        .map_err(|error| format!("Unable to commit task stop transaction: {error}"))?;
 
     tasks::get_task_context(connection, task_id)
+}
+
+pub fn reset_task_runtime(
+    connection: &mut Connection,
+    task_id: &str,
+) -> Result<TaskDetail, String> {
+    stop_task_activity(connection, task_id, None)
 }
 
 fn clear_role_instance_for_reset(
@@ -2715,7 +2742,7 @@ fn complete_lane(
     Ok(updated)
 }
 
-pub fn approve_pending_lane_completion(
+pub fn approve_task_review(
     connection: &mut Connection,
     project_root: &Path,
     session_dir: &Path,
@@ -2758,6 +2785,15 @@ pub fn approve_pending_lane_completion(
     )?;
     transition_task_after_completion(connection, &task, &lane, "success", &now)?;
     tasks::get_task_context(connection, task_id)
+}
+
+pub fn approve_pending_lane_completion(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+) -> Result<TaskDetail, String> {
+    approve_task_review(connection, project_root, session_dir, task_id)
 }
 
 pub fn reassign_task_to_lane(
@@ -2860,20 +2896,28 @@ pub fn reassign_task_to_lane(
     tasks::get_task_context(connection, task_id)
 }
 
-pub fn send_lane_back_for_work(
+fn reactivate_task_lane_assignment(
     connection: &Connection,
     task_id: &str,
+    allowed_statuses: &[&str],
+    missing_error: &str,
+    invalid_error: &str,
 ) -> Result<TaskLaneAssignment, String> {
     let assignment = get_current_lane_assignment(connection, task_id)?
-        .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
-    if !matches!(
-        assignment.status.as_str(),
-        ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
-    ) {
-        return Err(format!("Task {task_id} is not paused for user review"));
+        .ok_or_else(|| missing_error.to_string())?;
+    if !allowed_statuses.contains(&assignment.status.as_str()) {
+        return Err(invalid_error.to_string());
     }
 
     let now = now_iso();
+    let mut next_assignment_status = ASSIGNMENT_STATUS_ACTIVE;
+    if assignment.status == ASSIGNMENT_STATUS_PAUSED_BY_USER
+        && assignment.worker_type == "role"
+        && assignment.session_id.is_none()
+    {
+        next_assignment_status = ASSIGNMENT_STATUS_QUEUED;
+    }
+
     connection
         .execute(
             r#"
@@ -2884,7 +2928,7 @@ pub fn send_lane_back_for_work(
                 updated_at = ?3
             WHERE id = ?1
             "#,
-            params![assignment.id, ASSIGNMENT_STATUS_ACTIVE, now],
+            params![assignment.id, next_assignment_status, now],
         )
         .map_err(|error| {
             format!(
@@ -2892,6 +2936,65 @@ pub fn send_lane_back_for_work(
                 assignment.id
             )
         })?;
+
+    if let Some(role_queue_entry_id) = assignment.role_queue_entry_id.as_deref() {
+        if next_assignment_status == ASSIGNMENT_STATUS_QUEUED {
+            let assigned_instance_id = connection
+                .query_row(
+                    "SELECT assigned_instance_id FROM role_queue_entries WHERE id = ?1",
+                    [role_queue_entry_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "Unable to inspect role queue entry {} for task {}: {error}",
+                        role_queue_entry_id, task_id
+                    )
+                })?
+                .flatten();
+            let next_queue_status = if assigned_instance_id.is_some() {
+                "assigned"
+            } else {
+                "queued"
+            };
+            connection
+                .execute(
+                    r#"
+                    UPDATE role_queue_entries
+                    SET status = ?2,
+                        completed_at = NULL,
+                        updated_at = ?3
+                    WHERE id = ?1
+                    "#,
+                    params![role_queue_entry_id, next_queue_status, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to restore role queue entry {} for task {}: {error}",
+                        role_queue_entry_id, task_id
+                    )
+                })?;
+        } else {
+            connection
+                .execute(
+                    r#"
+                    UPDATE role_queue_entries
+                    SET status = 'assigned',
+                        completed_at = NULL,
+                        updated_at = ?2
+                    WHERE id = ?1 AND status = 'paused_by_user'
+                    "#,
+                    params![role_queue_entry_id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to reactivate role queue entry {} for task {}: {error}",
+                        role_queue_entry_id, task_id
+                    )
+                })?;
+        }
+    }
 
     if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
         connection
@@ -2908,6 +3011,46 @@ pub fn send_lane_back_for_work(
                 format!(
                     "Unable to reactivate role instance {} for task {}: {error}",
                     role_instance_id, task_id
+                )
+            })?;
+    }
+
+    if assignment.worker_type == "agent" {
+        if let Some(worker_id) = assignment.worker_id.as_deref() {
+            let task = tasks::get_task_context(connection, task_id)?;
+            connection
+                .execute(
+                    r#"
+                    UPDATE agent_runtime_states
+                    SET status = 'running',
+                        updated_at = ?3
+                    WHERE project_id = ?1 AND agent_id = ?2
+                    "#,
+                    params![task.project_id, worker_id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to reactivate agent runtime state for task {}: {error}",
+                        task_id
+                    )
+                })?;
+        }
+
+        connection
+            .execute(
+                r#"
+                UPDATE agent_queue_entries
+                SET status = 'dispatched',
+                    completed_at = NULL,
+                    updated_at = ?2
+                WHERE source_task_id = ?1 AND status = 'paused_by_user'
+                "#,
+                params![task_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to reactivate queued agent work for task {}: {error}",
+                    task_id
                 )
             })?;
     }
@@ -2931,10 +3074,176 @@ pub fn send_lane_back_for_work(
                 now,
             ],
         )
-        .map_err(|error| format!("Unable to send task {} back for work: {error}", task_id))?;
+        .map_err(|error| format!("Unable to reactivate task {} for work: {error}", task_id))?;
+
+    if next_assignment_status == ASSIGNMENT_STATUS_QUEUED {
+        activate_queued_role_assignments(connection)?;
+    }
 
     get_current_lane_assignment(connection, task_id)?
         .ok_or_else(|| format!("Unable to reload reactivated lane assignment for task {task_id}"))
+}
+
+pub fn mark_task_needs_work(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<TaskLaneAssignment, String> {
+    reactivate_task_lane_assignment(
+        connection,
+        task_id,
+        &[ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL],
+        &format!("Task {task_id} has no review-paused lane assignment to resume"),
+        &format!("Task {task_id} is not awaiting user approval"),
+    )
+}
+
+pub fn resume_task_lane(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<TaskLaneAssignment, String> {
+    reactivate_task_lane_assignment(
+        connection,
+        task_id,
+        &[
+            ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION,
+            ASSIGNMENT_STATUS_PAUSED_BY_USER,
+        ],
+        &format!("Task {task_id} has no paused lane assignment to resume"),
+        &format!("Task {task_id} is not paused for user intervention or user-directed pause"),
+    )
+}
+
+pub fn pause_task_lane(
+    connection: &Connection,
+    task_id: &str,
+    notes: Option<String>,
+) -> Result<TaskDetail, String> {
+    let assignment = get_current_lane_assignment(connection, task_id)?
+        .ok_or_else(|| format!("Task {task_id} has no lane assignment to pause"))?;
+    if !matches!(
+        assignment.status.as_str(),
+        ASSIGNMENT_STATUS_ACTIVE | ASSIGNMENT_STATUS_QUEUED
+    ) {
+        return Err(format!(
+            "Task {task_id} is not active or queued and cannot be paused"
+        ));
+    }
+
+    let task = tasks::get_task_context(connection, task_id)?;
+    let now = now_iso();
+    let normalized_notes = normalize_optional(notes);
+
+    connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = ?2,
+                pending_outcome = 'paused',
+                completion_notes = ?3,
+                updated_at = ?4
+            WHERE id = ?1
+            "#,
+            params![
+                assignment.id,
+                ASSIGNMENT_STATUS_PAUSED_BY_USER,
+                normalized_notes.as_deref(),
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to pause lane assignment {}: {error}", assignment.id))?;
+
+    if let Some(queue_entry_id) = assignment.role_queue_entry_id.as_deref() {
+        connection
+            .execute(
+                r#"
+                UPDATE role_queue_entries
+                SET status = 'paused_by_user',
+                    updated_at = ?2
+                WHERE id = ?1 AND status IN ('queued', 'assigned')
+                "#,
+                params![queue_entry_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to pause role queue entry {} for task {}: {error}",
+                    queue_entry_id, task_id
+                )
+            })?;
+    }
+
+    if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
+        connection
+            .execute(
+                r#"
+                UPDATE role_instances
+                SET status = 'waiting',
+                    updated_at = ?2
+                WHERE id = ?1
+                "#,
+                params![role_instance_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to pause role instance {} for task {}: {error}",
+                    role_instance_id, task_id
+                )
+            })?;
+    }
+
+    if assignment.worker_type == "agent" {
+        if let Some(worker_id) = assignment.worker_id.as_deref() {
+            connection
+                .execute(
+                    r#"
+                    UPDATE agent_runtime_states
+                    SET status = 'waiting',
+                        last_error = ?4,
+                        updated_at = ?3
+                    WHERE project_id = ?1 AND agent_id = ?2
+                    "#,
+                    params![task.project_id, worker_id, now, normalized_notes.as_deref()],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to pause agent runtime state for task {}: {error}",
+                        task_id
+                    )
+                })?;
+        }
+
+        connection
+            .execute(
+                r#"
+                UPDATE agent_queue_entries
+                SET status = 'paused_by_user',
+                    updated_at = ?2
+                WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched')
+                "#,
+                params![task_id, now],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to pause queued agent work for task {}: {error}",
+                    task_id
+                )
+            })?;
+    }
+
+    move_task_to_user_review(connection, task_id, &assignment.lane_id, &now)?;
+    tasks::get_task_context(connection, task_id)
+}
+
+pub fn send_lane_back_for_work(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<TaskLaneAssignment, String> {
+    let assignment = get_current_lane_assignment(connection, task_id)?
+        .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
+    match assignment.status.as_str() {
+        ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => mark_task_needs_work(connection, task_id),
+        ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => resume_task_lane(connection, task_id),
+        _ => Err(format!("Task {task_id} is not paused for user review")),
+    }
 }
 
 fn mark_assignment_awaiting_user_approval(
@@ -5278,6 +5587,274 @@ mod tests {
                 .map(|instance| instance.status.as_str()),
             Some("running")
         );
+    }
+
+    #[test]
+    fn pauses_and_resumes_the_same_lane_session_under_user_control() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Pause Resume Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Pause Resume Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-pause-resume");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Pause resume task".into(),
+                description: Some(
+                    "Pause and resume current lane work under user authority.".into(),
+                ),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("task should dispatch");
+        let session_id = assignment
+            .session_id
+            .clone()
+            .expect("session id should exist");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance should exist");
+
+        let paused = pause_task_lane(&connection, &task.id, Some("Paused by operator".into()))
+            .expect("task should pause");
+        assert_eq!(paused.status, "in_review");
+        assert_eq!(paused.assignee_type, "user");
+        assert_eq!(
+            paused
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_PAUSED_BY_USER)
+        );
+        assert_eq!(
+            paused
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.session_id.as_deref()),
+            Some(session_id.as_str())
+        );
+        let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load while paused");
+        assert_eq!(
+            waiting_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("waiting")
+        );
+
+        let resumed_assignment =
+            resume_task_lane(&connection, &task.id).expect("task should resume from pause");
+        assert_eq!(resumed_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
+        assert_eq!(
+            resumed_assignment.session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+        let resumed_task =
+            tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(resumed_task.status, "in_progress");
+        assert_eq!(resumed_task.assignee_type, "role");
+        let running_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load after resume");
+        assert_eq!(
+            running_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("running")
+        );
+    }
+
+    #[test]
+    fn pause_resume_and_stop_handle_queued_role_work() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Queued Control Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Queued Control Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-queued-control");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let first_task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Active queue owner".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("first task should create");
+        let second_task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Queued control task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("second task should create");
+
+        let active_assignment =
+            dispatch_task_lane(&mut connection, &project_root, &session_dir, &first_task.id)
+                .expect("first task should dispatch");
+        assert_eq!(active_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
+        let queued_assignment = dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &second_task.id,
+        )
+        .expect("second task should dispatch into queue");
+        assert_eq!(queued_assignment.status, ASSIGNMENT_STATUS_QUEUED);
+        assert!(queued_assignment.session_id.is_none());
+
+        let paused = pause_task_lane(
+            &connection,
+            &second_task.id,
+            Some("Hold queued work".into()),
+        )
+        .expect("queued task should pause");
+        assert_eq!(paused.status, "in_review");
+        assert_eq!(
+            paused
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_PAUSED_BY_USER)
+        );
+
+        let resumed_assignment =
+            resume_task_lane(&connection, &second_task.id).expect("queued task should resume");
+        assert_eq!(resumed_assignment.status, ASSIGNMENT_STATUS_QUEUED);
+        let resumed_task = tasks::get_task_context(&connection, &second_task.id)
+            .expect("queued task should reload");
+        assert_eq!(resumed_task.status, "in_progress");
+        assert_eq!(resumed_task.assignee_type, "role");
+
+        let stopped = stop_task_activity(
+            &mut connection,
+            &second_task.id,
+            Some("Canceled queued work".into()),
+        )
+        .expect("queued task stop should succeed");
+        assert_eq!(stopped.status, "ready");
+        assert!(stopped.active_lane_assignment.is_none());
+        assert_eq!(stopped.current_lane_id.as_deref(), Some("lane-implement"));
     }
 
     #[test]

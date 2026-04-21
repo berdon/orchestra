@@ -8,7 +8,7 @@ import {
   addTaskDependency,
   addTaskFileReference,
   addTaskTodo,
-  approveLaneCompletion,
+  approveTaskReview,
   commentOnTask,
   deleteTaskComment,
   updateTaskComment,
@@ -27,17 +27,18 @@ import {
   listWorkflows,
   listenToSessionStream,
   listenToTaskChanges,
+  markTaskNeedsWork,
+  manualTaskWhip,
+  pauseTaskLane,
   removeTaskAttachment,
   removeTaskDependency,
   removeTaskFileReference,
   requestUserIntervention,
   reportClientError,
-  resetTaskRuntime,
-  sendLaneBackForWork,
+  resumeTaskLane,
   sendSessionMessage,
   setDefaultTaskFileReference,
-  stopSessionRuntime,
-  manualTaskWhip,
+  stopTaskActivity,
   listTaskMessages,
   markTaskCommentsReadForUser,
   reassignTaskToLane,
@@ -876,7 +877,7 @@ export function TasksPage({
         currentTask = await getTask(route.taskId);
       }
       if (currentTask.activeLaneAssignment) {
-        await resetTaskRuntime(route.taskId);
+        await stopTaskActivity(route.taskId);
       }
       const saved = await updateTask(route.taskId, {
         ...taskToDraft(currentTask),
@@ -1193,7 +1194,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction("approve-pending", async () => {
-      await approveLaneCompletion(route.taskId);
+      await approveTaskReview(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to approve task lane.");
@@ -1214,28 +1215,30 @@ export function TasksPage({
     if (route.kind !== "detail") {
       return;
     }
-    const actionId = taskDetail?.activeLaneAssignment?.status === "awaiting_user_intervention"
-      ? "resume-pending"
-      : "needs-work-pending";
+    const shouldResume = ["awaiting_user_intervention", "paused_by_user"].includes(taskDetail?.activeLaneAssignment?.status ?? "");
+    const actionId = shouldResume ? "resume-pending" : "needs-work-pending";
     await runDetailAction(actionId, async () => {
-      await sendLaneBackForWork(route.taskId);
+      if (shouldResume) {
+        await resumeTaskLane(route.taskId);
+      } else {
+        await markTaskNeedsWork(route.taskId);
+      }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    }, taskDetail?.activeLaneAssignment?.status === "awaiting_user_intervention"
+    }, shouldResume
       ? "Unable to resume task lane."
-      : "Unable to send task lane back for work.");
+      : "Unable to mark task as needing work.");
   }
 
   async function handlePauseTaskRuntime() {
-    const sessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
-    if (route.kind !== "detail" || !sessionId) {
+    if (route.kind !== "detail") {
       return;
     }
     await runDetailAction("pause", async () => {
-      await stopSessionRuntime(sessionId);
+      await pauseTaskLane(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    }, "Unable to pause task runtime.");
+    }, "Unable to pause task lane.");
   }
 
   async function handleWhipTask() {
@@ -1262,14 +1265,10 @@ export function TasksPage({
       return;
     }
     await runDetailAction("reset", async () => {
-      const activeSessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
-      if (activeSessionId) {
-        await stopSessionRuntime(activeSessionId);
-      }
-      await resetTaskRuntime(route.taskId);
+      await stopTaskActivity(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
-    }, "Unable to reset task runtime.");
+    }, "Unable to stop current task activity.");
   }
 
   async function handleRetryTaskLane() {

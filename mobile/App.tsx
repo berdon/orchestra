@@ -25,9 +25,13 @@ import {
   listTasks,
   markInboxRead,
   pairDevice,
+  pauseTask,
+  resumeTask,
   sendSessionMessage,
   sendSupervisorMessage,
   sendTaskBack,
+  stopSessionRuntime,
+  stopTaskActivity,
   type MailboxMessage,
   type ProjectSummary,
   type SessionRecord,
@@ -316,6 +320,62 @@ export default function App() {
     }
   }
 
+  async function handleResumeTask() {
+    if (!connection || !selectedTask) return;
+    setBusyAction("resume");
+    try {
+      const updated = await resumeTask(connection.baseUrl, connection.token, selectedTask.id);
+      setSelectedTask(updated);
+      await loadCoreData(connection.baseUrl, connection.token, activeProjectId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to resume task.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handlePauseTask() {
+    if (!connection || !selectedTask) return;
+    setBusyAction("pause");
+    try {
+      const updated = await pauseTask(connection.baseUrl, connection.token, selectedTask.id);
+      setSelectedTask(updated);
+      await loadCoreData(connection.baseUrl, connection.token, activeProjectId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to pause task.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleStopTaskActivity() {
+    if (!connection || !selectedTask) return;
+    setBusyAction("stop-task");
+    try {
+      const updated = await stopTaskActivity(connection.baseUrl, connection.token, selectedTask.id);
+      setSelectedTask(updated);
+      await loadCoreData(connection.baseUrl, connection.token, activeProjectId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to stop task activity.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleStopSelectedSession() {
+    if (!connection || !selectedSession) return;
+    setBusyAction("stop-session");
+    try {
+      const updated = await stopSessionRuntime(connection.baseUrl, connection.token, selectedSession.id);
+      setSelectedSession(updated);
+      await loadCoreData(connection.baseUrl, connection.token, activeProjectId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to stop session runtime.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleSendSupervisorMessage() {
     if (!connection || !activeProjectId || !chatDraft.trim()) return;
     setBusyAction("chat");
@@ -464,12 +524,31 @@ export default function App() {
               <Text style={styles.cardMeta}>{selectedTask.status} · {selectedTask.priority}</Text>
               <Text style={styles.bodyText}>{selectedTask.description?.trim() || "No description."}</Text>
               <View style={styles.row}>
-                <Pressable style={styles.secondaryButton} onPress={() => void handleApproveTask()}>
-                  <Text style={styles.secondaryButtonText}>{busyAction === "approve" ? "Approving…" : "Approve"}</Text>
-                </Pressable>
-                <Pressable style={styles.secondaryButton} onPress={() => void handleSendTaskBack()}>
-                  <Text style={styles.secondaryButtonText}>{busyAction === "needs-work" ? "Sending…" : "Needs work"}</Text>
-                </Pressable>
+                {selectedTask.activeLaneAssignment?.status === "awaiting_user_approval" ? (
+                  <>
+                    <Pressable style={styles.secondaryButton} onPress={() => void handleApproveTask()}>
+                      <Text style={styles.secondaryButtonText}>{busyAction === "approve" ? "Approving…" : "Approve"}</Text>
+                    </Pressable>
+                    <Pressable style={styles.secondaryButton} onPress={() => void handleSendTaskBack()}>
+                      <Text style={styles.secondaryButtonText}>{busyAction === "needs-work" ? "Sending…" : "Needs work"}</Text>
+                    </Pressable>
+                  </>
+                ) : null}
+                {["awaiting_user_intervention", "paused_by_user"].includes(selectedTask.activeLaneAssignment?.status ?? "") ? (
+                  <Pressable style={styles.secondaryButton} onPress={() => void handleResumeTask()}>
+                    <Text style={styles.secondaryButtonText}>{busyAction === "resume" ? "Resuming…" : "Resume"}</Text>
+                  </Pressable>
+                ) : null}
+                {["active", "queued"].includes(selectedTask.activeLaneAssignment?.status ?? "") ? (
+                  <Pressable style={styles.secondaryButton} onPress={() => void handlePauseTask()}>
+                    <Text style={styles.secondaryButtonText}>{busyAction === "pause" ? "Pausing…" : "Pause"}</Text>
+                  </Pressable>
+                ) : null}
+                {selectedTask.activeLaneAssignment ? (
+                  <Pressable style={styles.secondaryButton} onPress={() => void handleStopTaskActivity()}>
+                    <Text style={styles.secondaryButtonText}>{busyAction === "stop-task" ? "Stopping…" : "Stop"}</Text>
+                  </Pressable>
+                ) : null}
               </View>
               <Text style={styles.sectionTitle}>Comments</Text>
               {selectedTask.comments.length ? selectedTask.comments.map((comment) => (
@@ -555,6 +634,9 @@ export default function App() {
             <TextInput style={styles.input} value={sessionDraft} onChangeText={setSessionDraft} placeholder="Send to session" />
             <Pressable style={styles.primaryButton} onPress={() => void handleSendSessionMessage()}>
               <Text style={styles.primaryButtonText}>{busyAction === "session" ? "Sending…" : "Send"}</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryButton} onPress={() => void handleStopSelectedSession()}>
+              <Text style={styles.secondaryButtonText}>{busyAction === "stop-session" ? "Stopping…" : "Stop"}</Text>
             </Pressable>
           </View>
         </View>

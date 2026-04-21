@@ -172,6 +172,12 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "complete_lane_as_success",
     "complete_lane_as_failure",
     "request_user_intervention",
+    "approve_task_review",
+    "mark_task_needs_work",
+    "resume_task_lane",
+    "pause_task_lane",
+    "stop_task_activity",
+    "stop_session_runtime",
     "reassign_task_to_lane",
     "add_task_dependency",
     "remove_task_dependency",
@@ -1180,6 +1186,23 @@ fn invoke_bridge_command(
             )?)
             .map_err(|error| format!("Unable to serialize project: {error}"))
         }
+        "stop_session_runtime" => {
+            let session_id = require_string(&payload, "sessionId")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "sessions.stop")?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "No app handle available for stop_session_runtime".to_string())?;
+            let app_for_state = app.clone();
+            let state = app_for_state.state::<crate::state::AppState>();
+            serde_json::to_value(tauri::async_runtime::block_on(
+                crate::commands::sessions::stop_session_runtime(app, state, session_id, notes),
+            )?)
+            .map_err(|error| format!("Unable to serialize stopped session runtime: {error}"))
+        }
         "list_tasks" => {
             let include_archived = payload
                 .get("includeArchived")
@@ -1797,6 +1820,87 @@ fn invoke_bridge_command(
             serde_json::to_value(task).map_err(|error| {
                 format!("Unable to serialize user-intervention task lane: {error}")
             })
+        }
+        "approve_task_review" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.review")?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "No app handle available for approve_task_review".to_string())?;
+            let app_for_state = app.clone();
+            let state = app_for_state.state::<crate::state::AppState>();
+            serde_json::to_value(tauri::async_runtime::block_on(
+                crate::commands::tasks::approve_task_review(app, state, task_id),
+            )?)
+            .map_err(|error| format!("Unable to serialize approved task review: {error}"))
+        }
+        "mark_task_needs_work" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.review")?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "No app handle available for mark_task_needs_work".to_string())?;
+            let app_for_state = app.clone();
+            let state = app_for_state.state::<crate::state::AppState>();
+            serde_json::to_value(tauri::async_runtime::block_on(
+                crate::commands::tasks::mark_task_needs_work(app, state, task_id, notes),
+            )?)
+            .map_err(|error| format!("Unable to serialize review rework task: {error}"))
+        }
+        "resume_task_lane" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.control")?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "No app handle available for resume_task_lane".to_string())?;
+            let app_for_state = app.clone();
+            let state = app_for_state.state::<crate::state::AppState>();
+            serde_json::to_value(tauri::async_runtime::block_on(
+                crate::commands::tasks::resume_task_lane(app, state, task_id, notes),
+            )?)
+            .map_err(|error| format!("Unable to serialize resumed task lane: {error}"))
+        }
+        "pause_task_lane" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.control")?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "No app handle available for pause_task_lane".to_string())?;
+            let app_for_state = app.clone();
+            let state = app_for_state.state::<crate::state::AppState>();
+            serde_json::to_value(tauri::async_runtime::block_on(
+                crate::commands::tasks::pause_task_lane(app, state, task_id, notes),
+            )?)
+            .map_err(|error| format!("Unable to serialize paused task lane: {error}"))
+        }
+        "stop_task_activity" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let notes = payload
+                .get("notes")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            command_authorization::require_permission(connection, authorization, "tasks.control")?;
+            let app = config
+                .clone_app_handle()
+                .ok_or_else(|| "No app handle available for stop_task_activity".to_string())?;
+            let app_for_state = app.clone();
+            let state = app_for_state.state::<crate::state::AppState>();
+            serde_json::to_value(tauri::async_runtime::block_on(
+                crate::commands::tasks::stop_task_activity(app, state, task_id, notes),
+            )?)
+            .map_err(|error| format!("Unable to serialize stopped task activity: {error}"))
         }
         "reassign_task_to_lane" => {
             let task_id = require_string(&payload, "taskId")?;

@@ -126,6 +126,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "sessions.message",
     ),
     (
+        "stop_session_runtime",
+        "Stop an active Orchestra session runtime",
+        "sessions.stop",
+    ),
+    (
         "get_session_model_state",
         "Inspect a session model",
         "sessions.read",
@@ -295,6 +300,31 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "request_user_intervention",
         "Request user intervention for the active lane",
         "tasks.transition",
+    ),
+    (
+        "approve_task_review",
+        "Approve a task lane paused for user review",
+        "tasks.review",
+    ),
+    (
+        "mark_task_needs_work",
+        "Send a review-paused task lane back for more work",
+        "tasks.review",
+    ),
+    (
+        "resume_task_lane",
+        "Resume a user-paused or intervention-paused task lane",
+        "tasks.control",
+    ),
+    (
+        "pause_task_lane",
+        "Pause active or queued task lane work under user authority",
+        "tasks.control",
+    ),
+    (
+        "stop_task_activity",
+        "Stop active or queued task work and return the task to a ready state",
+        "tasks.control",
     ),
     (
         "reassign_task_to_lane",
@@ -485,6 +515,93 @@ mod tests {
         assert!(tools.iter().any(|tool| tool.name == "list_agents"));
         assert!(tools.iter().any(|tool| tool.name == "list_sessions"));
         assert!(!tools.iter().any(|tool| tool.name == "create_role"));
+    }
+
+    #[test]
+    fn splits_review_control_and_session_stop_tools_from_task_transition() {
+        let mut connection = open_test_connection("command-auth-review-control");
+        let transition_role = roles::create_role(
+            &mut connection,
+            crate::models::RoleUpsertInput {
+                name: "Transition Only".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.transition".into()],
+            },
+        )
+        .expect("transition role should create");
+        let review_role = roles::create_role(
+            &mut connection,
+            crate::models::RoleUpsertInput {
+                name: "Review Control".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: vec![
+                    "tasks.review".into(),
+                    "tasks.control".into(),
+                    "sessions.stop".into(),
+                ],
+            },
+        )
+        .expect("review role should create");
+
+        let transition_tools = list_allowed_tools(
+            &connection,
+            Some(&AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: transition_role.id,
+            }),
+        )
+        .expect("transition tools should list");
+        assert!(transition_tools
+            .iter()
+            .any(|tool| tool.name == "complete_lane_as_success"));
+        assert!(!transition_tools
+            .iter()
+            .any(|tool| tool.name == "approve_task_review"));
+        assert!(!transition_tools
+            .iter()
+            .any(|tool| tool.name == "pause_task_lane"));
+
+        let review_tools = list_allowed_tools(
+            &connection,
+            Some(&AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: review_role.id,
+            }),
+        )
+        .expect("review tools should list");
+        assert!(review_tools
+            .iter()
+            .any(|tool| tool.name == "approve_task_review"));
+        assert!(review_tools
+            .iter()
+            .any(|tool| tool.name == "mark_task_needs_work"));
+        assert!(review_tools
+            .iter()
+            .any(|tool| tool.name == "resume_task_lane"));
+        assert!(review_tools
+            .iter()
+            .any(|tool| tool.name == "pause_task_lane"));
+        assert!(review_tools
+            .iter()
+            .any(|tool| tool.name == "stop_task_activity"));
+        assert!(review_tools
+            .iter()
+            .any(|tool| tool.name == "stop_session_runtime"));
+        assert!(!review_tools
+            .iter()
+            .any(|tool| tool.name == "complete_lane_as_success"));
     }
 
     #[test]

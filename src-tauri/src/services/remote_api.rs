@@ -27,7 +27,7 @@ use tower_http::{
 };
 
 use crate::{
-    commands::app::build_app_info,
+    commands::{app::build_app_info, sessions as session_commands, tasks as task_commands},
     models::{
         AppInfo, MailboxMessage, QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus,
         RemoteAuthResponse, RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput,
@@ -35,7 +35,7 @@ use crate::{
     },
     services::{
         agent_dispatch, app_events, database, live_sessions::ensure_runtime, messages, pi_sessions,
-        projects, remote_access, task_runtime, tasks,
+        projects, remote_access, tasks,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle, RemoteWebServerHandle},
 };
@@ -517,6 +517,12 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             "/api/v1/tasks/:task_id/needs-work",
             post(post_task_needs_work),
         )
+        .route("/api/v1/tasks/:task_id/resume", post(post_task_resume))
+        .route("/api/v1/tasks/:task_id/pause", post(post_task_pause))
+        .route(
+            "/api/v1/tasks/:task_id/stop-activity",
+            post(post_task_stop_activity),
+        )
         .route("/api/v1/inbox", get(get_inbox_messages))
         .route("/api/v1/devices/push-token", post(post_register_push_token))
         .route("/api/v1/inbox/send", post(post_send_inbox_message))
@@ -533,6 +539,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route(
             "/api/v1/sessions/:session_id/message",
             post(post_session_message),
+        )
+        .route(
+            "/api/v1/sessions/:session_id/stop",
+            post(post_stop_session_runtime),
         )
         .route("/api/v1/ws", get(ws_handler))
         .layer(cors)
@@ -1140,67 +1150,14 @@ async fn post_task_approve(
     Path(task_id): Path<String>,
 ) -> Result<Json<TaskDetail>, (StatusCode, Json<ApiError>)> {
     let device = resolve_remote_auth(&context.app, &headers, None)?;
-    let state = context.app.state::<AppState>();
-    let session_context = pi_sessions::session_context_for_project_id(
-        &tasks::get_task_context(
-            &database::open_connection()
-                .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
-            &task_id,
-        )
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
-        .project_id,
+    let task = task_commands::approve_task_review(
+        context.app.clone(),
+        context.app.state::<AppState>(),
+        task_id.clone(),
     )
-    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let mut connection = database::open_connection()
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let mut task = task_runtime::approve_pending_lane_completion(
-        &mut connection,
-        &session_context.project_root,
-        &session_context.session_dir,
-        &task_id,
-    )
+    .await
     .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
-
-    let auto_dispatches =
-        task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)
-            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    for outcome in &auto_dispatches {
-        task_runtime::start_assignment_run(
-            context.app.clone(),
-            state.inner(),
-            outcome.session_dir.clone(),
-            &outcome.assignment,
-        )
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-        if let Some(session_id) = outcome.assignment.session_id.clone() {
-            let _ = app_events::emit_session_change(
-                &context.app,
-                "task.transition.next_assignment",
-                [session_id],
-            );
-        }
-    }
-    if !auto_dispatches.is_empty() {
-        task = tasks::get_task_context(&connection, &task_id)
-            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-        let mut changed_task_ids = vec![task.id.clone()];
-        changed_task_ids.extend(
-            auto_dispatches
-                .iter()
-                .map(|outcome| outcome.task_id.clone()),
-        );
-        let _ = app_events::emit_task_change(
-            &context.app,
-            "task.transition.auto_dispatch",
-            changed_task_ids,
-        );
-    }
-    let _ = app_events::emit_task_change(
-        &context.app,
-        "task.transition.approved_success",
-        [task.id.clone()],
-    );
-    state.log(
+    context.app.state::<AppState>().log(
         "info",
         "remote.api.task.approve",
         &format!("{} approved task {}", device.label, task_id),
@@ -1214,43 +1171,84 @@ async fn post_task_needs_work(
     Path(task_id): Path<String>,
 ) -> Result<Json<TaskDetail>, (StatusCode, Json<ApiError>)> {
     let device = resolve_remote_auth(&context.app, &headers, None)?;
-    let state = context.app.state::<AppState>();
-    let project_id = tasks::get_task_context(
-        &database::open_connection()
-            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
-        &task_id,
-    )
-    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
-    .project_id;
-    let session_context = pi_sessions::session_context_for_project_id(&project_id)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let connection = database::open_connection()
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)
-        .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
-    task_runtime::start_assignment_follow_up(
+    let task = task_commands::mark_task_needs_work(
         context.app.clone(),
-        state.inner(),
-        session_context.session_dir.clone(),
-        &assignment,
-        &task_runtime::lane_rework_follow_up_prompt(),
+        context.app.state::<AppState>(),
+        task_id.clone(),
+        None,
     )
-    .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    if let Some(session_id) = assignment.session_id.clone() {
-        let _ =
-            app_events::emit_session_change(&context.app, "task.transition.rework", [session_id]);
-    }
-    let task = tasks::get_task_context(&connection, &task_id)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let _ = app_events::emit_task_change(
-        &context.app,
-        "task.transition.needs_work",
-        [task.id.clone()],
-    );
-    state.log(
+    .await
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    context.app.state::<AppState>().log(
         "info",
         "remote.api.task.needs_work",
         &format!("{} sent task {} back for work", device.label, task_id),
+    );
+    Ok(Json(task))
+}
+
+async fn post_task_resume(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Result<Json<TaskDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let task = task_commands::resume_task_lane(
+        context.app.clone(),
+        context.app.state::<AppState>(),
+        task_id.clone(),
+        None,
+    )
+    .await
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    context.app.state::<AppState>().log(
+        "info",
+        "remote.api.task.resume",
+        &format!("{} resumed task {}", device.label, task_id),
+    );
+    Ok(Json(task))
+}
+
+async fn post_task_pause(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Result<Json<TaskDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let task = task_commands::pause_task_lane(
+        context.app.clone(),
+        context.app.state::<AppState>(),
+        task_id.clone(),
+        None,
+    )
+    .await
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    context.app.state::<AppState>().log(
+        "info",
+        "remote.api.task.pause",
+        &format!("{} paused task {}", device.label, task_id),
+    );
+    Ok(Json(task))
+}
+
+async fn post_task_stop_activity(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Result<Json<TaskDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let task = task_commands::stop_task_activity(
+        context.app.clone(),
+        context.app.state::<AppState>(),
+        task_id.clone(),
+        None,
+    )
+    .await
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    context.app.state::<AppState>().log(
+        "info",
+        "remote.api.task.stop_activity",
+        &format!("{} stopped task activity for {}", device.label, task_id),
     );
     Ok(Json(task))
 }
@@ -1381,6 +1379,28 @@ async fn post_session_message(
     .await
     .map(Json)
     .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))
+}
+
+async fn post_stop_session_runtime(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionRecord>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let record = session_commands::stop_session_runtime(
+        context.app.clone(),
+        context.app.state::<AppState>(),
+        session_id.clone(),
+        None,
+    )
+    .await
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    context.app.state::<AppState>().log(
+        "info",
+        "remote.api.session.stop",
+        &format!("{} stopped session {}", device.label, session_id),
+    );
+    Ok(Json(record))
 }
 
 async fn get_supervisor_session(

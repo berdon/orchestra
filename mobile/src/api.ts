@@ -22,9 +22,22 @@ export interface TaskComment {
   createdAt: string;
 }
 
+export interface TaskLaneAssignment {
+  id: string;
+  status: string;
+  laneId: string;
+  workerType?: string | null;
+  workerId?: string | null;
+  sessionId?: string | null;
+  completionNotes?: string | null;
+}
+
 export interface TaskDetail extends TaskSummary {
   description?: string | null;
   comments: TaskComment[];
+  assigneeType?: string | null;
+  currentLaneId?: string | null;
+  activeLaneAssignment?: TaskLaneAssignment | null;
 }
 
 export interface MailboxMessage {
@@ -118,6 +131,18 @@ export async function sendTaskBack(baseUrl: string, token: string, taskId: strin
   return request<TaskDetail>(baseUrl, `/api/v1/tasks/${taskId}/needs-work`, token, { method: "POST" });
 }
 
+export async function resumeTask(baseUrl: string, token: string, taskId: string) {
+  return request<TaskDetail>(baseUrl, `/api/v1/tasks/${taskId}/resume`, token, { method: "POST" });
+}
+
+export async function pauseTask(baseUrl: string, token: string, taskId: string) {
+  return request<TaskDetail>(baseUrl, `/api/v1/tasks/${taskId}/pause`, token, { method: "POST" });
+}
+
+export async function stopTaskActivity(baseUrl: string, token: string, taskId: string) {
+  return request<TaskDetail>(baseUrl, `/api/v1/tasks/${taskId}/stop-activity`, token, { method: "POST" });
+}
+
 export async function listInbox(baseUrl: string, token: string, projectId?: string | null) {
   const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
   return request<MailboxMessage[]>(baseUrl, `/api/v1/inbox${query}`, token);
@@ -156,6 +181,10 @@ export async function sendSessionMessage(baseUrl: string, token: string, session
     method: "POST",
     body: JSON.stringify({ message }),
   });
+}
+
+export async function stopSessionRuntime(baseUrl: string, token: string, sessionId: string) {
+  return request<SessionRecord>(baseUrl, `/api/v1/sessions/${sessionId}/stop`, token, { method: "POST" });
 }
 
 export function createRemoteSocket(baseUrl: string, token: string) {
