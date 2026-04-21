@@ -3821,7 +3821,7 @@ fn orchestra_working_rules_block() -> String {
         "5. Whenever you resume this lane, restart after an interruption, or suspect new feedback may have arrived, call get_unread_task_comments using the canonical task ID. After you read and incorporate those comments, call mark_task_comments_read so Orchestra knows you saw them.",
         "6. Whenever you resume this lane, restart after an interruption, or Orchestra tells you to check mail, call get_unread_mail using the canonical task ID. After you read and incorporate unread mail, call mark_mail_read so Orchestra knows you handled it.",
         "7. Whenever you take or finish a large action, leave a durable comment with comment_on_task describing what you did and why. If you are responding to a specific existing comment, reply in-thread by setting parentCommentId instead of starting a new top-level comment.",
-        "8. When you identify a smaller follow-up item for this lane that should stay visible but does not deserve its own subtask, add it with add_task_todo. Use subtasks only for separately tracked work.",
+        "8. When you identify a smaller follow-up item for this lane that should stay visible but does not deserve its own subtask, add it with add_task_todo and an explicit laneId target. Use subtasks only for separately tracked work.",
         "9. If the work needs to be split into a separately tracked child task, create_subtask and describe the smaller unit clearly.",
         "10. If another task must finish first, add_task_dependency. If a dependency is no longer correct, remove_task_dependency.",
         "11. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution.",
@@ -3855,7 +3855,7 @@ fn orchestra_tool_help_block() -> String {
         "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail, call this tool to acknowledge it. If deliveryIds is omitted, it marks all currently visible unread mail for the worker session as read.",
         "- send_mail(projectId?, taskId?, recipientType, recipientId?, body, priority?): Call this tool to send mailbox messages to the user, another agent, or the active assignment mailbox for a task. Use recipientType user, agent, or active_assignment. Set priority to interrupt when the recipient should be steered immediately.",
         "- remind_me(message, delaySeconds? | delayMinutes?): Call this tool to schedule a message back to yourself after a short delay. Use it when you need Orchestra to nudge you after waiting, polling, or giving another process time to finish.",
-        "- add_task_todo(taskId?, input): Call this tool when you discover a smaller follow-up item that should remain visible on the task but does not deserve its own subtask. In a worker session, omit taskId and laneId to default to the current assignment.",
+        "- add_task_todo(taskId?, input): Call this tool when you discover a smaller follow-up item that should remain visible on the task but does not deserve its own subtask. Always provide input.laneId explicitly; in a worker session you may omit taskId to use the current task, but worker-owned sessions may target only their current lane or directly connected workflow handoff lanes.",
         "- mark_task_todo_finished(todoId): Call this tool as soon as a todo item is complete so Orchestra knows the lane is closer to done.",
         "- mark_task_todo_unfinished(todoId): Call this tool if a previously completed todo becomes relevant again or needs rework.",
         "- create_subtask(parent_task_id, input): Call this tool when the current task should be broken into a separately tracked child task. Make the title/action clear and specific so the new task can stand on its own.",
@@ -4553,6 +4553,7 @@ mod tests {
         assert!(prompt.contains("- list_task_todos(taskId): Call this tool to inspect every todo recorded on the task across lanes."));
         assert!(prompt.contains("- list_unfinished_task_todos(taskId, laneId?): Call this tool to inspect only unfinished todos."));
         assert!(prompt.contains("- add_task_todo(taskId?, input): Call this tool when you discover a smaller follow-up item"));
+        assert!(prompt.contains("Always provide input.laneId explicitly"));
         assert!(prompt.contains(
             "- mark_task_todo_finished(todoId): Call this tool as soon as a todo item is complete"
         ));
@@ -4563,7 +4564,7 @@ mod tests {
         assert!(prompt.contains("call get_unread_mail using the canonical task ID"));
         assert!(prompt.contains("call mark_mail_read so Orchestra knows you handled it"));
         assert!(prompt.contains("Whenever you take or finish a large action, leave a durable comment with comment_on_task"));
-        assert!(prompt.contains("add it with add_task_todo"));
+        assert!(prompt.contains("add it with add_task_todo and an explicit laneId target"));
         assert!(prompt.contains("If you create or materially change a large or central repository file that should stay visible on the task"));
         assert!(prompt.contains("Do not add normal source code or test file edits as task file references unless the human explicitly asked"));
         assert!(prompt.contains("Before you transition the task or request help, add a comment explaining exactly what happened"));

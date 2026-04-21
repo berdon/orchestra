@@ -991,17 +991,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide description and optionally taskId and laneId. In a worker session, omitting taskId and laneId defaults to the active assignment.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide description and the target laneId; taskId remains optional in an active worker session. Worker-owned sessions may target their current lane or directly connected workflow handoff lanes only.`,
       parameters: Type.Object({
         taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id. Omit in an active worker session to use the current task." })),
-        laneId: Type.Optional(Type.String({ description: "Optional workflow lane id. Omit in an active worker session to use the current lane." })),
+        laneId: Type.String({ description: "Required workflow lane id that should own the todo." }),
         description: Type.String({ description: "Todo description to track on the task." }),
       }),
-      async execute(_toolCallId: string, params: { taskId?: string; laneId?: string; description: string }) {
+      async execute(_toolCallId: string, params: { taskId?: string; laneId: string; description: string }) {
         const payload = {
           ...(params.taskId ? { taskId: params.taskId } : {}),
           input: {
-            ...(params.laneId ? { laneId: params.laneId } : {}),
+            laneId: params.laneId,
             description: params.description,
           },
         };

@@ -73,7 +73,7 @@ describe("desktop task todos", () => {
           description: "Deterministically exercises task todo creation and gating.",
           systemPrompt: [
             "You are a deterministic Orchestra agent.",
-            "When a task is dispatched to you, call add_task_todo with description 'Verify lane checklist completion' and let taskId and laneId default from the active assignment.",
+            "When a task is dispatched to you, call add_task_todo with description 'Verify lane checklist completion' and laneId 'lane-todo-execution'. You may omit taskId so the active assignment task is used.",
             "Then immediately call complete_lane_as_success with the canonical task ID from the prompt and notes 'attempt before todo completion'.",
             "If Orchestra rejects that completion because unfinished todo items remain, call list_unfinished_task_todos for the canonical task ID and current lane, mark every returned todo finished with mark_task_todo_finished, and then call complete_lane_as_success with the canonical task ID and notes 'task todo desktop e2e complete'.",
             "Do not ask questions and do not stop early.",

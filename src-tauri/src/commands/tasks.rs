@@ -148,7 +148,10 @@ pub fn add_task_todo(
     state.log(
         "info",
         "task.todo.added",
-        &format!("Added task todo {} to task {}", todo.id, task_id),
+        &format!(
+            "Added task todo {} to task {} for lane {}",
+            todo.id, task_id, todo.lane_id
+        ),
     );
     state.log_authorized_action(
         "auth.audit",

@@ -324,6 +324,8 @@ describe("orchestra tools extension bridge tool setup", () => {
 
     const addTaskTodoTool = registeredTools.find((tool) => tool.name === "add_task_todo");
     expect(addTaskTodoTool.parameters.properties.description).toBeTruthy();
+    expect(addTaskTodoTool.parameters.properties.laneId).toBeTruthy();
+    expect(addTaskTodoTool.parameters.required).toContain("laneId");
     const addTaskTodoResult = await addTaskTodoTool.execute("tool-call-8", {
       taskId: "task-1",
       laneId: "lane-implement",

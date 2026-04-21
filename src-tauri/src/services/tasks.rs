@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -11,12 +11,14 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        TaskComment, TaskCommentInput, TaskCommentReceipt, TaskDependency, TaskDetail,
-        TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
+        AuthorizationContext, TaskComment, TaskCommentInput, TaskCommentReceipt, TaskDependency,
+        TaskDetail, TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskTodo, TaskTodoInput,
+        TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
         projects, task_attachments, task_file_references, task_repositories, task_runtime,
+        workflows,
     },
 };
 
@@ -258,10 +260,25 @@ pub fn add_task_todo(
     task_id: &str,
     input: TaskTodoInput,
 ) -> Result<TaskTodo, String> {
+    add_task_todo_with_authorization(connection, task_id, input, None)
+}
+
+pub(crate) fn add_task_todo_with_authorization(
+    connection: &Connection,
+    task_id: &str,
+    input: TaskTodoInput,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<TaskTodo, String> {
     let task = get_task(connection, task_id)?;
     let lane_id = normalized_optional_string(input.lane_id)
         .ok_or_else(|| "laneId: A workflow lane is required for task todos.".to_string())?;
-    validate_task_todo_input(connection, &task, &lane_id, &input.description)?;
+    validate_task_todo_input(
+        connection,
+        &task,
+        &lane_id,
+        &input.description,
+        authorization,
+    )?;
     let now = now_iso();
     let todo = TaskTodo {
         id: task_todo_id(),
@@ -1911,6 +1928,7 @@ fn validate_task_todo_input(
     task: &TaskDetail,
     lane_id: &str,
     description: &str,
+    authorization: Option<&AuthorizationContext>,
 ) -> Result<(), String> {
     if description.trim().is_empty() {
         return Err("description: Task todo description is required.".into());
@@ -1922,7 +1940,74 @@ fn validate_task_todo_input(
     if !lane_exists_for_workflow(connection, workflow_id, lane_id)? {
         return Err("laneId: Todo lane must belong to the task workflow.".into());
     }
-    Ok(())
+    authorize_task_todo_creation(connection, task, workflow_id, lane_id, authorization)
+}
+
+fn authorize_task_todo_creation(
+    connection: &Connection,
+    task: &TaskDetail,
+    workflow_id: &str,
+    target_lane_id: &str,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<(), String> {
+    let Some(authorization) = authorization else {
+        return Ok(());
+    };
+
+    if !matches!(authorization.actor_type.as_str(), "agent" | "role_instance") {
+        return Ok(());
+    }
+
+    let assignment = task_runtime::get_active_lane_assignment(connection, &task.id)?
+        .filter(|assignment| {
+            task_runtime::assignment_owned_by_worker_authorization(
+                assignment,
+                Some(authorization),
+            )
+        })
+        .ok_or_else(|| {
+            "taskId: Worker task todo creation requires an active assignment on the target task owned by this worker."
+                .to_string()
+        })?;
+
+    let workflow = workflows::get_workflow(connection, workflow_id)?;
+    let current_lane = workflow
+        .lanes
+        .iter()
+        .find(|lane| lane.id == assignment.lane_id)
+        .ok_or_else(|| {
+            format!(
+                "laneId: Active assignment lane {} is not part of workflow {}.",
+                assignment.lane_id, workflow_id
+            )
+        })?;
+
+    let allowed_lane_ids = permitted_task_todo_lane_ids(current_lane);
+    if allowed_lane_ids.contains(target_lane_id) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "laneId: Workers on lane {} can only create todos for {}. Requested lane {} is not permitted.",
+        assignment.lane_id,
+        allowed_lane_ids.iter().cloned().collect::<Vec<_>>().join(", "),
+        target_lane_id,
+    ))
+}
+
+fn permitted_task_todo_lane_ids(current_lane: &crate::models::WorkflowLane) -> BTreeSet<String> {
+    let mut allowed_lane_ids = BTreeSet::from([current_lane.id.clone()]);
+    if current_lane.success_transition_type == "lane" {
+        if let Some(target_lane_id) = current_lane.success_target_lane_id.as_ref() {
+            allowed_lane_ids.insert(target_lane_id.clone());
+        }
+    }
+    if current_lane.failure_transition_type == "lane" {
+        if let Some(target_lane_id) = current_lane.failure_target_lane_id.as_ref() {
+            allowed_lane_ids.insert(target_lane_id.clone());
+        }
+    }
+    allowed_lane_ids
 }
 
 fn load_parent_summary(
@@ -2557,6 +2642,49 @@ mod tests {
             .expect("insert lane");
     }
 
+    fn seed_multi_lane_workflow(connection: &Connection) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO workflows (id, slug, name, archived, created_at, updated_at) VALUES (?1, ?2, ?3, 0, ?4, ?4)",
+                params!["workflow-dev", "development", "Development", now],
+            )
+            .expect("insert workflow");
+        connection
+            .execute(
+                "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, success_transition_type, success_target_lane_id, failure_transition_type, failure_target_lane_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 'user', 'lane', 'lane-review', 'lane', 'lane-rework', ?5, ?5)",
+                params!["lane-plan", "workflow-dev", "plan", "Plan", now],
+            )
+            .expect("insert plan lane");
+        for (lane_id, lane_key, lane_name, lane_order) in [
+            ("lane-review", "review", "Review", 1),
+            ("lane-rework", "rework", "Rework", 2),
+            ("lane-done", "done", "Done", 3),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, success_transition_type, failure_transition_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'user', 'end', 'end', ?6, ?6)",
+                    params![lane_id, "workflow-dev", lane_key, lane_name, lane_order, now],
+                )
+                .expect("insert non-plan lane");
+        }
+    }
+
+    fn insert_agent_assignment(
+        connection: &Connection,
+        task_id: &str,
+        worker_id: &str,
+        lane_id: &str,
+    ) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, 'workflow-dev', ?3, 'agent', ?4, 'active', 'session-task-todo', '/tmp/task-todo', NULL, NULL, 'Prompt', 0, NULL, ?5, NULL, ?5, ?5)",
+                params![format!("assignment-{lane_id}"), task_id, lane_id, worker_id, now],
+            )
+            .expect("insert assignment");
+    }
+
     fn create_named_task(
         connection: &mut Connection,
         title: &str,
@@ -2930,6 +3058,99 @@ mod tests {
             list_task_todos(&connection, &task.id).expect("remaining todos should list");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, first.id);
+    }
+
+    #[test]
+    fn add_task_todo_with_authorization_allows_explicit_same_lane_targets() {
+        let mut connection = in_memory_connection();
+        seed_multi_lane_workflow(&connection);
+
+        let task = create_named_task(
+            &mut connection,
+            "Authorized todo target",
+            "in_progress",
+            None,
+        );
+        insert_agent_assignment(&connection, &task.id, "agent-1", "lane-plan");
+
+        let todo = add_task_todo_with_authorization(
+            &connection,
+            &task.id,
+            TaskTodoInput {
+                lane_id: Some("lane-plan".into()),
+                description: "Keep the current lane checklist visible".into(),
+            },
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: "agent-1".into(),
+            }),
+        )
+        .expect("same-lane todo should be allowed");
+
+        assert_eq!(todo.lane_id, "lane-plan");
+    }
+
+    #[test]
+    fn add_task_todo_with_authorization_allows_direct_handoff_lane_targets() {
+        let mut connection = in_memory_connection();
+        seed_multi_lane_workflow(&connection);
+
+        let task = create_named_task(
+            &mut connection,
+            "Cross-lane todo target",
+            "in_progress",
+            None,
+        );
+        insert_agent_assignment(&connection, &task.id, "agent-1", "lane-plan");
+
+        let todo = add_task_todo_with_authorization(
+            &connection,
+            &task.id,
+            TaskTodoInput {
+                lane_id: Some("lane-review".into()),
+                description: "Prepare the next lane handoff".into(),
+            },
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: "agent-1".into(),
+            }),
+        )
+        .expect("direct handoff todo should be allowed");
+
+        assert_eq!(todo.lane_id, "lane-review");
+    }
+
+    #[test]
+    fn add_task_todo_with_authorization_rejects_non_handoff_cross_lane_targets() {
+        let mut connection = in_memory_connection();
+        seed_multi_lane_workflow(&connection);
+
+        let task = create_named_task(
+            &mut connection,
+            "Rejected cross-lane todo target",
+            "in_progress",
+            None,
+        );
+        insert_agent_assignment(&connection, &task.id, "agent-1", "lane-plan");
+
+        let error = add_task_todo_with_authorization(
+            &connection,
+            &task.id,
+            TaskTodoInput {
+                lane_id: Some("lane-done".into()),
+                description: "Skip ahead".into(),
+            },
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: "agent-1".into(),
+            }),
+        )
+        .expect_err("non-handoff lane should be rejected");
+
+        assert_eq!(
+            error,
+            "laneId: Workers on lane lane-plan can only create todos for lane-plan, lane-review, lane-rework. Requested lane lane-done is not permitted.",
+        );
     }
 
     #[test]

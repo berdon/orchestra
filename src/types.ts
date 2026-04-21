@@ -876,7 +876,7 @@ export interface TaskTodo {
 }
 
 export interface TaskTodoInput {
-  laneId?: string | null;
+  laneId: string;
   description: string;
 }
 

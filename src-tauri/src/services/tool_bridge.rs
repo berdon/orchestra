@@ -1440,7 +1440,7 @@ fn invoke_bridge_command(
         }
         "add_task_todo" => {
             command_authorization::require_permission(connection, authorization, "tasks.update")?;
-            let mut input: TaskTodoInput = serde_json::from_value(
+            let input: TaskTodoInput = serde_json::from_value(
                 payload
                     .get("input")
                     .cloned()
@@ -1452,7 +1452,7 @@ fn invoke_bridge_command(
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string);
-            let inferred_context = if payload_task_id.is_none() || input.lane_id.is_none() {
+            let inferred_context = if payload_task_id.is_none() {
                 Some(resolve_active_worker_task_context(
                     connection,
                     authorization,
@@ -1471,11 +1471,13 @@ fn invoke_bridge_command(
                     "taskId: Task id is required when there is no active worker assignment."
                         .to_string()
                 })?;
-            if input.lane_id.is_none() {
-                input.lane_id = inferred_context.map(|(_, lane_id)| lane_id);
-            }
-            serde_json::to_value(tasks::add_task_todo(connection, &task_id, input)?)
-                .map_err(|error| format!("Unable to serialize task todo: {error}"))
+            serde_json::to_value(tasks::add_task_todo_with_authorization(
+                connection,
+                &task_id,
+                input,
+                authorization,
+            )?)
+            .map_err(|error| format!("Unable to serialize task todo: {error}"))
         }
         "mark_task_todo_finished" => {
             let todo_id = require_string(&payload, "todoId")?;
@@ -2265,6 +2267,76 @@ mod tests {
         }
     }
 
+    fn seed_bridge_task_todo_context(
+        connection: &mut Connection,
+        task_title: &str,
+    ) -> (crate::models::AgentDefinition, crate::models::TaskDetail) {
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at) VALUES ('workflow-dev', 'workflow-dev', 'Workflow Dev', NULL, 0, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("workflow should insert");
+        let agent = agents::create_agent(
+            connection,
+            AgentUpsertInput {
+                name: "Todo Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.read".into(), "tasks.update".into()],
+            },
+        )
+        .expect("agent should create");
+        for lane_sql in [
+            "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, assigned_entity_id, success_transition_type, success_target_lane_id, failure_transition_type, failure_target_lane_id, created_at, updated_at) VALUES ('lane-plan', 'workflow-dev', 'plan', 'Plan', 0, 'agent', ?1, 'lane', 'lane-review', 'lane', 'lane-rework', ?2, ?2)",
+            "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, assigned_entity_id, success_transition_type, failure_transition_type, created_at, updated_at) VALUES ('lane-review', 'workflow-dev', 'review', 'Review', 1, 'agent', ?1, 'end', 'end', ?2, ?2)",
+            "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, assigned_entity_id, success_transition_type, failure_transition_type, created_at, updated_at) VALUES ('lane-rework', 'workflow-dev', 'rework', 'Rework', 2, 'agent', ?1, 'end', 'end', ?2, ?2)",
+            "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, assigned_entity_id, success_transition_type, failure_transition_type, created_at, updated_at) VALUES ('lane-done', 'workflow-dev', 'done', 'Done', 3, 'agent', ?1, 'end', 'end', ?2, ?2)",
+        ] {
+            connection
+                .execute(lane_sql, params![agent.slug.as_str(), now.as_str()])
+                .expect("lane should insert");
+        }
+        let task = tasks::create_task(
+            connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: task_title.into(),
+                description: None,
+                task_type: "task".into(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-task-todo', ?1, 'workflow-dev', 'lane-plan', 'agent', ?2, 'active', 'session-task-todo', '/tmp/task-todo', NULL, NULL, 'Prompt', 0, NULL, ?3, NULL, ?3, ?3)",
+                params![task.id.as_str(), agent.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        (agent, task)
+    }
+
     fn with_temp_home<T>(label: &str, action: impl FnOnce() -> T) -> T {
         let _guard = TEST_ENV_LOCK.lock().expect("test env lock should acquire");
         let previous_home = env::var_os("HOME");
@@ -3040,66 +3112,10 @@ mod tests {
     }
 
     #[test]
-    fn add_task_todo_defaults_to_the_active_worker_task_and_lane() {
+    fn add_task_todo_defaults_to_the_active_worker_task_when_lane_is_explicit() {
         let mut connection = open_test_connection("bridge-task-todos");
-        let now = crate::state::now_iso();
-        connection
-            .execute(
-                "INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at) VALUES ('workflow-dev', 'workflow-dev', 'Workflow Dev', NULL, 0, ?1, ?1)",
-                params![now.as_str()],
-            )
-            .expect("workflow should insert");
-        let agent = agents::create_agent(
-            &mut connection,
-            AgentUpsertInput {
-                name: "Todo Worker".into(),
-                description: None,
-                system_prompt: None,
-                provider: None,
-                model: None,
-                role_id: None,
-                scope: Some("global".into()),
-                project_id: None,
-                thinking_level: Some("medium".into()),
-                policy_ids: Vec::new(),
-                direct_permissions: vec!["tasks.read".into(), "tasks.update".into()],
-            },
-        )
-        .expect("agent should create");
-        connection
-            .execute(
-                "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, lane_order, assigned_entity_type, assigned_entity_id, success_transition_type, failure_transition_type, created_at, updated_at) VALUES ('lane-plan', 'workflow-dev', 'plan', 'Plan', 0, 'agent', ?1, 'end', 'end', ?2, ?2)",
-                params![agent.slug.as_str(), now.as_str()],
-            )
-            .expect("lane should insert");
-        let task = tasks::create_task(
-            &mut connection,
-            Some("orchestra"),
-            TaskUpsertInput {
-                title: "Bridge task todo target".into(),
-                description: None,
-                task_type: "task".into(),
-                status: "in_progress".into(),
-                priority: "P2".into(),
-                workflow_id: Some("workflow-dev".into()),
-                current_lane_id: Some("lane-plan".into()),
-                assignee_type: "agent".into(),
-                assignee_id: Some(agent.slug.clone()),
-                repository_id: None,
-                repository_ids: Vec::new(),
-                parent_task_id: None,
-                whip_max_attempts: None,
-                archived: None,
-            },
-        )
-        .expect("task should create");
-        let now = crate::state::now_iso();
-        connection
-            .execute(
-                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-task-todo', ?1, 'workflow-dev', 'lane-plan', 'agent', ?2, 'active', 'session-task-todo', '/tmp/task-todo', NULL, NULL, 'Prompt', 0, NULL, ?3, NULL, ?3, ?3)",
-                params![task.id.as_str(), agent.id.as_str(), now.as_str()],
-            )
-            .expect("assignment should insert");
+        let (agent, task) =
+            seed_bridge_task_todo_context(&mut connection, "Bridge task todo target");
 
         let config = dummy_bridge_config("bridge-task-todo");
         let authorization = AuthorizationContext {
@@ -3113,7 +3129,10 @@ mod tests {
             "add_task_todo",
             Some(&authorization),
             Some("session-task-todo"),
-            json!({ "description": "Follow up on the active lane" }),
+            json!({
+                "laneId": "lane-plan",
+                "description": "Follow up on the active lane"
+            }),
         )
         .expect("task todo should add through bridge");
 
@@ -3137,6 +3156,81 @@ mod tests {
         )
         .expect("unfinished task todos should list");
         assert_eq!(unfinished.as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn add_task_todo_rejects_missing_lane_even_with_an_active_worker_assignment() {
+        let mut connection = open_test_connection("bridge-task-todos-missing-lane");
+        let (agent, _task) =
+            seed_bridge_task_todo_context(&mut connection, "Bridge task todo missing lane");
+
+        let config = dummy_bridge_config("bridge-task-todo-missing-lane");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+
+        let error = invoke_bridge_command(
+            &config,
+            &connection,
+            "add_task_todo",
+            Some(&authorization),
+            Some("session-task-todo"),
+            json!({ "description": "Missing lane target" }),
+        )
+        .expect_err("missing lane should be rejected");
+
+        assert_eq!(error, "laneId: A workflow lane is required for task todos.");
+    }
+
+    #[test]
+    fn add_task_todo_allows_direct_handoff_lanes_and_rejects_other_cross_lane_targets() {
+        let mut connection = open_test_connection("bridge-task-todos-cross-lane");
+        let (agent, task) =
+            seed_bridge_task_todo_context(&mut connection, "Bridge cross-lane todo");
+
+        let config = dummy_bridge_config("bridge-task-todo-cross-lane");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+
+        let handoff_todo = invoke_bridge_command(
+            &config,
+            &connection,
+            "add_task_todo",
+            Some(&authorization),
+            Some("session-task-todo"),
+            json!({
+                "taskId": task.id,
+                "laneId": "lane-review",
+                "description": "Prepare review handoff"
+            }),
+        )
+        .expect("direct handoff lane should be allowed");
+        assert_eq!(
+            handoff_todo.get("laneId").and_then(Value::as_str),
+            Some("lane-review")
+        );
+
+        let error = invoke_bridge_command(
+            &config,
+            &connection,
+            "add_task_todo",
+            Some(&authorization),
+            Some("session-task-todo"),
+            json!({
+                "taskId": task.id,
+                "laneId": "lane-done",
+                "description": "Skip ahead"
+            }),
+        )
+        .expect_err("non-handoff lane should be rejected");
+
+        assert_eq!(
+            error,
+            "laneId: Workers on lane lane-plan can only create todos for lane-plan, lane-review, lane-rework. Requested lane lane-done is not permitted.",
+        );
     }
 
     #[test]
