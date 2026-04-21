@@ -65,7 +65,7 @@ interface TaskDetailPageProps {
   onClose: (reason?: string) => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onDispatch: () => void;
@@ -1552,7 +1552,7 @@ export function TaskDetailPage({
   return (
     <>
       <div className="task-detail-shell" ref={detailPageRef}>
-      <section className="task-page task-detail-page panel">
+      <section className="task-page task-detail-page panel" data-role="task-detail-panel" data-task-id={task.id}>
         <div className="panel__header panel__header--session-detail task-detail-primary-header" ref={primaryHeaderRef}>
           <div>
             <p className="eyebrow">Task detail</p>
@@ -1570,7 +1570,7 @@ export function TaskDetailPage({
                 className="secondary-button"
                 data-role="task-open-session"
                 type="button"
-                onClick={() => onOpenSession(activeSessionId)}
+                onClick={() => onOpenSession(activeSessionId, task.projectId)}
               >
                 Open session
               </button>

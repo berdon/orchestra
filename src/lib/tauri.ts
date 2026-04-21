@@ -560,13 +560,20 @@ function saveMockSessions(sessions: SessionRecord[], projectId?: string | null) 
   setStoredValue(sessionStorageKey(projectId), sessions);
 }
 
-function attachMockSessionTaskMetadata(session: SessionRecord, task: Pick<TaskDetail, "id" | "number" | "title">, workerType: string, workerName?: string | null) {
+function attachMockSessionTaskMetadata(
+  session: SessionRecord,
+  task: Pick<TaskDetail, "id" | "number" | "title" | "projectId">,
+  workerType: string,
+  workerName?: string | null,
+) {
   return {
     ...session,
     taskId: task.id,
+    taskProjectId: task.projectId,
     taskNumber: task.number,
     taskTitle: task.title,
     activeTaskId: task.id,
+    activeTaskProjectId: task.projectId,
     activeTaskNumber: task.number,
     activeTaskTitle: task.title,
     workerType,
@@ -578,6 +585,7 @@ function clearMockSessionActiveTaskMetadata(session: SessionRecord) {
   return {
     ...session,
     activeTaskId: null,
+    activeTaskProjectId: null,
     activeTaskNumber: null,
     activeTaskTitle: null,
   } satisfies SessionRecord;

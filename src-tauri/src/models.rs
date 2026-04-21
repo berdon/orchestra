@@ -457,11 +457,15 @@ pub struct SessionRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub task_number: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_task_project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_task_number: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
