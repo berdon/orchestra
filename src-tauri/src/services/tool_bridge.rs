@@ -1209,12 +1209,17 @@ fn invoke_bridge_command(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            let project_id = payload
-                .get("projectId")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("orchestra");
-            serde_json::to_value(tasks::list_tasks(connection, project_id, include_archived)?)
+            let Some(project_id) = projects::resolve_requested_or_default_project_id(
+                connection,
+                payload
+                    .get("projectId")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty()),
+            )? else {
+                return serde_json::to_value(Vec::<crate::models::TaskSummary>::new())
+                    .map_err(|error| format!("Unable to serialize tasks: {error}"));
+            };
+            serde_json::to_value(tasks::list_tasks(connection, &project_id, include_archived)?)
                 .map_err(|error| format!("Unable to serialize tasks: {error}"))
         }
         "get_task" | "get_task_context" => {
@@ -2209,13 +2214,14 @@ fn invoke_bridge_command(
         "get_worker_overlay" => {
             let worker_type = require_string(&payload, "workerType")?;
             let worker_slug = require_string(&payload, "workerSlug")?;
-            let project_slug = payload
-                .get("projectSlug")
-                .and_then(Value::as_str)
-                .unwrap_or("orchestra");
+            let project_slug = projects::require_requested_or_default_project_slug(
+                connection,
+                payload.get("projectSlug").and_then(Value::as_str),
+                "Create a project first before reading worker overlays.",
+            )?;
             command_authorization::require_permission(connection, authorization, "projects.read")?;
             serde_json::to_value(project_settings::get_worker_overlay(
-                project_slug,
+                &project_slug,
                 &worker_type,
                 &worker_slug,
             )?)
@@ -2224,10 +2230,11 @@ fn invoke_bridge_command(
         "update_worker_overlay" => {
             let worker_type = require_string(&payload, "workerType")?;
             let worker_slug = require_string(&payload, "workerSlug")?;
-            let project_slug = payload
-                .get("projectSlug")
-                .and_then(Value::as_str)
-                .unwrap_or("orchestra");
+            let project_slug = projects::require_requested_or_default_project_slug(
+                connection,
+                payload.get("projectSlug").and_then(Value::as_str),
+                "Create a project first before updating worker overlays.",
+            )?;
             let prompt = payload
                 .get("prompt")
                 .and_then(Value::as_str)
@@ -2238,7 +2245,7 @@ fn invoke_bridge_command(
                 "projects.update",
             )?;
             serde_json::to_value(project_settings::update_worker_overlay(
-                project_slug,
+                &project_slug,
                 &worker_type,
                 &worker_slug,
                 prompt,

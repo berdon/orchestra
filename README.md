@@ -30,6 +30,16 @@ This repository now includes the first-pass Orchestra application scaffold:
 - Settings page log viewer for early backend/session visibility
 - a session-first UI flow for creating, resuming, subscribing to, and interacting with sessions
 
+## First-run baseline
+
+A fresh Orchestra install now seeds a ready-to-use baseline automatically:
+
+- one starter project named `Orchestra`
+- standard global roles: Architect, Senior Developer, QA, Product Owner, and Project Manager
+- ready-to-use Product Strategy, Planning, and Development workflows wired to those role slugs
+
+These seeded records are normal user-managed data, not protected system state. You can edit, archive, duplicate, replace, or delete them as needed.
+
 ## Development
 
 ### Frontend only

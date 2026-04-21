@@ -102,6 +102,8 @@ pub fn run() {
             None,
         )
         .expect("unable to seed Orchestra supervisor authorization state");
+    services::install_seed::ensure_install_baseline_seeded(&mut bootstrap_connection)
+        .expect("unable to seed Orchestra install baseline");
     services::agent_runtime::reconcile_agent_runtime_states(&bootstrap_connection)
         .expect("unable to reconcile Orchestra agent runtime state");
 
@@ -121,6 +123,11 @@ pub fn run() {
             "Ensured supervisor policy {} and supervisor agent {}",
             supervisor_policy.id, supervisor_agent.id
         ),
+    );
+    app_state.log(
+        "info",
+        "install.seed",
+        "Ensured default install baseline project, roles, and workflows",
     );
     app_state.log(
         "info",

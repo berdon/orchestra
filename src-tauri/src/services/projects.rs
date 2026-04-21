@@ -17,7 +17,6 @@ use crate::services::{
 };
 
 pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, String> {
-    ensure_default_project(connection)?;
     let mut statement = connection
         .prepare(
             r#"
@@ -47,7 +46,6 @@ pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, Str
 }
 
 pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectDetail, String> {
-    ensure_default_project(connection)?;
     let project = connection
         .query_row(
             r#"
@@ -81,7 +79,6 @@ pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectD
 }
 
 pub fn ensure_project_exists(connection: &Connection, project_id: &str) -> Result<(), String> {
-    ensure_default_project(connection)?;
     let exists = connection
         .query_row(
             "SELECT 1 FROM projects WHERE id = ?1 LIMIT 1",
@@ -116,7 +113,6 @@ pub fn get_project_by_slug(
     connection: &Connection,
     project_slug: &str,
 ) -> Result<Option<ProjectDetail>, String> {
-    ensure_default_project(connection)?;
     let project = connection
         .query_row(
             r#"
@@ -150,6 +146,72 @@ pub fn get_project_by_slug(
         repositories,
         ..project
     }))
+}
+
+pub fn resolve_default_project_id(connection: &Connection) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT id
+            FROM projects
+            ORDER BY updated_at DESC, name ASC, id ASC
+            LIMIT 1
+            "#,
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to resolve default project: {error}"))
+}
+
+pub fn resolve_requested_or_default_project_id(
+    connection: &Connection,
+    requested_project_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    if let Some(project_id) = requested_project_id.filter(|value| !value.trim().is_empty()) {
+        ensure_project_exists(connection, project_id)?;
+        return Ok(Some(project_id.to_string()));
+    }
+
+    resolve_default_project_id(connection)
+}
+
+pub fn require_requested_or_default_project_id(
+    connection: &Connection,
+    requested_project_id: Option<&str>,
+    missing_message: &str,
+) -> Result<String, String> {
+    resolve_requested_or_default_project_id(connection, requested_project_id)?
+        .ok_or_else(|| missing_message.to_string())
+}
+
+pub fn resolve_default_project_slug(connection: &Connection) -> Result<Option<String>, String> {
+    let Some(project_id) = resolve_default_project_id(connection)? else {
+        return Ok(None);
+    };
+    Ok(Some(get_project(connection, &project_id)?.slug))
+}
+
+pub fn resolve_requested_or_default_project_slug(
+    connection: &Connection,
+    requested_project_slug: Option<&str>,
+) -> Result<Option<String>, String> {
+    if let Some(project_slug) = requested_project_slug.filter(|value| !value.trim().is_empty()) {
+        let project = get_project_by_slug(connection, project_slug)?
+            .ok_or_else(|| format!("Project slug {project_slug} was not found"))?;
+        return Ok(Some(project.slug));
+    }
+
+    resolve_default_project_slug(connection)
+}
+
+pub fn require_requested_or_default_project_slug(
+    connection: &Connection,
+    requested_project_slug: Option<&str>,
+    missing_message: &str,
+) -> Result<String, String> {
+    resolve_requested_or_default_project_slug(connection, requested_project_slug)?
+        .ok_or_else(|| missing_message.to_string())
 }
 
 fn existing_repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
@@ -243,7 +305,6 @@ pub fn list_repositories(
     connection: &Connection,
     project_id: Option<&str>,
 ) -> Result<Vec<RepositoryRecord>, String> {
-    ensure_default_project(connection)?;
     if let Some(project_id) = project_id {
         ensure_project_exists(connection, project_id)?;
     }
@@ -477,10 +538,6 @@ pub fn delete_repository(
     let repository = get_repository(connection, repository_id)?;
     let project = get_project(connection, &repository.project_id)?;
 
-    if project.id == DEFAULT_PROJECT_ID && repository.id == DEFAULT_REPOSITORY_ID {
-        return Err("The default Orchestra repository cannot be deleted.".into());
-    }
-
     let fallback_default_repository_id =
         if project.default_repository_id.as_deref() == Some(repository_id) {
             project
@@ -530,9 +587,6 @@ pub fn delete_repository(
 
 pub fn delete_project(connection: &Connection, project_id: &str) -> Result<ProjectDetail, String> {
     let project = get_project(connection, project_id)?;
-    if project.id == DEFAULT_PROJECT_ID {
-        return Err("The default Orchestra project cannot be deleted.".into());
-    }
 
     connection
         .execute("DELETE FROM projects WHERE id = ?1", [project_id])
@@ -569,44 +623,6 @@ pub fn get_repository(
         .optional()
         .map_err(|error| format!("Unable to query repository {repository_id}: {error}"))?
         .ok_or_else(|| format!("Repository {repository_id} was not found"))
-}
-
-const DEFAULT_PROJECT_ID: &str = "orchestra";
-const DEFAULT_REPOSITORY_ID: &str = "repo-orchestra";
-
-fn ensure_default_project(connection: &Connection) -> Result<(), String> {
-    let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
-        .map_err(|error| format!("Unable to count projects: {error}"))?;
-    if count > 0 {
-        return Ok(());
-    }
-
-    let now = now_iso();
-    let default_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .and_then(|path| path.parent())
-        .map(|path| path.join("orchestra").join("repository"))
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .to_path_buf()
-        });
-    connection
-        .execute(
-            "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', ?2, ?3, ?3)",
-            params![DEFAULT_PROJECT_ID, DEFAULT_REPOSITORY_ID, now],
-        )
-        .map_err(|error| format!("Unable to seed default project: {error}"))?;
-    connection
-        .execute(
-            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'existing', 'main', ?4, ?4)",
-            params![DEFAULT_REPOSITORY_ID, DEFAULT_PROJECT_ID, default_path.display().to_string(), now],
-        )
-        .map_err(|error| format!("Unable to seed default repository: {error}"))?;
-    Ok(())
 }
 
 fn normalize_project_input(mut input: ProjectUpsertInput) -> ProjectUpsertInput {

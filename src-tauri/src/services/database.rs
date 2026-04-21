@@ -97,6 +97,12 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS installation_bootstrap_state (
+                key TEXT PRIMARY KEY,
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS repositories (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

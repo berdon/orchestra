@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { buildSeededMockRoles } from "./defaultInstallBaseline";
 import { isTauriAvailable } from "./tauri";
 import type { RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError, RoleValidationResult } from "../types";
 
@@ -120,42 +121,7 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
 }
 
 function seedMockRoles(): RoleDefinition[] {
-  const timestamp = nowIso();
-
-  return [
-    {
-      id: createId("role"),
-      slug: "developer",
-      name: "Developer",
-      description: "Implements approved changes and carries work forward through build-ready lanes.",
-      systemPrompt: "Implement the requested changes and keep the task moving.",
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      thinkingLevel: "medium",
-      capacity: 2,
-      policyIds: [],
-      directPermissions: [],
-      archived: false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    },
-    {
-      id: createId("role"),
-      slug: "reviewer",
-      name: "Reviewer",
-      description: "Reviews completed work for correctness, regressions, and readiness.",
-      systemPrompt: "Review the proposed work and identify concrete findings.",
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      thinkingLevel: "low",
-      capacity: 1,
-      policyIds: [],
-      directPermissions: [],
-      archived: false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    },
-  ];
+  return buildSeededMockRoles(nowIso());
 }
 
 function ensureMockRoles() {

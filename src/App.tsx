@@ -2456,7 +2456,7 @@ export function App() {
         return;
       case "create-task":
         setActivePage("tasks");
-        setTasksCreateProjectId(activeProjectId ?? "orchestra");
+        setTasksCreateProjectId(activeProjectId ?? projects[0]?.id ?? null);
         setTasksCreateToken((current) => current + 1);
         return;
       case "create-session":

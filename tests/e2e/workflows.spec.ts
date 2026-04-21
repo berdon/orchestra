@@ -18,7 +18,9 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
     return development?.lanes?.map((lane: { assignedEntityId: string | null }) => lane.assignedEntityId) ?? [];
   });
 
-  expect(seededWorkflowRefs).toContain("developer");
+  expect(seededWorkflowRefs).toContain("architect");
+  expect(seededWorkflowRefs).toContain("senior-developer");
+  expect(seededWorkflowRefs).toContain("qa");
   expect(seededWorkflowRefs).not.toContain("developer-role");
 
   await page.getByRole("button", { name: "New workflow" }).click();

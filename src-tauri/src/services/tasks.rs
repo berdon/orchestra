@@ -61,12 +61,7 @@ pub fn list_tasks(
     project_id: &str,
     include_archived: bool,
 ) -> Result<Vec<TaskSummary>, String> {
-    if let Err(error) = projects::ensure_project_exists(connection, project_id) {
-        if project_id == DEFAULT_PROJECT_ID {
-            return Ok(Vec::new());
-        }
-        return Err(error);
-    }
+    projects::ensure_project_exists(connection, project_id)?;
     let mut statement = connection
         .prepare(&format!(
             r#"
@@ -336,7 +331,11 @@ pub fn create_task(
     project_id: Option<&str>,
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
-    let project_id = project_id.unwrap_or(DEFAULT_PROJECT_ID).to_string();
+    let project_id = projects::require_requested_or_default_project_id(
+        connection,
+        project_id,
+        "Create a project first before creating tasks.",
+    )?;
     create_task_from_blueprint(connection, &project_id, input, None, None)
 }
 

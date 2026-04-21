@@ -536,7 +536,8 @@ fn resolve_project_id_for_send(
         }
     }
 
-    Ok("orchestra".into())
+    projects::resolve_default_project_id(connection)?
+        .ok_or_else(|| "Create a project first before sending mail without a task context.".to_string())
 }
 
 fn resolve_recipient(

@@ -1,0 +1,329 @@
+{
+  "version": 1,
+  "project": {
+    "id": "orchestra",
+    "slug": "orchestra",
+    "name": "Orchestra",
+    "description": "Seeded starter workspace for strategy, planning, and development work. You can rename, replace, archive, or delete it at any time."
+  },
+  "roles": [
+    {
+      "id": "role-architect",
+      "slug": "architect",
+      "name": "Architect",
+      "description": "Clarifies requirements, frames technical direction, and produces implementation-ready plans.",
+      "systemPrompt": "You are the Architect role in Orchestra. Your job is to turn fuzzy requests into clear, workable technical direction. Optimize for clarity, sound structure, practical tradeoffs, and a plan other workers can execute without guessing.\n\nWhen you work, first make sure you understand the problem, constraints, dependencies, and desired outcome. Call out assumptions, open questions, risks, and sequencing issues early. Prefer the smallest design that satisfies the requirement well. When multiple approaches are possible, compare them briefly and recommend one with a concrete reason.\n\nGood output from you is specific and execution-ready: crisp scope, proposed architecture or change shape, key data/model impacts, integration points, validation expectations, and follow-up risks worth tracking. In Orchestra, keep the task state accurate: leave useful comments when important decisions are made, capture why the plan changed, and make handoffs easy for implementation and QA.\n\nAvoid vague strategy, overengineering, and plans that only restate the problem. Do not hide uncertainty. If something needs a decision, say so directly and explain the options.",
+      "provider": null,
+      "model": null,
+      "thinkingLevel": "high",
+      "capacity": 1,
+      "directPermissions": [
+        "tasks.read",
+        "tasks.create",
+        "tasks.update",
+        "tasks.comment",
+        "tasks.transition",
+        "tasks.attachments.write",
+        "tasks.dependencies.write"
+      ]
+    },
+    {
+      "id": "role-senior-developer",
+      "slug": "senior-developer",
+      "name": "Senior Developer",
+      "description": "Implements approved work carefully, validates changes, and delivers reviewable results.",
+      "systemPrompt": "You are the Senior Developer role in Orchestra. Your job is to implement approved work carefully, keep changes scoped, and leave the codebase better understood than you found it. Optimize for correctness, maintainability, and reliable delivery.\n\nBefore changing code, understand the current behavior and the intended outcome. Follow the approved plan when one exists, and only expand scope when the new work is clearly necessary to make the feature correct. Validate the important paths you touched, explain the tradeoffs you made, and surface any follow-up items that should stay visible.\n\nGood output from you includes clean implementation, focused diffs, relevant tests or verification steps, and concise notes about what changed and why. In Orchestra, keep the task state accurate: leave progress comments during substantial work, note meaningful decisions, and make it easy for QA and reviewers to understand what to check.\n\nAvoid speculative rewrites, unnecessary churn, hidden shortcuts, and claiming confidence without evidence. If validation is limited, say exactly what you did and what still needs verification.",
+      "provider": null,
+      "model": null,
+      "thinkingLevel": "medium",
+      "capacity": 2,
+      "directPermissions": [
+        "tasks.read",
+        "tasks.create",
+        "tasks.update",
+        "tasks.comment",
+        "tasks.transition",
+        "tasks.attachments.write",
+        "tasks.dependencies.write"
+      ]
+    },
+    {
+      "id": "role-qa",
+      "slug": "qa",
+      "name": "QA",
+      "description": "Verifies acceptance criteria, reproduces defects precisely, and reports findings with evidence.",
+      "systemPrompt": "You are the QA role in Orchestra. Your job is to verify whether work actually satisfies the requirement and to communicate findings clearly enough that the next person knows exactly what to do. Optimize for evidence, reproducibility, regression awareness, and release confidence.\n\nStart from the acceptance criteria and the stated intent of the change. Check the primary path, relevant edge cases, and the most likely regressions. When you find a problem, report the observed behavior, expected behavior, concrete repro steps, and the impact. Distinguish blockers from nits and unknowns.\n\nGood output from you is decisive and well-supported: pass/fail framing, evidence, concise repro notes, and clear follow-up guidance. In Orchestra, keep task state accurate by leaving durable comments with findings, referencing exactly what was validated, and avoiding ambiguous \"looks good\" approvals.\n\nAvoid vague feedback, unprioritized laundry lists, and conclusions without evidence. If you could not validate something, say what prevented it and what still needs coverage.",
+      "provider": null,
+      "model": null,
+      "thinkingLevel": "medium",
+      "capacity": 1,
+      "directPermissions": [
+        "tasks.read",
+        "tasks.create",
+        "tasks.update",
+        "tasks.comment",
+        "tasks.transition",
+        "tasks.attachments.write",
+        "tasks.dependencies.write"
+      ]
+    },
+    {
+      "id": "role-product-owner",
+      "slug": "product-owner",
+      "name": "Product Owner",
+      "description": "Keeps work aligned to user value, scope, and acceptance criteria.",
+      "systemPrompt": "You are the Product Owner role in Orchestra. Your job is to keep work anchored to real user value, clear scope, and explicit acceptance criteria. Optimize for outcome clarity, sensible prioritization, and decisions that reduce ambiguity for the rest of the workflow.\n\nWhen you work, make the user problem, expected behavior, constraints, and success conditions explicit. Tighten scope when a request is broad, highlight tradeoffs, and identify missing information early. Prefer simple statements of intent that can be tested and implemented directly.\n\nGood output from you includes clear problem framing, concrete acceptance criteria, explicit priorities, and crisp guidance about what is in or out of scope. In Orchestra, leave comments that capture product decisions and rationale so downstream workers do not have to reverse-engineer intent.\n\nAvoid placeholder requirements, hand-wavy priorities, and acceptance criteria that depend on interpretation. If something is unclear, surface it instead of letting the workflow drift.",
+      "provider": null,
+      "model": null,
+      "thinkingLevel": "medium",
+      "capacity": 1,
+      "directPermissions": [
+        "tasks.read",
+        "tasks.create",
+        "tasks.update",
+        "tasks.comment",
+        "tasks.transition",
+        "tasks.attachments.write",
+        "tasks.dependencies.write"
+      ]
+    },
+    {
+      "id": "role-project-manager",
+      "slug": "project-manager",
+      "name": "Project Manager",
+      "description": "Keeps execution sequenced, coordinated, and accurately tracked.",
+      "systemPrompt": "You are the Project Manager role in Orchestra. Your job is to keep execution moving in the right order with clear ownership, visible blockers, and reliable status. Optimize for coordination, sequencing, and handoffs that reduce idle time and confusion.\n\nWhen you work, identify what is blocking progress, what can happen in parallel, what depends on what, and what decision or artifact is needed next. Turn vague progress into concrete status. Keep plans realistic and keep the next action obvious.\n\nGood output from you includes clear sequencing, blocker tracking, ownership clarity, and concise status notes that help everyone else move faster. In Orchestra, use comments and task structure to make progress legible, preserve context at lane boundaries, and call out follow-up items that should not be lost.\n\nAvoid status theater, redundant commentary, and handoffs that say work moved without explaining why. If something is blocked, say what is blocked, by whom, and what unblocks it.",
+      "provider": null,
+      "model": null,
+      "thinkingLevel": "low",
+      "capacity": 1,
+      "directPermissions": [
+        "tasks.read",
+        "tasks.create",
+        "tasks.update",
+        "tasks.comment",
+        "tasks.transition",
+        "tasks.attachments.write",
+        "tasks.dependencies.write"
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "workflow-development",
+      "slug": "development",
+      "name": "Development",
+      "description": "Plan, implement, verify, and review delivery work.",
+      "lanes": [
+        {
+          "id": "lane-development-plan",
+          "key": "plan",
+          "name": "Plan",
+          "description": "Turn the request into an implementation-ready technical approach.",
+          "order": 0,
+          "assignedEntityType": "role",
+          "assignedEntityId": "architect",
+          "entryPromptTemplate": "Review the task, clarify the approach, and leave an implementation-ready plan with notable risks or dependencies.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-development-implement",
+          "failureTransitionType": "user_intervention",
+          "failureTargetLaneId": null
+        },
+        {
+          "id": "lane-development-implement",
+          "key": "implement",
+          "name": "Implement",
+          "description": "Execute the approved plan and validate the changed behavior.",
+          "order": 1,
+          "assignedEntityType": "role",
+          "assignedEntityId": "senior-developer",
+          "entryPromptTemplate": "Implement the planned change, keep the diff focused, run relevant validation, and document important tradeoffs or follow-up work.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-development-verify",
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-development-plan"
+        },
+        {
+          "id": "lane-development-verify",
+          "key": "verify",
+          "name": "Verify",
+          "description": "Validate acceptance criteria and report concrete findings.",
+          "order": 2,
+          "assignedEntityType": "role",
+          "assignedEntityId": "qa",
+          "entryPromptTemplate": "Verify the delivered work against the acceptance criteria, check likely regressions, and leave evidence-backed findings.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-development-review",
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-development-implement"
+        },
+        {
+          "id": "lane-development-review",
+          "key": "review",
+          "name": "Review",
+          "description": "User review and final disposition.",
+          "order": 3,
+          "assignedEntityType": "user",
+          "assignedEntityId": null,
+          "entryPromptTemplate": "Review the completed work, approve it if it meets expectations, or send it back with specific feedback.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "end",
+          "successTargetLaneId": null,
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-development-implement"
+        }
+      ]
+    },
+    {
+      "id": "workflow-product-strategy",
+      "slug": "product-strategy",
+      "name": "Product Strategy",
+      "description": "Frame an opportunity, pressure-test it technically, and prepare it for review.",
+      "lanes": [
+        {
+          "id": "lane-product-strategy-opportunity",
+          "key": "frame-opportunity",
+          "name": "Frame opportunity",
+          "description": "Clarify the user problem, target outcome, and success criteria.",
+          "order": 0,
+          "assignedEntityType": "role",
+          "assignedEntityId": "product-owner",
+          "entryPromptTemplate": "Frame the opportunity from the user and product perspective, define success, and call out scope or ambiguity that needs resolution.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-product-strategy-technical",
+          "failureTransitionType": "user_intervention",
+          "failureTargetLaneId": null
+        },
+        {
+          "id": "lane-product-strategy-technical",
+          "key": "technical-framing",
+          "name": "Technical framing",
+          "description": "Assess feasibility, constraints, and implementation implications.",
+          "order": 1,
+          "assignedEntityType": "role",
+          "assignedEntityId": "architect",
+          "entryPromptTemplate": "Assess feasibility, technical constraints, and major implementation considerations for the proposed strategy.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-product-strategy-delivery",
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-product-strategy-opportunity"
+        },
+        {
+          "id": "lane-product-strategy-delivery",
+          "key": "delivery-framing",
+          "name": "Delivery framing",
+          "description": "Outline sequencing, dependencies, and execution concerns.",
+          "order": 2,
+          "assignedEntityType": "role",
+          "assignedEntityId": "project-manager",
+          "entryPromptTemplate": "Translate the strategy into execution terms: sequencing, dependencies, risks, and the shape of the work required.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-product-strategy-review",
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-product-strategy-technical"
+        },
+        {
+          "id": "lane-product-strategy-review",
+          "key": "review",
+          "name": "Review",
+          "description": "User review of the proposed strategy.",
+          "order": 3,
+          "assignedEntityType": "user",
+          "assignedEntityId": null,
+          "entryPromptTemplate": "Review the proposed strategy, approve it if it is directionally right, or return it with specific feedback.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "end",
+          "successTargetLaneId": null,
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-product-strategy-opportunity"
+        }
+      ]
+    },
+    {
+      "id": "workflow-planning",
+      "slug": "planning",
+      "name": "Planning",
+      "description": "Turn scoped product intent into an execution-ready plan.",
+      "lanes": [
+        {
+          "id": "lane-planning-scope",
+          "key": "clarify-scope",
+          "name": "Clarify scope",
+          "description": "Confirm what is in scope, what success looks like, and what must not be missed.",
+          "order": 0,
+          "assignedEntityType": "role",
+          "assignedEntityId": "product-owner",
+          "entryPromptTemplate": "Clarify the scope, acceptance criteria, assumptions, and open questions so downstream planning is grounded in a clear outcome.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-planning-technical",
+          "failureTransitionType": "user_intervention",
+          "failureTargetLaneId": null
+        },
+        {
+          "id": "lane-planning-technical",
+          "key": "technical-plan",
+          "name": "Technical plan",
+          "description": "Define the implementation approach, risks, and technical sequencing.",
+          "order": 1,
+          "assignedEntityType": "role",
+          "assignedEntityId": "architect",
+          "entryPromptTemplate": "Produce an implementation-ready technical plan, including risks, dependencies, and the most important validation expectations.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-planning-execution",
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-planning-scope"
+        },
+        {
+          "id": "lane-planning-execution",
+          "key": "execution-plan",
+          "name": "Execution plan",
+          "description": "Turn the technical plan into concrete sequencing and ownership.",
+          "order": 2,
+          "assignedEntityType": "role",
+          "assignedEntityId": "project-manager",
+          "entryPromptTemplate": "Break the plan into a realistic execution sequence, call out blockers and dependencies, and make the next steps obvious.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "lane",
+          "successTargetLaneId": "lane-planning-review",
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-planning-technical"
+        },
+        {
+          "id": "lane-planning-review",
+          "key": "review",
+          "name": "Review",
+          "description": "User review of the full plan.",
+          "order": 3,
+          "assignedEntityType": "user",
+          "assignedEntityId": null,
+          "entryPromptTemplate": "Review the proposed plan, approve it if it is execution-ready, or send it back with specific gaps or changes.",
+          "useSeparateWorktree": false,
+          "requireUserApprovalOnSuccess": false,
+          "successTransitionType": "end",
+          "successTargetLaneId": null,
+          "failureTransitionType": "lane",
+          "failureTargetLaneId": "lane-planning-scope"
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { buildSeededMockProjects, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
 import type {
   ProjectDetail,
   ProjectSummary,
@@ -11,8 +12,18 @@ import type {
 
 const PROJECT_STORAGE_KEY = "orchestra.mock.projects";
 const ACTIVE_PROJECT_STORAGE_KEY = "orchestra.mock.active-project-id";
-const DEFAULT_PROJECT_ID = "orchestra";
-const DEFAULT_REPOSITORY_ID = "repo-orchestra";
+const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
+const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
+const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
+const TASK_STORAGE_KEY = "orchestra.mock.tasks";
+const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
+const TASK_COMMENT_USER_RECEIPT_STORAGE_KEY = "orchestra.mock.task-comment-user-receipts";
+const MAILBOX_STORAGE_KEY = "orchestra.mock.mailbox";
+const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
+const AGENT_QUEUE_STORAGE_KEY = "orchestra.mock.agent-queue";
+const TASK_SCHEDULE_STORAGE_KEY = "orchestra.mock.task-schedules";
+const DOMAIN_EVENT_STORAGE_KEY = "orchestra.mock.domain-events";
+const NO_PROJECT_RUNTIME_KEY = "no-project";
 
 function isTauriAvailable() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -41,34 +52,75 @@ function saveStoredProjects(projects: ProjectDetail[]) {
   window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
 }
 
+function getStoredArray<T>(key: string): T[] {
+  const value = window.localStorage.getItem(key);
+  return value ? (JSON.parse(value) as T[]) : [];
+}
+
+function saveStoredArray<T>(key: string, value: T[]) {
+  window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+function deleteProjectScopedMockState(projectId: string) {
+  const deletedTaskIds = new Set(
+    getStoredArray<{ id: string; projectId?: string | null }>(TASK_STORAGE_KEY)
+      .filter((task) => task.projectId === projectId)
+      .map((task) => task.id),
+  );
+  const deletedScheduleIds = new Set(
+    getStoredArray<{ id: string; projectId?: string | null }>(TASK_SCHEDULE_STORAGE_KEY)
+      .filter((schedule) => schedule.projectId === projectId)
+      .map((schedule) => schedule.id),
+  );
+
+  saveStoredArray(
+    TASK_STORAGE_KEY,
+    getStoredArray<{ id: string; projectId?: string | null }>(TASK_STORAGE_KEY).filter((task) => task.projectId !== projectId),
+  );
+  saveStoredArray(
+    TASK_DEPENDENCY_STORAGE_KEY,
+    getStoredArray<{ blockerTaskId: string; blockedTaskId: string }>(TASK_DEPENDENCY_STORAGE_KEY)
+      .filter((dependency) => !deletedTaskIds.has(dependency.blockerTaskId) && !deletedTaskIds.has(dependency.blockedTaskId)),
+  );
+  saveStoredArray(
+    TASK_COMMENT_USER_RECEIPT_STORAGE_KEY,
+    getStoredArray<{ taskId: string }>(TASK_COMMENT_USER_RECEIPT_STORAGE_KEY)
+      .filter((receipt) => !deletedTaskIds.has(receipt.taskId)),
+  );
+  saveStoredArray(
+    MAILBOX_STORAGE_KEY,
+    getStoredArray<{ projectId?: string | null; taskId?: string | null }>(MAILBOX_STORAGE_KEY)
+      .filter((message) => message.projectId !== projectId && !(message.taskId && deletedTaskIds.has(message.taskId))),
+  );
+  saveStoredArray(
+    AGENT_RUNTIME_STORAGE_KEY,
+    getStoredArray<{ projectId?: string | null }>(AGENT_RUNTIME_STORAGE_KEY)
+      .filter((runtime) => runtime.projectId !== projectId),
+  );
+  saveStoredArray(
+    AGENT_QUEUE_STORAGE_KEY,
+    getStoredArray<{ projectId?: string | null; sourceTaskId?: string | null }>(AGENT_QUEUE_STORAGE_KEY)
+      .filter((entry) => entry.projectId !== projectId && !(entry.sourceTaskId && deletedTaskIds.has(entry.sourceTaskId))),
+  );
+  saveStoredArray(
+    TASK_SCHEDULE_STORAGE_KEY,
+    getStoredArray<{ id: string; projectId?: string | null }>(TASK_SCHEDULE_STORAGE_KEY)
+      .filter((schedule) => schedule.projectId !== projectId),
+  );
+  saveStoredArray(
+    DOMAIN_EVENT_STORAGE_KEY,
+    getStoredArray<{ projectId?: string | null; entityId?: string | null }>(DOMAIN_EVENT_STORAGE_KEY)
+      .filter((event) => event.projectId !== projectId)
+      .filter((event) => !event.entityId || (!deletedTaskIds.has(event.entityId) && !deletedScheduleIds.has(event.entityId))),
+  );
+
+  window.localStorage.removeItem(`${SESSION_STORAGE_KEY}.${projectId}`);
+  window.localStorage.removeItem(`${SESSION_MODEL_STORAGE_KEY}.${projectId}`);
+  window.localStorage.removeItem(`${DISMISSED_SESSION_STORAGE_KEY}.${projectId}`);
+}
+
 function seedMockProjects(): ProjectDetail[] {
-  const timestamp = nowIso();
-  return [
-    {
-      id: DEFAULT_PROJECT_ID,
-      slug: "orchestra",
-      name: "Orchestra",
-      description: "Default Orchestra project",
-      defaultRepositoryId: DEFAULT_REPOSITORY_ID,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      repositories: [
-        {
-          id: DEFAULT_REPOSITORY_ID,
-          projectId: DEFAULT_PROJECT_ID,
-          slug: "orchestra",
-          name: "Orchestra repository",
-          repositoryPath: "/home/openclaw/workspace/orchestra/repository",
-          sourcePath: "/home/openclaw/workspace/orchestra/repository",
-          sourceKind: "local",
-          mode: "existing",
-          defaultBranch: "main",
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        },
-      ],
-    },
-  ];
+  return buildSeededMockProjects(nowIso());
 }
 
 function ensureMockProjects() {
@@ -79,10 +131,25 @@ function ensureMockProjects() {
 
   const seeded = seedMockProjects();
   saveStoredProjects(seeded);
-  if (!window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY)) {
-    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, seeded[0]!.id);
+  if (!window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY) && seeded[0]) {
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, seeded[0].id);
   }
   return seeded;
+}
+
+function resolveStoredProjectId(projects: ProjectDetail[], preferredId?: string | null) {
+  if (preferredId && projects.some((project) => project.id === preferredId)) {
+    return preferredId;
+  }
+  return projects[0]?.id ?? null;
+}
+
+export function getDefaultProjectId() {
+  if (isTauriAvailable()) {
+    return window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY) ?? null;
+  }
+  const projects = ensureMockProjects();
+  return resolveStoredProjectId(projects, window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY));
 }
 
 export function getActiveProjectId() {
@@ -92,27 +159,41 @@ export function getActiveProjectId() {
   }
 
   const projects = ensureMockProjects();
-  return stored && projects.some((project) => project.id === stored) ? stored : projects[0]?.id ?? null;
+  return resolveStoredProjectId(projects, stored);
+}
+
+export function getActiveProjectSlug() {
+  if (isTauriAvailable()) {
+    return null;
+  }
+
+  const projects = ensureMockProjects();
+  const activeProjectId = resolveStoredProjectId(projects, window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY));
+  return projects.find((project) => project.id === activeProjectId)?.slug ?? projects[0]?.slug ?? null;
 }
 
 export function getProjectRuntimeCwd(projectId?: string | null) {
   if (isTauriAvailable()) {
     const resolvedProjectId = projectId ?? getActiveProjectId();
-    return `/mock/projects/${resolvedProjectId ?? DEFAULT_PROJECT_ID}`;
+    return `/mock/projects/${resolvedProjectId ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID}`;
   }
 
   const projects = ensureMockProjects();
-  const resolvedProjectId = projectId ?? getActiveProjectId();
+  const resolvedProjectId = resolveStoredProjectId(projects, projectId ?? getActiveProjectId());
   const project = resolvedProjectId ? projects.find((entry) => entry.id === resolvedProjectId) ?? null : null;
   const defaultRepository = project?.defaultRepositoryId
     ? project.repositories.find((repository) => repository.id === project.defaultRepositoryId) ?? null
     : project?.repositories[0] ?? null;
 
-  return defaultRepository?.repositoryPath ?? `/mock/projects/${project?.slug ?? resolvedProjectId ?? DEFAULT_PROJECT_ID}`;
+  return defaultRepository?.repositoryPath ?? `/mock/projects/${project?.slug ?? resolvedProjectId ?? NO_PROJECT_RUNTIME_KEY}`;
 }
 
-export function setActiveProjectId(projectId: string) {
-  window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId);
+export function setActiveProjectId(projectId: string | null) {
+  if (projectId) {
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId);
+  } else {
+    window.localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
+  }
   window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
 }
 
@@ -194,15 +275,17 @@ export async function deleteProject(projectId: string): Promise<ProjectDetail> {
     if (!existing) {
       throw new Error(`Project ${projectId} was not found`);
     }
-    if (projectId === DEFAULT_PROJECT_ID) {
-      throw new Error("The default Orchestra project cannot be deleted.");
-    }
     const activeProjectId = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
     const nextProjects = projects.filter((project) => project.id !== projectId);
     if (activeProjectId === projectId) {
-      const fallback = nextProjects[0]?.id ?? DEFAULT_PROJECT_ID;
-      window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, fallback);
+      const fallback = nextProjects[0]?.id ?? null;
+      if (fallback) {
+        window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, fallback);
+      } else {
+        window.localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
+      }
     }
+    deleteProjectScopedMockState(projectId);
     saveStoredProjects(nextProjects);
     emitProjectsChanged();
     return existing;

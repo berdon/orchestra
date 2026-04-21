@@ -13,6 +13,7 @@ pub mod dispatcher;
 pub mod domain_events;
 pub mod git_worktrees;
 pub mod harness_settings;
+pub mod install_seed;
 pub mod live_sessions;
 pub mod logging;
 pub mod messages;

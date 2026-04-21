@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { buildSeededMockProjects, buildSeededMockWorkflows, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
 import { sortSessionRecords } from "./sessionList";
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import type {
@@ -77,7 +78,7 @@ const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
 const HARNESS_SETTINGS_STORAGE_KEY = "orchestra.mock.harness-settings";
 const TASK_SCHEDULE_STORAGE_KEY = "orchestra.mock.task-schedules";
 const DOMAIN_EVENT_STORAGE_KEY = "orchestra.mock.domain-events";
-const CURRENT_PROJECT_ID = "orchestra";
+const NO_PROJECT_STORAGE_KEY = "no-project";
 
 type OrchestraWindowGlobals = Window & {
   __ORCHESTRA_WINDOW_KIND__?: string;
@@ -102,7 +103,27 @@ function getStoredMockProjectsForSettings() {
   const value = window.localStorage.getItem("orchestra.mock.projects");
   return value
     ? (JSON.parse(value) as Array<{ id: string; slug: string }>)
-    : [{ id: CURRENT_PROJECT_ID, slug: CURRENT_PROJECT_ID }];
+    : buildSeededMockProjects().map((project) => ({ id: project.id, slug: project.slug }));
+}
+
+function resolveCurrentMockProjectId(preferredProjectId?: string | null) {
+  const projects = getStoredMockProjectsForSettings();
+  if (preferredProjectId && projects.some((project) => project.id === preferredProjectId)) {
+    return preferredProjectId;
+  }
+  return projects[0]?.id ?? null;
+}
+
+function hasStoredMockProject(projectId: string) {
+  return getStoredMockProjectsForSettings().some((project) => project.id === projectId);
+}
+
+function resolveMockProjectIdOrThrow(preferredProjectId?: string | null, entityLabel = "task") {
+  const resolvedProjectId = resolveCurrentMockProjectId(preferredProjectId);
+  if (resolvedProjectId) {
+    return resolvedProjectId;
+  }
+  throw new Error(`Create a project before creating a ${entityLabel}.`);
 }
 
 export function getInitialLogsWindowFlag() {
@@ -122,15 +143,15 @@ export function getInitialAgentTerminalSessionId() {
 }
 
 function sessionStorageKey(projectId?: string | null) {
-  return `${SESSION_STORAGE_KEY}.${projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+  return `${SESSION_STORAGE_KEY}.${resolveCurrentMockProjectId(projectId ?? getActiveProjectId()) ?? NO_PROJECT_STORAGE_KEY}`;
 }
 
 function sessionModelStorageKey(projectId?: string | null) {
-  return `${SESSION_MODEL_STORAGE_KEY}.${projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+  return `${SESSION_MODEL_STORAGE_KEY}.${resolveCurrentMockProjectId(projectId ?? getActiveProjectId()) ?? NO_PROJECT_STORAGE_KEY}`;
 }
 
 function dismissedSessionStorageKey(projectId?: string | null) {
-  return `${DISMISSED_SESSION_STORAGE_KEY}.${projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID}`;
+  return `${DISMISSED_SESSION_STORAGE_KEY}.${resolveCurrentMockProjectId(projectId ?? getActiveProjectId()) ?? NO_PROJECT_STORAGE_KEY}`;
 }
 
 const MOCK_MODELS: SessionModel[] = [
@@ -305,69 +326,7 @@ function seedMockSessions(): SessionRecord[] {
 }
 
 function seedMockWorkflows(): WorkflowDefinition[] {
-  const timestamp = nowIso();
-  const planId = createId("lane");
-  const buildId = createId("lane");
-  const reviewId = createId("lane");
-
-  return [
-    {
-      id: createId("workflow"),
-      slug: "development",
-      name: "Development",
-      description: "Plan, implement, and review work in a lightweight reusable flow.",
-      archived: false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      lanes: [
-        {
-          id: planId,
-          key: "plan",
-          name: "Plan",
-          order: 0,
-          assignedEntityType: "user",
-          assignedEntityId: null,
-          entryPromptTemplate: "Define the approach before implementation begins.",
-          useSeparateWorktree: false,
-          requireUserApprovalOnSuccess: false,
-          successTransitionType: "lane",
-          successTargetLaneId: buildId,
-          failureTransitionType: "user_intervention",
-          failureTargetLaneId: null,
-        },
-        {
-          id: buildId,
-          key: "implement",
-          name: "Implement",
-          order: 1,
-          assignedEntityType: "role",
-          assignedEntityId: "developer",
-          entryPromptTemplate: "Carry out the approved implementation plan.",
-          useSeparateWorktree: false,
-          requireUserApprovalOnSuccess: false,
-          successTransitionType: "lane",
-          successTargetLaneId: reviewId,
-          failureTransitionType: "lane",
-          failureTargetLaneId: planId,
-        },
-        {
-          id: reviewId,
-          key: "review",
-          name: "Review",
-          order: 2,
-          assignedEntityType: "user",
-          assignedEntityId: null,
-          entryPromptTemplate: "Check the completed work and decide what happens next.",
-          useSeparateWorktree: false,
-          requireUserApprovalOnSuccess: false,
-          successTransitionType: "end",
-          successTargetLaneId: null,
-          failureTransitionType: "lane",
-          failureTargetLaneId: buildId,
-        },
-      ],
-    },
-  ];
+  return buildSeededMockWorkflows(nowIso());
 }
 
 function ensureMockLogs() {
@@ -392,8 +351,8 @@ function ensureMockSessions(projectId?: string | null) {
     return existing;
   }
 
-  const resolvedProjectId = projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID;
-  if (projectId && projectId !== (getActiveProjectId() ?? CURRENT_PROJECT_ID)) {
+  const resolvedProjectId = resolveCurrentMockProjectId(projectId ?? getActiveProjectId());
+  if (projectId && projectId !== resolvedProjectId) {
     return [];
   }
 
@@ -624,7 +583,7 @@ export function createMockSessionRecord(title: string, openingAssistantMessage: 
 }
 
 function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
-  const runtime = getStoredMockAgentRuntimes().find((entry) => entry.agentId === agentId && entry.projectId === CURRENT_PROJECT_ID) ?? null;
+  const runtime = getStoredMockAgentRuntimes().find((entry) => entry.agentId === agentId && entry.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID) ?? null;
   const existingSessionId = typeof runtime?.mainSessionId === "string" ? runtime.mainSessionId : null;
   const existingSession = existingSessionId ? ensureMockSessions().find((entry) => entry.id === existingSessionId) ?? null : null;
   const session = existingSession ?? createMockSessionRecord(
@@ -636,11 +595,11 @@ function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
   upsertMockSession(session);
   saveStoredMockAgentRuntimes(
     getStoredMockAgentRuntimes().map((entry) =>
-      entry.agentId === agentId && entry.projectId === CURRENT_PROJECT_ID
+      entry.agentId === agentId && entry.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
         ? {
             ...entry,
             mainSessionId: session.id,
-            runtimeCwd: (typeof entry.runtimeCwd === "string" && entry.runtimeCwd) ? entry.runtimeCwd : getProjectRuntimeCwd(CURRENT_PROJECT_ID),
+            runtimeCwd: (typeof entry.runtimeCwd === "string" && entry.runtimeCwd) ? entry.runtimeCwd : getProjectRuntimeCwd(DEFAULT_INSTALL_BASELINE_PROJECT_ID),
             status: entry.currentQueueEntryId ? "running" : "idle",
             updatedAt: nowIso(),
           }
@@ -702,7 +661,7 @@ function seedMockTasks(): TaskDetail[] {
   const tasks: TaskDetail[] = [
     {
       id: epicTaskId,
-      projectId: CURRENT_PROJECT_ID,
+      projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
       number: "ORC-1",
       title: "Define Orchestra task system",
       description: "Document the task model including hierarchy, dependencies, attachments, and task tools.",
@@ -746,7 +705,7 @@ function seedMockTasks(): TaskDetail[] {
     },
     {
       id: planningTaskId,
-      projectId: CURRENT_PROJECT_ID,
+      projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
       number: "ORC-2",
       title: "Implement task foundation shell",
       description: "Add the first real Tasks page with list/detail editing so task orchestration can move out of placeholders.",
@@ -815,7 +774,7 @@ function seedMockTasks(): TaskDetail[] {
     },
     {
       id: blockedTaskId,
-      projectId: CURRENT_PROJECT_ID,
+      projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
       number: "ORC-3",
       title: "Plan hierarchy rollups",
       description: "Use the epic container to summarize child task progress and expose lineage in the task detail pane.",
@@ -1245,10 +1204,11 @@ function normalizeMockTaskScheduleInput(input: TaskScheduleUpsertInput, existing
   const nextFireAt = input.trigger.type === "time"
     ? existing?.nextFireAt ?? nextMockTimeFireAt(input.trigger, timestamp)
     : null;
+  const resolvedProjectId = existing?.projectId ?? resolveMockProjectIdOrThrow(projectId ?? getActiveProjectId(), "task schedule");
 
   return {
     id: existing?.id ?? createId("task-schedule"),
-    projectId: existing?.projectId ?? projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID,
+    projectId: resolvedProjectId,
     taskBlueprint,
     enabled: input.enabled ?? existing?.enabled ?? true,
     oneShot: input.oneShot,
@@ -1265,7 +1225,7 @@ function normalizeMockTaskScheduleInput(input: TaskScheduleUpsertInput, existing
 }
 
 function processMockTaskSchedules(projectId?: string | null) {
-  const targetProjectId = projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID;
+  const targetProjectId = resolveCurrentMockProjectId(projectId ?? getActiveProjectId());
   const schedules = ensureMockTaskSchedules();
   const domainEvents = ensureMockDomainEvents();
   let tasks = ensureMockTasks();
@@ -1516,6 +1476,11 @@ function ensureMockTasks() {
     return enrichMockTasks(existing, dependencies);
   }
 
+  if (!hasStoredMockProject(DEFAULT_INSTALL_BASELINE_PROJECT_ID)) {
+    setStoredValue(TASK_STORAGE_KEY, []);
+    return [];
+  }
+
   const seeded = seedMockTasks().map((task) => ensureStoredMockTask(task));
   setStoredValue(TASK_STORAGE_KEY, seeded);
   return seeded;
@@ -1673,10 +1638,11 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMoc
         const sequence = Number(task.number.replace(/^ORC-/, "")) || 0;
         return Math.max(highest, sequence);
       }, 0) + 1;
+  const resolvedProjectId = existingTask?.projectId ?? resolveMockProjectIdOrThrow(projectId ?? getActiveProjectId());
 
   return {
     id: existingTask?.id ?? createId("task"),
-    projectId: existingTask?.projectId ?? projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID,
+    projectId: resolvedProjectId,
     number: existingTask?.number ?? `ORC-${nextSequence}`,
     title: input.title.trim(),
     description: input.description?.trim() || null,
@@ -2431,7 +2397,7 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
 
   ensureMockSessionModel(nextSession.id);
   saveMockSessions(sortSessions([nextSession, ...sessions]));
-  appendMockLog("info", "sessions.create_contextual", `Created generic successor session ${nextSession.id} in ${projectSlug ?? CURRENT_PROJECT_ID}`);
+  appendMockLog("info", "sessions.create_contextual", `Created generic successor session ${nextSession.id} in ${projectSlug ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID}`);
   emitMockSessionChange({ sessionIds: [nextSession.id], reason: "sessions.create_contextual" });
   return nextSession;
 }
@@ -3134,14 +3100,14 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
     if (lane.assignedEntityType === "agent" && assignment.workerId) {
       const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
       assignment.sessionId = agentSession.id;
-      assignment.runtimeCwd = getProjectRuntimeCwd(CURRENT_PROJECT_ID);
+      assignment.runtimeCwd = getProjectRuntimeCwd(DEFAULT_INSTALL_BASELINE_PROJECT_ID);
       updateMockSession(agentSession.id, (current) => attachMockSessionTaskMetadata(current, task, "agent", lane.assignedEntityId ?? "Agent"));
       const agentQueueEntryId = createId("agent-queue");
       saveStoredMockAgentQueue([
         ...getStoredMockAgentQueue(),
         {
           id: agentQueueEntryId,
-          projectId: CURRENT_PROJECT_ID,
+          projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
           agentId: assignment.workerId,
           status: "dispatched",
           sourceType: "workflow_lane",
@@ -3161,7 +3127,7 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       ]);
       saveStoredMockAgentRuntimes(
         getStoredMockAgentRuntimes().map((runtime) =>
-          runtime.agentId === assignment.workerId && runtime.projectId === CURRENT_PROJECT_ID
+          runtime.agentId === assignment.workerId && runtime.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
             ? {
                 ...runtime,
                 status: "running",
@@ -3367,7 +3333,7 @@ function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
 
 function isMockAutoDispatchOnBlockerCompletionEnabled(projectId: string) {
   const projects = getStoredMockProjectsForSettings();
-  const projectSlug = projects.find((project) => project.id === projectId)?.slug ?? CURRENT_PROJECT_ID;
+  const projectSlug = projects.find((project) => project.id === projectId)?.slug ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID;
   const settings = getStoredMockProjectSettings();
   return Boolean((settings.general?.autoDispatchOnBlockerCompletion ?? true) && projectSlug);
 }
@@ -4120,7 +4086,7 @@ export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
       );
       saveStoredMockAgentRuntimes(
         getStoredMockAgentRuntimes().map((runtime) =>
-          runtime.agentId === activeAssignment.workerId && runtime.projectId === CURRENT_PROJECT_ID
+          runtime.agentId === activeAssignment.workerId && runtime.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
             ? {
                 ...runtime,
                 status: "idle",
@@ -4433,7 +4399,7 @@ export async function sendMailboxMessage(input: SendMailboxMessageInput): Promis
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const task = input.taskId ? tasks.find((entry) => entry.id === input.taskId) ?? null : null;
-    const projectId = task?.projectId ?? input.projectId ?? getActiveProjectId() ?? CURRENT_PROJECT_ID;
+    const projectId = task?.projectId ?? input.projectId ?? getActiveProjectId() ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID;
     const projects = getStoredValue<Array<{ id: string; repositories: Array<{ id: string; name: string; slug: string; localPath?: string | null }> }>>("orchestra.mock.projects") ?? [];
     const storedAgents = getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
     let recipientType = input.recipientType;

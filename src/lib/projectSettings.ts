@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { getActiveProjectSlug } from "./projects";
 import { isTauriAvailable } from "./tauri";
 import type {
   ProjectSessionPromptSettings,
@@ -105,11 +106,16 @@ const SESSION_PROMPT_TOKENS = [
   { token: "{ORCHESTRA.COMPLETION_RULES}", description: "Standard Orchestra completion rules block." },
 ] as const;
 
+function resolveProjectSlug(projectSlug?: string | null) {
+  return projectSlug ?? getActiveProjectSlug() ?? DEFAULT_PROJECT_SLUG;
+}
+
 export async function getSessionPromptSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSessionPromptSettings> {
+  const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     return {
-      projectSlug,
+      projectSlug: resolvedProjectSlug,
       template: settings.general?.taskSessionContextTemplate ?? DEFAULT_SESSION_PROMPT_TEMPLATE,
       defaultTemplate: DEFAULT_SESSION_PROMPT_TEMPLATE,
       availableTokens: [...SESSION_PROMPT_TOKENS],
@@ -117,10 +123,11 @@ export async function getSessionPromptSettings(projectSlug = DEFAULT_PROJECT_SLU
     };
   }
 
-  return invoke<ProjectSessionPromptSettings>("get_session_prompt_settings", { projectSlug });
+  return invoke<ProjectSessionPromptSettings>("get_session_prompt_settings", { projectSlug: resolvedProjectSlug });
 }
 
 export async function updateSessionPromptSettings(template: string | null, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSessionPromptSettings> {
+  const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     settings.general = {
@@ -129,29 +136,31 @@ export async function updateSessionPromptSettings(template: string | null, proje
       updatedAt: nowIso(),
     };
     saveStoredProjectSettings(settings);
-    return getSessionPromptSettings(projectSlug);
+    return getSessionPromptSettings(resolvedProjectSlug);
   }
 
-  return invoke<ProjectSessionPromptSettings>("update_session_prompt_settings", { projectSlug, template });
+  return invoke<ProjectSessionPromptSettings>("update_session_prompt_settings", { projectSlug: resolvedProjectSlug, template });
 }
 
 export async function getTaskAutomationSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectTaskAutomationSettings> {
+  const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     return {
-      projectSlug,
+      projectSlug: resolvedProjectSlug,
       autoDispatchOnBlockerCompletion: settings.general?.autoDispatchOnBlockerCompletion ?? true,
       updatedAt: settings.general?.updatedAt ?? null,
     };
   }
 
-  return invoke<ProjectTaskAutomationSettings>("get_task_automation_settings", { projectSlug });
+  return invoke<ProjectTaskAutomationSettings>("get_task_automation_settings", { projectSlug: resolvedProjectSlug });
 }
 
 export async function updateTaskAutomationSettings(
   autoDispatchOnBlockerCompletion: boolean,
   projectSlug = DEFAULT_PROJECT_SLUG,
 ): Promise<ProjectTaskAutomationSettings> {
+  const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     settings.general = {
@@ -160,16 +169,17 @@ export async function updateTaskAutomationSettings(
       updatedAt: nowIso(),
     };
     saveStoredProjectSettings(settings);
-    return getTaskAutomationSettings(projectSlug);
+    return getTaskAutomationSettings(resolvedProjectSlug);
   }
 
   return invoke<ProjectTaskAutomationSettings>("update_task_automation_settings", {
-    projectSlug,
+    projectSlug: resolvedProjectSlug,
     autoDispatchOnBlockerCompletion,
   });
 }
 
 export async function getWorkerOverlay(workerType: string, workerSlug: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {
+  const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     const normalizedWorkerType = workerType === "role" ? "role" : "agent";
@@ -179,7 +189,7 @@ export async function getWorkerOverlay(workerType: string, workerSlug: string, p
       : settings.agentOverlays?.[normalizedWorkerSlug];
 
     return {
-      projectSlug,
+      projectSlug: resolvedProjectSlug,
       workerType: normalizedWorkerType,
       workerSlug: normalizedWorkerSlug,
       prompt: overlay?.prompt ?? null,
@@ -187,10 +197,11 @@ export async function getWorkerOverlay(workerType: string, workerSlug: string, p
     };
   }
 
-  return invoke<ProjectWorkerOverlay>("get_worker_overlay", { projectSlug, workerType, workerSlug });
+  return invoke<ProjectWorkerOverlay>("get_worker_overlay", { projectSlug: resolvedProjectSlug, workerType, workerSlug });
 }
 
 export async function updateWorkerOverlay(workerType: string, workerSlug: string, prompt: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {
+  const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredProjectSettings();
     const normalizedWorkerType = workerType === "role" ? "role" : "agent";
@@ -215,7 +226,7 @@ export async function updateWorkerOverlay(workerType: string, workerSlug: string
     saveStoredProjectSettings(settings);
 
     return {
-      projectSlug,
+      projectSlug: resolvedProjectSlug,
       workerType: normalizedWorkerType,
       workerSlug: normalizedWorkerSlug,
       prompt: nextOverlay.prompt,
@@ -223,5 +234,5 @@ export async function updateWorkerOverlay(workerType: string, workerSlug: string
     };
   }
 
-  return invoke<ProjectWorkerOverlay>("update_worker_overlay", { projectSlug, workerType, workerSlug, prompt });
+  return invoke<ProjectWorkerOverlay>("update_worker_overlay", { projectSlug: resolvedProjectSlug, workerType, workerSlug, prompt });
 }

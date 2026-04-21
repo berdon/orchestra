@@ -98,6 +98,60 @@ test("settings projects panel deletes a non-default project and falls back clean
   expect(storedState.projects.some((project: { name: string }) => project.name === "Disposable Project")).toBe(false);
 });
 
+test("settings projects panel deletes the seeded default project cleanly", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+
+  await expect(page.getByRole("heading", { name: "Orchestra" })).toBeVisible();
+  await page.locator('[data-role="delete-project"]').click();
+  await expect(page.locator('[data-role="delete-project"]')).toHaveText("Confirm delete");
+  await page.locator('[data-role="delete-project"]').click();
+
+  await expect(page.locator('nav[aria-label="Projects"]')).not.toContainText("Orchestra");
+
+  const storedState = await page.evaluate(() => ({
+    activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),
+    projects: JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]"),
+  }));
+
+  expect(storedState.activeProjectId).toBeNull();
+  expect(storedState.projects).toEqual([]);
+});
+
+test("deleting the seeded default project does not resurrect or write browser-mode task state", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Orchestra" })).toBeVisible();
+  await page.locator('[data-role="delete-project"]').click();
+  await expect(page.locator('[data-role="delete-project"]')).toHaveText("Confirm delete");
+  await page.locator('[data-role="delete-project"]').click();
+
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Should not be created without a project");
+  await page.locator('[data-role="save-task"]').click();
+
+  await expect(page.locator(".error-copy")).toContainText("Create a project before creating a task.");
+
+  const storedState = await page.evaluate(() => ({
+    activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),
+    projects: JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]"),
+    tasks: JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]"),
+  }));
+
+  expect(storedState.activeProjectId).toBeNull();
+  expect(storedState.projects).toEqual([]);
+  expect(storedState.tasks).toEqual([]);
+});
+
 test("project switcher isolates browser-mode task state by project", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

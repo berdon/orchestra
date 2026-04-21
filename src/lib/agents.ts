@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
+import { getActiveProjectId, getDefaultProjectId, getProjectRuntimeCwd } from "./projects";
 import { createMockSessionRecord, emitMockSessionChange, isTauriAvailable, upsertMockSession } from "./tauri";
 import type {
   AgentDefinition,
@@ -26,7 +26,7 @@ const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const DEFAULT_PROJECT_ID = "orchestra";
 
 function activeProjectId() {
-  return getActiveProjectId() ?? DEFAULT_PROJECT_ID;
+  return getActiveProjectId() ?? getDefaultProjectId() ?? DEFAULT_PROJECT_ID;
 }
 
 function sessionStorageKey() {

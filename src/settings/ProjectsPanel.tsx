@@ -220,7 +220,7 @@ export function ProjectsPanel() {
   }
 
   async function handleDeleteProject() {
-    if (!selectedProject?.id || selectedProject.id === "orchestra") {
+    if (!selectedProject?.id) {
       return;
     }
 
@@ -259,6 +259,7 @@ export function ProjectsPanel() {
           <div>
             <p className="eyebrow">Project catalog</p>
             <h3>Projects</h3>
+            <p className="muted-copy">New installs start with a seeded Orchestra workspace. It is an ordinary project: you can rename it, add repositories, replace it, or delete it.</p>
           </div>
           <button className="primary-button" type="button" onClick={() => {
             setSelectedProjectId(null);
@@ -305,7 +306,7 @@ export function ProjectsPanel() {
               <h3>{selectedProject ? selectedProject.name : "New project"}</h3>
             </div>
             <div className="row-actions">
-              {selectedProject && selectedProject.id !== "orchestra" ? (
+              {selectedProject ? (
                 <>
                   <button
                     className={deleteProjectConfirmationArmed ? "secondary-button secondary-button--danger" : "secondary-button"}
@@ -427,7 +428,7 @@ export function ProjectsPanel() {
                         className="secondary-button secondary-button--danger"
                         data-role={`delete-repository-${repository.id}`}
                         type="button"
-                        disabled={saving || (selectedProject?.id === "orchestra" && repository.id === "repo-orchestra")}
+                        disabled={saving}
                         onClick={() => void handleDeleteRepository(repository.id, repository.name)}
                       >
                         Delete repository

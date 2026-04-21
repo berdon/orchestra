@@ -81,11 +81,13 @@ pub fn list_tasks(
     include_archived: Option<bool>,
 ) -> Result<Vec<TaskSummary>, String> {
     let connection = database::open_connection()?;
-    tasks::list_tasks(
+    let Some(project_id) = crate::services::projects::resolve_requested_or_default_project_id(
         &connection,
-        project_id.as_deref().unwrap_or("orchestra"),
-        include_archived.unwrap_or(false),
-    )
+        project_id.as_deref(),
+    )? else {
+        return Ok(Vec::new());
+    };
+    tasks::list_tasks(&connection, &project_id, include_archived.unwrap_or(false))
 }
 
 #[tauri::command]

@@ -10,9 +10,7 @@ use crate::{
     services::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
-        pi_sessions::{
-            detect_session_context, find_session_context_for_session, get_session, get_session_path,
-        },
+        pi_sessions::{find_session_context_for_session, get_session, get_session_path},
     },
     state::AppState,
 };
@@ -126,14 +124,17 @@ pub async fn ensure_agent_session(
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to open agent session because PI is unavailable: {error}")
     })?;
-    let (context, resolved_project_id) = if let Some(project_id) = project_id {
-        (
-            crate::services::pi_sessions::session_context_for_project_id(&project_id)?,
-            project_id,
-        )
+    let resolved_project_id = if let Some(project_id) = project_id {
+        project_id
     } else {
-        (detect_session_context(None)?, "orchestra".to_string())
+        let connection = database::open_connection()?;
+        crate::services::projects::require_requested_or_default_project_id(
+            &connection,
+            None,
+            "Create a project first before starting agent sessions.",
+        )?
     };
+    let context = crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
     let runtime_state = agent_dispatch::ensure_main_session(
         &context.project_root,
         &context.session_dir,
@@ -178,14 +179,17 @@ pub async fn open_agent_session_terminal(
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to open agent terminal because PI is unavailable: {error}")
     })?;
-    let (context, resolved_project_id) = if let Some(project_id) = project_id {
-        (
-            crate::services::pi_sessions::session_context_for_project_id(&project_id)?,
-            project_id,
-        )
+    let resolved_project_id = if let Some(project_id) = project_id {
+        project_id
     } else {
-        (detect_session_context(None)?, "orchestra".to_string())
+        let connection = database::open_connection()?;
+        crate::services::projects::require_requested_or_default_project_id(
+            &connection,
+            None,
+            "Create a project first before starting agent sessions.",
+        )?
     };
+    let context = crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
 
     let connection = database::open_connection()?;
     let detail = decorate_runtime_state(
