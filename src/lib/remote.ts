@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import {
+  buildExampleRemoteLanBaseUrl,
+  buildExampleRemoteSecureBaseUrl,
+  EXAMPLE_REMOTE_SECURE_WEB_URL,
+} from "./exampleRemoteEndpoints";
 import { isTauriAvailable } from "./tauri";
 import type {
   RemoteAccessSettingsInput,
@@ -72,10 +77,10 @@ export async function updateRemoteAccessSettings(input: RemoteAccessSettingsInpu
         port: input.port ?? current.settings.port,
         baseUrl: input.enabled ? `http://127.0.0.1:${input.port ?? current.settings.port}` : null,
         websocketUrl: input.enabled ? `ws://127.0.0.1:${input.port ?? current.settings.port}/api/v1/ws` : null,
-        lanBaseUrl: input.enabled && !input.useTailscale ? `http://192.168.1.10:${input.port ?? current.settings.port}` : null,
+        lanBaseUrl: input.enabled && !input.useTailscale ? buildExampleRemoteLanBaseUrl(input.port ?? current.settings.port) : null,
         webUrl: input.enabled && input.useTailscale ? "http://127.0.0.1:8788" : null,
-        tailscaleUrl: input.enabled && input.useTailscale ? `https://mock-device.ts.net:${input.port ?? current.settings.port}` : null,
-        tailscaleWebUrl: input.enabled && input.useTailscale ? "https://mock-device.ts.net:9443" : null,
+        tailscaleUrl: input.enabled && input.useTailscale ? buildExampleRemoteSecureBaseUrl(input.port ?? current.settings.port) : null,
+        tailscaleWebUrl: input.enabled && input.useTailscale ? EXAMPLE_REMOTE_SECURE_WEB_URL : null,
         startedAt: input.enabled ? nowIso() : null,
         lastError: null,
       },

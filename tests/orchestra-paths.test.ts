@@ -17,7 +17,7 @@ describe("orchestra session path helpers", () => {
   });
 
   it("derives a default project slug from cwd", () => {
-    expect(getProjectSlugFromCwd("/home/openclaw/workspace/orchestra")).toBe("orchestra");
+    expect(getProjectSlugFromCwd("/home/example-user/workspace/orchestra")).toBe("orchestra");
   });
 
   it("builds Orchestra-managed session paths under .orchestra", () => {

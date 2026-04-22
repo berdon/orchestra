@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+import {
+  buildExampleRemoteLanBaseUrl,
+  buildExampleRemoteLanWebSocketUrl,
+  buildExampleRemoteSecureBaseUrl,
+} from "../../src/lib/exampleRemoteEndpoints";
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -27,8 +33,8 @@ test("shared web driver preserves the entered API URL after pairing on the web",
       contentType: "application/json",
       body: JSON.stringify({
         token: "token-123",
-        baseUrl: "http://192.168.1.10:49500",
-        websocketUrl: "ws://192.168.1.10:49500/api/v1/ws",
+        baseUrl: buildExampleRemoteLanBaseUrl(49500),
+        websocketUrl: buildExampleRemoteLanWebSocketUrl(49500),
       }),
     });
   });
@@ -41,7 +47,7 @@ test("shared web driver preserves the entered API URL after pairing on the web",
   });
 
   await page.goto("/");
-  await page.getByTestId("connect-host-url").fill("https://mac-studio-01.gate-kettle.ts.net:49500");
+  await page.getByTestId("connect-host-url").fill(buildExampleRemoteSecureBaseUrl(49500));
   await page.getByTestId("connect-pairing-code").fill("ABCD-EFGH");
   await page.getByTestId("connect-device-label").fill("Safari on iPhone");
   await page.getByTestId("connect-pair-device").click();
@@ -54,7 +60,7 @@ test("shared web driver preserves the entered API URL after pairing on the web",
   });
 
   expect(storedConnection).toMatchObject({
-    baseUrl: "https://mac-studio-01.gate-kettle.ts.net:49500",
+    baseUrl: buildExampleRemoteSecureBaseUrl(49500),
     token: "token-123",
     deviceLabel: "Safari on iPhone",
   });

@@ -57,7 +57,7 @@ function defaultHostUrlDraft() {
     url.hash = "";
     return url.toString().replace(/\/$/, "");
   }
-  return "http://192.168.1.10:49500";
+  return "http://192.0.2.10:49500";
 }
 
 function normalizePairedBaseUrlForWeb(enteredBaseUrl: string, pairedBaseUrl?: string | null) {
