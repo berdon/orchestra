@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
 import type { BridgeDiagnostics, LogEntry, PiRuntimeDiagnostics, PiRuntimeSettings, ProjectSessionPromptSettings, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
 
@@ -25,7 +26,9 @@ interface GeneralPanelProps {
   logExportMessage: string | null;
   logExportError: string | null;
   includeRelatedSessionSnapshot: boolean;
+  explanatoryTooltipsEnabled: boolean;
   onThemeChange: (themeId: OrchestraThemeId) => void;
+  onToggleExplanatoryTooltips: (nextEnabled: boolean) => void;
   onRefreshBridgeDiagnostics: () => void;
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
@@ -86,7 +89,9 @@ export function GeneralPanel({
   logExportMessage,
   logExportError,
   includeRelatedSessionSnapshot,
+  explanatoryTooltipsEnabled,
   onThemeChange,
+  onToggleExplanatoryTooltips,
   onRefreshBridgeDiagnostics,
   onCleanupStaleBridges,
   onOpenLogsWindow,
@@ -105,6 +110,7 @@ export function GeneralPanel({
   const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
   const [defaultCompactionWindowDraft, setDefaultCompactionWindowDraft] = useState("10%");
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   useEffect(() => {
     setTemplateDraft(sessionPromptSettings?.template ?? "");
@@ -141,6 +147,16 @@ export function GeneralPanel({
           {selectedTheme ? (
             <p className="muted-copy" data-role="theme-current-kind">Mode: {selectedTheme.kind.replace(/-/g, " ")}</p>
           ) : null}
+          <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Turn brief hover help on or off across supported controls and form fields.")}>
+            <input
+              data-role="explanatory-tooltips-toggle"
+              type="checkbox"
+              checked={explanatoryTooltipsEnabled}
+              onChange={(event) => onToggleExplanatoryTooltips(event.target.checked)}
+            />
+            <span>Show explanatory tooltips</span>
+          </label>
+          <p className="muted-copy">Hover supported controls and fields to see brief help text.</p>
         </section>
 
         <div className="panel__header panel__header--stacked">

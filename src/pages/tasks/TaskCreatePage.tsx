@@ -1,3 +1,4 @@
+import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskScheduleUpsertInput, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { TaskEditorForm } from "./TaskEditorForm";
 import { TaskScheduleEditorForm } from "./TaskScheduleEditorForm";
@@ -36,6 +37,7 @@ export function TaskCreatePage({
   onBack,
 }: TaskCreatePageProps) {
   const canSave = scheduledMode ? Boolean(scheduleDraft.task.title.trim()) : Boolean(draft.title.trim());
+  const getTooltipProps = useExplanatoryTooltipProps();
   const canPublish = scheduledMode ? canSave : Boolean(draft.workflowId && draft.title.trim());
 
   return (
@@ -59,6 +61,7 @@ export function TaskCreatePage({
             data-role={scheduledMode ? "create-task-schedule" : "publish-task"}
             type="button"
             disabled={saving || !canPublish}
+            {...getTooltipProps(scheduledMode ? "Create this saved schedule and start using it for future triggers." : "Save this task and move it into workflow execution.")}
             onClick={onPublish}
           >
             {saving ? (scheduledMode ? "Creating…" : "Publishing…") : scheduledMode ? "Create schedule" : "Publish"}
@@ -68,6 +71,7 @@ export function TaskCreatePage({
             data-role={scheduledMode ? "save-task-schedule" : "save-task"}
             type="button"
             disabled={saving || !canSave}
+            {...getTooltipProps(scheduledMode ? "Save this schedule without enabling a new trigger right away." : "Save this task as a draft without dispatching it yet.")}
             onClick={onSave}
           >
             {saving ? "Saving…" : scheduledMode ? "Save schedule" : "Save changes"}
@@ -75,7 +79,7 @@ export function TaskCreatePage({
         </div>
       </div>
 
-      <label className="checkbox-field task-create-page__mode-toggle">
+      <label className="checkbox-field task-create-page__mode-toggle" {...getTooltipProps("Turn this on to create a reusable schedule instead of a one-off task.")}>
         <input
           data-role="task-create-scheduled-toggle"
           type="checkbox"

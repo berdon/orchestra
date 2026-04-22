@@ -10,6 +10,7 @@ import {
   sendMailboxMessage,
 } from "../lib/tauri";
 import { listTasks } from "../lib/tauri";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, MailboxMessage, TaskSummary } from "../types";
 
 interface InboxPageProps {
@@ -34,6 +35,7 @@ function summarizeAttentionReason(task: TaskSummary) {
 
 export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const [messages, setMessages] = useState<MailboxMessage[]>([]);
+  const getTooltipProps = useExplanatoryTooltipProps();
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [sending, setSending] = useState(false);
@@ -182,6 +184,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
                 className="secondary-button"
                 data-role="open-inbox-compose"
                 type="button"
+                {...getTooltipProps("Write a mailbox message to an agent from the user inbox.")}
                 onClick={() => setComposeOpen((current) => !current)}
               >
                 {composeOpen ? "Hide compose" : "Compose"}
@@ -191,6 +194,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
                 data-role="mark-all-inbox-read"
                 type="button"
                 disabled={!unreadCount || markingRead === "all"}
+                {...getTooltipProps("Mark every visible unread inbox message as read.")}
                 onClick={() => void handleMarkRead()}
               >
                 Mark all read
@@ -249,7 +253,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
                 <span className="field-group__label">Message</span>
                 <textarea className="text-area" data-role="inbox-compose-body" rows={4} value={messageBody} onChange={(event) => setMessageBody(event.target.value)} />
               </label>
-              <label className="checkbox-field task-editor-grid__full">
+              <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Send this as an interrupt instead of a normal mailbox delivery.")}>
                 <input data-role="inbox-compose-interrupt" type="checkbox" checked={interruptPriority} onChange={(event) => setInterruptPriority(event.target.checked)} />
                 <span>Interrupt recipient</span>
               </label>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { reportClientError } from "../lib/tauri";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import { createRemotePairingCode, getRemoteAccessStatus, revokeRemoteDevice, updateRemoteAccessSettings } from "../lib/remote";
 import type { RemoteAccessStatus } from "../types";
 
@@ -34,6 +35,7 @@ async function copyTextToClipboard(text: string) {
 
 export function RemotePanel() {
   const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
+  const getTooltipProps = useExplanatoryTooltipProps();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingPairingCode, setCreatingPairingCode] = useState(false);
@@ -206,18 +208,18 @@ export function RemotePanel() {
                 <span>Start the Orchestra remote driver API so Android/iOS devices can pair and connect.</span>
               </label>
             </label>
-            <label className="field-group">
+            <label className="field-group" {...getTooltipProps("Use Tailscale Serve to expose Orchestra through a managed HTTPS endpoint.")}>
               <span className="field-group__label">Use Tailscale Serve</span>
               <label className="checkbox-row">
                 <input type="checkbox" data-role="remote-use-tailscale" checked={useTailscaleDraft} onChange={(event) => setUseTailscaleDraft(event.target.checked)} />
                 <span>Automatically expose the backend on HTTPS port {portDraft || "49500"} and the web driver on HTTPS port 9443 via Tailscale Serve.</span>
               </label>
             </label>
-            <label className="field-group">
+            <label className="field-group" {...getTooltipProps("Choose which network interface the remote API listens on.")}>
               <span className="field-group__label">Bind host</span>
               <input className="text-input" data-role="remote-bind-host" value={useTailscaleDraft ? "127.0.0.1" : bindHostDraft} onChange={(event) => setBindHostDraft(event.target.value)} disabled={useTailscaleDraft} />
             </label>
-            <label className="field-group">
+            <label className="field-group" {...getTooltipProps("Choose which port the remote API listens on.")}>
               <span className="field-group__label">Port</span>
               <input className="text-input" data-role="remote-port" value={portDraft} onChange={(event) => setPortDraft(event.target.value)} />
             </label>

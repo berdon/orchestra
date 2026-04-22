@@ -13,6 +13,7 @@ import {
 } from "../lib/channels";
 import { listProjects } from "../lib/projects";
 import { reportClientError } from "../lib/tauri";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type {
   ChannelActivityEntry,
   ChannelDetail,
@@ -43,6 +44,7 @@ function createDraft(defaultProjectId: string | null): ChannelUpsertInput {
 
 export function ChannelsPanel() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const getTooltipProps = useExplanatoryTooltipProps();
   const [channels, setChannels] = useState<ChannelDetail[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [channelDetail, setChannelDetail] = useState<ChannelDetail | null>(null);
@@ -346,7 +348,7 @@ export function ChannelsPanel() {
               <span className="field-group__label">Channel name</span>
               <input className="text-input" data-role="channel-name" value={draft.name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
             </label>
-            <div className="field-group">
+            <div className="field-group" {...getTooltipProps("Choose which project Telegram commands should act on by default.")}>
               <span className="field-group__label">Active project for commands</span>
               <select className="text-input" data-role="channel-default-project" value={draft.defaultProjectId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, defaultProjectId: event.target.value || null }))}>
                 {projects.map((project) => (
@@ -426,7 +428,7 @@ export function ChannelsPanel() {
               </div>
             </div>
             <div className="task-editor-grid">
-              <label className="field-group task-editor-grid__full">
+              <label className="field-group task-editor-grid__full" {...getTooltipProps("Choose whether this channel receives notifications for all projects or only the selected command project.")}>
                 <span className="field-group__label">Notification scope</span>
                 <select className="text-input" data-role="telegram-notification-scope" value={draft.telegram?.notificationScope ?? "all_projects"} onChange={(event) => updateTelegramDraft({ notificationScope: event.target.value as "all_projects" | "active_project" })}>
                   <option value="all_projects">All projects</option>
@@ -434,7 +436,7 @@ export function ChannelsPanel() {
                 </select>
                 <span className="muted-copy">Choose All projects to send task-attention notifications for every project. Choose Active project only to limit notifications to the command project selected above.</span>
               </label>
-              <label className="checkbox-field task-editor-grid__full">
+              <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Turn Telegram supervisor commands on or off for this channel.")}>
                 <input data-role="telegram-commands-enabled" type="checkbox" checked={draft.telegram?.commandsEnabled ?? true} onChange={(event) => updateTelegramDraft({ commandsEnabled: event.target.checked })} />
                 <span>Enable Telegram supervisor commands (/help, /status, /projects, /tasks, /task, /approve, /needs-work, /mail, /model, /stop, /resume)</span>
               </label>

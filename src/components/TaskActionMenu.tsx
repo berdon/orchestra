@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
+
 export interface TaskActionMenuAction {
   id: string;
   label: string;
@@ -7,6 +9,7 @@ export interface TaskActionMenuAction {
   disabled?: boolean;
   variant?: "primary" | "secondary" | "danger";
   dataRole?: string;
+  tooltip?: string;
 }
 
 interface TaskActionMenuProps {
@@ -18,6 +21,7 @@ interface TaskActionMenuProps {
 export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId = null }: TaskActionMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -48,6 +52,7 @@ export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId
             data-role={action.dataRole}
             disabled={Boolean(pendingActionId) || action.disabled}
             type="button"
+            {...getTooltipProps(action.tooltip)}
             onClick={action.onClick}
           >
             {action.label}
@@ -80,6 +85,7 @@ export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId
                 data-role={action.dataRole}
                 disabled={Boolean(pendingActionId) || action.disabled}
                 type="button"
+                {...getTooltipProps(action.tooltip)}
                 onClick={() => {
                   setOpen(false);
                   action.onClick();

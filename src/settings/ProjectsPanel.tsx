@@ -17,6 +17,7 @@ import {
   getTaskAutomationSettings,
   updateTaskAutomationSettings,
 } from "../lib/projectSettings";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import { normalizeTaskPrefix, suggestTaskPrefix, validateTaskPrefix } from "../lib/taskPrefixes";
 import type {
   ProjectDetail,
@@ -41,6 +42,7 @@ function createBlankRemoteDraft(): RepositoryRemoteInput {
 
 export function ProjectsPanel() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const getTooltipProps = useExplanatoryTooltipProps();
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [projectDraft, setProjectDraft] = useState<ProjectUpsertInput>(createBlankProjectDraft);
@@ -376,7 +378,7 @@ export function ProjectsPanel() {
               <span className="field-group__label">Name</span>
               <input className="text-input" data-role="project-name" value={projectDraft.name} onChange={(event) => handleProjectNameChange(event.target.value)} />
             </label>
-            <label className="field-group">
+            <label className="field-group" {...getTooltipProps("Choose the prefix used for new task numbers in this project.")}>
               <span className="field-group__label">Task prefix</span>
               <input
                 className="text-input"
@@ -415,7 +417,7 @@ export function ProjectsPanel() {
                   Save automation settings
                 </button>
               </div>
-              <label className="field-group task-editor-grid__full">
+              <label className="field-group task-editor-grid__full" {...getTooltipProps("Automatically dispatch tasks when creation, unblocking, or dependency changes make them ready for work.")}>
                 <span className="field-group__label">Enable auto task dispatching for newly work-ready tasks</span>
                 <input
                   className="checkbox-input"

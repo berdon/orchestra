@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatListControlLabel(session: SessionRecord) {
@@ -146,6 +147,7 @@ export function SessionsPage({
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
   const revealTimerRef = useRef<number | null>(null);
   const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   useEffect(() => {
     setShowDebugInfo(false);
@@ -279,7 +281,7 @@ export function SessionsPage({
                       type="button"
                       tabIndex={showDeleteAction ? 0 : -1}
                       aria-label={`Dismiss ${getSessionListTitle(session)}`}
-                      title="Dismiss from session list"
+                      {...getTooltipProps("Hide this session from the list without deleting its stored history.")}
                       onClick={() => onDeleteSession(session.id)}
                     >
                       ×

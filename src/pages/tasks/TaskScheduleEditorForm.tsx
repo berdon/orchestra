@@ -1,3 +1,4 @@
+import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskScheduleDayOfWeek, TaskScheduleUpsertInput, WorkflowSummary } from "../../types";
 import { TaskEditorForm } from "./TaskEditorForm";
 
@@ -85,6 +86,7 @@ export function TaskScheduleEditorForm({
 }: TaskScheduleEditorFormProps) {
   const trigger = draft.trigger;
   const isSingleFire = trigger.type === "time" && trigger.kind === "once";
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   const updateTrigger = (nextTrigger: TaskScheduleUpsertInput["trigger"]) => {
     onChange({ ...draft, trigger: nextTrigger, oneShot: draft.oneShot || (nextTrigger.type === "time" && nextTrigger.kind === "once") });
@@ -113,7 +115,7 @@ export function TaskScheduleEditorForm({
       />
 
       <div className={detailLayout ? "task-editor-grid task-editor-grid--detail" : "task-editor-grid"}>
-        <label className="checkbox-field">
+        <label className="checkbox-field" {...getTooltipProps("Turn this schedule on or off without deleting its saved definition.")}>
           <input
             data-role="task-schedule-enabled"
             type="checkbox"
@@ -123,7 +125,7 @@ export function TaskScheduleEditorForm({
           <span>Schedule enabled</span>
         </label>
 
-        <label className="checkbox-field">
+        <label className="checkbox-field" {...getTooltipProps("Automatically disable this schedule after it creates its first task.")}>
           <input
             data-role="task-schedule-one-shot"
             type="checkbox"
@@ -134,7 +136,7 @@ export function TaskScheduleEditorForm({
           <span>Disable after the first trigger</span>
         </label>
 
-        <label className="field-group">
+        <label className="field-group" {...getTooltipProps("Choose whether a new trigger waits or creates another task when a previous one is still open.")}>
           <span className="field-group__label">Overlap policy</span>
           <select
             className="select-input"
@@ -147,7 +149,7 @@ export function TaskScheduleEditorForm({
           </select>
         </label>
 
-        <label className="field-group">
+        <label className="field-group" {...getTooltipProps("Choose whether this schedule fires from time-based rules or matching Orchestra events.")}>
           <span className="field-group__label">Trigger source</span>
           <select
             className="select-input"
@@ -287,7 +289,7 @@ export function TaskScheduleEditorForm({
             ) : null}
           </>
         ) : (
-          <label className="field-group task-editor-grid__full">
+          <label className="field-group task-editor-grid__full" {...getTooltipProps("Choose which Orchestra event should materialize a task from this schedule.")}>
             <span className="field-group__label">Domain event key</span>
             <input
               className="text-input"

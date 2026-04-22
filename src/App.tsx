@@ -51,6 +51,13 @@ import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSett
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
 import { getSystemNotificationEnvironmentStatus, getSystemNotificationPermissionState, requestSystemNotificationPermission, sendSystemNotification, sendTestSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
+import {
+  ExplanatoryTooltipsProvider,
+  applyExplanatoryTooltips,
+  getExplanatoryTooltipProps,
+  loadStoredExplanatoryTooltips,
+  storeExplanatoryTooltips,
+} from "./lib/tooltips";
 import { countVisibleUnreadTaskComments } from "./lib/taskUnreadCommentVisibility";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
@@ -784,6 +791,7 @@ export function App() {
   const [referenceRoles, setReferenceRoles] = useState<RoleSummary[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
+  const [explanatoryTooltipsEnabled, setExplanatoryTooltipsEnabled] = useState(() => loadStoredExplanatoryTooltips());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => loadStoredSidebarCollapsed());
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [loadingChatAgents, setLoadingChatAgents] = useState(false);
@@ -849,6 +857,10 @@ export function App() {
   useLayoutEffect(() => {
     applyOrchestraTheme(themeId);
   }, [themeId]);
+
+  useLayoutEffect(() => {
+    applyExplanatoryTooltips(explanatoryTooltipsEnabled);
+  }, [explanatoryTooltipsEnabled]);
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
@@ -2473,6 +2485,10 @@ export function App() {
     setThemeId(nextThemeId);
     storeOrchestraTheme(nextThemeId);
   }, []);
+  const handleExplanatoryTooltipsToggle = useCallback((nextEnabled: boolean) => {
+    setExplanatoryTooltipsEnabled(nextEnabled);
+    storeExplanatoryTooltips(nextEnabled);
+  }, []);
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
   const selectedSessionDraftMessage = selectedSession ? draftMessages[selectedSession.id] ?? "" : "";
@@ -2921,29 +2937,31 @@ export function App() {
 
   if (isLogsWindow) {
     return (
-      <main className="logs-window-shell" data-theme={themeId} data-theme-kind={activeTheme.kind}>
-        <header className="logs-window-header">
-          <div>
-            <p className="eyebrow">Orchestra diagnostics</p>
-            <h1>Logs</h1>
-          </div>
+      <ExplanatoryTooltipsProvider enabled={explanatoryTooltipsEnabled}>
+        <main className="logs-window-shell" data-theme={themeId} data-theme-kind={activeTheme.kind}>
+          <header className="logs-window-header">
+            <div>
+              <p className="eyebrow">Orchestra diagnostics</p>
+              <h1>Logs</h1>
+            </div>
 
-        </header>
+          </header>
 
-        <RuntimeLogPanel
-          logs={logs}
-          loadingLogs={loadingLogs}
-          clearingLogs={clearingLogs}
-          exportingLogs={exportingLogs}
-          exportStatusMessage={logExportMessage}
-          exportErrorMessage={logExportError}
-          includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
-          onRefresh={() => void loadLogs()}
-          onToggleIncludeRelatedSessionSnapshot={setIncludeRelatedSessionSnapshot}
-          onExport={() => void handleExportLogsBundle()}
-          onClear={() => void handleClearLogs()}
-        />
-      </main>
+          <RuntimeLogPanel
+            logs={logs}
+            loadingLogs={loadingLogs}
+            clearingLogs={clearingLogs}
+            exportingLogs={exportingLogs}
+            exportStatusMessage={logExportMessage}
+            exportErrorMessage={logExportError}
+            includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
+            onRefresh={() => void loadLogs()}
+            onToggleIncludeRelatedSessionSnapshot={setIncludeRelatedSessionSnapshot}
+            onExport={() => void handleExportLogsBundle()}
+            onClear={() => void handleClearLogs()}
+          />
+        </main>
+      </ExplanatoryTooltipsProvider>
     );
   }
 
@@ -2952,7 +2970,8 @@ export function App() {
   }
 
   return (
-    <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind} data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}>
+    <ExplanatoryTooltipsProvider enabled={explanatoryTooltipsEnabled}>
+      <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind} data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}>
       <aside className="sidebar">
         <div className="sidebar__top">
           <div className="sidebar__brand" data-role="app-brand">
@@ -2967,7 +2986,12 @@ export function App() {
               type="button"
               aria-label={isSidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
               aria-expanded={!isSidebarCollapsed}
-              title={isSidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+              {...getExplanatoryTooltipProps(
+                isSidebarCollapsed
+                  ? "Expand the sidebar so labels and navigation details are visible again."
+                  : "Collapse the sidebar to make more room for your work.",
+                explanatoryTooltipsEnabled,
+              )}
               onClick={() => setIsSidebarCollapsed((current) => !current)}
             >
               {isSidebarCollapsed ? "»" : "«"}
@@ -3101,6 +3125,7 @@ export function App() {
                 data-role="create-session"
                 type="button"
                 disabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
+                {...getExplanatoryTooltipProps("Start a new session in the active project.", explanatoryTooltipsEnabled)}
                 onClick={() =>
                   void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null))
                 }
@@ -3112,6 +3137,7 @@ export function App() {
                 className="primary-button"
                 data-role="new-task"
                 type="button"
+                {...getExplanatoryTooltipProps("Create a new task draft in the active project.", explanatoryTooltipsEnabled)}
                 onClick={() => {
                   setTasksCreateProjectId(activeProjectId);
                   setTasksCreateToken((current) => current + 1);
@@ -3122,10 +3148,22 @@ export function App() {
             ) : null}
           </div>
           <div className="status-cluster">
-            <button className="secondary-button" data-role="open-command-palette" type="button" onClick={() => handleOpenCommandPalette()}>
+            <button
+              className="secondary-button"
+              data-role="open-command-palette"
+              type="button"
+              {...getExplanatoryTooltipProps("Search pages and common actions from anywhere in the app.", explanatoryTooltipsEnabled)}
+              onClick={() => handleOpenCommandPalette()}
+            >
               Search · Ctrl+O
             </button>
-            <button className="secondary-button" data-role="open-supervisor-quick-chat" type="button" onClick={() => void handleOpenSupervisorQuickChat()}>
+            <button
+              className="secondary-button"
+              data-role="open-supervisor-quick-chat"
+              type="button"
+              {...getExplanatoryTooltipProps("Open a quick message window for the supervisor session.", explanatoryTooltipsEnabled)}
+              onClick={() => void handleOpenSupervisorQuickChat()}
+            >
               Supervisor · Ctrl+T
             </button>
             <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
@@ -3203,7 +3241,9 @@ export function App() {
               logExportMessage={logExportMessage}
               logExportError={logExportError}
               includeRelatedSessionSnapshot={includeRelatedSessionSnapshot}
+              explanatoryTooltipsEnabled={explanatoryTooltipsEnabled}
               onThemeChange={handleThemeChange}
+              onToggleExplanatoryTooltips={handleExplanatoryTooltipsToggle}
               onRefreshBridgeDiagnostics={() => void loadBridgeDiagnostics({ background: true })}
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
@@ -3402,6 +3442,7 @@ export function App() {
         pending={Boolean(supervisorPendingRun)}
         session={supervisorSession}
       />
-    </div>
+      </div>
+    </ExplanatoryTooltipsProvider>
   );
 }

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
+import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
@@ -162,6 +163,7 @@ function TaskRelaneMenu({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -192,6 +194,7 @@ function TaskRelaneMenu({
         type="button"
         disabled={disabled}
         aria-expanded={open}
+        {...getTooltipProps("Move this task into a different workflow lane and optionally leave a note about why.")}
         onClick={() => setOpen((current) => !current)}
       >
         Re-lane
@@ -380,6 +383,7 @@ export function TaskDetailPage({
   const lastMarkedCommentsReadKeyRef = useRef<string | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
   const [compactHeaderVisible, setCompactHeaderVisible] = useState(false);
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const taskHeading = draft.title.trim() || task.title;
@@ -689,6 +693,7 @@ export function TaskDetailPage({
         disabled: !canPublish,
         variant: "primary",
         dataRole: "publish-task",
+        tooltip: "Save this draft and move it into workflow execution.",
       });
     } else if (task.status === "ready") {
       actions.push({
@@ -697,6 +702,7 @@ export function TaskDetailPage({
         onClick: onDispatch,
         variant: "primary",
         dataRole: "dispatch-task-lane",
+        tooltip: "Start the current workflow lane for this ready task.",
       });
     }
 
@@ -707,6 +713,7 @@ export function TaskDetailPage({
         onClick: onApproveCompletion,
         variant: "primary",
         dataRole: "approve-task-lane",
+        tooltip: "Accept this lane result and let the workflow continue.",
       });
       actions.push({
         id: "needs-work-pending",
@@ -714,6 +721,7 @@ export function TaskDetailPage({
         onClick: onSendBackForWork,
         variant: "secondary",
         dataRole: "send-task-back-for-work",
+        tooltip: "Send this lane back for more work without closing the task.",
       });
       actions.push({
         id: "stop-pending-review",
@@ -721,6 +729,7 @@ export function TaskDetailPage({
         onClick: onResetTask,
         variant: "secondary",
         dataRole: "stop-task-activity",
+        tooltip: "End the current assignment and return this task to a ready state.",
       });
     } else if (["awaiting_user_intervention", "paused_by_user"].includes(effectiveActiveLaneAssignmentStatus ?? "")) {
       actions.push({
@@ -729,6 +738,7 @@ export function TaskDetailPage({
         onClick: onSendBackForWork,
         variant: "primary",
         dataRole: "resume-task-lane",
+        tooltip: "Resume the paused lane and keep work moving in the same assignment.",
       });
       actions.push({
         id: "stop-paused-lane",
@@ -736,6 +746,7 @@ export function TaskDetailPage({
         onClick: onResetTask,
         variant: "secondary",
         dataRole: "stop-task-activity",
+        tooltip: "End the paused assignment and return this task to a ready state.",
       });
     } else if (task.status === "in_review" && !task.activeLaneAssignment && task.assigneeType === "user" && task.currentLaneId) {
       actions.push({
@@ -744,6 +755,7 @@ export function TaskDetailPage({
         onClick: () => onComplete("success"),
         variant: "primary",
         dataRole: "complete-task-success",
+        tooltip: "Mark this review step successful and continue the workflow.",
       });
       actions.push({
         id: "needs-work-user",
@@ -751,6 +763,7 @@ export function TaskDetailPage({
         onClick: () => onComplete("failure"),
         variant: "secondary",
         dataRole: "complete-task-failure",
+        tooltip: "Send this review step back as incomplete so more work can happen.",
       });
     }
 
@@ -761,6 +774,7 @@ export function TaskDetailPage({
         onClick: onPauseRuntime,
         variant: "secondary",
         dataRole: "pause-task-runtime",
+        tooltip: "Pause the active lane without clearing its current assignment.",
       });
       actions.push({
         id: "stop-active-work",
@@ -768,6 +782,7 @@ export function TaskDetailPage({
         onClick: onResetTask,
         variant: "secondary",
         dataRole: "stop-task-activity",
+        tooltip: "End the current assignment and return this task to a ready state.",
       });
     }
 
@@ -778,6 +793,7 @@ export function TaskDetailPage({
         onClick: onWhipTask,
         variant: "secondary",
         dataRole: "whip-task-runtime",
+        tooltip: "Send a fresh nudge so the active worker keeps making progress on this lane.",
       });
     }
 
@@ -927,7 +943,14 @@ export function TaskDetailPage({
                   </p>
                 ) : null}
                 <div className="action-cluster">
-                  <button className="secondary-button secondary-button--danger" data-role="reset-task-runtime" type="button" disabled={Boolean(pendingActionId)} onClick={onResetTask}>
+                  <button
+                    className="secondary-button secondary-button--danger"
+                    data-role="reset-task-runtime"
+                    type="button"
+                    disabled={Boolean(pendingActionId)}
+                    {...getTooltipProps("End the current assignment and return this task to a ready state.")}
+                    onClick={onResetTask}
+                  >
                     Stop current work
                   </button>
                 </div>
@@ -939,16 +962,23 @@ export function TaskDetailPage({
                       <span className="status-badge status-badge--neutral">Mailbox</span>
                     </div>
                     <p className="muted-copy">This sends a mailbox message to the currently active assignment session and shows up in the worker's unread mail checks.</p>
-                    <label className="field-group">
+                    <label className="field-group" {...getTooltipProps("Write a mailbox message for the worker currently assigned to this lane.")}>
                       <span className="field-group__label">Message</span>
                       <textarea className="text-area" data-role="task-runtime-mail-body" rows={4} value={mailDraft} onChange={(event) => setMailDraft(event.target.value)} />
                     </label>
-                    <label className="checkbox-field">
+                    <label className="checkbox-field" {...getTooltipProps("Send this as an interrupt instead of a normal mailbox message.")}>
                       <input data-role="task-runtime-mail-interrupt" type="checkbox" checked={mailInterrupt} onChange={(event) => setMailInterrupt(event.target.checked)} />
                       <span>Interrupt worker immediately</span>
                     </label>
                     <div className="action-cluster">
-                      <button className="primary-button" data-role="task-runtime-send-mail" type="button" disabled={sendingMail || !mailDraft.trim()} onClick={() => void handleSendRuntimeMail()}>
+                      <button
+                        className="primary-button"
+                        data-role="task-runtime-send-mail"
+                        type="button"
+                        disabled={sendingMail || !mailDraft.trim()}
+                        {...getTooltipProps("Deliver this message to the active worker session for the current lane.")}
+                        onClick={() => void handleSendRuntimeMail()}
+                      >
                         {sendingMail ? "Sending…" : "Send mail"}
                       </button>
                     </div>
@@ -1033,13 +1063,26 @@ export function TaskDetailPage({
                 <h4>Blocked by and blocking</h4>
               </div>
               <div className="task-dependency-actions">
-                <select className="select-input" data-role="dependency-blocker-select" value={selectedBlockerTaskId} onChange={(event) => onSelectBlocker(event.target.value)}>
+                <select
+                  className="select-input"
+                  data-role="dependency-blocker-select"
+                  value={selectedBlockerTaskId}
+                  {...getTooltipProps("Choose a task that must finish before this one can continue.")}
+                  onChange={(event) => onSelectBlocker(event.target.value)}
+                >
                   <option value="">Select blocker task…</option>
                   {dependencyCandidates.map((candidate) => (
                     <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.title}</option>
                   ))}
                 </select>
-                <button className="secondary-button" data-role="add-dependency" type="button" disabled={!selectedBlockerTaskId} onClick={onAddDependency}>Add dependency</button>
+                <button
+                  className="secondary-button"
+                  data-role="add-dependency"
+                  type="button"
+                  disabled={!selectedBlockerTaskId}
+                  {...getTooltipProps("Link the selected task as a blocker for this one.")}
+                  onClick={onAddDependency}
+                >Add dependency</button>
               </div>
             </div>
 
@@ -1114,7 +1157,7 @@ export function TaskDetailPage({
             )}
 
             <div className="task-editor-grid">
-              <label className="field-group">
+              <label className="field-group" {...getTooltipProps("Choose which task repository owns the file you want to track here.")}>
                 <span className="field-group__label">Repository</span>
                 <select className="select-input" data-role="task-file-reference-repository" value={fileReferenceDraft.repositoryId} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, repositoryId: event.target.value })}>
                   <option value="">Select repository…</option>
@@ -1123,12 +1166,19 @@ export function TaskDetailPage({
                   ))}
                 </select>
               </label>
-              <label className="field-group">
+              <label className="field-group" {...getTooltipProps("Enter the repository-relative path for the file you want to keep visible on this task.")}>
                 <span className="field-group__label">Relative path</span>
                 <input className="text-input" data-role="task-file-reference-path" value={fileReferenceDraft.relativePath} onChange={(event) => onFileReferenceDraftChange({ ...fileReferenceDraft, relativePath: event.target.value })} placeholder="docs/design.md" />
               </label>
               <div className="task-editor-grid__full">
-                <button className="secondary-button" data-role="add-task-file-reference" type="button" disabled={!fileReferenceDraft.repositoryId || !fileReferenceDraft.relativePath.trim()} onClick={onAddFileReference}>Add file reference</button>
+                <button
+                  className="secondary-button"
+                  data-role="add-task-file-reference"
+                  type="button"
+                  disabled={!fileReferenceDraft.repositoryId || !fileReferenceDraft.relativePath.trim()}
+                  {...getTooltipProps("Track this repository file on the task so workers and reviewers can find it quickly.")}
+                  onClick={onAddFileReference}
+                >Add file reference</button>
               </div>
             </div>
 
@@ -1278,7 +1328,7 @@ export function TaskDetailPage({
                 </div>
               </div>
               <div className="field-grid field-grid--two-column">
-                <label className="field-group">
+                <label className="field-group" {...getTooltipProps("Choose which workflow lane should own this checklist item.")}>
                   <span className="field-group__label">Lane</span>
                   <select className="select-input" data-role="task-todo-lane" value={todoDraftLaneId} onChange={(event) => setTodoDraftLaneId(event.target.value)}>
                     <option value="">Select a lane</option>
@@ -1287,13 +1337,20 @@ export function TaskDetailPage({
                     ))}
                   </select>
                 </label>
-                <label className="field-group field-group--full-width">
+                <label className="field-group field-group--full-width" {...getTooltipProps("Describe the follow-up work that should stay visible on this task.")}>
                   <span className="field-group__label">Description</span>
                   <input className="text-input" data-role="task-todo-description" type="text" value={todoDraftDescription} onChange={(event) => setTodoDraftDescription(event.target.value)} placeholder="Describe the follow-up item for this lane" />
                 </label>
               </div>
               <div className="action-cluster action-cluster--wrap">
-                <button className="secondary-button" data-role="add-task-todo" type="button" disabled={!todoDraftDescription.trim() || !todoDraftLaneId} onClick={handleAddTodo}>Add todo</button>
+                <button
+                  className="secondary-button"
+                  data-role="add-task-todo"
+                  type="button"
+                  disabled={!todoDraftDescription.trim() || !todoDraftLaneId}
+                  {...getTooltipProps("Add a lane-scoped checklist item that must be tracked to completion.")}
+                  onClick={handleAddTodo}
+                >Add todo</button>
               </div>
             </div>
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { ProjectSummary } from "../types";
 
 interface ProjectSwitcherProps {
@@ -40,6 +41,7 @@ export function ProjectSwitcher({
 
   const activeUnreadCount = activeProject?.id ? unreadCountsByProject[activeProject.id] ?? 0 : 0;
   const triggerBadge = activeUnreadCount > 0 ? String(activeUnreadCount) : hasUnreadOutsideActiveProject ? "•" : null;
+  const getTooltipProps = useExplanatoryTooltipProps();
   const triggerName = activeProject?.name ?? "Select project";
   const triggerLabel = activeProject ? `Switch project: ${activeProject.name}` : "Select project";
   const triggerMonogram = getProjectMonogram(activeProject?.name);
@@ -95,7 +97,7 @@ export function ProjectSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={triggerLabel}
-        title={triggerLabel}
+        {...getTooltipProps("Switch the active project and refresh the app to that project's data.")}
         onClick={() => setOpen((current) => !current)}
       >
         <span className="project-switcher__avatar" aria-hidden="true">{triggerMonogram}</span>

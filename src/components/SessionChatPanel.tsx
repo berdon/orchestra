@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useState, type FormEvent, type RefObject, typ
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatControlOperationLabel(session: SessionRecord) {
@@ -518,6 +519,8 @@ const SessionTranscript = memo(function SessionTranscript({
     }
   }
 
+  const getTooltipProps = useExplanatoryTooltipProps();
+
   function handleAutoScrollToggle() {
     const nextLockedState = !scrollState.lockedToBottom;
     const node = transcriptRef.current;
@@ -544,7 +547,11 @@ const SessionTranscript = memo(function SessionTranscript({
           data-auto-scroll-mode={scrollState.lockedToBottom ? "on" : "off"}
           aria-pressed={scrollState.lockedToBottom}
           aria-label={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
-          title={scrollState.lockedToBottom ? "Disable auto-scroll" : "Enable auto-scroll and jump to latest"}
+          {...getTooltipProps(
+            scrollState.lockedToBottom
+              ? "Follow the live transcript and keep the latest output in view."
+              : "Pause transcript following so you can inspect earlier output.",
+          )}
           onClick={handleAutoScrollToggle}
         >
           <span aria-hidden="true">{scrollState.lockedToBottom ? "↓" : "⏸"}</span>
@@ -557,7 +564,11 @@ const SessionTranscript = memo(function SessionTranscript({
           data-wrap-mode={wrapTranscript ? "wrap" : "nowrap"}
           aria-pressed={wrapTranscript}
           aria-label={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
-          title={wrapTranscript ? "Disable transcript line wrapping" : "Enable transcript line wrapping"}
+          {...getTooltipProps(
+            wrapTranscript
+              ? "Wrap long transcript lines so they stay inside the panel."
+              : "Show each transcript line without wrapping.",
+          )}
           onClick={() => setWrapTranscript((current) => !current)}
         >
           <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
@@ -650,6 +661,7 @@ export function SessionChatPanel({
     }),
     [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
   );
+  const getTooltipProps = useExplanatoryTooltipProps();
   const activeTaskId = session?.activeTaskId ?? null;
   const activeTaskProjectId = session?.activeTaskProjectId ?? session?.taskProjectId ?? null;
 
@@ -671,9 +683,7 @@ export function SessionChatPanel({
                   className="secondary-button"
                   data-role="session-open-task"
                   type="button"
-                  title={session.activeTaskNumber && session.activeTaskTitle
-                    ? `Open ${session.activeTaskNumber} · ${session.activeTaskTitle}`
-                    : "Open active task"}
+                  {...getTooltipProps("Open the active task without leaving this session.")}
                   onClick={() => onOpenTask(activeTaskId, activeTaskProjectId)}
                 >
                   Open task

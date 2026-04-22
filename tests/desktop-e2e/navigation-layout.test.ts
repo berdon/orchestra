@@ -38,7 +38,8 @@ describe("desktop navigation layout", () => {
         navTitles: string[];
         navAriaLabels: string[];
         iconCount: number;
-        triggerTitle: string;
+        triggerTooltip: string;
+        toggleTooltip: string;
         shortLabelCount: number;
       }>(
         sessionId,
@@ -47,7 +48,8 @@ describe("desktop navigation layout", () => {
             navTitles: Array.from(document.querySelectorAll('[data-role^="nav-item-"]')).map((node) => node.getAttribute('title') ?? ''),
             navAriaLabels: Array.from(document.querySelectorAll('[data-role^="nav-item-"]')).map((node) => node.getAttribute('aria-label') ?? ''),
             iconCount: document.querySelectorAll('.nav-item__icon').length,
-            triggerTitle: document.querySelector('[data-role="project-switcher-trigger"]')?.getAttribute('title') ?? '',
+            triggerTooltip: document.querySelector('[data-role="project-switcher-trigger"]')?.getAttribute('data-tooltip') ?? '',
+            toggleTooltip: document.querySelector('[data-role="toggle-sidebar-collapse"]')?.getAttribute('data-tooltip') ?? '',
             shortLabelCount: document.querySelectorAll('.nav-item__label--short').length,
           };
         `,
@@ -55,7 +57,8 @@ describe("desktop navigation layout", () => {
       expect(collapsedRailState.navTitles).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings']);
       expect(collapsedRailState.navAriaLabels).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings']);
       expect(collapsedRailState.iconCount).toBeGreaterThanOrEqual(6);
-      expect(collapsedRailState.triggerTitle).toContain('Switch project:');
+      expect(collapsedRailState.triggerTooltip).toBe("Switch the active project and refresh the app to that project's data.");
+      expect(collapsedRailState.toggleTooltip).toBe('Expand the sidebar so labels and navigation details are visible again.');
       expect(collapsedRailState.shortLabelCount).toBe(0);
 
       await clickSelector(sessionId, '[data-role="toggle-sidebar-collapse"]');

@@ -1,4 +1,5 @@
 import { TaskTagInput } from "../../components/TaskTagInput";
+import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
@@ -26,6 +27,8 @@ export function TaskEditorForm({
   showAssigneeFields = true,
   onChange,
 }: TaskEditorFormProps) {
+  const getTooltipProps = useExplanatoryTooltipProps();
+
   return (
     <div className={detailLayout ? "task-editor-grid task-editor-grid--detail" : "task-editor-grid"}>
       <label className="field-group task-editor-grid__full">
@@ -62,7 +65,7 @@ export function TaskEditorForm({
         </select>
       </label>
 
-      <label className="field-group">
+      <label className="field-group" {...getTooltipProps("Choose which workflow owns this task's lane transitions.")}>
         <span className="field-group__label">Workflow</span>
         <select
           className="select-input"
@@ -77,7 +80,7 @@ export function TaskEditorForm({
         </select>
       </label>
 
-      <label className="field-group">
+      <label className="field-group" {...getTooltipProps("Limit how many automatic re-prompts happen before Orchestra escalates to a user.")}>
         <span className="field-group__label">Whip max attempts</span>
         <input
           className="text-input"
@@ -104,7 +107,7 @@ export function TaskEditorForm({
         <textarea className="text-area" data-role="task-description" rows={6} value={draft.description ?? ""} onChange={(event) => onChange({ ...draft, description: event.target.value })} />
       </label>
 
-      <label className="field-group task-editor-grid__full">
+      <label className="field-group task-editor-grid__full" {...getTooltipProps("Choose which repositories workers should use while working on this task.")}>
         <span className="field-group__label">Task repositories</span>
         <select
           className="select-input task-repositories-input"

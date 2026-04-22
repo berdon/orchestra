@@ -2,7 +2,11 @@ import { expect, test } from "@playwright/test";
 
 test("settings general renders bridge diagnostics and session prompt controls", async ({ page }) => {
   await page.addInitScript(() => {
+    if (window.localStorage.getItem("orchestra.test.general.seeded") === "true") {
+      return;
+    }
     window.localStorage.clear();
+    window.localStorage.setItem("orchestra.test.general.seeded", "true");
     const timestamp = new Date().toISOString();
     window.localStorage.setItem(
       "orchestra.mock.bridge-diagnostics",
@@ -86,11 +90,13 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("tab", { name: "General" }).click();
+  await page.locator('[data-role="nav-item-settings"]').click();
+  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-dark");
+  await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "enabled");
+  await expect(page.locator('[data-role="explanatory-tooltips-toggle"]')).toBeChecked();
   await page.locator('[data-role="theme-select"]').selectOption("catppuccin-latte");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "catppuccin-latte");
   await expect(page.locator('[data-role="theme-current-kind"]')).toContainText("light");
@@ -100,6 +106,30 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await expect(page.locator('[data-role="theme-current-kind"]')).toContainText("dark");
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.theme"))).toBe("dracula");
 
+  await page.locator('[data-role="explanatory-tooltips-toggle"]').uncheck();
+  await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "disabled");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.explanatory-tooltips"))).toBe("disabled");
+  await page.reload();
+  await page.locator('[data-role="nav-item-settings"]').click();
+  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
+  await expect(page.locator('[data-role="explanatory-tooltips-toggle"]')).not.toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "disabled");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await expect.poll(() => page.locator('[data-role="task-workflow"]').evaluate((element) => element.closest('label')?.getAttribute('data-tooltip') ?? null)).toBeNull();
+
+  await page.locator('[data-role="nav-item-settings"]').click();
+  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
+  await page.locator('[data-role="explanatory-tooltips-toggle"]').check();
+  await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "enabled");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.explanatory-tooltips"))).toBe("enabled");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await expect.poll(() => page.locator('[data-role="task-workflow"]').evaluate((element) => element.closest('label')?.getAttribute('data-tooltip') ?? null)).toBe("Choose which workflow owns this task's lane transitions.");
+
+  await page.locator('[data-role="nav-item-settings"]').click();
+  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
   await expect(page.getByRole("heading", { name: "Session prompt" })).toBeVisible();
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
   await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{TASK.ID}");
