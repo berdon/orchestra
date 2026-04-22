@@ -18,6 +18,7 @@ pub mod live_sessions;
 pub mod logging;
 pub mod messages;
 pub mod orchestra_paths;
+pub mod pi_runtime;
 pub mod pi_sessions;
 pub mod policies;
 pub mod project_settings;

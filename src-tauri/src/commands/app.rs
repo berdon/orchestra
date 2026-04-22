@@ -14,9 +14,10 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::{
     models::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
-        PiRuntimeSettings, ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo,
-        SystemNotificationEnvironmentStatus, SystemNotificationPermissionState,
-        SystemNotificationRequest, TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput,
+        PiImportLegacyResult, PiRuntimeDiagnostics, PiRuntimeSettings, ProjectUpsertInput,
+        RoleUpsertInput, SessionModel, SessionStorageInfo, SystemNotificationEnvironmentStatus,
+        SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
+        WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
         database, harness_settings,
@@ -33,10 +34,45 @@ use crate::{
 pub fn build_app_info(state: &AppState) -> AppInfo {
     let version = env!("CARGO_PKG_VERSION");
     let hash = option_env!("ORCHESTRA_GIT_HASH").unwrap_or("dev");
-    let dispatch_blocked_reason = match state.sync_pi_runtime_health() {
-        Ok(_) => None,
-        Err(error) => Some(error),
-    };
+    let pi_runtime_diagnostics = crate::services::pi_runtime::get_pi_runtime_diagnostics()
+        .unwrap_or_else(|error| PiRuntimeDiagnostics {
+            runtime: crate::models::PiRuntimeStatus {
+                available: false,
+                source: if crate::services::pi_runtime::is_packaged_mode() {
+                    "bundled".into()
+                } else {
+                    "external".into()
+                },
+                packaged_mode: crate::services::pi_runtime::is_packaged_mode(),
+                resolved_path: None,
+                error: Some(error.clone()),
+                message: error.clone(),
+            },
+            auth: crate::models::PiAuthStatus {
+                configured: false,
+                agent_dir: "<unavailable>".into(),
+                auth_path: "<unavailable>".into(),
+                models_path: "<unavailable>".into(),
+                settings_path: "<unavailable>".into(),
+                auth_exists: false,
+                models_exists: false,
+                legacy_agent_dir: None,
+                legacy_auth_available: false,
+                legacy_models_available: false,
+                auth_imported_at: None,
+                models_imported_at: None,
+                message: error.clone(),
+            },
+            add_ons: crate::models::PiAddOnPolicyStatus {
+                packaged_mode: crate::services::pi_runtime::is_packaged_mode(),
+                allowed: true,
+                extra_extensions: Vec::new(),
+                blocked_extensions: Vec::new(),
+                message: error,
+            },
+        });
+    let dispatch_blocked_reason = pi_runtime_diagnostics.runtime.error.clone();
+    let _ = state.sync_pi_runtime_health();
     AppInfo {
         app_name: "Orchestra".into(),
         environment: "tauri".into(),
@@ -44,6 +80,7 @@ pub fn build_app_info(state: &AppState) -> AppInfo {
         version_display: format!("{}-{}", version, hash),
         dispatch_blocked: dispatch_blocked_reason.is_some(),
         dispatch_blocked_reason,
+        pi_runtime_diagnostics,
     }
 }
 
@@ -258,10 +295,14 @@ pub fn update_pi_runtime_settings(
 
 #[tauri::command]
 pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableDiagnostic {
-    match state.sync_pi_runtime_health() {
-        Ok(path) => PiExecutableDiagnostic {
-            resolved_path: Some(path.display().to_string()),
-            error: None,
+    match crate::services::pi_runtime::get_pi_runtime_diagnostics() {
+        Ok(diagnostics) => PiExecutableDiagnostic {
+            resolved_path: diagnostics.runtime.resolved_path,
+            error: diagnostics.runtime.error,
+            source: diagnostics.runtime.source,
+            packaged_mode: diagnostics.runtime.packaged_mode,
+            agent_dir: Some(diagnostics.auth.agent_dir),
+            auth_configured: diagnostics.auth.configured,
         },
         Err(error) => {
             state.log(
@@ -272,9 +313,30 @@ pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableD
             PiExecutableDiagnostic {
                 resolved_path: None,
                 error: Some(error),
+                source: if crate::services::pi_runtime::is_packaged_mode() {
+                    "bundled".into()
+                } else {
+                    "external".into()
+                },
+                packaged_mode: crate::services::pi_runtime::is_packaged_mode(),
+                agent_dir: None,
+                auth_configured: false,
             }
         }
     }
+}
+
+#[tauri::command]
+pub fn get_pi_runtime_diagnostics() -> Result<PiRuntimeDiagnostics, String> {
+    crate::services::pi_runtime::get_pi_runtime_diagnostics()
+}
+
+#[tauri::command]
+pub fn import_legacy_pi_configuration(
+    import_auth: bool,
+    import_models: bool,
+) -> Result<PiImportLegacyResult, String> {
+    crate::services::pi_runtime::import_legacy_pi_configuration(import_auth, import_models)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

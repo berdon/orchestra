@@ -58,7 +58,7 @@ pub(crate) fn is_unknown_command_error(error: &str) -> bool {
     error.to_ascii_lowercase().contains("unknown command")
 }
 
-fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(project_root) = env::var("ORCHESTRA_PROJECT_ROOT") {
         let fallback = Path::new(&project_root).join("extensions/orchestra-tools.ts");
         if fallback.exists() {
@@ -127,6 +127,8 @@ pub struct SessionRuntime {
     session_dir: PathBuf,
     session_path: PathBuf,
     pi_executable_path: PathBuf,
+    pi_runtime_source: String,
+    pi_agent_dir: PathBuf,
     shell_path: Option<String>,
     orchestra_extension_path: PathBuf,
     extra_extensions: Vec<String>,
@@ -161,11 +163,12 @@ impl SessionRuntime {
         )?;
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
         let extension_path = resolve_orchestra_extension_path(&app)?;
-        let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
+        let runtime_context = crate::services::pi_runtime::resolve_pi_runtime_context(None)?;
+        let extra_extensions = harness_settings::resolve_spawn_extra_extensions(
+            harness_settings::get_pi_runtime_settings()?.extra_extensions,
+        )?;
 
-        let pi_executable = app
-            .state::<crate::state::AppState>()
-            .sync_pi_runtime_health()?;
+        let pi_executable = runtime_context.executable_path.clone();
         let args = build_runtime_pi_args(
             &session_path,
             &session_dir,
@@ -203,6 +206,7 @@ impl SessionRuntime {
 
         let mut command = Command::new(&pi_executable);
         crate::services::pi_sessions::apply_user_shell_environment(&mut command);
+        crate::services::pi_runtime::apply_pi_runtime_environment(&mut command, &runtime_context)?;
         let mut child = command
             .args(&args)
             .env("ORCHESTRA_BRIDGE_URL", &bridge_config.url)
@@ -273,6 +277,8 @@ impl SessionRuntime {
             session_dir,
             session_path,
             pi_executable_path: pi_executable,
+            pi_runtime_source: runtime_context.runtime_source,
+            pi_agent_dir: runtime_context.pi_agent_dir,
             shell_path,
             orchestra_extension_path: extension_path,
             extra_extensions,
@@ -1056,8 +1062,11 @@ impl SessionRuntime {
             automatic_extensions_disabled: true,
             orchestra_extension_path: Some(self.orchestra_extension_path.display().to_string()),
             extra_extensions: self.extra_extensions.clone(),
+            blocked_extra_extensions: Vec::new(),
             loaded_extensions,
             pi_executable_path: Some(self.pi_executable_path.display().to_string()),
+            pi_runtime_source: Some(self.pi_runtime_source.clone()),
+            pi_agent_dir: Some(self.pi_agent_dir.display().to_string()),
             shell_path: self.shell_path.clone(),
             project_root: self
                 .project_root
@@ -1685,11 +1694,14 @@ pub fn get_session_runtime_details(
     let context = crate::services::pi_sessions::find_session_context_for_session(session_id)?;
     let session_path = get_session_path(&context.session_dir, session_id)?;
     let orchestra_extension_path = resolve_orchestra_extension_path(app)?;
-    let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
-    let pi_executable_path = state
-        .sync_pi_runtime_health()
-        .ok()
-        .map(|path| path.display().to_string());
+    let configured_settings = harness_settings::get_pi_runtime_settings()?;
+    let blocked_extra_extensions =
+        harness_settings::blocked_packaged_mode_extensions(&configured_settings.extra_extensions);
+    let extra_extensions = configured_settings.extra_extensions;
+    let runtime_context = crate::services::pi_runtime::resolve_pi_runtime_context(None).ok();
+    let pi_executable_path = runtime_context
+        .as_ref()
+        .map(|context| context.executable_path.display().to_string());
     let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
     let loaded_extensions = std::iter::once(orchestra_extension_path.display().to_string())
         .chain(extra_extensions.iter().cloned())
@@ -1714,16 +1726,32 @@ pub fn get_session_runtime_details(
         automatic_extensions_disabled: true,
         orchestra_extension_path: Some(orchestra_extension_path.display().to_string()),
         extra_extensions,
+        blocked_extra_extensions: blocked_extra_extensions.clone(),
         loaded_extensions,
         pi_executable_path,
+        pi_runtime_source: runtime_context
+            .as_ref()
+            .map(|context| context.runtime_source.clone()),
+        pi_agent_dir: runtime_context
+            .as_ref()
+            .map(|context| context.pi_agent_dir.display().to_string()),
         shell_path,
         project_root: Some(context.project_root.display().to_string()),
         session_dir: Some(context.session_dir.display().to_string()),
         session_path: Some(session_path.display().to_string()),
-        notes: vec![
-            "No live runtime is currently attached to this session. These details describe what Orchestra will load the next time it spawns the live runtime for this session.".into(),
-            "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
-        ],
+        notes: {
+            let mut notes = vec![
+                "No live runtime is currently attached to this session. These details describe what Orchestra will load the next time it spawns the live runtime for this session.".into(),
+                "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
+            ];
+            if !blocked_extra_extensions.is_empty() {
+                notes.push(format!(
+                    "Packaged Orchestra will reject unsupported extra extension entries: {}.",
+                    blocked_extra_extensions.join(", ")
+                ));
+            }
+            notes
+        },
         control_capabilities: Some(control_capabilities),
         control_operation,
     })

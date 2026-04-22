@@ -10,6 +10,7 @@ pub struct AppInfo {
     pub version_display: String,
     pub dispatch_blocked: bool,
     pub dispatch_blocked_reason: Option<String>,
+    pub pi_runtime_diagnostics: PiRuntimeDiagnostics,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -309,11 +310,70 @@ pub struct SessionStorageInfo {
     pub session_dir: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiRuntimeDiagnostics {
+    pub runtime: PiRuntimeStatus,
+    pub auth: PiAuthStatus,
+    pub add_ons: PiAddOnPolicyStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiRuntimeStatus {
+    pub available: bool,
+    pub source: String,
+    pub packaged_mode: bool,
+    pub resolved_path: Option<String>,
+    pub error: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiAuthStatus {
+    pub configured: bool,
+    pub agent_dir: String,
+    pub auth_path: String,
+    pub models_path: String,
+    pub settings_path: String,
+    pub auth_exists: bool,
+    pub models_exists: bool,
+    pub legacy_agent_dir: Option<String>,
+    pub legacy_auth_available: bool,
+    pub legacy_models_available: bool,
+    pub auth_imported_at: Option<String>,
+    pub models_imported_at: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiAddOnPolicyStatus {
+    pub packaged_mode: bool,
+    pub allowed: bool,
+    pub extra_extensions: Vec<String>,
+    pub blocked_extensions: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PiExecutableDiagnostic {
     pub resolved_path: Option<String>,
     pub error: Option<String>,
+    pub source: String,
+    pub packaged_mode: bool,
+    pub agent_dir: Option<String>,
+    pub auth_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiImportLegacyResult {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+    pub diagnostics: PiRuntimeDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -429,8 +489,11 @@ pub struct SessionRuntimeDetails {
     pub automatic_extensions_disabled: bool,
     pub orchestra_extension_path: Option<String>,
     pub extra_extensions: Vec<String>,
+    pub blocked_extra_extensions: Vec<String>,
     pub loaded_extensions: Vec<String>,
     pub pi_executable_path: Option<String>,
+    pub pi_runtime_source: Option<String>,
+    pub pi_agent_dir: Option<String>,
     pub shell_path: Option<String>,
     pub project_root: Option<String>,
     pub session_dir: Option<String>,

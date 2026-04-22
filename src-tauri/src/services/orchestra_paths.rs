@@ -81,6 +81,30 @@ pub fn orchestra_settings_path(root: &Path) -> PathBuf {
     root.join("settings.json")
 }
 
+pub fn orchestra_runtime_root(root: &Path) -> PathBuf {
+    root.join("runtime")
+}
+
+pub fn orchestra_pi_root(root: &Path) -> PathBuf {
+    orchestra_runtime_root(root).join("pi")
+}
+
+pub fn orchestra_pi_agent_dir(root: &Path) -> PathBuf {
+    orchestra_pi_root(root).join("agent")
+}
+
+pub fn orchestra_pi_auth_path(root: &Path) -> PathBuf {
+    orchestra_pi_agent_dir(root).join("auth.json")
+}
+
+pub fn orchestra_pi_models_path(root: &Path) -> PathBuf {
+    orchestra_pi_agent_dir(root).join("models.json")
+}
+
+pub fn orchestra_pi_settings_path(root: &Path) -> PathBuf {
+    orchestra_pi_agent_dir(root).join("settings.json")
+}
+
 pub fn project_root(root: &Path, project_slug: &str) -> PathBuf {
     root.join("projects").join(sanitize_slug(project_slug))
 }
@@ -138,6 +162,26 @@ mod tests {
         assert_eq!(
             orchestra_settings_path(&root),
             PathBuf::from("/tmp/home/.orchestra/settings.json")
+        );
+        assert_eq!(
+            orchestra_runtime_root(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime")
+        );
+        assert_eq!(
+            orchestra_pi_agent_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent")
+        );
+        assert_eq!(
+            orchestra_pi_auth_path(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent/auth.json")
+        );
+        assert_eq!(
+            orchestra_pi_models_path(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent/models.json")
+        );
+        assert_eq!(
+            orchestra_pi_settings_path(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent/settings.json")
         );
         assert_eq!(
             project_session_dir(&root, "Orchestra App"),

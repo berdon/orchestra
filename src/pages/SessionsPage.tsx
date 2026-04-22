@@ -472,8 +472,26 @@ export function SessionsPage({
                     ) : <p className="session-debug-value">None</p>}
                   </section>
                   <section className="session-debug-item">
+                    <p className="eyebrow">Blocked extra extensions</p>
+                    {runtimeDetails.blockedExtraExtensions.length ? (
+                      <ul className="session-runtime-details-list">
+                        {runtimeDetails.blockedExtraExtensions.map((extension) => (
+                          <li className="session-debug-value" key={extension}>{extension}</li>
+                        ))}
+                      </ul>
+                    ) : <p className="session-debug-value">None</p>}
+                  </section>
+                  <section className="session-debug-item">
                     <p className="eyebrow">PI executable</p>
                     <p className="session-debug-value">{runtimeDetails.piExecutablePath ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">PI runtime source</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeSource ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">PI agent dir</p>
+                    <p className="session-debug-value">{runtimeDetails.piAgentDir ?? "—"}</p>
                   </section>
                   <section className="session-debug-item">
                     <p className="eyebrow">Shell PATH source</p>

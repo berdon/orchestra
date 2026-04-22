@@ -11,6 +11,8 @@ import type {
   ArchiveMailboxMessagesInput,
   BridgeCleanupEvent,
   PiExecutableDiagnostic,
+  PiImportLegacyResult,
+  PiRuntimeDiagnostics,
   BridgeDiagnostics,
   DomainEvent,
   InboxChangeEvent,
@@ -2218,6 +2220,38 @@ export async function getAppInfo(): Promise<AppInfo> {
       versionDisplay: "0.1.0-mock0000",
       dispatchBlocked: false,
       dispatchBlockedReason: null,
+      piRuntimeDiagnostics: {
+        runtime: {
+          available: true,
+          source: "external",
+          packagedMode: false,
+          resolvedPath: "pi (mock)",
+          error: null,
+          message: "PI runtime resolved in browser-mode mock.",
+        },
+        auth: {
+          configured: true,
+          agentDir: "~/.orchestra/runtime/pi/agent",
+          authPath: "~/.orchestra/runtime/pi/agent/auth.json",
+          modelsPath: "~/.orchestra/runtime/pi/agent/models.json",
+          settingsPath: "~/.orchestra/runtime/pi/agent/settings.json",
+          authExists: true,
+          modelsExists: true,
+          legacyAgentDir: "~/.pi/agent",
+          legacyAuthAvailable: true,
+          legacyModelsAvailable: true,
+          authImportedAt: null,
+          modelsImportedAt: null,
+          message: "Browser-mode mock simulates configured Orchestra-managed PI auth.",
+        },
+        addOns: {
+          packagedMode: false,
+          allowed: true,
+          extraExtensions: [],
+          blockedExtensions: [],
+          message: "Browser-mode mock allows free-form PI extension entries.",
+        },
+      },
     };
   }
 
@@ -2364,8 +2398,11 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
       automaticExtensionsDisabled: true,
       orchestraExtensionPath,
       extraExtensions,
+      blockedExtraExtensions: [],
       loadedExtensions: [orchestraExtensionPath, ...extraExtensions],
       piExecutablePath: "pi (mock)",
+      piRuntimeSource: "external",
+      piAgentDir: "~/.orchestra/runtime/pi/agent",
       shellPath: "/mock/bin",
       projectRoot: session.debugInfo?.projectRoot ?? "/mock/orchestra/project",
       sessionDir: "/mock/orchestra/sessions",
@@ -2724,10 +2761,37 @@ export async function stopSessionRuntime(sessionId: string, notes?: string): Pro
 
 export async function getPiExecutableDiagnostic(): Promise<PiExecutableDiagnostic> {
   if (!isTauriAvailable()) {
-    return { resolvedPath: "/mock/bin/pi", error: null };
+    return {
+      resolvedPath: "/mock/bin/pi",
+      error: null,
+      source: "external",
+      packagedMode: false,
+      agentDir: "~/.orchestra/runtime/pi/agent",
+      authConfigured: true,
+    };
   }
 
   return invoke<PiExecutableDiagnostic>("get_pi_executable_diagnostic");
+}
+
+export async function getPiRuntimeDiagnostics(): Promise<PiRuntimeDiagnostics> {
+  if (!isTauriAvailable()) {
+    return (await getAppInfo()).piRuntimeDiagnostics;
+  }
+
+  return invoke<PiRuntimeDiagnostics>("get_pi_runtime_diagnostics");
+}
+
+export async function importLegacyPiConfiguration(importAuth: boolean, importModels: boolean): Promise<PiImportLegacyResult> {
+  if (!isTauriAvailable()) {
+    return {
+      imported: [importAuth ? "auth.json" : null, importModels ? "models.json" : null].filter((value): value is string => Boolean(value)),
+      skipped: [],
+      diagnostics: await getPiRuntimeDiagnostics(),
+    };
+  }
+
+  return invoke<PiImportLegacyResult>("import_legacy_pi_configuration", { importAuth, importModels });
 }
 
 export async function listPiModels(): Promise<SessionModel[]> {

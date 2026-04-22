@@ -631,7 +631,9 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
                 </label>
 
                 <div className="workflow-form-grid__full muted-copy" data-role="agent-pi-executable-diagnostic">
-                  PI executable: {piExecutableDiagnostic?.resolvedPath ?? piExecutableDiagnostic?.error ?? "Loading…"}
+                  PI runtime ({piExecutableDiagnostic?.source ?? "loading"}): {piExecutableDiagnostic?.resolvedPath ?? piExecutableDiagnostic?.error ?? "Loading…"}
+                  {piExecutableDiagnostic?.agentDir ? <><br />Agent dir: {piExecutableDiagnostic.agentDir}</> : null}
+                  <br />Auth configured: {piExecutableDiagnostic ? (piExecutableDiagnostic.authConfigured ? "Yes" : "No") : "Loading…"}
                 </div>
 
                 <label className="field-group workflow-form-grid__full">

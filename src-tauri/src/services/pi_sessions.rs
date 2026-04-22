@@ -1510,7 +1510,9 @@ fn set_session_thinking_level_with_executable(
 }
 
 fn list_available_models_with_executable(executable: &Path) -> Result<Vec<SessionModel>, String> {
-    let resolved_executable = resolve_pi_executable(Some(executable))?;
+    let runtime_context =
+        crate::services::pi_runtime::resolve_pi_runtime_context(Some(executable))?;
+    let resolved_executable = runtime_context.executable_path.clone();
     let temp_root = std::env::temp_dir().join(format!("orchestra-models-{}", Uuid::new_v4()));
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("Unable to create temporary model query directory: {error}"))?;
@@ -1572,8 +1574,11 @@ fn spawn_rpc_process(
         session_dir.display().to_string(),
         "--no-extensions".to_string(),
     ];
+    let runtime_context =
+        crate::services::pi_runtime::resolve_pi_runtime_context(Some(executable))?;
     let mut command = Command::new(&pi_executable);
     apply_user_shell_environment(&mut command);
+    crate::services::pi_runtime::apply_pi_runtime_environment(&mut command, &runtime_context)?;
     let mut child = command
         .args(&args)
         .current_dir(project_root)

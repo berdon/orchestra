@@ -22,6 +22,7 @@ import {
   getTask,
   isCurrentAgentTerminalWindow,
   isCurrentLogsWindow,
+  importLegacyPiConfiguration,
   listInboxMessages,
   listSessions,
   listTasks,
@@ -1471,8 +1472,18 @@ export function App() {
   async function handleSavePiRuntimeSettings(input: { extraExtensions: string[]; defaultCompactionWindow: string }) {
     try {
       setPiRuntimeSettings(await updatePiRuntimeSettings(input));
+      await loadAppInfo();
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to save PI runtime settings.");
+    }
+  }
+
+  async function handleImportLegacyPiConfiguration(input: { importAuth: boolean; importModels: boolean }) {
+    try {
+      await importLegacyPiConfiguration(input.importAuth, input.importModels);
+      await Promise.all([loadAppInfo(), loadPiRuntimeSettings()]);
+    } catch (error) {
+      setSessionActionError(error instanceof Error ? error.message : "Unable to import legacy PI configuration.");
     }
   }
 
@@ -3135,6 +3146,28 @@ export function App() {
           </div>
         ) : null}
 
+        {appInfo?.piRuntimeDiagnostics.runtime.available && !appInfo.piRuntimeDiagnostics.auth.configured ? (
+          <div className="session-readonly-banner app-status-banner" data-role="pi-auth-banner">
+            <div>
+              <strong>PI auth setup required.</strong> {appInfo.piRuntimeDiagnostics.auth.message}
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setSettingsTab("general")}>
+              Open settings
+            </button>
+          </div>
+        ) : null}
+
+        {appInfo?.piRuntimeDiagnostics.addOns.blockedExtensions.length ? (
+          <div className="session-readonly-banner app-status-banner" data-role="pi-addon-policy-banner">
+            <div>
+              <strong>Unsupported packaged-mode PI add-ons.</strong> {appInfo.piRuntimeDiagnostics.addOns.message}
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setSettingsTab("general")}>
+              Review settings
+            </button>
+          </div>
+        ) : null}
+
         {activePage === "settings" ? (
           settingsTab === "projects" ? (
             <ProjectsPanel />
@@ -3155,6 +3188,7 @@ export function App() {
               bridgeDiagnostics={bridgeDiagnostics}
               sessionPromptSettings={sessionPromptSettings}
               piRuntimeSettings={piRuntimeSettings}
+              piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
               systemNotificationEnvironment={systemNotificationEnvironment}
               systemNotificationPermission={systemNotificationPermission}
               refreshingSystemNotificationPermission={refreshingSystemNotificationPermission}
@@ -3175,6 +3209,7 @@ export function App() {
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
               onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
+              onImportLegacyPiConfiguration={(input) => void handleImportLegacyPiConfiguration(input)}
               onRefreshSystemNotificationPermission={() => void handleRefreshSystemNotificationPermission()}
               onRequestSystemNotificationPermission={() => void handleRequestSystemNotificationPermission()}
               onSendTestSystemNotification={() => void handleSendTestSystemNotification()}

@@ -660,8 +660,9 @@ impl AppState {
     }
 
     pub fn sync_pi_runtime_health(&self) -> Result<PathBuf, String> {
-        match crate::services::pi_sessions::resolve_pi_executable(None) {
-            Ok(path) => {
+        match crate::services::pi_runtime::resolve_pi_runtime_context(None) {
+            Ok(context) => {
+                let path = context.executable_path;
                 let was_blocked = self
                     .pi_dispatch_block_reason
                     .lock()
@@ -673,7 +674,7 @@ impl AppState {
                         "info",
                         "pi.dispatch.unblocked",
                         &format!(
-                            "PI executable is available again at {}. Dispatching re-enabled.",
+                            "PI runtime is available again at {}. Dispatching re-enabled.",
                             path.display()
                         ),
                     );

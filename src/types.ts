@@ -22,6 +22,7 @@ export interface AppInfo {
   versionDisplay: string;
   dispatchBlocked: boolean;
   dispatchBlockedReason?: string | null;
+  piRuntimeDiagnostics: PiRuntimeDiagnostics;
 }
 
 export type SystemNotificationPermissionState =
@@ -39,9 +40,58 @@ export interface SystemNotificationEnvironmentStatus {
   appBundlePath?: string | null;
 }
 
+export interface PiRuntimeStatus {
+  available: boolean;
+  source: string;
+  packagedMode: boolean;
+  resolvedPath?: string | null;
+  error?: string | null;
+  message: string;
+}
+
+export interface PiAuthStatus {
+  configured: boolean;
+  agentDir: string;
+  authPath: string;
+  modelsPath: string;
+  settingsPath: string;
+  authExists: boolean;
+  modelsExists: boolean;
+  legacyAgentDir?: string | null;
+  legacyAuthAvailable: boolean;
+  legacyModelsAvailable: boolean;
+  authImportedAt?: string | null;
+  modelsImportedAt?: string | null;
+  message: string;
+}
+
+export interface PiAddOnPolicyStatus {
+  packagedMode: boolean;
+  allowed: boolean;
+  extraExtensions: string[];
+  blockedExtensions: string[];
+  message: string;
+}
+
+export interface PiRuntimeDiagnostics {
+  runtime: PiRuntimeStatus;
+  auth: PiAuthStatus;
+  addOns: PiAddOnPolicyStatus;
+}
+
 export interface PiExecutableDiagnostic {
   resolvedPath?: string | null;
   error?: string | null;
+  source: string;
+  packagedMode: boolean;
+  agentDir?: string | null;
+  authConfigured: boolean;
+}
+
+export interface PiImportLegacyResult {
+  imported: string[];
+  skipped: string[];
+  diagnostics: PiRuntimeDiagnostics;
 }
 
 export interface RemoteAccessSettings {
@@ -310,8 +360,11 @@ export interface SessionRuntimeDetails {
   automaticExtensionsDisabled: boolean;
   orchestraExtensionPath?: string | null;
   extraExtensions: string[];
+  blockedExtraExtensions: string[];
   loadedExtensions: string[];
   piExecutablePath?: string | null;
+  piRuntimeSource?: string | null;
+  piAgentDir?: string | null;
   shellPath?: string | null;
   projectRoot?: string | null;
   sessionDir?: string | null;
