@@ -19,7 +19,10 @@ use crate::{
     },
     services::{
         database,
-        orchestra_paths::{default_orchestra_root, project_session_dir, sanitize_slug},
+        orchestra_paths::{
+            configured_checkout_root, current_orchestra_checkout_root, default_orchestra_root,
+            project_session_dir, sanitize_slug,
+        },
         projects,
     },
 };
@@ -46,17 +49,11 @@ pub struct StoredSession {
 }
 
 fn configured_project_root() -> Option<PathBuf> {
-    env::var("ORCHESTRA_PROJECT_ROOT")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    configured_checkout_root()
 }
 
-fn fallback_manifest_project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+fn fallback_checkout_root() -> Option<PathBuf> {
+    current_orchestra_checkout_root()
 }
 
 fn resolve_context_project_root(project_slug: &str) -> Result<PathBuf, String> {
@@ -70,9 +67,8 @@ fn resolve_context_project_root(project_slug: &str) -> Result<PathBuf, String> {
         return Ok(resolved);
     }
 
-    let manifest_root = fallback_manifest_project_root();
-    if manifest_root.is_dir() {
-        return Ok(manifest_root);
+    if let Some(checkout_root) = fallback_checkout_root().filter(|path| path.is_dir()) {
+        return Ok(checkout_root);
     }
 
     Ok(resolved)
@@ -85,8 +81,10 @@ pub fn detect_session_context(
         sanitize_slug(project_slug)
     } else if let Some(project_root) = configured_project_root() {
         infer_project_slug(&project_root)
+    } else if let Some(project_root) = fallback_checkout_root() {
+        infer_project_slug(&project_root)
     } else {
-        infer_project_slug(&fallback_manifest_project_root())
+        "orchestra".into()
     };
 
     let project_root = resolve_context_project_root(&project_slug)?;

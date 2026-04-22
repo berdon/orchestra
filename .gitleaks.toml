@@ -1,0 +1,13 @@
+title = "Orchestra gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated or local build output directories are scanned separately."
+paths = [
+  '''(^|.*/)\.tmp(/|$)''',
+  '''(^|.*/)dist(/|$)''',
+  '''(^|.*/)mobile/dist-web(/|$)''',
+  '''(^|.*/)src-tauri/target(/|$)''',
+]

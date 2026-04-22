@@ -34,8 +34,9 @@ use crate::{
         RemotePushTokenInput, SendMailboxMessageInput, SessionRecord, TaskDetail, TaskSummary,
     },
     services::{
-        agent_dispatch, app_events, database, live_sessions::ensure_runtime, messages, pi_sessions,
-        projects, remote_access, tasks,
+        agent_dispatch, app_events, database, live_sessions::ensure_runtime, messages,
+        orchestra_paths::current_orchestra_checkout_root, pi_sessions, projects, remote_access,
+        tasks,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle, RemoteWebServerHandle},
 };
@@ -586,15 +587,22 @@ fn resolve_mobile_web_root(app: &AppHandle) -> Result<PathBuf, String> {
         return Ok(bundled);
     }
 
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mobile/dist-web");
-    if repo.exists() {
-        return Ok(repo);
+    if let Some(checkout_root) = current_orchestra_checkout_root() {
+        let repo = checkout_root.join("mobile/dist-web");
+        if repo.exists() {
+            return Ok(repo);
+        }
+
+        return Err(format!(
+            "Unable to locate Orchestra web driver assets. Expected {} or {}. Run `cd mobile && npm install && npm run web:build` before enabling Tailscale support.",
+            bundled.display(),
+            repo.display()
+        ));
     }
 
     Err(format!(
-        "Unable to locate Orchestra web driver assets. Expected {} or {}. Run `cd mobile && npm install && npm run web:build` before enabling Tailscale support.",
-        bundled.display(),
-        repo.display()
+        "Unable to locate Orchestra web driver assets. Expected bundled assets at {} or a local Orchestra checkout with mobile/dist-web available.",
+        bundled.display()
     ))
 }
 

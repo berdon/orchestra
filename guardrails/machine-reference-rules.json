@@ -1,0 +1,38 @@
+{
+  "seedUsernames": [],
+  "rules": [
+    {
+      "id": "configured-username",
+      "kind": "username",
+      "description": "Configured machine-specific usernames or handles."
+    },
+    {
+      "id": "unix-home-path",
+      "kind": "regex",
+      "description": "Concrete macOS/Linux home-directory paths.",
+      "pattern": "(?:/Users|/home)/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._~:-]+)+",
+      "flags": "g"
+    },
+    {
+      "id": "windows-home-path",
+      "kind": "regex",
+      "description": "Concrete Windows user-profile paths.",
+      "pattern": "[A-Za-z]:(?:\\\\\\\\|\\\\)Users(?:\\\\\\\\|\\\\)[A-Za-z0-9._-]+(?:(?:\\\\\\\\|\\\\)[A-Za-z0-9._~:-]+)+",
+      "flags": "g"
+    },
+    {
+      "id": "unix-orchestra-machine-path",
+      "kind": "regex",
+      "description": "Concrete Orchestra storage or task-workspace paths rooted in a real macOS/Linux home directory.",
+      "pattern": "(?:/Users|/home)/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._~:-]+)*/\\.orchestra(?:/[A-Za-z0-9._~:-]+)*",
+      "flags": "g"
+    },
+    {
+      "id": "windows-orchestra-machine-path",
+      "kind": "regex",
+      "description": "Concrete Orchestra storage or task-workspace paths rooted in a real Windows user profile.",
+      "pattern": "[A-Za-z]:(?:\\\\\\\\|\\\\)Users(?:\\\\\\\\|\\\\)[A-Za-z0-9._-]+(?:(?:\\\\\\\\|\\\\)[A-Za-z0-9._~:-]+)*(?:\\\\\\\\|\\\\)\\.orchestra(?:(?:\\\\\\\\|\\\\)[A-Za-z0-9._~:-]+)*",
+      "flags": "g"
+    }
+  ]
+}

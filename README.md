@@ -55,6 +55,39 @@ npm run dev
 npm test
 ```
 
+### Release guardrails
+
+Before distributing an adhoc build, run the verified guardrail flow:
+
+```bash
+npm run build:adhoc:verified
+```
+
+That command runs:
+- `gitleaks` against the current source tree
+- `gitleaks` against reachable git history
+- the repo-local machine-reference scanner for usernames and concrete local paths
+- a sanitized release-mode adhoc bundle build with Rust path remapping enabled
+- a post-build artifact scan over the built app/resources using extracted text plus `strings`
+
+If `gitleaks` is not already installed, the wrapper script will download the repo-pinned version into `.tmp/tools/gitleaks/` for repeatable local use.
+
+For individual checks, use:
+
+```bash
+npm run scan:secrets
+npm run scan:history
+npm run scan:machine-refs
+npm run scan:artifacts
+npm run scan:artifacts:release
+```
+
+To audit specific local usernames without committing them, set `ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES` for the scan invocation, for example:
+
+```bash
+ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES=alice,bob npm run scan:machine-refs
+```
+
 ### Desktop E2E policy
 
 Desktop end-to-end tests must use the desktop runner scripts only. Do not run desktop specs directly with generic `npx playwright test` invocations or ad hoc Tauri/cargo commands.
@@ -119,12 +152,16 @@ Orchestra is configured to build with adhoc signing, which enables system notifi
 # Quick build with adhoc signing
 ./scripts/build-adhoc.sh
 
-# Or manually
+# Verified pre-release build with source/history/artifact guardrails
+npm run build:adhoc:verified
+
+# Or manually build a sanitized release bundle
 source "$HOME/.cargo/env"
-cargo tauri build --debug
+ORCHESTRA_BUILD_PROFILE=release ORCHESTRA_SANITIZE_BUILD_PATHS=1 ./scripts/build-adhoc.sh
 ```
 
-The built app will be at `src-tauri/target/debug/bundle/macos/Orchestra.app`.
+The quick local build lands at `src-tauri/target/debug/bundle/macos/Orchestra.app`.
+The verified pre-release build lands at `src-tauri/target/release/bundle/macos/Orchestra.app`.
 
 See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adhoc-signing.md](docs/adhoc-signing.md) for complete documentation on adhoc signing.
 

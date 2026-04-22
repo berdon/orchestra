@@ -1,6 +1,45 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+pub fn configured_checkout_root() -> Option<PathBuf> {
+    env::var_os("ORCHESTRA_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+pub fn find_checkout_root_from(start: &Path) -> Option<PathBuf> {
+    let mut current = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+
+    loop {
+        if current.join("package.json").is_file()
+            && current.join("src-tauri/tauri.conf.json").is_file()
+        {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+pub fn current_orchestra_checkout_root() -> Option<PathBuf> {
+    configured_checkout_root()
+        .or_else(|| {
+            env::current_dir()
+                .ok()
+                .and_then(|path| find_checkout_root_from(&path))
+        })
+        .or_else(|| {
+            env::current_exe()
+                .ok()
+                .and_then(|path| find_checkout_root_from(&path))
+        })
+}
+
 pub fn sanitize_slug(value: &str) -> String {
     let mut slug = String::new();
     let mut last_was_dash = false;
@@ -108,5 +147,41 @@ mod tests {
             project_settings_path(&root, "Orchestra App"),
             PathBuf::from("/tmp/home/.orchestra/projects/orchestra-app/settings.json")
         );
+    }
+
+    #[test]
+    fn finds_checkout_root_from_repo_and_target_paths() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "orchestra-paths-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos()
+        ));
+        let root = temp_root.join("orchestra-checkout");
+        std::fs::create_dir_all(root.join("src-tauri/src/services"))
+            .expect("repo source tree should be created");
+        std::fs::create_dir_all(root.join("src-tauri/target/release"))
+            .expect("repo target tree should be created");
+        std::fs::write(root.join("package.json"), "{}")
+            .expect("package.json sentinel should be created");
+        std::fs::write(root.join("src-tauri/tauri.conf.json"), "{}")
+            .expect("tauri.conf sentinel should be created");
+        std::fs::write(root.join("src-tauri/target/release/orchestra"), "")
+            .expect("binary sentinel should be created");
+
+        let nested_repo_path = root.join("src-tauri/src/services");
+        let nested_target_binary = root.join("src-tauri/target/release/orchestra");
+
+        assert_eq!(
+            find_checkout_root_from(&nested_repo_path),
+            Some(root.clone())
+        );
+        assert_eq!(
+            find_checkout_root_from(&nested_target_binary),
+            Some(root.clone())
+        );
+
+        std::fs::remove_dir_all(temp_root).expect("temp checkout should be removed");
     }
 }

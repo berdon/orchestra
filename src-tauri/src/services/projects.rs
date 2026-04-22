@@ -10,8 +10,8 @@ use crate::models::{
 };
 use crate::services::{
     orchestra_paths::{
-        default_orchestra_root, managed_repository_checkout_dir, managed_repository_root,
-        project_root, sanitize_slug,
+        current_orchestra_checkout_root, default_orchestra_root, managed_repository_checkout_dir,
+        managed_repository_root, project_root, sanitize_slug,
     },
     project_settings,
 };
@@ -662,6 +662,19 @@ pub fn get_repository(
 const DEFAULT_PROJECT_ID: &str = "orchestra";
 const DEFAULT_REPOSITORY_ID: &str = "repo-orchestra";
 
+fn default_repository_seed_path() -> Result<PathBuf, String> {
+    if let Some(checkout_root) = current_orchestra_checkout_root() {
+        return Ok(checkout_root);
+    }
+
+    let orchestra_root = default_orchestra_root()?;
+    Ok(managed_repository_checkout_dir(
+        &orchestra_root,
+        DEFAULT_PROJECT_ID,
+        "orchestra",
+    ))
+}
+
 fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
@@ -671,17 +684,7 @@ fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     }
 
     let now = now_iso();
-    let default_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .and_then(|path| path.parent())
-        .map(|path| path.join("orchestra").join("repository"))
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .to_path_buf()
-        });
+    let default_path = default_repository_seed_path()?;
     connection
         .execute(
             "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', 'ORC', ?2, ?3, ?3)",

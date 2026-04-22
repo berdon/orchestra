@@ -7,6 +7,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "scan:secrets": "./scripts/run-secret-scan.sh source",
+    "scan:history": "./scripts/run-secret-scan.sh history",
+    "scan:machine-refs": "node ./scripts/scan-machine-references.mjs --mode source",
+    "scan:guardrails": "npm run scan:secrets && npm run scan:history && npm run scan:machine-refs",
+    "scan:artifacts": "./scripts/scan-release-artifacts.sh debug",
+    "scan:artifacts:release": "./scripts/scan-release-artifacts.sh release",
+    "build:adhoc:verified": "npm run scan:guardrails && ORCHESTRA_BUILD_PROFILE=release ORCHESTRA_SANITIZE_BUILD_PATHS=1 ./scripts/build-adhoc.sh && npm run scan:artifacts:release",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",

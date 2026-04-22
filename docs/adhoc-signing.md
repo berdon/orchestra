@@ -61,10 +61,33 @@ This configuration:
 
 ### Quick Build
 
-Use the provided script:
+Use the provided script when you want the fastest local adhoc build:
 
 ```bash
 ./scripts/build-adhoc.sh
+```
+
+### Verified Pre-release Build
+
+Before distributing an adhoc build, use the verified guardrail flow instead:
+
+```bash
+npm run build:adhoc:verified
+```
+
+That verified command runs repository guardrails before and after the bundle build:
+- `npm run scan:secrets` for current-source secret scanning via gitleaks
+- `npm run scan:history` for reachable git-history secret scanning via gitleaks
+- `npm run scan:machine-refs` for usernames and concrete local/workspace path checks
+- a sanitized release-mode adhoc bundle build with Rust path remapping enabled
+- `npm run scan:artifacts:release` for post-build bundle/resource scanning using extracted text plus `strings`
+
+If `gitleaks` is not already installed, the wrapper will fetch the repo-pinned version into `.tmp/tools/gitleaks/` so developers and future CI can run the same scanner version.
+
+To audit specific local usernames without committing them, set `ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES` for the guardrail run, for example:
+
+```bash
+ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES=alice,bob npm run scan:machine-refs
 ```
 
 ### Manual Build
@@ -73,23 +96,28 @@ Use the provided script:
 # Source Rust environment
 source "$HOME/.cargo/env"
 
-# Build with adhoc signing (automatically uses the config above)
+# Quick debug build with adhoc signing
 cargo tauri build --debug
+
+# Sanitized verified-release build with adhoc signing
+ORCHESTRA_BUILD_PROFILE=release ORCHESTRA_SANITIZE_BUILD_PATHS=1 ./scripts/build-adhoc.sh
 ```
 
 ## Output
 
 After building, you'll find:
 
-- **App Bundle**: `src-tauri/target/debug/bundle/macos/Orchestra.app`
-- **DMG Installer**: `src-tauri/target/debug/bundle/dmg/Orchestra_0.1.0_x64.dmg`
+- **Quick App Bundle**: `src-tauri/target/debug/bundle/macos/Orchestra.app`
+- **Quick DMG Installer**: `src-tauri/target/debug/bundle/dmg/Orchestra_0.1.0_x64.dmg`
+- **Verified App Bundle**: `src-tauri/target/release/bundle/macos/Orchestra.app`
+- **Verified DMG Installer**: `src-tauri/target/release/bundle/dmg/Orchestra_0.1.0_x64.dmg`
 
 ## Verifying the Signature
 
 Check that adhoc signing was applied:
 
 ```bash
-codesign -dvvv src-tauri/target/debug/bundle/macos/Orchestra.app
+codesign -dvvv src-tauri/target/release/bundle/macos/Orchestra.app
 ```
 
 Look for:
@@ -99,7 +127,7 @@ Look for:
 ## Running the Built App
 
 ```bash
-open src-tauri/target/debug/bundle/macos/Orchestra.app
+open src-tauri/target/release/bundle/macos/Orchestra.app
 ```
 
 ## Development vs Production
@@ -184,6 +212,7 @@ While adhoc signing enables features like notifications, it:
 - Does not provide the same security guarantees as proper Apple signing
 - Should not be used for public distribution
 - Is appropriate for development and internal testing
+- Should be paired with `npm run build:adhoc:verified` before a release so source, git history, and built artifacts are scanned for secrets and machine-specific references
 
 ## References
 

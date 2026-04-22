@@ -1,0 +1,67 @@
+{
+  "entries": [
+    {
+      "pathGlob": "docs/orc-33-secret-machine-reference-guardrails-plan.md",
+      "matchContains": "example-user",
+      "reason": "The ORC-33 planning doc uses a synthetic placeholder username to document how runtime seed detection works."
+    },
+    {
+      "pathGlob": "docs/orc-33-secret-machine-reference-guardrails-plan.md",
+      "matchContains": "/Users/alice/.orchestra/",
+      "reason": "The ORC-33 planning doc includes a synthetic macOS path example in its validation section."
+    },
+    {
+      "pathGlob": "docs/orc-33-secret-machine-reference-guardrails-plan.md",
+      "matchContains": "C:\\Users\\alice\\",
+      "reason": "The ORC-33 planning doc includes a synthetic Windows path example in its validation section."
+    },
+    {
+      "pathGlob": "guardrails/machine-reference-allowlist.json",
+      "ruleIds": [
+        "unix-home-path",
+        "unix-orchestra-machine-path",
+        "windows-orchestra-machine-path"
+      ],
+      "reason": "The allowlist file intentionally stores synthetic path examples that describe other approved false positives."
+    },
+    {
+      "pathGlob": "guardrails/machine-reference-allowlist.json",
+      "matchContains": "/home/user/repo",
+      "reason": "The allowlist documents a synthetic Linux fixture used by projects.rs tests."
+    },
+    {
+      "pathGlob": "src-tauri/src/services/projects.rs",
+      "matchContains": "/home/user/repo",
+      "reason": "Rust tests use a placeholder Linux home-directory fixture to verify remote-path rejection behavior."
+    },
+    {
+      "pathGlob": "guardrails/machine-reference-allowlist.json",
+      "matchContains": "/home/openclaw/workspace/orchestra",
+      "reason": "The allowlist documents an intentional placeholder Linux workspace fixture."
+    },
+    {
+      "pathGlob": "tests/orchestra-paths.test.ts",
+      "matchContains": "/home/openclaw/workspace/orchestra",
+      "reason": "Unit test fixture for deriving a project slug from a Linux workspace path."
+    },
+    {
+      "pathGlob": "tests/scan-machine-references.test.ts",
+      "ruleIds": [
+        "unix-home-path",
+        "unix-orchestra-machine-path",
+        "windows-orchestra-machine-path"
+      ],
+      "reason": "Unit coverage intentionally embeds synthetic path fixtures to verify machine-reference detection behavior."
+    },
+    {
+      "pathGlob": "tests/scan-machine-references.test.ts",
+      "matchContains": "/Users/alice/.orchestra/projects/demo/task-workspaces/tasks/task-1",
+      "reason": "Unit coverage intentionally embeds a synthetic macOS Orchestra path fixture to verify detection."
+    },
+    {
+      "pathGlob": "tests/scan-machine-references.test.ts",
+      "matchContains": "C:\\Users\\alice\\.orchestra\\projects\\demo\\sessions",
+      "reason": "Unit coverage intentionally embeds a synthetic Windows Orchestra path fixture to verify detection."
+    }
+  ]
+}
