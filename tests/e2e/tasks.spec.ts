@@ -18,6 +18,8 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
 
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Draft board task");
   await expect(page.locator('[data-role="publish-task"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-title-tags"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-overview-tags"]')).toHaveCount(0);
   await expect(page.locator('[data-role="task-overview-description"]')).toContainText("No description provided.");
   await expect(page.getByRole("button", { name: "Back to tasks" })).toHaveCount(0);
   await page.getByRole("button", { name: "Tasks" }).click();
@@ -69,11 +71,12 @@ test("task create and detail flows support free-form tags with inline validation
 
   await page.locator('[data-role="save-task"]').click();
 
-  const overviewTags = page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]');
-  await expect(overviewTags).toHaveCount(3);
-  await expect(overviewTags.nth(0)).toContainText("api");
-  await expect(overviewTags.nth(1)).toContainText("backend");
-  await expect(overviewTags.nth(2)).toContainText("frontend");
+  const titleTags = page.locator('[data-role="task-title-tags"] [data-role="task-tag-chip"]');
+  await expect(page.locator('[data-role="task-overview-tags"]')).toHaveCount(0);
+  await expect(titleTags).toHaveCount(3);
+  await expect(titleTags.nth(0)).toContainText("api");
+  await expect(titleTags.nth(1)).toContainText("backend");
+  await expect(titleTags.nth(2)).toContainText("frontend");
 
   await page.locator('[data-role="edit-task"]').click();
   await tagInput.click();
@@ -90,9 +93,10 @@ test("task create and detail flows support free-form tags with inline validation
   await page.locator('[data-role="save-task"]').click();
   await page.locator('[data-role="close-edit-task"]').click();
 
-  await expect(page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]').nth(0)).toContainText("api");
-  await expect(page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]').nth(1)).toContainText("backend");
-  await expect(page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]').nth(2)).toContainText("ops");
+  await expect(page.locator('[data-role="task-overview-tags"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-title-tags"] [data-role="task-tag-chip"]').nth(0)).toContainText("api");
+  await expect(page.locator('[data-role="task-title-tags"] [data-role="task-tag-chip"]').nth(1)).toContainText("backend");
+  await expect(page.locator('[data-role="task-title-tags"] [data-role="task-tag-chip"]').nth(2)).toContainText("ops");
 });
 
 test("tasks overview hides empty inbox, hides done lanes, and supports done filtering in card and table views", async ({ page }) => {
@@ -233,7 +237,8 @@ test("tasks overview hides empty inbox, hides done lanes, and supports done filt
 
   await page.locator('[data-role="task-view-table"]').click();
   await expect(page.locator('[data-role="task-table"]')).toContainText("Completed task");
-  await expect(page.locator('[data-role="task-table-row"]')).toContainText("Simple Flow");
+  await expect(page.locator('[data-role="task-table"] thead th')).toHaveText(["Name", "Priority", "Status", "Tags", "Lane", "Assignee", "Comments"]);
+  await expect(page.getByRole("columnheader", { name: "Workflow" })).toHaveCount(0);
   await expect(page.locator('[data-role="task-table-row"]')).toContainText("0");
   await expect(page.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
   await expect.poll(async () =>

@@ -3164,6 +3164,24 @@ strong {
   position: relative;
 }
 
+.task-detail-primary-header__copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-detail-primary-header__copy h2 {
+  margin: 0;
+}
+
+.task-detail-primary-header__tags {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+}
+
 .task-action-menu,
 .task-relane-menu,
 .task-detail-summary,

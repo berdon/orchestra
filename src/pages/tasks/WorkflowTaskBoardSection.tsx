@@ -67,7 +67,6 @@ export function WorkflowTaskBoardSection({
                 <th>Priority</th>
                 <th>Status</th>
                 <th>Tags</th>
-                <th>Workflow</th>
                 <th>Lane</th>
                 <th>Assignee</th>
                 <th>Comments</th>
@@ -103,7 +102,6 @@ export function WorkflowTaskBoardSection({
                   <td>
                     <TaskTagList className="task-table__tags" emptyPlaceholder="—" maxVisible={3} task={task} />
                   </td>
-                  <td>{section.workflowName}</td>
                   <td>{resolveLaneLabel(task, section)}</td>
                   <td>{resolveTaskAssigneeLabel(task, agents, roles)}</td>
                   <td>

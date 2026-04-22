@@ -9,6 +9,7 @@ import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
+import { getTaskTags } from "../../lib/taskListQuery";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 
 interface TaskTimelineItem {
@@ -385,7 +386,7 @@ export function TaskDetailPage({
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const recentHistory = timelineItems.slice(0, historyLimit);
   const summaryComments = commentThreads.slice(0, 4);
-  const taskTags = task.tags ?? [];
+  const taskTags = getTaskTags(task);
   const todoGroups = groupTodosByLane(task);
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
@@ -1584,9 +1585,16 @@ export function TaskDetailPage({
       <div className="task-detail-shell" ref={detailPageRef}>
       <section className="task-page task-detail-page panel" data-role="task-detail-panel" data-task-id={task.id}>
         <div className="panel__header panel__header--session-detail task-detail-primary-header" ref={primaryHeaderRef}>
-          <div>
+          <div className="task-detail-primary-header__copy">
             <p className="eyebrow">Task detail</p>
             <h2 data-role="task-title-heading">{taskHeading}</h2>
+            {taskTags.length ? (
+              <div className="task-detail-primary-header__tags task-tag-list task-tag-list--readonly" data-role="task-title-tags" aria-label="Task tags">
+                {taskTags.map((tag) => (
+                  <span className="task-tag-chip task-tag-chip--readonly" data-role="task-tag-chip" data-tag-value={tag} key={tag}>{tag}</span>
+                ))}
+              </div>
+            ) : null}
             <div className="session-detail__meta">
               {taskHeaderMeta.map((item) => (
                 <span key={item}>{item}</span>
@@ -1709,25 +1717,6 @@ export function TaskDetailPage({
                 pendingActionId={pendingActionId}
               />
             </div>
-
-            <section className="task-history-card" data-role="task-overview-tags">
-              <div className="workflow-section__header">
-                <div>
-                  <p className="eyebrow">Tags</p>
-                  <h4>Task tags</h4>
-                </div>
-                {taskTags.length ? <span className="status-badge status-badge--neutral">{taskTags.length}</span> : null}
-              </div>
-              {taskTags.length ? (
-                <div className="task-tag-list task-tag-list--readonly">
-                  {taskTags.map((tag) => (
-                    <span className="task-tag-chip task-tag-chip--readonly" data-role="task-tag-chip" data-tag-value={tag} key={tag}>{tag}</span>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted-copy task-tag-empty" data-role="task-tags-empty">No tags</p>
-              )}
-            </section>
 
             <div className="task-history-card" data-role="task-overview-description">
               <div className="workflow-section__header">
