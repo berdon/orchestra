@@ -184,6 +184,201 @@ test("tasks overview hides empty inbox, hides done lanes, and supports done filt
   await secondPage.close();
 });
 
+test("queued assignment badges do not replace lifecycle status badges in card and table views", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-status-badges",
+          slug: "status-badges",
+          name: "Status Badge Flow",
+          description: "Verify lifecycle and queue badges stay separate.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-queued-in-progress",
+          projectId: "orchestra",
+          number: "ORC-21",
+          title: "Queued in-progress task",
+          description: null,
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: "workflow-status-badges",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: {
+            id: "assignment-queued-in-progress",
+            taskId: "task-queued-in-progress",
+            workflowId: "workflow-status-badges",
+            laneId: "lane-implement",
+            workerType: "role",
+            workerId: "developer",
+            status: "queued",
+            sessionId: null,
+            runtimeCwd: null,
+            roleQueueEntryId: "queue-queued-in-progress",
+            roleInstanceId: null,
+            prompt: "Implement it.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: timestamp,
+            completedAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        {
+          id: "task-queued-blocked",
+          projectId: "orchestra",
+          number: "ORC-22",
+          title: "Queued blocked task",
+          description: null,
+          type: "task",
+          status: "blocked",
+          priority: "P2",
+          workflowId: "workflow-status-badges",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: {
+            id: "assignment-queued-blocked",
+            taskId: "task-queued-blocked",
+            workflowId: "workflow-status-badges",
+            laneId: "lane-implement",
+            workerType: "role",
+            workerId: "developer",
+            status: "queued",
+            sessionId: null,
+            runtimeCwd: null,
+            roleQueueEntryId: "queue-queued-blocked",
+            roleInstanceId: null,
+            prompt: "Investigate the blocker.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: timestamp,
+            completedAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  const inProgressCard = page.locator('[data-role="task-card"][data-task-id="task-queued-in-progress"]').first();
+  const blockedCard = page.locator('[data-role="task-card"][data-task-id="task-queued-blocked"]').first();
+
+  await expect(inProgressCard.locator('[data-role="task-lifecycle-status-badge"]').first()).toHaveText("in progress");
+  await expect(inProgressCard.locator('[data-role="task-assignment-status-badge"]').first()).toHaveText("queued");
+  await expect(blockedCard.locator('[data-role="task-lifecycle-status-badge"]').first()).toHaveText("blocked");
+  await expect(blockedCard.locator('[data-role="task-assignment-status-badge"]').first()).toHaveText("queued");
+  await expect(inProgressCard.locator('[data-role="task-lifecycle-status-badge"]').first()).not.toHaveText("queued");
+  await expect(blockedCard.locator('[data-role="task-lifecycle-status-badge"]').first()).not.toHaveText("queued");
+
+  await page.locator('[data-role="task-view-table"]').click();
+
+  const inProgressRow = page.locator('[data-role="task-table-row"][data-task-id="task-queued-in-progress"]');
+  const blockedRow = page.locator('[data-role="task-table-row"][data-task-id="task-queued-blocked"]');
+
+  await expect(inProgressRow.locator('[data-role="task-lifecycle-status-badge"]')).toHaveText("in progress");
+  await expect(inProgressRow.locator('[data-role="task-assignment-status-badge"]')).toHaveText("queued");
+  await expect(blockedRow.locator('[data-role="task-lifecycle-status-badge"]')).toHaveText("blocked");
+  await expect(blockedRow.locator('[data-role="task-assignment-status-badge"]')).toHaveText("queued");
+  await expect(inProgressRow.locator('[data-role="task-lifecycle-status-badge"]')).not.toHaveText("queued");
+  await expect(blockedRow.locator('[data-role="task-lifecycle-status-badge"]')).not.toHaveText("queued");
+});
+
 test("workflow lanes stay within a max height and scroll long task lists", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

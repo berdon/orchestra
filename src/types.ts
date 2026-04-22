@@ -1087,6 +1087,7 @@ export interface TaskSummary {
   blockingCount: number;
   attachmentCount: number;
   dependencyBlocked: boolean;
+  activeLaneAssignmentStatus?: string | null;
   readyForDispatch: boolean;
   createdAt: string;
   updatedAt: string;

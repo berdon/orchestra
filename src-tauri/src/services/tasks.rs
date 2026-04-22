@@ -162,8 +162,9 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     blocking_count: row.get(23)?,
                     attachment_count: row.get(24)?,
                     dependency_blocked: row.get::<_, i64>(25)? != 0,
-                    ready_for_dispatch: row.get::<_, i64>(26)? != 0,
-                    repository_id: row.get(29)?,
+                    active_lane_assignment_status: row.get(26)?,
+                    ready_for_dispatch: row.get::<_, i64>(27)? != 0,
+                    repository_id: row.get(30)?,
                     repository_ids: Vec::new(),
                     parent: None,
                     lineage: Vec::new(),
@@ -177,8 +178,8 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     todos: Vec::new(),
                     lane_runs: Vec::new(),
                     active_lane_assignment: None,
-                    created_at: row.get(27)?,
-                    updated_at: row.get(28)?,
+                    created_at: row.get(28)?,
+                    updated_at: row.get(29)?,
                 })
             },
         )
@@ -193,6 +194,10 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
     task.active_lane_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
+    task.active_lane_assignment_status = task
+        .active_lane_assignment
+        .as_ref()
+        .map(|assignment| assignment.status.clone());
     task.task_repositories = task_repositories::load_task_repositories(
         connection,
         task_id,
@@ -2536,6 +2541,7 @@ fn task_summary_columns(alias: &str) -> String {
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocker_task_id = {alias}.id), 0) AS blocking_count,
         COALESCE((SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = {alias}.id), 0) AS attachment_count,
         CASE WHEN {unresolved_blockers} > 0 OR {unfinished_child_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
+        {current_lane_assignment_status} AS active_lane_assignment_status,
         CASE WHEN {alias}.archived = 0 AND {alias}.workflow_id IS NOT NULL AND {alias}.current_lane_id IS NOT NULL AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 AND {unfinished_child_blockers} = 0 AND NOT EXISTS (SELECT 1 FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active')) THEN 1 ELSE 0 END AS ready_for_dispatch,
         {alias}.created_at,
         {alias}.updated_at
@@ -2543,6 +2549,13 @@ fn task_summary_columns(alias: &str) -> String {
         unresolved_blockers = unresolved_blocker_sql(alias),
         unfinished_child_blockers = unfinished_child_blocker_sql(alias),
         unread_user_comments = unread_user_comment_count_sql(alias),
+        current_lane_assignment_status = current_lane_assignment_status_sql(alias),
+    )
+}
+
+fn current_lane_assignment_status_sql(alias: &str) -> String {
+    format!(
+        "(SELECT tla.status FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user') AND {alias}.status NOT IN ('completed', 'canceled') AND ({alias}.current_lane_id IS NULL OR tla.lane_id = {alias}.current_lane_id) ORDER BY CASE tla.status WHEN 'active' THEN 0 WHEN 'awaiting_user_approval' THEN 1 WHEN 'awaiting_user_intervention' THEN 2 WHEN 'paused_by_user' THEN 3 ELSE 4 END, tla.created_at ASC, tla.id ASC LIMIT 1)"
     )
 }
 
@@ -2593,9 +2606,10 @@ fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
         blocking_count: row.get(23)?,
         attachment_count: row.get(24)?,
         dependency_blocked: row.get::<_, i64>(25)? != 0,
-        ready_for_dispatch: row.get::<_, i64>(26)? != 0,
-        created_at: row.get(27)?,
-        updated_at: row.get(28)?,
+        active_lane_assignment_status: row.get(26)?,
+        ready_for_dispatch: row.get::<_, i64>(27)? != 0,
+        created_at: row.get(28)?,
+        updated_at: row.get(29)?,
     })
 }
 
@@ -2883,6 +2897,37 @@ mod tests {
         assert_eq!(project_b[0].id, task_b.id);
         assert_eq!(task_a.number, "PA-1");
         assert_eq!(task_b.number, "PB-1");
+    }
+
+    #[test]
+    fn list_tasks_keeps_lifecycle_status_and_exposes_assignment_status_separately() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?1, 'Orchestra', NULL, 'ORC', NULL, ?2, ?2)",
+                params![DEFAULT_PROJECT_ID, now.as_str()],
+            )
+            .expect("default project should insert");
+
+        let task = create_named_task(&mut connection, "Queued implementation", "in_progress", None);
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, 'workflow-dev', 'lane-plan', 'role', 'developer', 'queued', NULL, NULL, NULL, NULL, 'Implement it', 0, NULL, ?3, NULL, ?3, ?3)",
+                params!["assignment-queued-summary", task.id.as_str(), now.as_str()],
+            )
+            .expect("queued assignment should insert");
+
+        let listed = list_tasks(&connection, DEFAULT_PROJECT_ID, false).expect("tasks should list");
+        let summary = listed
+            .iter()
+            .find(|candidate| candidate.id == task.id)
+            .expect("task summary should be present");
+
+        assert_eq!(summary.status, "in_progress");
+        assert_eq!(summary.active_lane_assignment_status.as_deref(), Some("queued"));
+        assert!(!summary.ready_for_dispatch);
     }
 
     #[test]

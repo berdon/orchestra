@@ -1,6 +1,7 @@
 import type { AgentSummary, RoleSummary, TaskSummary } from "../../types";
 import { TaskCompactCard } from "./TaskCompactCard";
 import type { TaskBoardViewMode } from "./TasksOverviewPage";
+import { TaskSummaryStatusBadges } from "./taskStatusBadges";
 import type { TaskWorkflowSection } from "./taskBoardModel";
 import { resolveTaskAssigneeLabel } from "./taskBoardModel";
 
@@ -11,25 +12,6 @@ interface WorkflowTaskBoardSectionProps {
   displayMode: TaskBoardViewMode;
   showDoneTasks: boolean;
   onOpenTask: (taskId: string) => void;
-}
-
-function formatStatusLabel(status: string) {
-  return status.replace(/_/g, " ");
-}
-
-function getStatusTone(status: string) {
-  switch (status) {
-    case "completed":
-      return "success";
-    case "blocked":
-      return "error";
-    case "in_review":
-      return "warning";
-    case "in_progress":
-      return "accent";
-    default:
-      return "neutral";
-  }
 }
 
 function getPriorityLabel(priority: string) {
@@ -114,7 +96,7 @@ export function WorkflowTaskBoardSection({
                   </td>
                   <td>{getPriorityLabel(task.priority)}</td>
                   <td>
-                    <span className={`status-badge status-badge--${getStatusTone(task.status)}`}>{formatStatusLabel(task.status)}</span>
+                    <TaskSummaryStatusBadges task={task} />
                   </td>
                   <td>{section.workflowName}</td>
                   <td>{resolveLaneLabel(task, section)}</td>

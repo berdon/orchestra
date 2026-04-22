@@ -1533,6 +1533,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     blockingCount: task.blocking.length,
     attachmentCount: task.attachments.length,
     dependencyBlocked,
+    activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? null,
     readyForDispatch:
       !task.archived &&
       Boolean(task.workflowId && task.currentLaneId) &&

@@ -1,28 +1,10 @@
 import type { TaskSummary } from "../../types";
+import { TaskSummaryStatusBadges } from "./taskStatusBadges";
 
 interface TaskCompactCardProps {
   task: TaskSummary;
   assigneeLabel: string;
   onOpen: (taskId: string) => void;
-}
-
-function formatStatusLabel(status: string) {
-  return status.replace(/_/g, " ");
-}
-
-function getStatusTone(status: string) {
-  switch (status) {
-    case "completed":
-      return "success";
-    case "blocked":
-      return "error";
-    case "in_review":
-      return "warning";
-    case "in_progress":
-      return "accent";
-    default:
-      return "neutral";
-  }
 }
 
 export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCardProps) {
@@ -36,7 +18,7 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCard
     >
       <div className="task-compact-card__header">
         <span className="task-compact-card__number">{task.number}</span>
-        <span className={`status-badge status-badge--${getStatusTone(task.status)}`}>{formatStatusLabel(task.status)}</span>
+        <TaskSummaryStatusBadges task={task} />
       </div>
       <strong className="task-compact-card__title" title={task.title}>
         {task.title}
