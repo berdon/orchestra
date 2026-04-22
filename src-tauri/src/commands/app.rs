@@ -352,6 +352,7 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
                     .into(),
             ),
             task_type: "task".into(),
+            tags: Vec::new(),
             status: "in_progress".into(),
             priority: "P1".into(),
             workflow_id: Some(workflow.id.clone()),

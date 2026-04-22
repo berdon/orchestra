@@ -1316,6 +1316,7 @@ mod tests {
             title: "Scheduled task".into(),
             description: Some("Do the thing".into()),
             task_type: "task".into(),
+            tags: Vec::new(),
             status: "draft".into(),
             priority: "P2".into(),
             workflow_id: None,
@@ -1328,6 +1329,29 @@ mod tests {
             whip_max_attempts: Some(10),
             archived: Some(false),
         }
+    }
+
+    #[test]
+    fn deserializes_legacy_task_blueprint_without_tags() {
+        let input = serde_json::from_value::<TaskUpsertInput>(json!({
+            "title": "Legacy scheduled task",
+            "description": "Do the thing",
+            "type": "task",
+            "status": "draft",
+            "priority": "P2",
+            "workflowId": null,
+            "currentLaneId": null,
+            "assigneeType": "unassigned",
+            "assigneeId": null,
+            "repositoryId": null,
+            "repositoryIds": [],
+            "parentTaskId": null,
+            "whipMaxAttempts": 10,
+            "archived": false
+        }))
+        .expect("legacy task blueprint should deserialize");
+
+        assert!(input.tags.is_empty());
     }
 
     #[test]

@@ -683,6 +683,7 @@ function seedMockTasks(): TaskDetail[] {
       assigneeId: null,
       repositoryId: null,
       repositoryIds: [],
+      tags: [],
       parentTaskId: null,
       archived: false,
       commentCount: 0,
@@ -727,6 +728,7 @@ function seedMockTasks(): TaskDetail[] {
       assigneeId: "developer",
       repositoryId: null,
       repositoryIds: [],
+      tags: [],
       parentTaskId: epicTaskId,
       archived: false,
       commentCount: 1,
@@ -796,6 +798,7 @@ function seedMockTasks(): TaskDetail[] {
       assigneeId: null,
       repositoryId: null,
       repositoryIds: [],
+      tags: [],
       parentTaskId: epicTaskId,
       archived: false,
       commentCount: 0,
@@ -905,9 +908,39 @@ function saveMockTaskSchedules(schedules: StoredTaskScheduleRecord[]) {
   setStoredValue(TASK_SCHEDULE_STORAGE_KEY, schedules);
 }
 
+const MOCK_TASK_TAG_MAX_LENGTH = 32;
+const MOCK_TASK_TAG_MAX_COUNT = 20;
+
+function normalizeMockTaskTags(tags: string[] | null | undefined) {
+  return [...new Set((tags ?? [])
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean))].sort((left, right) => left.localeCompare(right));
+}
+
+function validateMockTaskTags(tags: string[] | null | undefined) {
+  const normalized = normalizeMockTaskTags(tags);
+  const errors: Array<{ path: string; message: string }> = [];
+
+  if (normalized.length > MOCK_TASK_TAG_MAX_COUNT) {
+    errors.push({ path: "tags", message: `Task tags must contain at most ${MOCK_TASK_TAG_MAX_COUNT} unique entries.` });
+  }
+
+  normalized.forEach((tag, index) => {
+    if (tag.length > MOCK_TASK_TAG_MAX_LENGTH) {
+      errors.push({ path: `tags[${index}]`, message: `Task tags must be ${MOCK_TASK_TAG_MAX_LENGTH} characters or fewer.` });
+    }
+    if (!/^[a-z0-9_-]+$/.test(tag)) {
+      errors.push({ path: `tags[${index}]`, message: "Task tags may only contain lowercase letters, digits, hyphens, and underscores." });
+    }
+  });
+
+  return { normalized, errors };
+}
+
 function normalizeScheduleBlueprint(task: TaskUpsertInput): TaskUpsertInput {
   return {
     ...task,
+    tags: normalizeMockTaskTags(task.tags),
     status: "ready",
     archived: false,
     currentLaneId: null,
@@ -1370,6 +1403,7 @@ function dedupeMockTaskIds(taskIds: string[]) {
 function ensureStoredMockTask(task: TaskDetail | StoredMockTask): StoredMockTask {
   return {
     ...task,
+    tags: normalizeMockTaskTags(task.tags),
     autoBlockedByDependencies: (task as StoredMockTask).autoBlockedByDependencies ?? false,
   };
 }
@@ -1514,6 +1548,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     title: task.title,
     description: task.description,
     type: task.type,
+    tags: task.tags ?? [],
     status: task.status,
     priority: task.priority,
     workflowId: task.workflowId,
@@ -1533,6 +1568,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     blockingCount: task.blocking.length,
     attachmentCount: task.attachments.length,
     dependencyBlocked,
+    activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? task.activeLaneAssignmentStatus ?? null,
     readyForDispatch:
       !task.archived &&
       Boolean(task.workflowId && task.currentLaneId) &&
@@ -1560,6 +1596,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     blockingCount: 0,
     attachmentCount: 0,
     dependencyBlocked: false,
+    activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? task.activeLaneAssignmentStatus ?? null,
     readyForDispatch: false,
     attachments: task.attachments ?? [],
     todos: task.todos ?? [],
@@ -1624,6 +1661,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         blockingCount: blocking.length,
         attachmentCount: task.attachments.length,
         dependencyBlocked,
+        activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? task.activeLaneAssignmentStatus ?? null,
         readyForDispatch:
           !task.archived &&
           Boolean(task.workflowId && task.currentLaneId) &&
@@ -1669,6 +1707,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMoc
     title: input.title.trim(),
     description: input.description?.trim() || null,
     type: input.type,
+    tags: normalizeMockTaskTags(input.tags),
     status: input.status,
     priority: input.priority,
     workflowId: input.workflowId?.trim() || null,
@@ -1716,6 +1755,8 @@ function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
   if (!input.title.trim()) {
     errors.push({ path: "title", message: "Task title is required." });
   }
+
+  errors.push(...validateMockTaskTags(input.tags).errors);
 
   if (!["task", "bug", "feature", "chore", "epic"].includes(input.type)) {
     errors.push({ path: "type", message: "Task type must be one of: task, bug, feature, chore, epic." });

@@ -38,6 +38,9 @@ const VALID_ASSIGNEE_TYPES: &[&str] = &["user", "agent", "role", "unassigned"];
 const VALID_COMMENT_ORIGIN_TYPES: &[&str] = &["user", "agent", "role", "system"];
 const DEFAULT_TASK_COMMENT_USER_ID: &str = "desktop-user";
 const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "canceled"];
+const TASK_TAG_SEPARATOR: char = '\u{001F}';
+const MAX_TASK_TAG_LENGTH: usize = 32;
+const MAX_TASK_TAG_COUNT: usize = 20;
 
 #[derive(Debug, Clone)]
 struct CommentAnchorInput {
@@ -142,28 +145,30 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     title: row.get(3)?,
                     description: row.get(4)?,
                     task_type: row.get(5)?,
-                    status: row.get(6)?,
-                    priority: row.get(7)?,
-                    workflow_id: row.get(8)?,
-                    current_lane_id: row.get(9)?,
-                    assignee_type: row.get(10)?,
-                    assignee_id: row.get(11)?,
-                    parent_task_id: row.get(12)?,
-                    whip_max_attempts: row.get(13)?,
-                    archived: row.get::<_, i64>(14)? != 0,
-                    comment_count: row.get(15)?,
-                    unread_comment_count: row.get(16)?,
-                    lane_run_count: row.get(17)?,
-                    child_count: row.get(18)?,
-                    completed_child_count: row.get(19)?,
-                    in_progress_child_count: row.get(20)?,
-                    blocked_child_count: row.get(21)?,
-                    blocked_by_count: row.get(22)?,
-                    blocking_count: row.get(23)?,
-                    attachment_count: row.get(24)?,
-                    dependency_blocked: row.get::<_, i64>(25)? != 0,
-                    ready_for_dispatch: row.get::<_, i64>(26)? != 0,
-                    repository_id: row.get(29)?,
+                    tags: parse_task_tags_csv(row.get::<_, String>(6)?),
+                    status: row.get(7)?,
+                    priority: row.get(8)?,
+                    workflow_id: row.get(9)?,
+                    current_lane_id: row.get(10)?,
+                    assignee_type: row.get(11)?,
+                    assignee_id: row.get(12)?,
+                    parent_task_id: row.get(13)?,
+                    whip_max_attempts: row.get(14)?,
+                    archived: row.get::<_, i64>(15)? != 0,
+                    comment_count: row.get(16)?,
+                    unread_comment_count: row.get(17)?,
+                    lane_run_count: row.get(18)?,
+                    child_count: row.get(19)?,
+                    completed_child_count: row.get(20)?,
+                    in_progress_child_count: row.get(21)?,
+                    blocked_child_count: row.get(22)?,
+                    blocked_by_count: row.get(23)?,
+                    blocking_count: row.get(24)?,
+                    attachment_count: row.get(25)?,
+                    dependency_blocked: row.get::<_, i64>(26)? != 0,
+                    active_lane_assignment_status: row.get(27)?,
+                    ready_for_dispatch: row.get::<_, i64>(28)? != 0,
+                    repository_id: row.get(31)?,
                     repository_ids: Vec::new(),
                     parent: None,
                     lineage: Vec::new(),
@@ -177,8 +182,8 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     todos: Vec::new(),
                     lane_runs: Vec::new(),
                     active_lane_assignment: None,
-                    created_at: row.get(27)?,
-                    updated_at: row.get(28)?,
+                    created_at: row.get(29)?,
+                    updated_at: row.get(30)?,
                 })
             },
         )
@@ -193,6 +198,10 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
     task.active_lane_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
+    task.active_lane_assignment_status = task
+        .active_lane_assignment
+        .as_ref()
+        .map(|assignment| assignment.status.clone());
     task.task_repositories = task_repositories::load_task_repositories(
         connection,
         task_id,
@@ -410,6 +419,7 @@ pub fn create_task_from_blueprint(
     .map_err(|error| format!("Unable to create task: {error}"))?;
 
     sync_task_repository_links(&tx, &task_id, project_id, &normalized.repository_ids, &now)?;
+    sync_task_tags(&tx, &task_id, &normalized.tags, &now)?;
     reconcile_dependency_statuses(
         &tx,
         collect_task_refresh_ids_with_parent_overrides(
@@ -534,6 +544,7 @@ pub fn update_task(
         &normalized.repository_ids,
         &now,
     )?;
+    sync_task_tags(&tx, task_id, &normalized.tags, &now)?;
     reconcile_dependency_statuses(
         &tx,
         collect_task_refresh_ids_with_parent_overrides(
@@ -1515,6 +1526,8 @@ fn validate_task_input(
         errors.push("title: Task title is required.".to_string());
     }
 
+    errors.extend(validate_task_tags(&input.tags));
+
     if !VALID_TASK_TYPES.contains(&input.task_type.as_str()) {
         errors.push("type: Task type must be one of: task, bug, feature, chore, epic.".to_string());
     }
@@ -2375,10 +2388,63 @@ fn would_create_dependency_cycle(
     Ok(false)
 }
 
+fn normalize_task_tags(tags: Vec<String>) -> Vec<String> {
+    let mut normalized = tags
+        .into_iter()
+        .map(|tag| tag.trim().to_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn validate_task_tags(tags: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    if tags.len() > MAX_TASK_TAG_COUNT {
+        errors.push(format!(
+            "tags: Task tags must contain at most {MAX_TASK_TAG_COUNT} unique entries."
+        ));
+    }
+
+    for (index, tag) in tags.iter().enumerate() {
+        if tag.len() > MAX_TASK_TAG_LENGTH {
+            errors.push(format!(
+                "tags[{index}]: Task tags must be {MAX_TASK_TAG_LENGTH} characters or fewer."
+            ));
+        }
+        if !tag.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '_')
+        }) {
+            errors.push(format!(
+                "tags[{index}]: Task tags may only contain lowercase letters, digits, hyphens, and underscores."
+            ));
+        }
+    }
+
+    errors
+}
+
+fn parse_task_tags_csv(value: String) -> Vec<String> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        value
+            .split(TASK_TAG_SEPARATOR)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
 fn normalize_input(mut input: TaskUpsertInput) -> TaskUpsertInput {
     input.title = input.title.trim().to_string();
     input.description = normalized_optional_string(input.description);
     input.task_type = input.task_type.trim().to_string();
+    input.tags = normalize_task_tags(input.tags);
     input.status = input.status.trim().to_string();
     input.priority = input.priority.trim().to_string();
     input.workflow_id = normalized_optional_string(input.workflow_id);
@@ -2507,6 +2573,28 @@ fn sync_task_repository_links(
     Ok(())
 }
 
+fn sync_task_tags(
+    connection: &rusqlite::Transaction<'_>,
+    task_id: &str,
+    tags: &[String],
+    created_at: &str,
+) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM task_tags WHERE task_id = ?1", [task_id])
+        .map_err(|error| format!("Unable to clear task tags for {task_id}: {error}"))?;
+
+    for tag in tags {
+        connection
+            .execute(
+                "INSERT INTO task_tags (task_id, tag, created_at) VALUES (?1, ?2, ?3)",
+                params![task_id, tag, created_at],
+            )
+            .map_err(|error| format!("Unable to store task tag {tag} for {task_id}: {error}"))?;
+    }
+
+    Ok(())
+}
+
 fn task_summary_columns(alias: &str) -> String {
     format!(
         r#"
@@ -2516,6 +2604,7 @@ fn task_summary_columns(alias: &str) -> String {
         {alias}.title,
         {alias}.description,
         {alias}.task_type,
+        {tags_csv} AS tags_csv,
         {alias}.status,
         {alias}.priority,
         {alias}.workflow_id,
@@ -2536,6 +2625,7 @@ fn task_summary_columns(alias: &str) -> String {
         COALESCE((SELECT COUNT(*) FROM task_dependencies d WHERE d.blocker_task_id = {alias}.id), 0) AS blocking_count,
         COALESCE((SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = {alias}.id), 0) AS attachment_count,
         CASE WHEN {unresolved_blockers} > 0 OR {unfinished_child_blockers} > 0 THEN 1 ELSE 0 END AS dependency_blocked,
+        {current_lane_assignment_status} AS active_lane_assignment_status,
         CASE WHEN {alias}.archived = 0 AND {alias}.workflow_id IS NOT NULL AND {alias}.current_lane_id IS NOT NULL AND {alias}.status IN ('ready', 'in_progress') AND {unresolved_blockers} = 0 AND {unfinished_child_blockers} = 0 AND NOT EXISTS (SELECT 1 FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active')) THEN 1 ELSE 0 END AS ready_for_dispatch,
         {alias}.created_at,
         {alias}.updated_at
@@ -2543,6 +2633,21 @@ fn task_summary_columns(alias: &str) -> String {
         unresolved_blockers = unresolved_blocker_sql(alias),
         unfinished_child_blockers = unfinished_child_blocker_sql(alias),
         unread_user_comments = unread_user_comment_count_sql(alias),
+        current_lane_assignment_status = current_lane_assignment_status_sql(alias),
+        tags_csv = task_tags_csv_sql(alias),
+    )
+}
+
+fn current_lane_assignment_status_sql(alias: &str) -> String {
+    format!(
+        "(SELECT tla.status FROM task_lane_assignments tla WHERE tla.task_id = {alias}.id AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user') AND {alias}.status NOT IN ('completed', 'canceled') AND ({alias}.current_lane_id IS NULL OR tla.lane_id = {alias}.current_lane_id) ORDER BY CASE tla.status WHEN 'active' THEN 0 WHEN 'awaiting_user_approval' THEN 1 WHEN 'awaiting_user_intervention' THEN 2 WHEN 'paused_by_user' THEN 3 ELSE 4 END, tla.created_at ASC, tla.id ASC LIMIT 1)"
+    )
+}
+
+fn task_tags_csv_sql(alias: &str) -> String {
+    format!(
+        "COALESCE((SELECT GROUP_CONCAT(tag, '{separator}') FROM (SELECT tt.tag AS tag FROM task_tags tt WHERE tt.task_id = {alias}.id ORDER BY tt.tag ASC)), '')",
+        separator = TASK_TAG_SEPARATOR,
     )
 }
 
@@ -2573,29 +2678,31 @@ fn map_task_summary_row(row: &Row<'_>) -> rusqlite::Result<TaskSummary> {
         title: row.get(3)?,
         description: row.get(4)?,
         task_type: row.get(5)?,
-        status: row.get(6)?,
-        priority: row.get(7)?,
-        workflow_id: row.get(8)?,
-        current_lane_id: row.get(9)?,
-        assignee_type: row.get(10)?,
-        assignee_id: row.get(11)?,
-        parent_task_id: row.get(12)?,
-        whip_max_attempts: row.get(13)?,
-        archived: row.get::<_, i64>(14)? != 0,
-        comment_count: row.get(15)?,
-        unread_comment_count: row.get(16)?,
-        lane_run_count: row.get(17)?,
-        child_count: row.get(18)?,
-        completed_child_count: row.get(19)?,
-        in_progress_child_count: row.get(20)?,
-        blocked_child_count: row.get(21)?,
-        blocked_by_count: row.get(22)?,
-        blocking_count: row.get(23)?,
-        attachment_count: row.get(24)?,
-        dependency_blocked: row.get::<_, i64>(25)? != 0,
-        ready_for_dispatch: row.get::<_, i64>(26)? != 0,
-        created_at: row.get(27)?,
-        updated_at: row.get(28)?,
+        tags: parse_task_tags_csv(row.get::<_, String>(6)?),
+        status: row.get(7)?,
+        priority: row.get(8)?,
+        workflow_id: row.get(9)?,
+        current_lane_id: row.get(10)?,
+        assignee_type: row.get(11)?,
+        assignee_id: row.get(12)?,
+        parent_task_id: row.get(13)?,
+        whip_max_attempts: row.get(14)?,
+        archived: row.get::<_, i64>(15)? != 0,
+        comment_count: row.get(16)?,
+        unread_comment_count: row.get(17)?,
+        lane_run_count: row.get(18)?,
+        child_count: row.get(19)?,
+        completed_child_count: row.get(20)?,
+        in_progress_child_count: row.get(21)?,
+        blocked_child_count: row.get(22)?,
+        blocked_by_count: row.get(23)?,
+        blocking_count: row.get(24)?,
+        attachment_count: row.get(25)?,
+        dependency_blocked: row.get::<_, i64>(26)? != 0,
+        active_lane_assignment_status: row.get(27)?,
+        ready_for_dispatch: row.get::<_, i64>(28)? != 0,
+        created_at: row.get(29)?,
+        updated_at: row.get(30)?,
     })
 }
 
@@ -2623,6 +2730,12 @@ mod tests {
     fn in_memory_connection() -> Connection {
         let connection = Connection::open_in_memory().expect("open in-memory db");
         database::apply_migrations(&connection).expect("apply migrations");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, NULL, ?5, ?5)",
+                params![DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID, "Orchestra", "ORC", now_iso()],
+            )
+            .expect("default project should insert");
         connection
     }
 
@@ -2703,6 +2816,7 @@ mod tests {
                     "task"
                 }
                 .into(),
+                tags: Vec::new(),
                 status: status.into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -2719,6 +2833,16 @@ mod tests {
         .expect("create named task")
     }
 
+    fn load_persisted_task_tags(connection: &Connection, task_id: &str) -> Vec<String> {
+        connection
+            .prepare("SELECT tag FROM task_tags WHERE task_id = ?1 ORDER BY tag ASC")
+            .expect("task tag query should prepare")
+            .query_map([task_id], |row| row.get::<_, String>(0))
+            .expect("task tag query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("task tag rows should collect")
+    }
+
     #[test]
     fn create_and_load_task_round_trip() {
         let mut connection = in_memory_connection();
@@ -2732,6 +2856,7 @@ mod tests {
                 title: "Map task foundation".into(),
                 description: Some("Persist task records".into()),
                 task_type: "feature".into(),
+                tags: Vec::new(),
                 status: "in_progress".into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -2767,6 +2892,158 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_persists_and_lists_task_tags() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let created = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Tagged task".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: vec![
+                    "Urgent".into(),
+                    " backend ".into(),
+                    "".into(),
+                    "urgent".into(),
+                    "ops_1".into(),
+                ],
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        assert_eq!(created.tags, vec!["backend", "ops_1", "urgent"]);
+        assert_eq!(
+            load_persisted_task_tags(&connection, &created.id),
+            created.tags
+        );
+
+        let listed = list_tasks(&connection, DEFAULT_PROJECT_ID, false).expect("tasks should list");
+        let listed_task = listed
+            .iter()
+            .find(|task| task.id == created.id)
+            .expect("tagged task should be listed");
+        assert_eq!(listed_task.tags, vec!["backend", "ops_1", "urgent"]);
+
+        let loaded = get_task(&connection, &created.id).expect("task should load");
+        assert_eq!(loaded.tags, vec!["backend", "ops_1", "urgent"]);
+    }
+
+    #[test]
+    fn empty_task_tags_round_trip_as_empty_array() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let created = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Untagged task".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        assert!(created.tags.is_empty());
+        assert!(load_persisted_task_tags(&connection, &created.id).is_empty());
+        assert!(get_task(&connection, &created.id)
+            .expect("task should load")
+            .tags
+            .is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_task_tags() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let error = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Invalid tags".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: vec!["valid".into(), "not ok".into(), "x".repeat(33)],
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect_err("invalid tags should be rejected");
+
+        assert!(error.contains(
+            "Task tags may only contain lowercase letters, digits, hyphens, and underscores."
+        ));
+        assert!(error.contains("Task tags must be 32 characters or fewer."));
+    }
+
+    #[test]
+    fn rejects_more_than_twenty_unique_task_tags() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let error = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Too many tags".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: (1..=21).map(|index| format!("tag-{index}")).collect(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect_err("tag count overflow should be rejected");
+
+        assert!(error.contains("tags: Task tags must contain at most 20 unique entries."));
+    }
+
+    #[test]
     fn updates_task_whip_max_attempts() {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
@@ -2778,6 +3055,7 @@ mod tests {
                 title: "Whip settings task".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "draft".into(),
                 priority: "P2".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -2801,6 +3079,7 @@ mod tests {
                 title: created.title.clone(),
                 description: created.description.clone(),
                 task_type: created.task_type.clone(),
+                tags: Vec::new(),
                 status: created.status.clone(),
                 priority: created.priority.clone(),
                 workflow_id: created.workflow_id.clone(),
@@ -2816,6 +3095,130 @@ mod tests {
         )
         .expect("task should update");
         assert_eq!(updated.whip_max_attempts, 5);
+    }
+
+    #[test]
+    fn update_task_replaces_and_clears_tags() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let created = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Mutable tags".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: vec!["alpha".into(), "beta".into()],
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        assert_eq!(
+            load_persisted_task_tags(&connection, &created.id),
+            vec!["alpha", "beta"]
+        );
+
+        let updated = update_task(
+            &mut connection,
+            &created.id,
+            TaskUpsertInput {
+                title: created.title.clone(),
+                description: created.description.clone(),
+                task_type: created.task_type.clone(),
+                tags: vec!["gamma".into(), " beta ".into(), "GAMMA".into()],
+                status: created.status.clone(),
+                priority: created.priority.clone(),
+                workflow_id: created.workflow_id.clone(),
+                current_lane_id: created.current_lane_id.clone(),
+                assignee_type: created.assignee_type.clone(),
+                assignee_id: created.assignee_id.clone(),
+                repository_id: created.repository_id.clone(),
+                repository_ids: created.repository_ids.clone(),
+                parent_task_id: created.parent_task_id.clone(),
+                whip_max_attempts: Some(created.whip_max_attempts),
+                archived: Some(created.archived),
+            },
+        )
+        .expect("task should update");
+
+        assert_eq!(updated.tags, vec!["beta", "gamma"]);
+        assert_eq!(
+            load_persisted_task_tags(&connection, &created.id),
+            vec!["beta", "gamma"]
+        );
+
+        let cleared = update_task(
+            &mut connection,
+            &created.id,
+            TaskUpsertInput {
+                title: updated.title.clone(),
+                description: updated.description.clone(),
+                task_type: updated.task_type.clone(),
+                tags: Vec::new(),
+                status: updated.status.clone(),
+                priority: updated.priority.clone(),
+                workflow_id: updated.workflow_id.clone(),
+                current_lane_id: updated.current_lane_id.clone(),
+                assignee_type: updated.assignee_type.clone(),
+                assignee_id: updated.assignee_id.clone(),
+                repository_id: updated.repository_id.clone(),
+                repository_ids: updated.repository_ids.clone(),
+                parent_task_id: updated.parent_task_id.clone(),
+                whip_max_attempts: Some(updated.whip_max_attempts),
+                archived: Some(updated.archived),
+            },
+        )
+        .expect("task tags should clear");
+
+        assert!(cleared.tags.is_empty());
+        assert!(load_persisted_task_tags(&connection, &created.id).is_empty());
+    }
+
+    #[test]
+    fn deleting_task_cascades_task_tags() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let created = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Tagged delete".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: vec!["cleanup".into(), "ops".into()],
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        assert_eq!(
+            load_persisted_task_tags(&connection, &created.id),
+            vec!["cleanup", "ops"]
+        );
+
+        let _deleted = delete_task(&mut connection, &created.id).expect("task should delete");
+        assert!(load_persisted_task_tags(&connection, &created.id).is_empty());
     }
 
     #[test]
@@ -2839,6 +3242,7 @@ mod tests {
                 title: "Task A".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -2860,6 +3264,7 @@ mod tests {
                 title: "Task B".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -2906,6 +3311,7 @@ mod tests {
                 title: "First task".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -2939,6 +3345,7 @@ mod tests {
                 title: "Second task".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -3002,6 +3409,7 @@ mod tests {
                 title: "Repo default task".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "draft".into(),
                 priority: "P2".into(),
                 workflow_id: None,
@@ -3032,6 +3440,7 @@ mod tests {
                 title: "Broken".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "draft".into(),
                 priority: "P2".into(),
                 workflow_id: None,
@@ -3060,6 +3469,7 @@ mod tests {
                 title: "Broken".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "draft".into(),
                 priority: "P2".into(),
                 workflow_id: None,
@@ -3251,6 +3661,7 @@ mod tests {
                 title: "Other project parent".into(),
                 description: None,
                 task_type: "epic".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -3273,6 +3684,7 @@ mod tests {
                 title: "Broken child".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P1".into(),
                 workflow_id: Some("workflow-dev".into()),
@@ -3309,6 +3721,7 @@ mod tests {
                 title: parent.title.clone(),
                 description: parent.description.clone(),
                 task_type: parent.task_type.clone(),
+                tags: Vec::new(),
                 status: parent.status.clone(),
                 priority: parent.priority.clone(),
                 workflow_id: parent.workflow_id.clone(),
@@ -3908,6 +4321,7 @@ mod tests {
                 title: blocker.title.clone(),
                 description: blocker.description.clone(),
                 task_type: blocker.task_type.clone(),
+                tags: Vec::new(),
                 status: "completed".into(),
                 priority: blocker.priority.clone(),
                 workflow_id: blocker.workflow_id.clone(),
@@ -4009,6 +4423,7 @@ mod tests {
                 title: child.title.clone(),
                 description: child.description.clone(),
                 task_type: child.task_type.clone(),
+                tags: Vec::new(),
                 status: "completed".into(),
                 priority: child.priority.clone(),
                 workflow_id: child.workflow_id.clone(),
