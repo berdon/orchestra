@@ -1,4 +1,5 @@
 import type { TaskSummary } from "../../types";
+import { TaskTagList } from "./TaskTagList";
 import { TaskSummaryStatusBadges } from "./taskStatusBadges";
 
 interface TaskCompactCardProps {
@@ -23,6 +24,7 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCard
       <strong className="task-compact-card__title" title={task.title}>
         {task.title}
       </strong>
+      <TaskTagList className="task-compact-card__tags" maxVisible={2} task={task} />
       <div className="task-compact-card__meta">
         <span title={assigneeLabel}>{assigneeLabel}</span>
         {task.unreadCommentCount > 0 ? (

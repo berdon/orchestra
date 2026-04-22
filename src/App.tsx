@@ -60,7 +60,11 @@ import { AgentChatPage } from "./pages/AgentChatPage";
 import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
-import type { TaskBoardViewMode } from "./pages/tasks/TasksOverviewPage";
+import {
+  loadStoredTaskOverviewState,
+  storeTaskOverviewState,
+  type TaskOverviewState,
+} from "./pages/tasks/taskOverviewState";
 import { AgentsPanel } from "./settings/AgentsPanel";
 import { ChannelsPanel } from "./settings/ChannelsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
@@ -117,7 +121,6 @@ const SETTINGS_TABS = [
 ] as const;
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
-const TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
 const APP_ROUTE_PAGES = new Set<PrimaryPage>(["tasks", "inbox", "agents", "chat", "sessions", "settings"]);
@@ -179,11 +182,6 @@ function setSearchParam(params: URLSearchParams, key: string, value: string | nu
     return;
   }
   params.delete(key);
-}
-
-function loadStoredTaskBoardViewMode(): TaskBoardViewMode {
-  const stored = window.localStorage.getItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY);
-  return stored === "table" || stored === "cards" ? stored : "cards";
 }
 
 function loadStoredSidebarCollapsed() {
@@ -739,7 +737,7 @@ export function App() {
   const [sessionScrollState, setSessionScrollState] = useState<SessionScrollState>({ lockedToBottom: true });
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
   const [tasksCreateProjectId, setTasksCreateProjectId] = useState<string | null>(null);
-  const [taskBoardViewMode, setTaskBoardViewMode] = useState<TaskBoardViewMode>(() => loadStoredTaskBoardViewMode());
+  const [taskOverviewState, setTaskOverviewState] = useState<TaskOverviewState>(() => loadStoredTaskOverviewState(initialRouteState.projectId));
   const [tasksOverviewToken, setTasksOverviewToken] = useState(0);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialRouteState.selectedTaskId);
   const [tasksOpenRequest, setTasksOpenRequest] = useState<{ taskId: string; token: number; projectId: string | null } | null>(
@@ -979,19 +977,12 @@ export function App() {
   }, [chatSessionId, draftMessages]);
 
   useEffect(() => {
-    window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, taskBoardViewMode);
-  }, [taskBoardViewMode]);
+    storeTaskOverviewState(activeProjectId, taskOverviewState);
+  }, [taskOverviewState]);
 
   useEffect(() => {
-    if (activePage === "tasks") {
-      setTaskBoardViewMode(loadStoredTaskBoardViewMode());
-    }
-  }, [activePage]);
-
-  function handleTaskBoardViewModeChange(viewMode: TaskBoardViewMode) {
-    window.localStorage.setItem(TASK_BOARD_VIEW_MODE_STORAGE_KEY, viewMode);
-    setTaskBoardViewMode(viewMode);
-  }
+    setTaskOverviewState(loadStoredTaskOverviewState(activeProjectId));
+  }, [activeProjectId]);
 
   const mergeSessionRecord = useCallback((updatedSession: SessionRecord, options?: { select?: boolean }) => {
     setSessions((current) => {
@@ -3085,9 +3076,9 @@ export function App() {
             key={activeProject?.id ?? "default"}
             openTaskRequest={tasksOpenRequest}
             projectId={activeProject?.id ?? null}
-            taskBoardViewMode={taskBoardViewMode}
+            taskOverviewState={taskOverviewState}
             tasksOverviewToken={tasksOverviewToken}
-            onTaskBoardViewModeChange={handleTaskBoardViewModeChange}
+            onTaskOverviewStateChange={setTaskOverviewState}
             onSelectedTaskIdChange={setSelectedTaskId}
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}

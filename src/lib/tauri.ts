@@ -3,6 +3,7 @@ import { buildSeededMockProjects, buildSeededMockWorkflows, DEFAULT_INSTALL_BASE
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
 import { sortSessionRecords } from "./sessionList";
+import { getTaskTags } from "./taskListQuery";
 import { normalizeTaskTags, validateTaskTagSet } from "./taskTags";
 import type {
   AgentSummary,
@@ -1646,7 +1647,6 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     title: task.title,
     description: task.description,
     type: task.type,
-    tags: task.tags ?? [],
     status: task.status,
     priority: task.priority,
     workflowId: task.workflowId,
@@ -1673,6 +1673,7 @@ function summarizeTask(task: TaskDetail): TaskSummary {
       ["ready", "in_progress"].includes(task.status) &&
       !dependencyBlocked &&
       !task.activeLaneAssignment,
+    tags: getTaskTags(task),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   };
