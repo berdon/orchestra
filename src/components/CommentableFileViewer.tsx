@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import hljs from "highlight.js";
 
 import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskFileReference, TaskSummary } from "../types";
+import { buildTaskCommentThreads, type TaskCommentThread } from "../lib/taskCommentThreads";
 import { TaskCommentComposer } from "./TaskCommentComposer";
 import { TaskCommentMessage } from "./TaskCommentMessage";
 
@@ -35,14 +36,9 @@ interface OpenFileCommentDraftDetail {
   left?: number;
 }
 
-interface FileCommentThread {
-  comment: TaskComment;
-  replies: TaskComment[];
-}
-
 interface ThreadPopoverState {
   lineNumber: number;
-  threads: FileCommentThread[];
+  threads: TaskCommentThread[];
   top: number;
   left: number;
 }
@@ -214,29 +210,11 @@ function formatLineLabel(comment: TaskComment) {
 }
 
 function buildFileCommentThreads(comments: TaskComment[], reference: TaskFileReference) {
-  const repliesByParent = new Map<string, TaskComment[]>();
-  const topLevelComments: TaskComment[] = [];
-
-  for (const comment of comments) {
-    if (!comment.parentCommentId) {
-      if (isCommentAnchoredToReference(comment, reference)) {
-        topLevelComments.push(comment);
-      }
-      continue;
-    }
-
-    const replies = repliesByParent.get(comment.parentCommentId) ?? [];
-    replies.push(comment);
-    repliesByParent.set(comment.parentCommentId, replies);
-  }
-
-  return topLevelComments.map((comment) => ({
-    comment,
-    replies: repliesByParent.get(comment.id) ?? [],
-  }));
+  return buildTaskCommentThreads(comments)
+    .filter(({ comment }) => isCommentAnchoredToReference(comment, reference));
 }
 
-function lineCommentCounts(threads: FileCommentThread[]) {
+function lineCommentCounts(threads: TaskCommentThread[]) {
   const counts = new Map<number, number>();
   for (const thread of threads) {
     const start = thread.comment.lineStart ?? 0;
@@ -248,8 +226,8 @@ function lineCommentCounts(threads: FileCommentThread[]) {
   return counts;
 }
 
-function buildThreadsByLine(threads: FileCommentThread[]) {
-  const byLine = new Map<number, FileCommentThread[]>();
+function buildThreadsByLine(threads: TaskCommentThread[]) {
+  const byLine = new Map<number, TaskCommentThread[]>();
   for (const thread of threads) {
     const start = thread.comment.lineStart ?? 0;
     const end = thread.comment.lineEnd ?? start;

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
+import { buildTaskCommentThreads, sortTaskCommentThreadsByLatestActivityDesc } from "../../lib/taskCommentThreads";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
@@ -126,30 +127,6 @@ function createReplyDraft(author = "User", parentCommentId?: string | null): Tas
     interruptAgent: false,
     parentCommentId: parentCommentId ?? null,
   };
-}
-
-function groupTaskComments(comments: TaskComment[]) {
-  const repliesByParent = new Map<string, TaskComment[]>();
-  const topLevelComments: TaskComment[] = [];
-
-  for (const comment of comments) {
-    if (!comment.parentCommentId) {
-      topLevelComments.push(comment);
-      continue;
-    }
-
-    const replies = repliesByParent.get(comment.parentCommentId) ?? [];
-    replies.push(comment);
-    repliesByParent.set(comment.parentCommentId, replies);
-  }
-
-  return topLevelComments
-    .slice()
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .map((comment) => ({
-      comment,
-      replies: repliesByParent.get(comment.id) ?? [],
-    }));
 }
 
 function TaskRelaneMenu({
@@ -387,7 +364,7 @@ export function TaskDetailPage({
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const taskHeading = draft.title.trim() || task.title;
-  const commentThreads = groupTaskComments(task.comments);
+  const commentThreads = sortTaskCommentThreadsByLatestActivityDesc(buildTaskCommentThreads(task.comments));
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const recentHistory = timelineItems.slice(0, historyLimit);
   const summaryComments = commentThreads.slice(0, 4);
