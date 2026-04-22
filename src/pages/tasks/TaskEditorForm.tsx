@@ -1,3 +1,4 @@
+import { TaskTagInput } from "../../components/TaskTagInput";
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskPriority, TaskStatus, TaskType, TaskUpsertInput, WorkflowSummary } from "../../types";
 
 const TASK_TYPES: TaskType[] = ["task", "bug", "feature", "chore", "epic"];
@@ -92,6 +93,10 @@ export function TaskEditorForm({
 
       <div className="task-editor-grid__full muted-copy">
         Orchestra re-prompts idle agent-owned task lanes to keep working. If the lane still is not completed after this many whip attempts, Orchestra automatically escalates the task to user intervention.
+      </div>
+
+      <div className="task-editor-grid__full">
+        <TaskTagInput tags={draft.tags ?? []} onChange={(tags) => onChange({ ...draft, tags })} />
       </div>
 
       <label className="field-group task-editor-grid__full">

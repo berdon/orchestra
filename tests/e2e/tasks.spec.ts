@@ -30,6 +30,71 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
 });
 
+test("task create and detail flows support free-form tags with inline validation and keyboard removal", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+
+  await page.locator('[data-role="task-title"]').fill("Tagged task");
+
+  const tagInput = page.locator('[data-role="task-tags-input"]');
+  const editableTags = page.locator('[data-role="task-tags-field"] [data-role="task-tag-chip"]');
+
+  await tagInput.fill("Backend");
+  await tagInput.press("Enter");
+  await tagInput.fill("api");
+  await tagInput.press("Enter");
+  await expect(editableTags).toHaveCount(2);
+  await expect(editableTags.nth(0)).toContainText("api");
+  await expect(editableTags.nth(1)).toContainText("backend");
+
+  await tagInput.fill("Backend");
+  await tagInput.press("Enter");
+  await expect(editableTags).toHaveCount(2);
+  await expect(page.locator('[data-role="task-tags-error"]')).toHaveCount(0);
+
+  await tagInput.fill("bad tag");
+  await tagInput.press("Enter");
+  await expect(page.locator('[data-role="task-tags-error"]')).toContainText("Tags must use lower-case letters");
+  await expect(editableTags).toHaveCount(2);
+
+  await tagInput.fill("frontend");
+  await tagInput.press("Enter");
+  await expect(page.locator('[data-role="task-tags-error"]')).toHaveCount(0);
+  await expect(editableTags).toHaveCount(3);
+
+  await page.locator('[data-role="save-task"]').click();
+
+  const overviewTags = page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]');
+  await expect(overviewTags).toHaveCount(3);
+  await expect(overviewTags.nth(0)).toContainText("api");
+  await expect(overviewTags.nth(1)).toContainText("backend");
+  await expect(overviewTags.nth(2)).toContainText("frontend");
+
+  await page.locator('[data-role="edit-task"]').click();
+  await tagInput.click();
+  await tagInput.press("Backspace");
+  await expect(page.locator('[data-role="task-tag-chip-focus"][data-tag-value="frontend"]')).toBeFocused();
+  await page.keyboard.press("Delete");
+  await expect(editableTags).toHaveCount(2);
+
+  await tagInput.fill("OPS");
+  await tagInput.press("Enter");
+  await expect(editableTags).toHaveCount(3);
+  await expect(editableTags.nth(2)).toContainText("ops");
+
+  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="close-edit-task"]').click();
+
+  await expect(page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]').nth(0)).toContainText("api");
+  await expect(page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]').nth(1)).toContainText("backend");
+  await expect(page.locator('[data-role="task-overview-tags"] [data-role="task-tag-chip"]').nth(2)).toContainText("ops");
+});
+
 test("tasks overview hides empty inbox, hides done lanes, and supports done filtering in card and table views", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -3,6 +3,7 @@ import { buildSeededMockProjects, buildSeededMockWorkflows, DEFAULT_INSTALL_BASE
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
 import { sortSessionRecords } from "./sessionList";
+import { normalizeTaskTags, validateTaskTagSet } from "./taskTags";
 import type {
   AgentSummary,
   AppInfo,
@@ -908,39 +909,10 @@ function saveMockTaskSchedules(schedules: StoredTaskScheduleRecord[]) {
   setStoredValue(TASK_SCHEDULE_STORAGE_KEY, schedules);
 }
 
-const MOCK_TASK_TAG_MAX_LENGTH = 32;
-const MOCK_TASK_TAG_MAX_COUNT = 20;
-
-function normalizeMockTaskTags(tags: string[] | null | undefined) {
-  return [...new Set((tags ?? [])
-    .map((tag) => tag.trim().toLowerCase())
-    .filter(Boolean))].sort((left, right) => left.localeCompare(right));
-}
-
-function validateMockTaskTags(tags: string[] | null | undefined) {
-  const normalized = normalizeMockTaskTags(tags);
-  const errors: Array<{ path: string; message: string }> = [];
-
-  if (normalized.length > MOCK_TASK_TAG_MAX_COUNT) {
-    errors.push({ path: "tags", message: `Task tags must contain at most ${MOCK_TASK_TAG_MAX_COUNT} unique entries.` });
-  }
-
-  normalized.forEach((tag, index) => {
-    if (tag.length > MOCK_TASK_TAG_MAX_LENGTH) {
-      errors.push({ path: `tags[${index}]`, message: `Task tags must be ${MOCK_TASK_TAG_MAX_LENGTH} characters or fewer.` });
-    }
-    if (!/^[a-z0-9_-]+$/.test(tag)) {
-      errors.push({ path: `tags[${index}]`, message: "Task tags may only contain lowercase letters, digits, hyphens, and underscores." });
-    }
-  });
-
-  return { normalized, errors };
-}
-
 function normalizeScheduleBlueprint(task: TaskUpsertInput): TaskUpsertInput {
   return {
     ...task,
-    tags: normalizeMockTaskTags(task.tags),
+    tags: normalizeTaskTags(task.tags ?? []),
     status: "ready",
     archived: false,
     currentLaneId: null,
@@ -1403,7 +1375,7 @@ function dedupeMockTaskIds(taskIds: string[]) {
 function ensureStoredMockTask(task: TaskDetail | StoredMockTask): StoredMockTask {
   return {
     ...task,
-    tags: normalizeMockTaskTags(task.tags),
+    tags: normalizeTaskTags(task.tags ?? []),
     autoBlockedByDependencies: (task as StoredMockTask).autoBlockedByDependencies ?? false,
   };
 }
@@ -1831,7 +1803,6 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMoc
     title: input.title.trim(),
     description: input.description?.trim() || null,
     type: input.type,
-    tags: normalizeMockTaskTags(input.tags),
     status: input.status,
     priority: input.priority,
     workflowId: input.workflowId?.trim() || null,
@@ -1841,6 +1812,7 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMoc
     repositoryId: (input.repositoryIds?.[0]?.trim() || input.repositoryId?.trim() || null),
     repositoryIds: (input.repositoryIds ?? []).map((value) => value.trim()).filter(Boolean),
     parentTaskId: input.parentTaskId?.trim() || null,
+    tags: normalizeTaskTags(input.tags ?? existingTask?.tags ?? []),
     whipMaxAttempts: Math.max(1, input.whipMaxAttempts ?? existingTask?.whipMaxAttempts ?? 10),
     archived: input.archived ?? existingTask?.archived ?? false,
     commentCount: existingTask?.comments.length ?? 0,
@@ -1880,8 +1852,6 @@ function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
     errors.push({ path: "title", message: "Task title is required." });
   }
 
-  errors.push(...validateMockTaskTags(input.tags).errors);
-
   if (!["task", "bug", "feature", "chore", "epic"].includes(input.type)) {
     errors.push({ path: "type", message: "Task type must be one of: task, bug, feature, chore, epic." });
   }
@@ -1903,6 +1873,11 @@ function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
 
   if ((input.whipMaxAttempts ?? 10) < 1) {
     errors.push({ path: "whipMaxAttempts", message: "Task whip max attempts must be at least 1." });
+  }
+
+  const tagError = validateTaskTagSet(input.tags ?? []);
+  if (tagError) {
+    errors.push({ path: "tags", message: tagError });
   }
 
   if (["user", "unassigned"].includes(input.assigneeType) && input.assigneeId?.trim()) {
