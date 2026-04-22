@@ -75,6 +75,70 @@ fn stop_live_session_runtime_for_task_control(
     Ok(had_runtime)
 }
 
+fn cleanup_blocked_task_runtime_claims(
+    app: &AppHandle,
+    state: &AppState,
+    connection: &mut rusqlite::Connection,
+    task_ids: impl IntoIterator<Item = String>,
+    reason: &str,
+) -> Result<Vec<String>, String> {
+    let mut seen = HashSet::new();
+    let mut cleaned_task_ids = Vec::new();
+
+    for task_id in task_ids {
+        if !seen.insert(task_id.clone()) {
+            continue;
+        }
+
+        let Ok(task) = tasks::get_task_context(connection, &task_id) else {
+            continue;
+        };
+        if task.status != "blocked" {
+            continue;
+        }
+
+        let cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
+            connection,
+            &task_id,
+            Some("Task is blocked and no longer holds worker runtime or queue capacity.".into()),
+        )?;
+        if !cleanup.changed {
+            continue;
+        }
+
+        let mut emitted_session_ids = HashSet::new();
+        for assignment in &cleanup.assignments {
+            if let Some(session_id) = assignment.session_id.as_deref() {
+                stop_live_session_runtime_for_task_control(state, session_id)?;
+                if emitted_session_ids.insert(session_id.to_string()) {
+                    emit_session_change(app, reason, [session_id.to_string()]);
+                }
+                if assignment.worker_type == "role" {
+                    crate::services::live_sessions::schedule_session_retirement(
+                        app.clone(),
+                        session_id.to_string(),
+                        Duration::ZERO,
+                        reason,
+                    );
+                }
+            }
+        }
+
+        state.log(
+            "info",
+            reason,
+            &format!(
+                "Cleared blocked-task runtime claims for task {} ({} open assignment(s))",
+                task_id,
+                cleanup.assignments.len()
+            ),
+        );
+        cleaned_task_ids.push(task_id);
+    }
+
+    Ok(cleaned_task_ids)
+}
+
 #[tauri::command]
 pub fn list_tasks(
     project_id: Option<String>,
@@ -336,8 +400,18 @@ pub fn create_task(
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
-    let task = tasks::create_task(&mut connection, project_id.as_deref(), input)?;
+    let mut task = tasks::create_task(&mut connection, project_id.as_deref(), input)?;
     let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+    let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+        &app,
+        &state,
+        &mut connection,
+        changed_task_ids.clone(),
+        "task.blocked.runtime_cleared",
+    )?;
+    if cleaned_blocked_task_ids.contains(&task.id) {
+        task = tasks::get_task_context(&connection, &task.id)?;
+    }
     state.log("info", "task.created", &format!("Created task {}", task.id));
     state.log_authorized_action("auth.audit", "create_task", None, None, &task.id, "success");
     record_task_domain_event(
@@ -364,8 +438,18 @@ pub fn create_subtask(
     input: TaskUpsertInput,
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
-    let task = tasks::create_subtask(&mut connection, &parent_task_id, input)?;
+    let mut task = tasks::create_subtask(&mut connection, &parent_task_id, input)?;
     let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+    let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+        &app,
+        &state,
+        &mut connection,
+        changed_task_ids.clone(),
+        "task.blocked.runtime_cleared",
+    )?;
+    if cleaned_blocked_task_ids.contains(&task.id) {
+        task = tasks::get_task_context(&connection, &task.id)?;
+    }
     state.log(
         "info",
         "task.created",
@@ -405,7 +489,7 @@ pub fn update_task(
 ) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
     let existing = tasks::get_task_context(&connection, &task_id)?;
-    let task = tasks::update_task(&mut connection, &task_id, input)?;
+    let mut task = tasks::update_task(&mut connection, &task_id, input)?;
     let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
     changed_task_ids.extend(tasks::collect_parent_chain_task_ids(
         &connection,
@@ -418,6 +502,16 @@ pub fn update_task(
             .filter(|task_id| seen.insert(task_id.clone()))
             .collect::<Vec<_>>()
     };
+    let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+        &app,
+        &state,
+        &mut connection,
+        changed_task_ids.clone(),
+        "task.blocked.runtime_cleared",
+    )?;
+    if cleaned_blocked_task_ids.contains(&task.id) {
+        task = tasks::get_task_context(&connection, &task.id)?;
+    }
     state.log("info", "task.updated", &format!("Updated task {}", task.id));
     state.log_authorized_action("auth.audit", "update_task", None, None, &task_id, "success");
     record_task_domain_event(
@@ -636,8 +730,13 @@ pub fn add_task_dependency(
             .filter(|task_id| seen.insert(task_id.clone()))
             .collect::<Vec<_>>()
     };
-    let canceled_assignment =
-        task_runtime::cancel_dispatch_for_dependency_block(&mut connection, &blocked_task_id)?;
+    let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+        &app,
+        &state,
+        &mut connection,
+        changed_task_ids.clone(),
+        "task.dependency.blocked",
+    )?;
     state.log(
         "info",
         "task.dependency.added",
@@ -646,32 +745,7 @@ pub fn add_task_dependency(
             blocker_task_id, blocked_task_id
         ),
     );
-    let canceled_assignment_present = canceled_assignment.is_some();
-    if let Some(assignment) = canceled_assignment {
-        if let Some(session_id) = assignment.session_id.clone() {
-            if let Some(runtime) = state.remove_session_runtime(&session_id)? {
-                runtime.abort_active_run();
-            }
-            let _ = state.clear_active_session_run(&session_id);
-            emit_session_change(&app, "task.dependency.blocked", [session_id.clone()]);
-            if assignment.worker_type == "role" {
-                crate::services::live_sessions::schedule_session_retirement(
-                    app.clone(),
-                    session_id,
-                    Duration::ZERO,
-                    "task.dependency.blocked",
-                );
-            }
-        }
-        state.log(
-            "info",
-            "task.dependency.blocked",
-            &format!(
-                "Canceled open assignment {} because task {} became dependency blocked",
-                assignment.id, blocked_task_id
-            ),
-        );
-    }
+    let canceled_assignment_present = cleaned_blocked_task_ids.contains(&blocked_task_id);
     state.log_authorized_action(
         "auth.audit",
         "add_task_dependency",
@@ -693,7 +767,7 @@ pub fn remove_task_dependency(
     state: State<'_, AppState>,
     dependency_id: String,
 ) -> Result<TaskDependency, String> {
-    let connection = database::open_connection()?;
+    let mut connection = database::open_connection()?;
     let dependency = tasks::remove_task_dependency(&connection, &dependency_id)?;
     let mut changed_task_ids =
         tasks::collect_task_refresh_ids(&connection, &dependency.blocked_task_id)?;
@@ -705,6 +779,13 @@ pub fn remove_task_dependency(
             .filter(|task_id| seen.insert(task_id.clone()))
             .collect::<Vec<_>>()
     };
+    cleanup_blocked_task_runtime_claims(
+        &app,
+        &state,
+        &mut connection,
+        changed_task_ids.clone(),
+        "task.blocked.runtime_cleared",
+    )?;
     state.log(
         "info",
         "task.dependency.removed",
@@ -983,6 +1064,17 @@ pub async fn approve_task_review(
         &context.session_dir,
         &task_id,
     )?;
+    let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+    let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+        &app,
+        &state,
+        &mut connection,
+        changed_task_ids.clone(),
+        "task.blocked.runtime_cleared",
+    )?;
+    if cleaned_blocked_task_ids.contains(&task.id) {
+        task = tasks::get_task_context(&connection, &task_id)?;
+    }
 
     let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
         task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
@@ -1008,7 +1100,6 @@ pub async fn approve_task_review(
             emit_session_change(&app, "task.transition.next_assignment", [session_id]);
         }
     }
-    let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
     changed_task_ids.extend(
         auto_dispatches
             .iter()
@@ -1098,6 +1189,17 @@ pub async fn reassign_task_to_lane(
             notes,
             None,
         )?;
+        let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+        let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+            &app,
+            &state,
+            &mut connection,
+            changed_task_ids.clone(),
+            "task.blocked.runtime_cleared",
+        )?;
+        if cleaned_blocked_task_ids.contains(&task.id) {
+            task = tasks::get_task_context(&connection, &task_id)?;
+        }
 
         let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
             task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
@@ -1531,6 +1633,17 @@ async fn complete_lane_command(
                 None,
             )?,
         };
+        let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+        let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
+            &app,
+            &state,
+            &mut connection,
+            changed_task_ids.clone(),
+            "task.blocked.runtime_cleared",
+        )?;
+        if cleaned_blocked_task_ids.contains(&task.id) {
+            task = tasks::get_task_context(&connection, &task_id)?;
+        }
 
         let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
             task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
@@ -1584,7 +1697,6 @@ async fn complete_lane_command(
             }),
         );
 
-        let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
         changed_task_ids.extend(
             auto_dispatches
                 .iter()

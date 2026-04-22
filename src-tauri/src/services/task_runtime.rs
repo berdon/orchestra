@@ -45,6 +45,12 @@ pub struct RestartResumeCandidate {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TaskRuntimeClaimCleanup {
+    pub assignments: Vec<TaskLaneAssignment>,
+    pub changed: bool,
+}
+
 fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionContext, String> {
     let connection = crate::services::database::open_connection()?;
     let task = tasks::get_task_context(&connection, task_id)?;
@@ -297,17 +303,16 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
     Ok(duplicate_ids)
 }
 
-pub fn task_lane_queue_source_is_valid(
+fn task_is_runnable_for_worker_runtime(
     connection: &Connection,
-    task_id: &str,
+    task: &TaskDetail,
     workflow_id: Option<&str>,
     lane_id: &str,
 ) -> Result<bool, String> {
-    let Ok(task) = tasks::get_task_context(connection, task_id) else {
-        return Ok(false);
-    };
-
-    if task.archived || matches!(task.status.as_str(), "completed" | "canceled") {
+    if task.archived
+        || task.dependency_blocked
+        || !matches!(task.status.as_str(), "ready" | "in_progress")
+    {
         return Ok(false);
     }
 
@@ -321,7 +326,34 @@ pub fn task_lane_queue_source_is_valid(
         }
     }
 
-    Ok(true)
+    let Some(task_workflow_id) = task.workflow_id.as_deref() else {
+        return Ok(false);
+    };
+    let workflow = match workflows::get_workflow(connection, task_workflow_id) {
+        Ok(workflow) => workflow,
+        Err(_) => return Ok(false),
+    };
+    let Some(lane) = workflow.lanes.iter().find(|lane| lane.id == lane_id) else {
+        return Ok(false);
+    };
+
+    Ok(matches!(
+        lane.assigned_entity_type.as_str(),
+        "role" | "agent"
+    ))
+}
+
+pub fn task_lane_queue_source_is_valid(
+    connection: &Connection,
+    task_id: &str,
+    workflow_id: Option<&str>,
+    lane_id: &str,
+) -> Result<bool, String> {
+    let Ok(task) = tasks::get_task_context(connection, task_id) else {
+        return Ok(false);
+    };
+
+    task_is_runnable_for_worker_runtime(connection, &task, workflow_id, lane_id)
 }
 
 pub fn get_assignment_by_id(
@@ -586,6 +618,205 @@ pub fn rotate_open_assignment_session(
     Ok(replacement)
 }
 
+fn list_open_task_lane_assignments(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<TaskLaneAssignment>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                id,
+                task_id,
+                workflow_id,
+                lane_id,
+                worker_type,
+                worker_id,
+                status,
+                session_id,
+                runtime_cwd,
+                role_queue_entry_id,
+                role_instance_id,
+                prompt,
+                pending_outcome,
+                completion_notes,
+                whip_count,
+                last_whip_at,
+                started_at,
+                completed_at,
+                created_at,
+                updated_at
+            FROM task_lane_assignments
+            WHERE task_id = ?1
+              AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| {
+            format!("Unable to prepare open task lane assignment query for {task_id}: {error}")
+        })?;
+
+    let rows = statement
+        .query_map([task_id], read_assignment)
+        .map_err(|error| {
+            format!("Unable to query open task lane assignments for {task_id}: {error}")
+        })?;
+
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        format!("Unable to collect open task lane assignments for {task_id}: {error}")
+    })
+}
+
+pub fn clear_task_runtime_claims_preserving_status(
+    connection: &mut Connection,
+    task_id: &str,
+    notes: Option<String>,
+) -> Result<TaskRuntimeClaimCleanup, String> {
+    let task = tasks::get_task_context(connection, task_id)?;
+    let assignments = list_open_task_lane_assignments(connection, task_id)?;
+    let now = now_iso();
+    let normalized_notes = normalize_optional(notes);
+
+    let mut impacted_agent_ids = connection
+        .prepare(
+            r#"
+            SELECT DISTINCT agent_id
+            FROM agent_queue_entries
+            WHERE source_task_id = ?1
+              AND status IN ('queued', 'dispatched', 'paused_by_user')
+            ORDER BY agent_id ASC
+            "#,
+        )
+        .map_err(|error| {
+            format!("Unable to prepare blocked-task agent queue query for {task_id}: {error}")
+        })?
+        .query_map([task_id], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            format!("Unable to query blocked-task agent queue rows for {task_id}: {error}")
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!("Unable to collect blocked-task agent queue rows for {task_id}: {error}")
+        })?;
+
+    for assignment in &assignments {
+        if assignment.worker_type == "agent" {
+            if let Some(worker_id) = assignment.worker_id.clone() {
+                if !impacted_agent_ids.contains(&worker_id) {
+                    impacted_agent_ids.push(worker_id);
+                }
+            }
+        }
+    }
+
+    let mut impacted_role_instance_ids = connection
+        .prepare(
+            r#"
+            SELECT DISTINCT assigned_instance_id
+            FROM role_queue_entries
+            WHERE source_task_id = ?1
+              AND status IN ('queued', 'assigned', 'paused_by_user')
+              AND assigned_instance_id IS NOT NULL
+            ORDER BY assigned_instance_id ASC
+            "#,
+        )
+        .map_err(|error| {
+            format!("Unable to prepare blocked-task role queue query for {task_id}: {error}")
+        })?
+        .query_map([task_id], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            format!("Unable to query blocked-task role queue rows for {task_id}: {error}")
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!("Unable to collect blocked-task role queue rows for {task_id}: {error}")
+        })?;
+
+    for assignment in &assignments {
+        if let Some(instance_id) = assignment.role_instance_id.clone() {
+            if !impacted_role_instance_ids.contains(&instance_id) {
+                impacted_role_instance_ids.push(instance_id);
+            }
+        }
+    }
+
+    let tx = connection.transaction().map_err(|error| {
+        format!("Unable to start task runtime cleanup transaction for {task_id}: {error}")
+    })?;
+
+    for assignment in assignments
+        .iter()
+        .filter(|assignment| assignment.session_id.is_some())
+    {
+        update_open_lane_run(
+            &tx,
+            task_id,
+            &assignment.lane_id,
+            assignment.session_id.as_deref(),
+            ASSIGNMENT_STATUS_CANCELED,
+            normalized_notes.clone(),
+            &now,
+        )?;
+    }
+
+    let mut changed = false;
+    let cleared_assignments = tx
+        .execute(
+            "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = ?4, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
+            params![task_id, ASSIGNMENT_STATUS_CANCELED, now, normalized_notes.as_deref()],
+        )
+        .map_err(|error| format!("Unable to clear open task lane assignments for blocked task {task_id}: {error}"))?;
+    changed |= cleared_assignments > 0;
+
+    let cleared_agent_queue = tx
+        .execute(
+            "UPDATE agent_queue_entries SET status = 'canceled', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched', 'paused_by_user')",
+            params![task_id, now],
+        )
+        .map_err(|error| format!("Unable to clear agent queue entries for blocked task {task_id}: {error}"))?;
+    changed |= cleared_agent_queue > 0;
+
+    let cleared_role_queue = tx
+        .execute(
+            "UPDATE role_queue_entries SET status = 'canceled', assigned_instance_id = NULL, started_at = NULL, completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'assigned', 'paused_by_user')",
+            params![task_id, now],
+        )
+        .map_err(|error| format!("Unable to clear role queue entries for blocked task {task_id}: {error}"))?;
+    changed |= cleared_role_queue > 0;
+
+    for agent_id in &impacted_agent_ids {
+        let updated = tx
+            .execute(
+                "UPDATE agent_runtime_states SET status = 'idle', current_queue_entry_id = NULL, last_error = NULL, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
+                params![task.project_id, agent_id, now],
+            )
+            .map_err(|error| {
+                format!("Unable to reset agent runtime state for blocked task {task_id}: {error}")
+            })?;
+        changed |= updated > 0;
+    }
+
+    for role_instance_id in &impacted_role_instance_ids {
+        let updated = tx
+            .execute(
+                "UPDATE role_instances SET status = 'canceled', current_queue_entry_id = NULL, session_id = NULL, last_error = ?3, updated_at = ?2 WHERE id = ?1",
+                params![role_instance_id, now, normalized_notes.as_deref()],
+            )
+            .map_err(|error| {
+                format!("Unable to reset role instance for blocked task {task_id}: {error}")
+            })?;
+        changed |= updated > 0;
+    }
+
+    tx.commit()
+        .map_err(|error| format!("Unable to commit task runtime cleanup for {task_id}: {error}"))?;
+
+    Ok(TaskRuntimeClaimCleanup {
+        assignments,
+        changed,
+    })
+}
+
 pub fn cancel_dispatch_for_dependency_block(
     connection: &mut Connection,
     task_id: &str,
@@ -595,57 +826,12 @@ pub fn cancel_dispatch_for_dependency_block(
         return Ok(None);
     }
 
-    let assignment = get_active_lane_assignment(connection, task_id)?;
-    let Some(active_assignment) = assignment.clone() else {
-        return Ok(None);
-    };
-
-    let now = now_iso();
-    let tx = connection
-        .transaction()
-        .map_err(|error| format!("Unable to start dependency block reset transaction: {error}"))?;
-
-    tx.execute(
-        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = NULL, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active')",
-        params![task_id, ASSIGNMENT_STATUS_CANCELED, now],
-    )
-    .map_err(|error| format!("Unable to clear open task lane assignments for dependency-blocked task {task_id}: {error}"))?;
-
-    tx.execute(
-        "UPDATE agent_queue_entries SET status = 'completed', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched')",
-        params![task_id, now],
-    )
-    .map_err(|error| format!("Unable to clear agent queue entries for dependency-blocked task {task_id}: {error}"))?;
-
-    tx.execute(
-        "UPDATE role_queue_entries SET status = 'canceled', completed_at = ?2, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'assigned')",
-        params![task_id, now],
-    )
-    .map_err(|error| format!("Unable to clear role queue entries for dependency-blocked task {task_id}: {error}"))?;
-
-    if let Some(worker_id) = active_assignment.worker_id.as_deref() {
-        if active_assignment.worker_type == "agent" {
-            tx.execute(
-                "UPDATE agent_runtime_states SET status = 'idle', current_queue_entry_id = NULL, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
-                params![task.project_id, worker_id, now],
-            )
-            .map_err(|error| format!("Unable to reset agent runtime state for dependency-blocked task {task_id}: {error}"))?;
-        }
-    }
-
-    if let Some(role_instance_id) = active_assignment.role_instance_id.as_deref() {
-        tx.execute(
-            "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, last_error = NULL, updated_at = ?2 WHERE id = ?1",
-            params![role_instance_id, now],
-        )
-        .map_err(|error| format!("Unable to reset role instance for dependency-blocked task {task_id}: {error}"))?;
-    }
-
-    tx.commit().map_err(|error| {
-        format!("Unable to commit dependency block reset for {task_id}: {error}")
-    })?;
-
-    Ok(Some(active_assignment))
+    let cleanup = clear_task_runtime_claims_preserving_status(
+        connection,
+        task_id,
+        Some("Task became blocked by unresolved dependencies or unfinished subtasks.".to_string()),
+    )?;
+    Ok(cleanup.assignments.into_iter().next())
 }
 
 pub fn stop_task_activity(
@@ -898,7 +1084,7 @@ pub fn find_stale_task_assignment_candidates(
             r#"
             SELECT id
             FROM task_lane_assignments
-            WHERE status IN ('queued', 'active')
+            WHERE status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
             ORDER BY updated_at ASC, created_at ASC
             "#,
         )
@@ -936,6 +1122,27 @@ fn stale_assignment_reason(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
 ) -> Result<Option<String>, String> {
+    let task = tasks::get_task_context(connection, &assignment.task_id)?;
+    if task.status == "blocked" {
+        return Ok(Some(
+            "task is blocked and should not retain worker runtime".into(),
+        ));
+    }
+
+    if matches!(
+        assignment.status.as_str(),
+        ASSIGNMENT_STATUS_QUEUED | ASSIGNMENT_STATUS_ACTIVE
+    ) && !task_lane_queue_source_is_valid(
+        connection,
+        &assignment.task_id,
+        Some(&assignment.workflow_id),
+        &assignment.lane_id,
+    )? {
+        return Ok(Some(
+            "task is no longer runnable for the queued/active lane claim".into(),
+        ));
+    }
+
     if assignment.status == ASSIGNMENT_STATUS_ACTIVE {
         let Some(session_id) = assignment.session_id.as_deref() else {
             return Ok(Some("active assignment is missing a session".into()));
@@ -1189,6 +1396,12 @@ pub fn dispatch_task_lane(
         ));
     }
 
+    if task.status == "blocked" {
+        return Err(format!(
+            "Task {task_id} is blocked and cannot be dispatched until it becomes runnable"
+        ));
+    }
+
     if task.dependency_blocked {
         return Err(format!(
             "Task {task_id} is blocked by unresolved dependencies or unfinished subtasks"
@@ -1253,19 +1466,12 @@ pub fn maybe_auto_dispatch_task(
     task_id: &str,
 ) -> Result<Option<TaskLaneAssignment>, String> {
     let task = tasks::get_task_context(connection, task_id)?;
-    if task.archived
-        || task.dependency_blocked
-        || !matches!(task.status.as_str(), "ready" | "in_progress")
-    {
-        return Ok(None);
-    }
-
     let workflow = match load_task_workflow(connection, &task) {
         Ok(workflow) => workflow,
         Err(_) => return Ok(None),
     };
     let lane = resolve_task_lane(&workflow, &task)?;
-    if lane.assigned_entity_type == "user" {
+    if !task_is_runnable_for_worker_runtime(connection, &task, Some(&workflow.id), &lane.id)? {
         return Ok(None);
     }
 
@@ -4590,6 +4796,7 @@ mod tests {
     use std::{
         fs::{self, File},
         io::Write,
+        path::Path,
         process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -4734,6 +4941,37 @@ mod tests {
             },
         )
         .expect("workflow should create")
+    }
+
+    fn insert_project_and_repository(
+        connection: &Connection,
+        project_id: &str,
+        project_slug: &str,
+        repo_id: &str,
+        repo_slug: &str,
+        repo_name: &str,
+        repo_root: &Path,
+    ) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, 'ORC', ?4, ?5, ?5)",
+                params![project_id, project_slug, project_slug, repo_id, now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'main', ?6, ?6)",
+                params![
+                    repo_id,
+                    project_id,
+                    repo_slug,
+                    repo_name,
+                    repo_root.display().to_string(),
+                    now.as_str()
+                ],
+            )
+            .expect("repository should insert");
     }
 
     #[test]
@@ -7352,23 +7590,19 @@ mod tests {
         )
         .expect("workflow should create");
         let root = init_test_repo("task-runtime-child-unblocks-parent");
-        let now = now_iso();
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
-                params![now.as_str()],
-            )
-            .expect("project should insert");
-        connection
-            .execute(
-                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-parent-auto', 'orchestra', 'parent-auto-repo', 'Parent Auto Repo', ?1, NULL, 'main', ?2, ?2)",
-                params![root.display().to_string(), now.as_str()],
-            )
-            .expect("repository should insert");
+        insert_project_and_repository(
+            &connection,
+            "project-parent-auto",
+            "project-parent-auto",
+            "repo-parent-auto",
+            "parent-auto-repo",
+            "Parent Auto Repo",
+            &root,
+        );
 
         let parent = tasks::create_task(
             &mut connection,
-            Some("orchestra"),
+            Some("project-parent-auto"),
             TaskUpsertInput {
                 title: "Parent task".into(),
                 description: None,
@@ -7411,6 +7645,12 @@ mod tests {
         )
         .expect("child should create");
 
+        let blocked_parent =
+            tasks::get_task(&connection, &parent.id).expect("parent should reload");
+        assert_eq!(blocked_parent.status, "blocked");
+        assert!(blocked_parent.dependency_blocked);
+        assert!(!blocked_parent.ready_for_dispatch);
+
         let _completed_child = tasks::update_task(
             &mut connection,
             &child.id,
@@ -7433,6 +7673,12 @@ mod tests {
             },
         )
         .expect("child should complete");
+
+        let unblocked_parent = tasks::get_task(&connection, &parent.id)
+            .expect("parent should reload after child completion");
+        assert_eq!(unblocked_parent.status, "ready");
+        assert!(!unblocked_parent.dependency_blocked);
+        assert!(unblocked_parent.ready_for_dispatch);
 
         let session_dir = root.join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
@@ -7685,6 +7931,505 @@ mod tests {
             assignment.runtime_cwd.as_deref(),
             Some(wrong_runtime.to_string_lossy().as_ref())
         );
+    }
+
+    #[test]
+    fn blocked_role_task_cleanup_cancels_open_claims_without_unblocking() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Blocked Cleanup Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("low".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let project_root = init_test_repo("task-runtime-blocked-role-cleanup");
+        insert_project_and_repository(
+            &connection,
+            "project-role-blocked",
+            "project-role-blocked",
+            "repo-role-blocked",
+            "repo-role-blocked",
+            "Blocked Role Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-role-blocked"),
+            TaskUpsertInput {
+                title: "Role blocked cleanup".into(),
+                description: Some("Dispatch, then block it.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-role-blocked".into()),
+                repository_ids: vec!["repo-role-blocked".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("role task should dispatch");
+        assert_eq!(assignment.worker_type, "role");
+        assert!(assignment.session_id.is_some());
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role assignment should have instance");
+
+        let blocked = tasks::update_task(
+            &mut connection,
+            &task.id,
+            TaskUpsertInput {
+                title: task.title.clone(),
+                description: task.description.clone(),
+                task_type: task.task_type.clone(),
+                status: "blocked".into(),
+                priority: task.priority.clone(),
+                workflow_id: task.workflow_id.clone(),
+                current_lane_id: task.current_lane_id.clone(),
+                assignee_type: task.assignee_type.clone(),
+                assignee_id: task.assignee_id.clone(),
+                repository_id: task.repository_id.clone(),
+                repository_ids: task.repository_ids.clone(),
+                parent_task_id: task.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("task should become blocked");
+        assert_eq!(blocked.status, "blocked");
+        assert!(blocked.active_lane_assignment.is_some());
+
+        let cleanup = clear_task_runtime_claims_preserving_status(
+            &mut connection,
+            &task.id,
+            Some("Task is blocked".into()),
+        )
+        .expect("blocked cleanup should succeed");
+        assert!(cleanup.changed);
+        assert_eq!(cleanup.assignments.len(), 1);
+
+        let reloaded = tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(reloaded.status, "blocked");
+        assert!(reloaded.active_lane_assignment.is_none());
+
+        let assignment_status: String = connection
+            .query_row(
+                "SELECT status FROM task_lane_assignments WHERE id = ?1",
+                [assignment.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("assignment should load");
+        assert_eq!(assignment_status, "canceled");
+
+        let role_queue_status: String = connection
+            .query_row(
+                "SELECT status FROM role_queue_entries WHERE source_task_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                [task.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("role queue entry should load");
+        assert_eq!(role_queue_status, "canceled");
+
+        let (role_instance_status, role_instance_session): (String, Option<String>) = connection
+            .query_row(
+                "SELECT status, session_id FROM role_instances WHERE id = ?1",
+                [role_instance_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("role instance should load");
+        assert_eq!(role_instance_status, "canceled");
+        assert!(role_instance_session.is_none());
+    }
+
+    #[test]
+    fn blocked_agent_task_cleanup_releases_runtime_capacity() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Blocked Cleanup Agent".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("low".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Agent Blocked Cleanup Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-agent".into()),
+                    key: "agent".into(),
+                    name: "Agent".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some("Handle the task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-blocked-agent-cleanup");
+        insert_project_and_repository(
+            &connection,
+            "project-agent-blocked",
+            "project-agent-blocked",
+            "repo-agent-blocked",
+            "repo-agent-blocked",
+            "Blocked Agent Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-agent-blocked"),
+            TaskUpsertInput {
+                title: "Agent blocked cleanup".into(),
+                description: Some("Dispatch, then block it.".into()),
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-agent".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-agent-blocked".into()),
+                repository_ids: vec!["repo-agent-blocked".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent task should dispatch");
+        assert_eq!(assignment.worker_type, "agent");
+        assert!(assignment.session_id.is_some());
+
+        let blocked = tasks::update_task(
+            &mut connection,
+            &task.id,
+            TaskUpsertInput {
+                title: task.title.clone(),
+                description: task.description.clone(),
+                task_type: task.task_type.clone(),
+                status: "blocked".into(),
+                priority: task.priority.clone(),
+                workflow_id: task.workflow_id.clone(),
+                current_lane_id: task.current_lane_id.clone(),
+                assignee_type: task.assignee_type.clone(),
+                assignee_id: task.assignee_id.clone(),
+                repository_id: task.repository_id.clone(),
+                repository_ids: task.repository_ids.clone(),
+                parent_task_id: task.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("task should become blocked");
+        assert_eq!(blocked.status, "blocked");
+        assert!(blocked.active_lane_assignment.is_some());
+
+        let cleanup = clear_task_runtime_claims_preserving_status(
+            &mut connection,
+            &task.id,
+            Some("Task is blocked".into()),
+        )
+        .expect("blocked cleanup should succeed");
+        assert!(cleanup.changed);
+
+        let reloaded = tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(reloaded.status, "blocked");
+        assert!(reloaded.active_lane_assignment.is_none());
+
+        let queue_status: String = connection
+            .query_row(
+                "SELECT status FROM agent_queue_entries WHERE source_task_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                [task.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("agent queue entry should load");
+        assert_eq!(queue_status, "canceled");
+
+        let (runtime_status, current_queue_entry_id): (String, Option<String>) = connection
+            .query_row(
+                "SELECT status, current_queue_entry_id FROM agent_runtime_states WHERE project_id = ?1 AND agent_id = ?2",
+                ["project-agent-blocked", agent.id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("agent runtime should load");
+        assert_eq!(runtime_status, "idle");
+        assert!(current_queue_entry_id.is_none());
+    }
+
+    #[test]
+    fn initially_blocked_tasks_cannot_dispatch_or_validate_queue_sources() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Dispatch Guard Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Blocked Dispatch Guard Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-role".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-initially-blocked");
+        insert_project_and_repository(
+            &connection,
+            "project-initially-blocked",
+            "project-initially-blocked",
+            "repo-initially-blocked",
+            "repo-initially-blocked",
+            "Initially Blocked Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-initially-blocked"),
+            TaskUpsertInput {
+                title: "Initially blocked task".into(),
+                description: Some("Should not dispatch while blocked.".into()),
+                task_type: "task".into(),
+                status: "blocked".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-role".into()),
+                assignee_type: "role".into(),
+                assignee_id: Some(role.slug.clone()),
+                repository_id: Some("repo-initially-blocked".into()),
+                repository_ids: vec!["repo-initially-blocked".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let error = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect_err("initially blocked task should not dispatch");
+        assert!(error.contains("blocked and cannot be dispatched"));
+        assert!(!task_lane_queue_source_is_valid(
+            &connection,
+            &task.id,
+            task.workflow_id.as_deref(),
+            task.current_lane_id
+                .as_deref()
+                .expect("task should have lane"),
+        )
+        .expect("queue source validation should succeed"));
+    }
+
+    #[test]
+    fn blocked_tasks_are_reported_as_stale_runtime_claims() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Stale Blocked Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Blocked Stale Claim Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-role".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-blocked-stale-claim");
+        insert_project_and_repository(
+            &connection,
+            "project-blocked-stale",
+            "project-blocked-stale",
+            "repo-blocked-stale",
+            "repo-blocked-stale",
+            "Blocked Stale Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-blocked-stale"),
+            TaskUpsertInput {
+                title: "Blocked stale task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "blocked".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-role".into()),
+                assignee_type: "role".into(),
+                assignee_id: Some(role.slug.clone()),
+                repository_id: Some("repo-blocked-stale".into()),
+                repository_ids: vec!["repo-blocked-stale".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = now_iso();
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    pending_outcome, completion_notes, whip_count, last_whip_at,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-blocked-stale', ?1, ?2, 'lane-role', 'role', ?3, 'active',
+                    'session-blocked-stale', NULL, NULL, NULL, 'Prompt',
+                    NULL, NULL, 0, NULL,
+                    ?4, NULL, ?4, ?4
+                )
+                "#,
+                params![
+                    task.id.as_str(),
+                    workflow.id.as_str(),
+                    role.id.as_str(),
+                    now.as_str()
+                ],
+            )
+            .expect("stale assignment should insert");
+
+        let candidates = find_stale_task_assignment_candidates(&connection)
+            .expect("stale assignment candidates should load");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.task_id == task.id)
+            .expect("blocked task should be reported as stale");
+        assert!(candidate.reason.contains("blocked"));
     }
 
     #[test]

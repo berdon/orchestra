@@ -179,7 +179,12 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
             continue;
         }
 
-        let task = task_runtime::reset_task_runtime(&mut connection, &candidate.task_id)?;
+        let _cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
+            &mut connection,
+            &candidate.task_id,
+            Some(candidate.reason.clone()),
+        )?;
+        let task = crate::services::tasks::get_task_context(&connection, &candidate.task_id)?;
         state.log(
             "warn",
             "task.runtime.stale_assignment_recovered",
