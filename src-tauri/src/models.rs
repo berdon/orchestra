@@ -1317,6 +1317,8 @@ pub struct TaskSummary {
     pub description: Option<String>,
     #[serde(rename = "type")]
     pub task_type: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub status: String,
     pub priority: String,
     pub workflow_id: Option<String>,
@@ -1364,6 +1366,8 @@ pub struct TaskDetail {
     pub description: Option<String>,
     #[serde(rename = "type")]
     pub task_type: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub status: String,
     pub priority: String,
     pub workflow_id: Option<String>,
@@ -1412,6 +1416,8 @@ pub struct TaskUpsertInput {
     pub description: Option<String>,
     #[serde(rename = "type")]
     pub task_type: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub status: String,
     pub priority: String,
     pub workflow_id: Option<String>,

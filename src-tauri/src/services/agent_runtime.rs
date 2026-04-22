@@ -816,6 +816,7 @@ mod tests {
                 title: "Guard invalid agent queueing".into(),
                 description: None,
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
                 workflow_id: Some(workflow.id.clone()),

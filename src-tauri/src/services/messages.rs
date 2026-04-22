@@ -1080,6 +1080,7 @@ mod tests {
                 title: title.into(),
                 description: Some("Test task".into()),
                 task_type: "task".into(),
+                tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
                 workflow_id: None,

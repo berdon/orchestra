@@ -1067,6 +1067,7 @@ export interface TaskSummary {
   title: string;
   description?: string | null;
   type: TaskType | string;
+  tags: string[];
   status: TaskStatus | string;
   priority: TaskPriority | string;
   workflowId?: string | null;
@@ -1115,6 +1116,7 @@ export interface TaskUpsertInput {
   title: string;
   description?: string | null;
   type: TaskType | string;
+  tags: string[];
   status: TaskStatus | string;
   priority: TaskPriority | string;
   workflowId?: string | null;

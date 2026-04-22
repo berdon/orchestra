@@ -410,6 +410,17 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_tasks_parent
                 ON tasks(parent_task_id);
 
+            CREATE TABLE IF NOT EXISTS task_tags (
+                task_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, tag),
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_tags_tag_task_id
+                ON task_tags(tag, task_id);
+
             CREATE TABLE IF NOT EXISTS task_comments (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -837,6 +848,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
     ensure_tasks_table_columns(connection)?;
+    ensure_task_tag_tables(connection)?;
     ensure_task_comments_table_columns(connection)?;
     ensure_mailbox_tables(connection)?;
     ensure_mailbox_table_columns(connection)?;
@@ -1479,6 +1491,27 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
         .map_err(|error| {
             format!("Unable to create tasks source_schedule_id index: {error}")
         })?;
+
+    Ok(())
+}
+
+fn ensure_task_tag_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS task_tags (
+                task_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, tag),
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_tags_tag_task_id
+                ON task_tags(tag, task_id);
+            "#,
+        )
+        .map_err(|error| format!("Unable to ensure task_tags table: {error}"))?;
 
     Ok(())
 }
@@ -2574,6 +2607,85 @@ mod tests {
         assert!(indexes
             .iter()
             .any(|name| name == "idx_tasks_source_schedule_id"));
+    }
+
+    #[test]
+    fn migrates_legacy_tasks_table_and_adds_task_tag_tables() {
+        let path = unique_temp_db("tasks-tag-migration");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL,
+                    number TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    workflow_id TEXT,
+                    current_lane_id TEXT,
+                    assignee_type TEXT NOT NULL,
+                    assignee_id TEXT,
+                    repository_id TEXT,
+                    parent_task_id TEXT,
+                    whip_max_attempts INTEGER NOT NULL DEFAULT 10,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status, priority,
+                    workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id,
+                    whip_max_attempts, archived, created_at, updated_at
+                ) VALUES (
+                    'task-1', 'orchestra', 1, 'ORC-1', 'Legacy task', NULL, 'task', 'ready', 'P2',
+                    NULL, NULL, 'user', NULL, NULL, NULL,
+                    10, 0, '2026-03-18T00:00:00Z', '2026-03-18T00:00:00Z'
+                );
+                "#,
+            )
+            .expect("legacy tasks table should seed");
+        drop(connection);
+
+        initialize_database_at(&path).expect("database migration should succeed");
+        let connection = Connection::open(&path).expect("migrated database should open");
+
+        let tag_columns =
+            table_columns(&connection, "task_tags").expect("task_tags columns should load");
+        for expected in ["task_id", "tag", "created_at"] {
+            assert!(
+                tag_columns.contains(expected),
+                "missing expected task_tags column: {expected}"
+            );
+        }
+
+        let indexes = connection
+            .prepare("PRAGMA index_list('task_tags')")
+            .expect("index query should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("index query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("indexes should collect");
+        assert!(indexes
+            .iter()
+            .any(|name| name == "idx_task_tags_tag_task_id"));
+
+        let legacy_task = connection
+            .query_row(
+                "SELECT id, number FROM tasks WHERE id = 'task-1'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("legacy task should remain readable");
+        assert_eq!(legacy_task, ("task-1".into(), "ORC-1".into()));
     }
 
     #[test]
