@@ -7,7 +7,19 @@ interface ProjectSwitcherProps {
   activeProjectId: string | null;
   unreadCountsByProject: Record<string, number>;
   hasUnreadOutsideActiveProject: boolean;
+  collapsed: boolean;
   onSelectProject: (projectId: string) => void;
+}
+
+function getProjectMonogram(name: string | null | undefined) {
+  const trimmed = name?.trim();
+  if (!trimmed) {
+    return "PR";
+  }
+
+  const segments = trimmed.split(/\s+/).filter(Boolean);
+  const initials = segments.slice(0, 2).map((segment) => segment[0]?.toUpperCase() ?? "").join("");
+  return initials || trimmed.slice(0, 2).toUpperCase();
 }
 
 export function ProjectSwitcher({
@@ -15,6 +27,7 @@ export function ProjectSwitcher({
   activeProjectId,
   unreadCountsByProject,
   hasUnreadOutsideActiveProject,
+  collapsed,
   onSelectProject,
 }: ProjectSwitcherProps) {
   const [open, setOpen] = useState(false);
@@ -26,7 +39,10 @@ export function ProjectSwitcher({
   );
 
   const activeUnreadCount = activeProject?.id ? unreadCountsByProject[activeProject.id] ?? 0 : 0;
-  const triggerBadge = activeUnreadCount > 0 ? String(activeUnreadCount) : hasUnreadOutsideActiveProject ? "*" : null;
+  const triggerBadge = activeUnreadCount > 0 ? String(activeUnreadCount) : hasUnreadOutsideActiveProject ? "•" : null;
+  const triggerName = activeProject?.name ?? "Select project";
+  const triggerLabel = activeProject ? `Switch project: ${activeProject.name}` : "Select project";
+  const triggerMonogram = getProjectMonogram(activeProject?.name);
 
   useEffect(() => {
     setOpen(false);
@@ -57,7 +73,7 @@ export function ProjectSwitcher({
   }, [open]);
 
   return (
-    <div className="project-switcher" ref={rootRef}>
+    <div className="project-switcher" ref={rootRef} data-collapsed={collapsed ? "true" : "false"}>
       <span className="project-switcher__label">Project</span>
       <select
         className="project-switcher__native-select"
@@ -78,9 +94,14 @@ export function ProjectSwitcher({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={triggerLabel}
+        title={triggerLabel}
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="project-switcher__trigger-label">{activeProject?.name ?? "Select project"}</span>
+        <span className="project-switcher__avatar" aria-hidden="true">{triggerMonogram}</span>
+        <span className="project-switcher__trigger-body">
+          <span className="project-switcher__trigger-label">{triggerName}</span>
+        </span>
         {triggerBadge ? (
           <span className="status-badge status-badge--warning status-badge--compact project-switcher__badge" data-role="project-switcher-trigger-badge">
             {triggerBadge}
@@ -100,11 +121,13 @@ export function ProjectSwitcher({
                 data-role={`project-switcher-option-${project.slug}`}
                 type="button"
                 role="menuitem"
+                title={project.name}
                 onClick={() => {
                   setOpen(false);
                   onSelectProject(project.id);
                 }}
               >
+                <span className="project-switcher__item-avatar" aria-hidden="true">{getProjectMonogram(project.name)}</span>
                 <span className="project-switcher__item-label">{project.name}</span>
                 {unreadCount > 0 ? (
                   <span className="status-badge status-badge--warning status-badge--compact project-switcher__badge">
