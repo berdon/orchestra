@@ -11,6 +11,49 @@ mkdir -p "${RUN_DIR}" "${TEST_HOME}"
 PREVIEW_URL="${ORCHESTRA_DESKTOP_E2E_PREVIEW_URL:-http://127.0.0.1:1420}"
 PREVIEW_PORT="${ORCHESTRA_DESKTOP_E2E_PREVIEW_PORT:-1420}"
 REUSE_PREVIEW="${ORCHESTRA_DESKTOP_E2E_REUSE_PREVIEW:-0}"
+BINARY_PATH="${ROOT_DIR}/src-tauri/target/debug/orchestra"
+BUILD_LOCK_DIR="${ROOT_DIR}/src-tauri/target/debug/.desktop-e2e-build-lock"
+
+binary_matches_preview_url() {
+  [[ -x "${BINARY_PATH}" ]] || return 1
+  strings "${BINARY_PATH}" 2>/dev/null | grep -F "${PREVIEW_URL}" >/dev/null 2>&1
+}
+
+ensure_binary_matches_preview_url() {
+  if binary_matches_preview_url; then
+    return
+  fi
+
+  (
+    set -euo pipefail
+
+    while ! mkdir "${BUILD_LOCK_DIR}" 2>/dev/null; do
+      echo "[desktop-e2e-runner] waiting for desktop E2E build lock ${BUILD_LOCK_DIR}"
+      sleep 1
+    done
+    trap 'rmdir "${BUILD_LOCK_DIR}" 2>/dev/null || true' EXIT
+
+    if binary_matches_preview_url; then
+      exit 0
+    fi
+
+    local_tauri_config="$(python3 - "${PREVIEW_URL}" <<'PY'
+import json
+import sys
+
+print(json.dumps({"build": {"devUrl": sys.argv[1]}}))
+PY
+)"
+
+    echo "[desktop-e2e-runner] building Tauri debug binary for preview ${PREVIEW_URL}"
+    TAURI_CONFIG="${local_tauri_config}" cargo build --manifest-path "${ROOT_DIR}/src-tauri/Cargo.toml"
+
+    if ! binary_matches_preview_url; then
+      echo "desktop E2E binary did not embed preview URL ${PREVIEW_URL} after rebuild" >&2
+      exit 1
+    fi
+  )
+}
 
 choose_unused_port() {
   local base="$1"
@@ -50,7 +93,6 @@ PY
 SCRIPT_LOG="${RUN_DIR}/runner.log"
 DRIVER_LOG="${RUN_DIR}/tauri-driver.log"
 PREVIEW_LOG="${RUN_DIR}/vite-preview.log"
-BINARY_PATH="${ROOT_DIR}/src-tauri/target/debug/orchestra"
 WEBDRIVER_PORT="$(choose_unused_port 30000)"
 NATIVE_WEBDRIVER_PORT="$(choose_unused_port 45000)"
 PLATFORM="$(uname -s)"
@@ -86,6 +128,8 @@ run_inner() {
   if [[ -d "${REAL_HOME}/.pi" ]]; then
     ln -s "${REAL_HOME}/.pi" "${TEST_HOME}/.pi"
   fi
+
+  ensure_binary_matches_preview_url
 
   if [[ "${REUSE_PREVIEW}" == "1" ]]; then
     for _ in $(seq 1 60); do

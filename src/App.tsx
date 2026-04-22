@@ -101,14 +101,77 @@ import type {
   TaskSummary,
 } from "./types";
 
-const NAV_ITEMS: Array<{ id: PrimaryPage; label: string; shortLabel: string }> = [
-  { id: "tasks", label: "Tasks", shortLabel: "Ta" },
-  { id: "inbox", label: "Inbox", shortLabel: "In" },
-  { id: "agents", label: "Agents", shortLabel: "Ag" },
-  { id: "chat", label: "Chat", shortLabel: "Ch" },
-  { id: "sessions", label: "Sessions", shortLabel: "Se" },
-  { id: "settings", label: "Settings", shortLabel: "St" },
+const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
+  { id: "tasks", label: "Tasks" },
+  { id: "inbox", label: "Inbox" },
+  { id: "agents", label: "Agents" },
+  { id: "chat", label: "Chat" },
+  { id: "sessions", label: "Sessions" },
+  { id: "settings", label: "Settings" },
 ];
+
+function NavIcon({ pageId, className }: { pageId: PrimaryPage; className?: string }) {
+  switch (pageId) {
+    case "tasks":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3.5" y="4" width="13" height="12.5" rx="2.5" />
+          <path d="M6.75 7.25h6.5" />
+          <path d="M6.75 10h6.5" />
+          <path d="M6.75 12.75h4.25" />
+        </svg>
+      );
+    case "inbox":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 6.5 6.1 4h7.8L16 6.5v8a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 14.5Z" />
+          <path d="M4 11.25h3l1.25 2h3.5l1.25-2H16" />
+        </svg>
+      );
+    case "agents":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M7.25 9a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z" />
+          <path d="M12.9 10.15a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8Z" />
+          <path d="M4.75 14.75a3.35 3.35 0 0 1 5 0" />
+          <path d="M11.1 14.5a2.9 2.9 0 0 1 4.15 0" />
+        </svg>
+      );
+    case "chat":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5.25 5h9.5A1.75 1.75 0 0 1 16.5 6.75v5.5A1.75 1.75 0 0 1 14.75 14H9.5L6 16.5V14H5.25A1.75 1.75 0 0 1 3.5 12.25v-5.5A1.75 1.75 0 0 1 5.25 5Z" />
+          <path d="M6.75 8.5h6.5" />
+          <path d="M6.75 11h4.5" />
+        </svg>
+      );
+    case "sessions":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3.75" y="4" width="12.5" height="12" rx="2.5" />
+          <path d="M7 8.25h6" />
+          <path d="M7 11h6" />
+          <path d="M7 13.75h3.5" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 4.25v1.4" />
+          <path d="M10 14.35v1.4" />
+          <path d="M5.93 5.93l.99.99" />
+          <path d="m13.08 13.08.99.99" />
+          <path d="M4.25 10h1.4" />
+          <path d="M14.35 10h1.4" />
+          <path d="m5.93 14.07.99-.99" />
+          <path d="m13.08 6.92.99-.99" />
+          <circle cx="10" cy="10" r="2.85" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 const SETTINGS_TABS = [
   { id: "projects", label: "Projects" },
@@ -2904,6 +2967,7 @@ export function App() {
             activeProjectId={activeProject?.id ?? null}
             unreadCountsByProject={projectUnreadCounts}
             hasUnreadOutsideActiveProject={hasUnreadOutsideActiveProject && activeProjectUnreadCount === 0}
+            collapsed={isSidebarCollapsed}
             onSelectProject={(projectId) => setActiveProjectIdState(projectId)}
           />
 
@@ -2915,10 +2979,16 @@ export function App() {
                   <button
                     className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
                     type="button"
+                    data-role={`nav-item-${item.id}`}
+                    aria-label={item.label}
+                    aria-current={item.id === activePage ? "page" : undefined}
+                    title={item.label}
                     onClick={() => setActivePage(item.id)}
                   >
-                    <span className="nav-item__label nav-item__label--full">{item.label}</span>
-                    <span className="nav-item__label nav-item__label--short" aria-hidden="true">{item.shortLabel}</span>
+                    <span className="nav-item__icon" aria-hidden="true">
+                      <NavIcon pageId={item.id} className="nav-item__icon-svg" />
+                    </span>
+                    <span className="nav-item__label">{item.label}</span>
                     {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                   </button>
 
@@ -2948,6 +3018,9 @@ export function App() {
                   className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
                   type="button"
                   data-role={`nav-item-${item.id}`}
+                  aria-label={item.label}
+                  aria-current={item.id === activePage ? "page" : undefined}
+                  title={item.label}
                   onClick={() => {
                     if (item.id === "tasks") {
                       navigateToTasksOverview();
@@ -2956,8 +3029,10 @@ export function App() {
                     setActivePage(item.id);
                   }}
                 >
-                  <span className="nav-item__label nav-item__label--full">{item.label}</span>
-                  <span className="nav-item__label nav-item__label--short" aria-hidden="true">{item.shortLabel}</span>
+                  <span className="nav-item__icon" aria-hidden="true">
+                    <NavIcon pageId={item.id} className="nav-item__icon-svg" />
+                  </span>
+                  <span className="nav-item__label">{item.label}</span>
                   {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                 </button>
               );
@@ -2970,10 +3045,16 @@ export function App() {
             <button
               className={activePage === "settings" ? "nav-item nav-item--active" : "nav-item"}
               type="button"
+              data-role="nav-item-settings"
+              aria-label="Settings"
+              aria-current={activePage === "settings" ? "page" : undefined}
+              title="Settings"
               onClick={() => setActivePage("settings")}
             >
-              <span className="nav-item__label nav-item__label--full">Settings</span>
-              <span className="nav-item__label nav-item__label--short" aria-hidden="true">St</span>
+              <span className="nav-item__icon" aria-hidden="true">
+                <NavIcon pageId="settings" className="nav-item__icon-svg" />
+              </span>
+              <span className="nav-item__label">Settings</span>
             </button>
 
             {activePage === "settings" && !isSidebarCollapsed ? (

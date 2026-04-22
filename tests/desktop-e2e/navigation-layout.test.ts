@@ -34,6 +34,30 @@ describe("desktop navigation layout", () => {
       );
       expect(collapsed).toBe('true');
 
+      const collapsedRailState = await executeScript<{
+        navTitles: string[];
+        navAriaLabels: string[];
+        iconCount: number;
+        triggerTitle: string;
+        shortLabelCount: number;
+      }>(
+        sessionId,
+        `
+          return {
+            navTitles: Array.from(document.querySelectorAll('[data-role^="nav-item-"]')).map((node) => node.getAttribute('title') ?? ''),
+            navAriaLabels: Array.from(document.querySelectorAll('[data-role^="nav-item-"]')).map((node) => node.getAttribute('aria-label') ?? ''),
+            iconCount: document.querySelectorAll('.nav-item__icon').length,
+            triggerTitle: document.querySelector('[data-role="project-switcher-trigger"]')?.getAttribute('title') ?? '',
+            shortLabelCount: document.querySelectorAll('.nav-item__label--short').length,
+          };
+        `,
+      );
+      expect(collapsedRailState.navTitles).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings']);
+      expect(collapsedRailState.navAriaLabels).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings']);
+      expect(collapsedRailState.iconCount).toBeGreaterThanOrEqual(6);
+      expect(collapsedRailState.triggerTitle).toContain('Switch project:');
+      expect(collapsedRailState.shortLabelCount).toBe(0);
+
       await clickSelector(sessionId, '[data-role="toggle-sidebar-collapse"]');
       const expanded = await executeScript<string | null>(
         sessionId,
@@ -92,11 +116,16 @@ describe("desktop navigation layout", () => {
         sessionId,
         `
           const row = document.querySelector('.session-list-row');
-          row?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-          row?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+          const link = row?.querySelector('[data-role="session-link"]');
+          row?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: document.body }));
+          row?.dispatchEvent(new MouseEvent('mouseenter', { relatedTarget: document.body }));
+          if (link instanceof HTMLElement) {
+            link.focus();
+          }
+          return true;
         `,
       );
-      await sleep(2200);
+      await waitForSelector(sessionId, '.session-list-row--actions-visible .session-delete-button', 5000);
       const revealClass = await executeScript<string>(
         sessionId,
         `return document.querySelector('.session-list-row')?.className ?? '';`,
