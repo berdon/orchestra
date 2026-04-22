@@ -1,6 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5ioAAAAASUVORK5CYII=";
+
+async function setTaskOverviewFiltersExpanded(page: Page, expanded: boolean) {
+  const toggle = page.locator('[data-role="task-overview-filters-toggle"]');
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) !== String(expanded)) {
+    await toggle.click();
+  }
+  await expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+}
 
 test("tasks overview creates a draft task and opens dedicated detail/create pages", async ({ page }) => {
   await page.addInitScript(() => {
@@ -30,6 +39,286 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
   await expect(page.locator('[data-role="task-overview-description"]')).toContainText("No description provided.");
   await page.getByRole("button", { name: "Tasks" }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
+});
+
+test("tasks overview hides empty draft and scheduled sections and starts filters collapsed by default", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-quiet-overview",
+          slug: "quiet-overview",
+          name: "Quiet Overview Flow",
+          description: "Simple lane for overview chrome coverage.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-backend-ready",
+          projectId: "orchestra",
+          number: "ORC-1",
+          title: "Backend only task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: "workflow-quiet-overview",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["backend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        {
+          id: "task-frontend-ready",
+          projectId: "orchestra",
+          number: "ORC-2",
+          title: "Frontend only task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: "workflow-quiet-overview",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["frontend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.task-schedules", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  await expect(page.locator('[data-role="draft-task-section"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-schedule-section"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator('[data-role="task-overview-filters-body"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("No active filters");
+
+  await setTaskOverviewFiltersExpanded(page, true);
+  await expect(page.locator('[data-role="task-sort-field"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-tag-filters"]')).toContainText("#backend");
+
+  await page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]').click();
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Backend only task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).not.toContainText("Frontend only task");
+
+  await setTaskOverviewFiltersExpanded(page, false);
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Tags: #backend");
+});
+
+test("tasks overview shows populated draft and scheduled sections", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-scheduled-overview",
+          slug: "scheduled-overview",
+          name: "Scheduled Overview Flow",
+          description: "Flow used to verify visible overview sections.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-draft-visible",
+          projectId: "orchestra",
+          number: "ORC-3",
+          title: "Draft planning task",
+          description: null,
+          type: "task",
+          status: "draft",
+          priority: "P2",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.task-schedules",
+      JSON.stringify([
+        {
+          id: "schedule-nightly-triage",
+          projectId: "orchestra",
+          taskBlueprint: {
+            title: "Nightly triage",
+            description: "Review inbound requests.",
+            type: "task",
+            status: "ready",
+            priority: "P2",
+            workflowId: "workflow-scheduled-overview",
+            currentLaneId: null,
+            assigneeType: "unassigned",
+            assigneeId: null,
+            repositoryId: null,
+            repositoryIds: [],
+            parentTaskId: null,
+            whipMaxAttempts: 10,
+            archived: false,
+          },
+          enabled: true,
+          oneShot: false,
+          overlapPolicy: "skip",
+          trigger: { type: "time", kind: "daily", timeOfDay: "09:00", timezone: "UTC" },
+          nextFireAt: null,
+          lastFiredAt: null,
+          lastMaterializedTaskId: null,
+          lastError: null,
+          occurrences: [],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft planning task");
+  await expect(page.locator('[data-role="task-schedule-section"]')).toContainText("Nightly triage");
+  await expect(page.locator('[data-role="task-schedule-card"]')).toHaveCount(1);
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "false");
 });
 
 test("task create and detail flows support free-form tags with inline validation and keyboard removal", async ({ page }) => {
@@ -669,6 +958,10 @@ test("tasks overview filters and sorts by tags and renders compact tags across c
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks" }).click();
 
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("No active filters");
+  await setTaskOverviewFiltersExpanded(page, true);
+
   await expect(page.locator('[data-role="task-tag-filters"]')).toContainText("#backend");
   await page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]').click();
   await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Backend only task");
@@ -700,6 +993,7 @@ test("tasks overview filters and sorts by tags and renders compact tags across c
   await secondPage.goto("/");
   await secondPage.getByRole("button", { name: "Tasks" }).click();
   await expect(secondPage.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(secondPage.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "true");
   await expect(secondPage.locator('[data-role="task-sort-field"]')).toHaveValue("tags");
   await expect(secondPage.locator('[data-role="task-sort-direction"]')).toHaveValue("asc");
   await secondPage.close();
@@ -804,6 +1098,10 @@ test("tasks overview keeps stale persisted tag filters clearable when current ta
   await page.getByRole("button", { name: "Tasks" }).click();
 
   await expect(page.locator('[data-role="workflow-task-section"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Tags: #backend");
+
+  await setTaskOverviewFiltersExpanded(page, true);
   await expect(page.locator('[data-role="task-tag-filters"]')).toContainText("#backend");
   await expect(page.locator('[data-role="task-tag-filter-note"]')).toContainText("#backend");
   await expect(page.locator('[data-role="task-clear-tags"]')).toBeEnabled();
@@ -2512,7 +2810,7 @@ test("task detail requires a hold before delete and confirms removal in a modal"
   await expect(page.locator('[data-role="task-delete-confirm"]')).toBeVisible();
   await page.locator('[data-role="confirm-delete-task"]').click();
 
-  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Delete me");
+  await expect(page.locator('[data-role="draft-task-section"]')).toHaveCount(0);
 });
 
 test("dispatching a role-owned task surfaces the spawned runtime session in the Sessions list", async ({ page }) => {

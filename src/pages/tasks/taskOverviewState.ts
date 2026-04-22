@@ -10,6 +10,7 @@ export interface TaskOverviewState {
   sort: TaskListSort;
   tags: string[];
   tagMatch: TaskTagMatchMode;
+  filtersExpanded: boolean;
 }
 
 export const LEGACY_TASK_BOARD_VIEW_MODE_STORAGE_KEY = "orchestra.preferences.task-board-view-mode";
@@ -28,6 +29,7 @@ export const DEFAULT_TASK_OVERVIEW_STATE: TaskOverviewState = {
   sort: { ...DEFAULT_TASK_LIST_SORT },
   tags: [],
   tagMatch: "any",
+  filtersExpanded: false,
 };
 
 export const TASK_OVERVIEW_SORT_FIELD_OPTIONS: Array<{ value: TaskListSortField; label: string }> = [
@@ -51,6 +53,7 @@ function buildDefaultState(overrides?: Partial<TaskOverviewState>): TaskOverview
     sort: overrides?.sort ?? { ...DEFAULT_TASK_OVERVIEW_STATE.sort },
     tags: overrides?.tags ?? DEFAULT_TASK_OVERVIEW_STATE.tags,
     tagMatch: overrides?.tagMatch ?? DEFAULT_TASK_OVERVIEW_STATE.tagMatch,
+    filtersExpanded: overrides?.filtersExpanded ?? DEFAULT_TASK_OVERVIEW_STATE.filtersExpanded,
   };
 }
 
@@ -98,6 +101,9 @@ export function normalizeTaskOverviewState(value: unknown, fallback?: Partial<Ta
     tagMatch: typeof candidate.tagMatch === "string" && TASK_TAG_MATCH_MODES.includes(candidate.tagMatch)
       ? candidate.tagMatch
       : defaultState.tagMatch,
+    filtersExpanded: typeof candidate.filtersExpanded === "boolean"
+      ? candidate.filtersExpanded
+      : defaultState.filtersExpanded,
   };
 }
 
