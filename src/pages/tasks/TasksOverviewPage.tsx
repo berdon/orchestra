@@ -94,6 +94,7 @@ export function TasksOverviewPage({
       : null,
     sortUsesDefault ? null : `Sort: ${formatSortSummary(overviewState.sort)}`,
   ].filter((item): item is string => Boolean(item));
+  const activeFilterCount = filterSummaryItems.length;
 
   function updateOverviewState(nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) {
     onOverviewStateChange(nextState);
@@ -150,7 +151,11 @@ export function TasksOverviewPage({
           </div>
         </div>
 
-        <section className="task-overview-filters" data-role="task-overview-filters-card">
+        <section
+          className={overviewState.filtersExpanded ? "task-overview-filters task-overview-filters--expanded" : "task-overview-filters"}
+          data-role="task-overview-filters-card"
+          data-expanded={overviewState.filtersExpanded ? "true" : "false"}
+        >
           <button
             className="task-overview-filters__toggle"
             data-role="task-overview-filters-toggle"
@@ -158,15 +163,19 @@ export function TasksOverviewPage({
             aria-expanded={overviewState.filtersExpanded}
             onClick={() => updateOverviewState((current) => ({ ...current, filtersExpanded: !current.filtersExpanded }))}
           >
-            <span className="task-overview-filters__header">
-              <span className="eyebrow">Filters &amp; sorting</span>
-              <span className="task-overview-filters__title-row">
-                <strong>Task filters</strong>
-                <span className="task-overview-filters__summary" data-role="task-overview-filters-summary">
-                  {filterSummaryItems.length ? filterSummaryItems.map((item) => (
-                    <span key={item} className="task-overview-filters__summary-pill">{item}</span>
-                  )) : <span className="task-overview-filters__summary-pill">No active filters</span>}
-                </span>
+            <span className="task-overview-filters__toggle-main">
+              <span className="task-overview-filters__label-row">
+                <strong className="task-overview-filters__label">Filters</strong>
+                {activeFilterCount ? (
+                  <span className="task-overview-filters__active-count" data-role="task-overview-filters-active-count">
+                    {activeFilterCount} active
+                  </span>
+                ) : null}
+              </span>
+              <span className="task-overview-filters__summary" data-role="task-overview-filters-summary">
+                {filterSummaryItems.length ? filterSummaryItems.map((item) => (
+                  <span key={item} className="task-overview-filters__summary-item">{item}</span>
+                )) : <span className="task-overview-filters__summary-item task-overview-filters__summary-item--empty">No active filters</span>}
               </span>
             </span>
             <span className="task-overview-filters__indicator" aria-hidden="true">{overviewState.filtersExpanded ? "▾" : "▸"}</span>
