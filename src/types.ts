@@ -1130,6 +1130,19 @@ export interface TaskUpsertInput {
   archived?: boolean;
 }
 
+export type TaskTagMatchMode = "all" | "any";
+export type TaskSortField = "updatedAt" | "createdAt" | "priority" | "number" | "title" | "tags";
+export type TaskSortDirection = "asc" | "desc";
+
+export interface TaskListOptions {
+  projectId?: string | null;
+  includeArchived?: boolean;
+  tags?: string[];
+  tagMatch?: TaskTagMatchMode;
+  sortBy?: TaskSortField;
+  sortDirection?: TaskSortDirection;
+}
+
 export type DomainEventTopic =
   | "task.created"
   | "task.updated"

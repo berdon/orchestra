@@ -65,6 +65,11 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "tasks.create",
       },
       {
+        name: "update_task",
+        description: "Update an existing task",
+        requiredPermission: "tasks.update",
+      },
+      {
         name: "get_worker_overlay",
         description: "Get a worker overlay",
         requiredPermission: "projects.read",
@@ -760,18 +765,39 @@ describe("orchestra tools extension bridge tool setup", () => {
       description: "Create it in the right place",
       type: "bug",
       priority: "P1",
+      tags: ["backend", "urgent"],
     });
 
     const listTasksTool = registeredTools.find((tool) => tool.name === "list_tasks");
     expect(listTasksTool.parameters.properties.projectId).toBeTruthy();
+    expect(listTasksTool.parameters.properties.tags).toBeTruthy();
+    expect(listTasksTool.parameters.properties.tagMatch).toBeTruthy();
+    expect(listTasksTool.parameters.properties.sortBy).toBeTruthy();
+    expect(listTasksTool.parameters.properties.sortDirection).toBeTruthy();
     await listTasksTool.execute("tool-call-2", {
       projectId: "project-2",
       includeArchived: false,
+      tags: ["backend", "urgent"],
+      tagMatch: "all",
+      sortBy: "tags",
+      sortDirection: "asc",
+    });
+
+    const updateTaskTool = registeredTools.find((tool) => tool.name === "update_task");
+    expect(updateTaskTool.parameters.properties.taskId).toBeTruthy();
+    expect(updateTaskTool.parameters.properties.tags).toBeTruthy();
+    expect(updateTaskTool.parameters.properties.inputJson).toBeUndefined();
+    await updateTaskTool.execute("tool-call-3", {
+      taskId: "task-1",
+      title: "Scoped task",
+      type: "bug",
+      priority: "P1",
+      tags: ["backend"],
     });
 
     const getWorkerOverlayTool = registeredTools.find((tool) => tool.name === "get_worker_overlay");
     expect(getWorkerOverlayTool.parameters.properties.projectSlug).toBeTruthy();
-    await getWorkerOverlayTool.execute("tool-call-3", {
+    await getWorkerOverlayTool.execute("tool-call-4", {
       workerType: "agent",
       workerSlug: "Data",
       projectSlug: "project-two",
@@ -779,7 +805,7 @@ describe("orchestra tools extension bridge tool setup", () => {
 
     const updateWorkerOverlayTool = registeredTools.find((tool) => tool.name === "update_worker_overlay");
     expect(updateWorkerOverlayTool.parameters.properties.projectSlug).toBeTruthy();
-    await updateWorkerOverlayTool.execute("tool-call-4", {
+    await updateWorkerOverlayTool.execute("tool-call-5", {
       workerType: "agent",
       workerSlug: "Data",
       projectSlug: "project-two",
@@ -788,9 +814,9 @@ describe("orchestra tools extension bridge tool setup", () => {
 
     const helpTool = registeredTools.find((tool) => tool.name === "orchestra_help");
     expect(helpTool.parameters.properties.command).toBeTruthy();
-    const helpResult = await helpTool.execute("tool-call-5", { command: "create_task" });
+    const helpResult = await helpTool.execute("tool-call-6", { command: "create_task" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload).toEqual({
       projectId: "project-2",
       input: {
@@ -800,18 +826,34 @@ describe("orchestra tools extension bridge tool setup", () => {
         status: "ready",
         priority: "P1",
         assigneeType: "unassigned",
+        tags: ["backend", "urgent"],
       },
     });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload).toEqual({
       projectId: "project-2",
       includeArchived: false,
+      tags: ["backend", "urgent"],
+      tagMatch: "all",
+      sortBy: "tags",
+      sortDirection: "asc",
     });
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).payload).toEqual({
+      taskId: "task-1",
+      input: {
+        title: "Scoped task",
+        type: "bug",
+        status: "ready",
+        priority: "P1",
+        assigneeType: "unassigned",
+        tags: ["backend"],
+      },
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload).toEqual({
       workerType: "agent",
       workerSlug: "Data",
       projectSlug: "project-two",
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload).toEqual({
+    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body)).payload).toEqual({
       workerType: "agent",
       workerSlug: "Data",
       projectSlug: "project-two",

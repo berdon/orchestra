@@ -79,6 +79,10 @@ fn stop_live_session_runtime_for_task_control(
 pub fn list_tasks(
     project_id: Option<String>,
     include_archived: Option<bool>,
+    tags: Option<Vec<String>>,
+    tag_match: Option<String>,
+    sort_by: Option<String>,
+    sort_direction: Option<String>,
 ) -> Result<Vec<TaskSummary>, String> {
     let connection = database::open_connection()?;
     let Some(project_id) = crate::services::projects::resolve_requested_or_default_project_id(
@@ -88,7 +92,14 @@ pub fn list_tasks(
     else {
         return Ok(Vec::new());
     };
-    tasks::list_tasks(&connection, &project_id, include_archived.unwrap_or(false))
+    let query = tasks::TaskListQuery::from_raw(
+        include_archived,
+        tags,
+        tag_match.as_deref(),
+        sort_by.as_deref(),
+        sort_direction.as_deref(),
+    )?;
+    tasks::list_tasks_with_query(&connection, &project_id, query)
 }
 
 #[tauri::command]

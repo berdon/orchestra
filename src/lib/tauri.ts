@@ -41,6 +41,7 @@ import type {
   TaskDetail,
   TaskLaneAssignment,
   TaskLaneRun,
+  TaskListOptions,
   TaskScheduleDetail,
   TaskScheduleOccurrence,
   TaskScheduleSummary,
@@ -2902,17 +2903,127 @@ async function resolveTauriProjectId(projectId?: string | null) {
   return projects[0]?.id ?? requestedProjectId ?? null;
 }
 
-export async function listTasks(includeArchived = false, projectId?: string | null): Promise<TaskSummary[]> {
-  const activeProjectId = projectId ?? getActiveProjectId();
+function normalizeTaskListOptions(
+  optionsOrIncludeArchived: TaskListOptions | boolean | undefined,
+  legacyProjectId?: string | null,
+): Required<Pick<TaskListOptions, "includeArchived" | "tagMatch" | "sortBy" | "sortDirection">> & Omit<TaskListOptions, "includeArchived" | "tagMatch" | "sortBy" | "sortDirection"> {
+  if (typeof optionsOrIncludeArchived === "object" && optionsOrIncludeArchived !== null) {
+    return {
+      projectId: optionsOrIncludeArchived.projectId,
+      includeArchived: optionsOrIncludeArchived.includeArchived ?? false,
+      tags: optionsOrIncludeArchived.tags,
+      tagMatch: optionsOrIncludeArchived.tagMatch ?? "all",
+      sortBy: optionsOrIncludeArchived.sortBy ?? "updatedAt",
+      sortDirection: optionsOrIncludeArchived.sortDirection ?? "desc",
+    };
+  }
+
+  return {
+    projectId: legacyProjectId,
+    includeArchived: optionsOrIncludeArchived ?? false,
+    tags: undefined,
+    tagMatch: "all",
+    sortBy: "updatedAt",
+    sortDirection: "desc",
+  };
+}
+
+function buildMockTaskTagSortKey(tags: string[] | null | undefined) {
+  return normalizeMockTaskTags(tags).join(",");
+}
+
+function matchesMockTaskTags(task: TaskSummary, requestedTags: string[], tagMatch: "all" | "any") {
+  if (requestedTags.length === 0) {
+    return true;
+  }
+
+  const taskTags = new Set(task.tags ?? []);
+  if (tagMatch === "any") {
+    return requestedTags.some((tag) => taskTags.has(tag));
+  }
+
+  return requestedTags.every((tag) => taskTags.has(tag));
+}
+
+function compareMockTasks(left: TaskSummary, right: TaskSummary, options: ReturnType<typeof normalizeTaskListOptions>) {
+  if (left.archived !== right.archived) {
+    return Number(left.archived) - Number(right.archived);
+  }
+
+  const directionMultiplier = options.sortDirection === "asc" ? 1 : -1;
+  const priorityRank = (value: string) => ({ P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 }[value] ?? 5);
+  const defaultTiebreak = () => {
+    const updatedCompare = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    if (updatedCompare !== 0) {
+      return updatedCompare;
+    }
+    return parseTaskNumber(right.number).sequence - parseTaskNumber(left.number).sequence;
+  };
+
+  let primaryCompare = 0;
+  switch (options.sortBy) {
+    case "createdAt":
+      primaryCompare = (Date.parse(left.createdAt) - Date.parse(right.createdAt)) * directionMultiplier;
+      break;
+    case "priority":
+      primaryCompare = (priorityRank(left.priority) - priorityRank(right.priority)) * directionMultiplier;
+      break;
+    case "number":
+      primaryCompare = (parseTaskNumber(left.number).sequence - parseTaskNumber(right.number).sequence) * directionMultiplier;
+      break;
+    case "title":
+      primaryCompare = left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) * directionMultiplier;
+      break;
+    case "tags": {
+      const leftKey = buildMockTaskTagSortKey(left.tags);
+      const rightKey = buildMockTaskTagSortKey(right.tags);
+      const leftUntagged = leftKey.length === 0;
+      const rightUntagged = rightKey.length === 0;
+      if (leftUntagged !== rightUntagged) {
+        return leftUntagged ? 1 : -1;
+      }
+      primaryCompare = leftKey.localeCompare(rightKey) * directionMultiplier;
+      break;
+    }
+    case "updatedAt":
+    default:
+      primaryCompare = (Date.parse(left.updatedAt) - Date.parse(right.updatedAt)) * directionMultiplier;
+      break;
+  }
+
+  if (primaryCompare !== 0) {
+    return primaryCompare;
+  }
+  return defaultTiebreak();
+}
+
+export async function listTasks(options?: TaskListOptions): Promise<TaskSummary[]>;
+export async function listTasks(includeArchived?: boolean, projectId?: string | null): Promise<TaskSummary[]>;
+export async function listTasks(
+  optionsOrIncludeArchived: TaskListOptions | boolean = false,
+  legacyProjectId?: string | null,
+): Promise<TaskSummary[]> {
+  const options = normalizeTaskListOptions(optionsOrIncludeArchived, legacyProjectId);
+  const activeProjectId = options.projectId ?? getActiveProjectId();
+  const normalizedTags = normalizeMockTaskTags(options.tags);
   if (!isTauriAvailable()) {
     return processMockTaskSchedules(activeProjectId).tasks
       .filter((task) => task.projectId === activeProjectId)
-      .filter((task) => includeArchived || !task.archived)
-      .map(summarizeTask);
+      .filter((task) => options.includeArchived || !task.archived)
+      .map(summarizeTask)
+      .filter((task) => matchesMockTaskTags(task, normalizedTags, options.tagMatch))
+      .sort((left, right) => compareMockTasks(left, right, options));
   }
 
-  const resolvedProjectId = await resolveTauriProjectId(projectId);
-  return invoke<TaskSummary[]>("list_tasks", { projectId: resolvedProjectId, includeArchived });
+  const resolvedProjectId = await resolveTauriProjectId(options.projectId);
+  return invoke<TaskSummary[]>("list_tasks", {
+    projectId: resolvedProjectId,
+    includeArchived: options.includeArchived,
+    tags: normalizedTags,
+    tagMatch: options.tagMatch,
+    sortBy: options.sortBy,
+    sortDirection: options.sortDirection,
+  });
 }
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
