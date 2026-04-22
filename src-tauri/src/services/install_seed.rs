@@ -4,10 +4,9 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Deserialize;
 
-use crate::{
-    services::{
-        orchestra_paths::{default_orchestra_root, project_root}, project_settings,
-    },
+use crate::services::{
+    orchestra_paths::{default_orchestra_root, project_root},
+    project_settings,
 };
 
 const INSTALL_BASELINE_KEY: &str = "default-install-baseline";
@@ -123,13 +122,17 @@ pub fn ensure_install_baseline_seeded(connection: &mut Connection) -> Result<(),
 }
 
 fn load_catalog() -> Result<DefaultInstallBaselineCatalog, String> {
-    serde_json::from_str(include_str!("../../../src/seed/default-install-baseline.json"))
-        .map_err(|error| format!("Unable to parse default install baseline catalog: {error}"))
+    serde_json::from_str(include_str!(
+        "../../../src/seed/default-install-baseline.json"
+    ))
+    .map_err(|error| format!("Unable to parse default install baseline catalog: {error}"))
 }
 
 fn table_count(connection: &Connection, table: &str) -> Result<i64, String> {
     connection
-        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
         .map_err(|error| format!("Unable to count {table}: {error}"))
 }
 
@@ -147,8 +150,13 @@ fn seed_project(tx: &Transaction<'_>, project: &SeedProject, now: &str) -> Resul
 
 fn seed_roles(tx: &Transaction<'_>, roles: &[SeedRole], now: &str) -> Result<(), String> {
     for role in roles {
-        let direct_permissions = serde_json::to_string(&role.direct_permissions)
-            .map_err(|error| format!("Unable to encode permissions for role {}: {error}", role.slug))?;
+        let direct_permissions =
+            serde_json::to_string(&role.direct_permissions).map_err(|error| {
+                format!(
+                    "Unable to encode permissions for role {}: {error}",
+                    role.slug
+                )
+            })?;
         tx.execute(
             r#"
             INSERT INTO roles (
@@ -198,7 +206,13 @@ fn seed_workflows(
             INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)
             "#,
-            params![workflow.id, workflow.slug, workflow.name, workflow.description, now],
+            params![
+                workflow.id,
+                workflow.slug,
+                workflow.name,
+                workflow.description,
+                now
+            ],
         )
         .map_err(|error| format!("Unable to seed workflow {}: {error}", workflow.slug))?;
 
@@ -260,8 +274,12 @@ fn seed_workflows(
 fn ensure_project_root_exists(project_slug: &str) -> Result<(), String> {
     let orchestra_root = default_orchestra_root()?;
     let root = project_root(&orchestra_root, project_slug);
-    fs::create_dir_all(&root)
-        .map_err(|error| format!("Unable to create project directory {}: {error}", root.display()))
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "Unable to create project directory {}: {error}",
+            root.display()
+        )
+    })
 }
 
 fn now_iso() -> String {
@@ -342,7 +360,9 @@ mod tests {
         let lane_refs = development
             .lanes
             .into_iter()
-            .map(|lane: WorkflowLane| (lane.key, lane.assigned_entity_type, lane.assigned_entity_id))
+            .map(|lane: WorkflowLane| {
+                (lane.key, lane.assigned_entity_type, lane.assigned_entity_id)
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             lane_refs,
@@ -367,18 +387,15 @@ mod tests {
 
         ensure_install_baseline_seeded(&mut connection).expect("baseline should seed");
         projects::delete_project(&connection, "orchestra").expect("seeded project should delete");
-        assert!(
-            projects::list_projects(&connection)
-                .expect("projects should list after delete")
-                .is_empty()
-        );
+        assert!(projects::list_projects(&connection)
+            .expect("projects should list after delete")
+            .is_empty());
 
-        ensure_install_baseline_seeded(&mut connection).expect("baseline state should prevent reseed");
-        assert!(
-            projects::list_projects(&connection)
-                .expect("projects should still be empty")
-                .is_empty()
-        );
+        ensure_install_baseline_seeded(&mut connection)
+            .expect("baseline state should prevent reseed");
+        assert!(projects::list_projects(&connection)
+            .expect("projects should still be empty")
+            .is_empty());
     }
 
     #[test]
@@ -389,7 +406,8 @@ mod tests {
 
         ensure_install_baseline_seeded(&mut connection).expect("baseline should seed");
 
-        let architect = roles::get_role(&connection, "role-architect").expect("architect should load");
+        let architect =
+            roles::get_role(&connection, "role-architect").expect("architect should load");
         let updated_role = roles::update_role(
             &mut connection,
             &architect.id,
@@ -401,6 +419,7 @@ mod tests {
                 model: architect.model.clone(),
                 thinking_level: Some(architect.thinking_level.clone()),
                 capacity: architect.capacity,
+                compaction_window: None,
                 policy_ids: architect.policy_ids.clone(),
                 direct_permissions: architect.direct_permissions.clone(),
             },

@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     models::PiRuntimeSettings,
-    services::orchestra_paths::{default_orchestra_root, orchestra_settings_path},
+    services::{
+        orchestra_paths::{default_orchestra_root, orchestra_settings_path},
+        session_compaction::{normalize_compaction_window_spec, DEFAULT_COMPACTION_WINDOW},
+    },
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -27,6 +30,7 @@ struct StoredHarnessSection {
 struct StoredPiRuntimeSettings {
     #[serde(default)]
     extra_extensions: Vec<String>,
+    default_compaction_window: Option<String>,
     updated_at: Option<String>,
 }
 
@@ -37,15 +41,20 @@ pub fn get_pi_runtime_settings() -> Result<PiRuntimeSettings, String> {
 
 pub fn update_pi_runtime_settings(
     extra_extensions: Vec<String>,
+    default_compaction_window: Option<String>,
 ) -> Result<PiRuntimeSettings, String> {
     let orchestra_root = default_orchestra_root()?;
-    update_pi_runtime_settings_in(&orchestra_root, extra_extensions)
+    update_pi_runtime_settings_in(&orchestra_root, extra_extensions, default_compaction_window)
 }
 
 pub fn get_pi_runtime_settings_in(orchestra_root: &Path) -> Result<PiRuntimeSettings, String> {
     let settings = load_harness_settings(orchestra_root)?;
     Ok(PiRuntimeSettings {
         extra_extensions: settings.harness.pi.extra_extensions,
+        default_compaction_window: normalize_compaction_window_spec(
+            settings.harness.pi.default_compaction_window,
+        )?
+        .unwrap_or_else(|| DEFAULT_COMPACTION_WINDOW.to_string()),
         updated_at: settings.harness.pi.updated_at,
     })
 }
@@ -53,9 +62,12 @@ pub fn get_pi_runtime_settings_in(orchestra_root: &Path) -> Result<PiRuntimeSett
 pub fn update_pi_runtime_settings_in(
     orchestra_root: &Path,
     extra_extensions: Vec<String>,
+    default_compaction_window: Option<String>,
 ) -> Result<PiRuntimeSettings, String> {
     let mut settings = load_harness_settings(orchestra_root)?;
     settings.harness.pi.extra_extensions = normalize_extensions(extra_extensions);
+    settings.harness.pi.default_compaction_window =
+        normalize_compaction_window_spec(default_compaction_window)?;
     settings.harness.pi.updated_at = Some(Utc::now().to_rfc3339());
     save_harness_settings(orchestra_root, &settings)?;
     get_pi_runtime_settings_in(orchestra_root)
@@ -154,6 +166,7 @@ mod tests {
                 "npm:pi-example".into(),
                 "".into(),
             ],
+            Some(" 12% ".into()),
         )
         .expect("pi runtime settings should save");
 
@@ -164,9 +177,11 @@ mod tests {
                 "./extensions/custom.ts".to_string()
             ]
         );
+        assert_eq!(saved.default_compaction_window, "12%");
         assert!(saved.updated_at.is_some());
 
         let loaded = get_pi_runtime_settings_in(&root).expect("pi runtime settings should load");
         assert_eq!(loaded.extra_extensions, saved.extra_extensions);
+        assert_eq!(loaded.default_compaction_window, "12%");
     }
 }

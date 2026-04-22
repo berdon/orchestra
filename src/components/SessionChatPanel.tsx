@@ -5,6 +5,37 @@ import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
+function formatControlOperationLabel(session: SessionRecord) {
+  const operation = session.controlOperation;
+  if (!operation) {
+    return null;
+  }
+  const subject = operation.kind === "compact"
+    ? (operation.trigger === "auto" ? "Auto-compacting" : "Compacting")
+    : "Reloading";
+  if (operation.status === "running") {
+    return `${subject}…`;
+  }
+  if (operation.status === "failed") {
+    return operation.kind === "compact" ? "Compaction failed" : "Reload failed";
+  }
+  if (operation.kind === "compact") {
+    return operation.trigger === "auto" ? "Auto-compacted" : "Compacted";
+  }
+  return "Reloaded";
+}
+
+function getControlOperationTone(session: SessionRecord) {
+  const operation = session.controlOperation;
+  if (!operation) {
+    return null;
+  }
+  if (operation.status === "running") {
+    return "accent";
+  }
+  return operation.status === "failed" ? "error" : "success";
+}
+
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
     case "thinking":
@@ -240,9 +271,18 @@ const SessionComposer = memo(function SessionComposer({
   onReloadSession,
 }: SessionComposerProps) {
   const [showSessionActions, setShowSessionActions] = useState(false);
-  const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly && !sessionPending;
-  const canCompactSession = Boolean(onCompactSession) && !sessionReadOnly && !sessionPending;
-  const canReloadSession = Boolean(onReloadSession) && !sessionReadOnly && !sessionPending;
+  const sessionControlBusy = session.controlOperation?.status === "running";
+  const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly && !sessionPending && !sessionControlBusy;
+  const canCompactSession = Boolean(onCompactSession)
+    && !sessionReadOnly
+    && !sessionPending
+    && !sessionControlBusy
+    && session.controlCapabilities?.compact.status !== "unsupported";
+  const canReloadSession = Boolean(onReloadSession)
+    && !sessionReadOnly
+    && !sessionPending
+    && !sessionControlBusy
+    && session.controlCapabilities?.reload.status !== "unsupported";
 
   useEffect(() => {
     setShowSessionActions(false);
@@ -339,9 +379,13 @@ const SessionComposer = memo(function SessionComposer({
                         data-role="session-action-compact"
                         type="button"
                         role="menuitem"
+                        title={session.controlCapabilities?.compact.reason ?? undefined}
                         disabled={!canCompactSession}
                         onClick={() => {
                           setShowSessionActions(false);
+                          if (!canCompactSession) {
+                            return;
+                          }
                           onCompactSession();
                         }}
                       >
@@ -354,6 +398,7 @@ const SessionComposer = memo(function SessionComposer({
                         data-role="session-action-reload"
                         type="button"
                         role="menuitem"
+                        title={session.controlCapabilities?.reload.reason ?? undefined}
                         disabled={!canReloadSession}
                         onClick={() => {
                           setShowSessionActions(false);
@@ -640,6 +685,11 @@ export function SessionChatPanel({
               <span className={`status-badge status-badge--${getActivityTone(session.activityState)}`}>
                 {formatActivityLabel(session.activityState, session.activeToolName)}
               </span>
+              {formatControlOperationLabel(session) ? (
+                <span className={`status-badge status-badge--${getControlOperationTone(session) ?? "neutral"}`}>
+                  {formatControlOperationLabel(session)}
+                </span>
+              ) : null}
               {sessionReadOnly ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
             </div>
           </div>

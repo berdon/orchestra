@@ -125,6 +125,7 @@ function buildMockAgentValidation(input: AgentUpsertInput): AgentValidationResul
   const provider = input.provider?.trim() || "";
   const model = input.model?.trim() || "";
   const thinkingLevel = input.thinkingLevel?.trim().toLowerCase() || "off";
+  const compactionWindow = input.compactionWindow?.trim() || null;
 
   if (!name) {
     errors.push({ code: "required", path: "name", message: "Agent name is required." });
@@ -140,6 +141,10 @@ function buildMockAgentValidation(input: AgentUpsertInput): AgentValidationResul
 
   if (input.scope === "project" && !(input.projectId?.trim() || activeProjectId())) {
     errors.push({ code: "required", path: "projectId", message: "Choose a project for project-scoped agents." });
+  }
+
+  if (compactionWindow && !(/^(?:[1-9]\d?|99)%$/.test(compactionWindow) || /^\d+$/.test(compactionWindow) || /^off$/i.test(compactionWindow))) {
+    errors.push({ code: "invalid", path: "compactionWindow", message: "Compaction window must be `10%`, a positive token reserve like `16000`, or `off`." });
   }
 
   if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel)) {
@@ -174,6 +179,7 @@ function normalizeMockAgentInput(input: AgentUpsertInput, existing?: AgentDefini
   const provider = input.provider?.trim() || null;
   const model = input.model?.trim() || null;
   const thinkingLevel = input.thinkingLevel?.trim().toLowerCase() || "off";
+  const compactionWindow = input.compactionWindow?.trim() || null;
   const timestamp = nowIso();
   const existingAgents = ensureMockAgents();
   const baseSlug = slugifyAgentName(name);
@@ -200,6 +206,7 @@ function normalizeMockAgentInput(input: AgentUpsertInput, existing?: AgentDefini
     scope,
     projectId: scope === "project" ? input.projectId ?? existing?.projectId ?? activeProjectId() : null,
     thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
+    compactionWindow,
     policyIds: Array.from(new Set(input.policyIds ?? existing?.policyIds ?? [])).sort(),
     directPermissions: Array.from(new Set(input.directPermissions ?? existing?.directPermissions ?? [])).sort(),
     system: existing?.system ?? false,
@@ -225,6 +232,7 @@ function seedMockAgents(): AgentDefinition[] {
       scope: "global",
       projectId: null,
       thinkingLevel: "medium",
+      compactionWindow: null,
       policyIds: ["policy-supervisor"],
       directPermissions: [],
       system: true,
@@ -245,6 +253,7 @@ function seedMockAgents(): AgentDefinition[] {
       scope: "global",
       projectId: null,
       thinkingLevel: "medium",
+      compactionWindow: null,
       policyIds: [],
       directPermissions: [],
       system: false,

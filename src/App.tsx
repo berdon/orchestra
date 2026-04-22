@@ -3,6 +3,7 @@ import {
   cleanupStaleBridgeInstances,
   clearLogs,
   compactSession,
+  reloadSession,
   createContextualSession,
   createSession,
   deleteSession,
@@ -595,6 +596,8 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     activeTaskTitle: session.activeTaskTitle ?? null,
     workerType: session.workerType ?? null,
     workerName: session.workerName ?? null,
+    controlCapabilities: session.controlCapabilities ?? null,
+    controlOperation: session.controlOperation ?? null,
   };
 }
 
@@ -636,7 +639,21 @@ function areSessionMetadataEqual(left: SessionRecord, right: SessionRecord) {
     && left.activeTaskNumber === right.activeTaskNumber
     && left.activeTaskTitle === right.activeTaskTitle
     && left.workerType === right.workerType
-    && left.workerName === right.workerName;
+    && left.workerName === right.workerName
+    && left.controlCapabilities?.reload.status === right.controlCapabilities?.reload.status
+    && left.controlCapabilities?.reload.reason === right.controlCapabilities?.reload.reason
+    && left.controlCapabilities?.compact.status === right.controlCapabilities?.compact.status
+    && left.controlCapabilities?.compact.reason === right.controlCapabilities?.compact.reason
+    && left.controlCapabilities?.autoCompact.status === right.controlCapabilities?.autoCompact.status
+    && left.controlCapabilities?.autoCompact.reason === right.controlCapabilities?.autoCompact.reason
+    && left.controlCapabilities?.effectiveCompactionWindow === right.controlCapabilities?.effectiveCompactionWindow
+    && left.controlCapabilities?.effectiveCompactionWindowSource === right.controlCapabilities?.effectiveCompactionWindowSource
+    && left.controlOperation?.kind === right.controlOperation?.kind
+    && left.controlOperation?.trigger === right.controlOperation?.trigger
+    && left.controlOperation?.status === right.controlOperation?.status
+    && left.controlOperation?.startedAt === right.controlOperation?.startedAt
+    && left.controlOperation?.finishedAt === right.controlOperation?.finishedAt
+    && left.controlOperation?.message === right.controlOperation?.message;
 }
 
 function areSessionRecordsEqual(left: SessionRecord, right: SessionRecord) {
@@ -1362,9 +1379,9 @@ export function App() {
     setSessionPromptSettings(await updateSessionPromptSettings(template, activeProject.slug));
   }
 
-  async function handleSavePiRuntimeSettings(extraExtensions: string[]) {
+  async function handleSavePiRuntimeSettings(input: { extraExtensions: string[]; defaultCompactionWindow: string }) {
     try {
-      setPiRuntimeSettings(await updatePiRuntimeSettings(extraExtensions));
+      setPiRuntimeSettings(await updatePiRuntimeSettings(input));
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to save PI runtime settings.");
     }
@@ -2603,8 +2620,8 @@ export function App() {
     if (!sessionId) {
       return;
     }
-    queueSessionMessage(sessionId, "/reload");
-  }, [queueSessionMessage]);
+    void runSessionAction(async () => reloadSession(sessionId));
+  }, [runSessionAction]);
 
   const handleSelectedSessionModelChange = useCallback((value: string) => {
     if (selectedSession) {
@@ -2931,7 +2948,7 @@ export function App() {
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
-              onSavePiRuntimeSettings={(extraExtensions) => void handleSavePiRuntimeSettings(extraExtensions)}
+              onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
               onRefreshSystemNotificationPermission={() => void handleRefreshSystemNotificationPermission()}
               onRequestSystemNotificationPermission={() => void handleRequestSystemNotificationPermission()}
               onSendTestSystemNotification={() => void handleSendTestSystemNotification()}

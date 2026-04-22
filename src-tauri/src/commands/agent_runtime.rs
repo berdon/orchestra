@@ -134,7 +134,8 @@ pub async fn ensure_agent_session(
             "Create a project first before starting agent sessions.",
         )?
     };
-    let context = crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
+    let context =
+        crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
     let runtime_state = agent_dispatch::ensure_main_session(
         &context.project_root,
         &context.session_dir,
@@ -189,7 +190,8 @@ pub async fn open_agent_session_terminal(
             "Create a project first before starting agent sessions.",
         )?
     };
-    let context = crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
+    let context =
+        crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
 
     let connection = database::open_connection()?;
     let detail = decorate_runtime_state(

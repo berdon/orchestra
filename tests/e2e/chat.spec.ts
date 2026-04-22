@@ -232,7 +232,8 @@ test("chat page session actions can reload the current agent chat and rotate a n
 
   await page.locator('[data-role="session-actions-trigger"]').click();
   await page.locator('[data-role="session-action-reload"]').click();
-  await expect(page.locator('[data-role="session-transcript"]')).toContainText("/reload");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session reloaded.");
+  await expect(page.locator('[data-role="session-transcript"]')).not.toContainText("/reload");
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", secondSessionId ?? "");
 
   await page.getByRole("button", { name: "Sessions" }).click();

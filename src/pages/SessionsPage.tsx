@@ -5,6 +5,15 @@ import { SessionChatPanel } from "../components/SessionChatPanel";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
+function formatListControlLabel(session: SessionRecord) {
+  if (session.controlOperation?.status !== "running") {
+    return null;
+  }
+  return session.controlOperation.kind === "compact"
+    ? (session.controlOperation.trigger === "auto" ? "Auto-compacting" : "Compacting")
+    : "Reloading";
+}
+
 function formatActivityLabel(activityState?: SessionActivityState, activeToolName?: string | null) {
   switch (activityState) {
     case "thinking":
@@ -32,6 +41,14 @@ function getActivityTone(activityState?: SessionActivityState) {
     default:
       return "neutral";
   }
+}
+
+function formatCapability(value?: { status: string; reason?: string | null } | null) {
+  if (!value) {
+    return "Unknown";
+  }
+  const status = value.status.charAt(0).toUpperCase() + value.status.slice(1);
+  return value.reason ? `${status} · ${value.reason}` : status;
 }
 
 interface SessionsPageProps {
@@ -249,8 +266,10 @@ export function SessionsPage({
                     >
                       <div className="session-list-link__header">
                         <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
-                        <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : getActivityTone(session.activityState)}`}>
-                          {session.terminalAttached ? "Terminal attached" : formatActivityLabel(session.activityState, session.activeToolName)}
+                        <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : formatListControlLabel(session) ? "accent" : getActivityTone(session.activityState)}`}>
+                          {session.terminalAttached
+                            ? "Terminal attached"
+                            : formatListControlLabel(session) ?? formatActivityLabel(session.activityState, session.activeToolName)}
                         </span>
                       </div>
                       <span className="session-list-link__title">{getSessionListTitle(session)}</span>
@@ -408,6 +427,26 @@ export function SessionsPage({
                   <section className="session-debug-item">
                     <p className="eyebrow">Subscribed</p>
                     <p className="session-debug-value">{runtimeDetails.subscribed ? "Yes" : "No"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Reload control</p>
+                    <p className="session-debug-value">{formatCapability(runtimeDetails.controlCapabilities?.reload)}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Compact control</p>
+                    <p className="session-debug-value">{formatCapability(runtimeDetails.controlCapabilities?.compact)}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Auto-compaction</p>
+                    <p className="session-debug-value">{formatCapability(runtimeDetails.controlCapabilities?.autoCompact)}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Effective compaction window</p>
+                    <p className="session-debug-value">{runtimeDetails.controlCapabilities?.effectiveCompactionWindow ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Compaction window source</p>
+                    <p className="session-debug-value">{runtimeDetails.controlCapabilities?.effectiveCompactionWindowSource ?? "—"}</p>
                   </section>
                 </div>
 

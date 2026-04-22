@@ -392,6 +392,34 @@ pub struct SessionDebugInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionControlCapability {
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionControlCapabilities {
+    pub reload: SessionControlCapability,
+    pub compact: SessionControlCapability,
+    pub auto_compact: SessionControlCapability,
+    pub effective_compaction_window: Option<String>,
+    pub effective_compaction_window_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionControlOperationState {
+    pub kind: String,
+    pub trigger: String,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionRuntimeDetails {
     pub session_id: String,
     pub source: String,
@@ -408,6 +436,8 @@ pub struct SessionRuntimeDetails {
     pub session_dir: Option<String>,
     pub session_path: Option<String>,
     pub notes: Vec<String>,
+    pub control_capabilities: Option<SessionControlCapabilities>,
+    pub control_operation: Option<SessionControlOperationState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -477,6 +507,10 @@ pub struct SessionRecord {
     pub worker_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worker_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_capabilities: Option<SessionControlCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_operation: Option<SessionControlOperationState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -512,6 +546,7 @@ pub struct AgentDefinition {
     pub scope: String,
     pub project_id: Option<String>,
     pub thinking_level: String,
+    pub compaction_window: Option<String>,
     pub policy_ids: Vec<String>,
     pub direct_permissions: Vec<String>,
     pub system: bool,
@@ -533,6 +568,7 @@ pub struct AgentUpsertInput {
     pub scope: Option<String>,
     pub project_id: Option<String>,
     pub thinking_level: Option<String>,
+    pub compaction_window: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
     #[serde(default)]
@@ -676,6 +712,7 @@ pub struct ProjectTaskAutomationSettings {
 #[serde(rename_all = "camelCase")]
 pub struct PiRuntimeSettings {
     pub extra_extensions: Vec<String>,
+    pub default_compaction_window: String,
     pub updated_at: Option<String>,
 }
 
@@ -809,6 +846,7 @@ pub struct RoleDefinition {
     pub model: Option<String>,
     pub thinking_level: String,
     pub capacity: i64,
+    pub compaction_window: Option<String>,
     pub policy_ids: Vec<String>,
     pub direct_permissions: Vec<String>,
     pub archived: bool,
@@ -844,6 +882,7 @@ pub struct RoleUpsertInput {
     pub model: Option<String>,
     pub thinking_level: Option<String>,
     pub capacity: i64,
+    pub compaction_window: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
     #[serde(default)]

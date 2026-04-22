@@ -303,7 +303,8 @@ test("sessions composer session actions can reload, compact the current session,
   const reloadedSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
   await page.locator('[data-role="session-actions-trigger"]').click();
   await page.locator('[data-role="session-action-reload"]').click();
-  await expect(page.locator('[data-role="session-transcript"]')).toContainText("/reload");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session reloaded.");
+  await expect(page.locator('[data-role="session-transcript"]')).not.toContainText("/reload");
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", reloadedSessionId ?? "");
 });
 
@@ -1356,6 +1357,126 @@ test("sessions page can open runtime details and show loaded extensions for the 
 
   await page.locator('[data-role="close-session-runtime-details"]').click();
   await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toHaveCount(0);
+});
+
+test("sessions page surfaces unsupported reload failures and runtime capability reasons", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-runtime-control-failure",
+          title: "Unsupported reload session",
+          status: "idle",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: true,
+          events: [
+            {
+              id: "assistant-1",
+              kind: "assistant",
+              message: "Waiting for session control feedback.",
+              timestamp,
+            },
+          ],
+          controlCapabilities: {
+            reload: { status: "unknown", reason: null },
+            compact: { status: "supported", reason: null },
+            autoCompact: { status: "supported", reason: null },
+            effectiveCompactionWindow: "10%",
+            effectiveCompactionWindowSource: "global",
+          },
+          controlOperation: null,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Unsupported reload session" }).click();
+
+  await page.evaluate((sessionId) => {
+    const storageKey = "orchestra.mock.sessions.orchestra";
+    const nextTimestamp = new Date().toISOString();
+    const sessions = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    const nextSessions = sessions.map((session: any) => {
+      if (session.id !== sessionId) {
+        return session;
+      }
+      return {
+        ...session,
+        updatedAt: nextTimestamp,
+        events: [
+          ...session.events,
+          {
+            id: "control-failed",
+            kind: "system",
+            message: "runtime_control_unsupported",
+            timestamp: nextTimestamp,
+          },
+        ],
+        controlCapabilities: {
+          reload: { status: "unsupported", reason: "runtime_control_unsupported" },
+          compact: { status: "supported", reason: null },
+          autoCompact: { status: "unsupported", reason: "compaction_window_disabled" },
+          effectiveCompactionWindow: "off",
+          effectiveCompactionWindowSource: "role",
+        },
+        controlOperation: {
+          kind: "reload",
+          trigger: "manual",
+          status: "failed",
+          startedAt: "2026-04-08T00:05:00Z",
+          finishedAt: "2026-04-08T00:05:02Z",
+          message: "runtime_control_unsupported",
+        },
+      };
+    });
+    window.localStorage.setItem(storageKey, JSON.stringify(nextSessions));
+
+    const inject = (window as typeof window & {
+      __orchestraTestInjectSessionStream?: (payload: unknown) => void;
+    }).__orchestraTestInjectSessionStream;
+    inject?.({
+      sessionId,
+      receivedAt: "2026-04-08T00:05:00Z",
+      event: {
+        type: "session_control_start",
+        operationId: "control-failed",
+        control: "reload",
+        trigger: "manual",
+        startedAt: "2026-04-08T00:05:00Z",
+      },
+    });
+    inject?.({
+      sessionId,
+      receivedAt: "2026-04-08T00:05:02Z",
+      event: {
+        type: "session_control_end",
+        operationId: "control-failed",
+        control: "reload",
+        trigger: "manual",
+        startedAt: "2026-04-08T00:05:00Z",
+        finishedAt: "2026-04-08T00:05:02Z",
+        success: false,
+        error: "runtime_control_unsupported",
+      },
+    });
+  }, "session-runtime-control-failure");
+
+  await expect(page.locator('.error-copy').first()).toContainText('runtime_control_unsupported');
+  await expect(page.locator('[data-role="session-chat-panel"]')).toContainText('Reload failed');
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText('runtime_control_unsupported');
+  await expect(page.locator('[data-role="session-transcript"]')).not.toContainText('/reload');
+
+  await page.locator('[data-role="open-session-runtime-details"]').click();
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('Unsupported · runtime_control_unsupported');
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('Unsupported · compaction_window_disabled');
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('Effective compaction window');
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('off');
+  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('role');
 });
 
 test("sessions transcript wraps long lines by default and can toggle to no-wrap", async ({ page }) => {

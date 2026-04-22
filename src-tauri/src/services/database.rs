@@ -135,6 +135,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 scope TEXT NOT NULL DEFAULT 'global',
                 project_id TEXT,
                 thinking_level TEXT NOT NULL DEFAULT 'off',
+                compaction_window TEXT,
                 direct_permissions TEXT NOT NULL DEFAULT '[]',
                 system INTEGER NOT NULL DEFAULT 0,
                 immutable INTEGER NOT NULL DEFAULT 0,
@@ -153,6 +154,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 model TEXT,
                 thinking_level TEXT NOT NULL DEFAULT 'off',
                 capacity INTEGER NOT NULL DEFAULT 1,
+                compaction_window TEXT,
                 direct_permissions TEXT NOT NULL DEFAULT '[]',
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -855,7 +857,9 @@ fn ensure_projects_table_columns(connection: &Connection) -> Result<(), String> 
     if !columns.contains("task_prefix") {
         connection
             .execute("ALTER TABLE projects ADD COLUMN task_prefix TEXT", [])
-            .map_err(|error| format!("Unable to add task_prefix column to projects table: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to add task_prefix column to projects table: {error}")
+            })?;
     }
 
     Ok(())
@@ -976,7 +980,9 @@ fn normalize_task_prefix_candidate(value: &str) -> Option<String> {
     }
     let mut characters = normalized.chars();
     let first = characters.next()?;
-    if !first.is_ascii_alphabetic() || !characters.all(|character| character.is_ascii_alphanumeric()) {
+    if !first.is_ascii_alphabetic()
+        || !characters.all(|character| character.is_ascii_alphanumeric())
+    {
         return None;
     }
     Some(normalized)
@@ -1036,7 +1042,11 @@ fn project_task_prefix_base(project_name: &str, project_slug: &str) -> String {
     if candidate.is_empty() {
         candidate = "PR".into();
     }
-    if !candidate.chars().next().is_some_and(|character| character.is_ascii_alphabetic()) {
+    if !candidate
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic())
+    {
         candidate = format!("P{candidate}");
     }
     if candidate.len() < 2 {
@@ -1167,6 +1177,14 @@ fn ensure_agents_table_columns(connection: &Connection) -> Result<(), String> {
             )
             .map_err(|error| {
                 format!("Unable to add direct_permissions column to agents table: {error}")
+            })?;
+    }
+
+    if !columns.contains("compaction_window") {
+        connection
+            .execute("ALTER TABLE agents ADD COLUMN compaction_window TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add compaction_window column to agents table: {error}")
             })?;
     }
 
@@ -1324,6 +1342,14 @@ fn ensure_roles_table_columns(connection: &Connection) -> Result<(), String> {
             )
             .map_err(|error| {
                 format!("Unable to add direct_permissions column to roles table: {error}")
+            })?;
+    }
+
+    if !columns.contains("compaction_window") {
+        connection
+            .execute("ALTER TABLE roles ADD COLUMN compaction_window TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add compaction_window column to roles table: {error}")
             })?;
     }
 
@@ -2136,7 +2162,9 @@ mod tests {
         let prefixes = connection
             .prepare("SELECT id, task_prefix FROM projects ORDER BY id ASC")
             .expect("prefix query should prepare")
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .expect("prefix query should execute")
             .collect::<Result<Vec<_>, _>>()
             .expect("prefix rows should collect");
@@ -2152,7 +2180,9 @@ mod tests {
         let task_numbers = connection
             .prepare("SELECT id, number FROM tasks ORDER BY id ASC")
             .expect("task query should prepare")
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .expect("task query should execute")
             .collect::<Result<Vec<_>, _>>()
             .expect("task numbers should collect");

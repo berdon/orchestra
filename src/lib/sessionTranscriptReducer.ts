@@ -289,6 +289,8 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     activeTaskTitle: session.activeTaskTitle ?? null,
     workerType: session.workerType ?? null,
     workerName: session.workerName ?? null,
+    controlCapabilities: session.controlCapabilities ?? null,
+    controlOperation: session.controlOperation ?? null,
   };
 }
 
@@ -824,6 +826,86 @@ export function reduceSessionTranscriptEvent(
         thinking: false,
         timestamp: eventTimestamp,
       })),
+    };
+  }
+
+  if (eventType === "session_control_start") {
+    const rpcEvent = isObject(payload.event) ? payload.event : null;
+    const control = asString(rpcEvent?.control) || "control";
+    const trigger = asString(rpcEvent?.trigger) || "manual";
+    const operationId = asString(rpcEvent?.operationId) || `${control}-${eventTimestamp}`;
+    const startedAt = asString(rpcEvent?.startedAt) || eventTimestamp;
+    const label = trigger === "auto"
+      ? `Auto-${control === "compact" ? "compaction" : control}`
+      : control === "compact"
+        ? "Compaction"
+        : "Reload";
+    const message = control === "compact"
+      ? (trigger === "auto" ? "Auto-compacting session…" : "Compacting session…")
+      : "Reloading session…";
+    return {
+      session: upsertSystemEvent(
+        patchSessionRecord(session, (current) => ({
+          ...current,
+          updatedAt: eventTimestamp,
+          controlOperation: {
+            kind: control === "compact" ? "compact" : "reload",
+            trigger: trigger === "auto" ? "auto" : "manual",
+            status: "running",
+            startedAt,
+            finishedAt: null,
+            message,
+          },
+          lastActivityAt: eventTimestamp,
+        })),
+        operationId,
+        runId,
+        eventTimestamp,
+        message,
+        true,
+        { label },
+      ),
+    };
+  }
+
+  if (eventType === "session_control_end") {
+    const rpcEvent = isObject(payload.event) ? payload.event : null;
+    const control = asString(rpcEvent?.control) || "control";
+    const trigger = asString(rpcEvent?.trigger) || "manual";
+    const operationId = asString(rpcEvent?.operationId) || `${control}-${eventTimestamp}`;
+    const startedAt = asString(rpcEvent?.startedAt) || eventTimestamp;
+    const finishedAt = asString(rpcEvent?.finishedAt) || eventTimestamp;
+    const success = rpcEvent?.success === true;
+    const message = asString(rpcEvent?.message) || asString(rpcEvent?.error) || (success ? `${control} completed.` : `${control} failed.`);
+    const label = trigger === "auto"
+      ? `Auto-${control === "compact" ? "compaction" : control}`
+      : control === "compact"
+        ? "Compaction"
+        : "Reload";
+    return {
+      session: upsertSystemEvent(
+        patchSessionRecord(session, (current) => ({
+          ...current,
+          updatedAt: eventTimestamp,
+          controlOperation: {
+            kind: control === "compact" ? "compact" : "reload",
+            trigger: trigger === "auto" ? "auto" : "manual",
+            status: success ? "succeeded" : "failed",
+            startedAt,
+            finishedAt,
+            message,
+          },
+          lastActivityAt: eventTimestamp,
+        })),
+        operationId,
+        runId,
+        eventTimestamp,
+        message,
+        false,
+        { label },
+      ),
+      refreshFromBackend: true,
+      sessionActionError: success ? undefined : message,
     };
   }
 

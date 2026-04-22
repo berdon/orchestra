@@ -9,7 +9,10 @@ use crate::{
         AgentDefinition, AgentMemoryInfo, AgentSummary, AgentUpsertInput, AgentValidationError,
         AgentValidationResult,
     },
-    services::{agent_files, orchestra_paths::sanitize_slug, policies, projects},
+    services::{
+        agent_files, orchestra_paths::sanitize_slug, policies, projects,
+        session_compaction::normalize_compaction_window_spec,
+    },
 };
 
 const AGENT_SCOPE_GLOBAL: &str = "global";
@@ -94,7 +97,7 @@ pub fn get_agent(connection: &Connection, agent_id: &str) -> Result<AgentDefinit
     let row = connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, system_prompt, provider, model, role_id, scope, project_id, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at
+            SELECT id, slug, name, description, system_prompt, provider, model, role_id, scope, project_id, thinking_level, compaction_window, direct_permissions, system, immutable, archived, created_at, updated_at
             FROM agents
             WHERE id = ?1
             "#,
@@ -113,11 +116,12 @@ pub fn get_agent(connection: &Connection, agent_id: &str) -> Result<AgentDefinit
                     row.get::<_, Option<String>>(9)?,
                     row.get::<_, String>(10)?,
                     row.get::<_, Option<String>>(11)?,
-                    row.get::<_, i64>(12)?,
+                    row.get::<_, Option<String>>(12)?,
                     row.get::<_, i64>(13)?,
                     row.get::<_, i64>(14)?,
-                    row.get::<_, String>(15)?,
+                    row.get::<_, i64>(15)?,
                     row.get::<_, String>(16)?,
+                    row.get::<_, String>(17)?,
                 ))
             },
         )
@@ -137,13 +141,14 @@ pub fn get_agent(connection: &Connection, agent_id: &str) -> Result<AgentDefinit
         scope: row.8,
         project_id: row.9,
         thinking_level: row.10,
+        compaction_window: row.11,
         policy_ids: policies::load_agent_policy_ids(connection, &row.0)?,
-        direct_permissions: policies::decode_string_list(row.11)?,
-        system: row.12 != 0,
-        immutable: row.13 != 0,
-        archived: row.14 != 0,
-        created_at: row.15,
-        updated_at: row.16,
+        direct_permissions: policies::decode_string_list(row.12)?,
+        system: row.13 != 0,
+        immutable: row.14 != 0,
+        archived: row.15 != 0,
+        created_at: row.16,
+        updated_at: row.17,
     })
 }
 
@@ -253,6 +258,10 @@ pub fn validate_agent(
         ));
     }
 
+    if let Err(error) = normalize_compaction_window_spec(normalized.compaction_window.clone()) {
+        errors.push(validation_error("invalid", "compactionWindow", &error));
+    }
+
     for (index, policy_id) in normalized.policy_ids.iter().enumerate() {
         let exists = connection
             .query_row(
@@ -299,6 +308,8 @@ fn create_agent_in(
     let now = now_iso();
     let agent_id = agent_id();
     let slug = unique_slug(connection, &normalized.name, None)?;
+    let compaction_window = normalize_compaction_window_spec(normalized.compaction_window.clone())
+        .map_err(|error| format!("Unable to normalize agent compaction window: {error}"))?;
     let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let tx = connection
         .transaction()
@@ -318,6 +329,7 @@ fn create_agent_in(
             scope,
             project_id,
             thinking_level,
+            compaction_window,
             direct_permissions,
             system,
             immutable,
@@ -325,7 +337,7 @@ fn create_agent_in(
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 0, 0, ?13, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, 0, 0, ?14, ?14)
         "#,
         params![
             agent_id,
@@ -345,6 +357,7 @@ fn create_agent_in(
                 .thinking_level
                 .clone()
                 .unwrap_or_else(|| "off".into()),
+            compaction_window,
             direct_permissions,
             now,
         ],
@@ -404,6 +417,10 @@ fn update_agent_in(
             }
         }
 
+        if let Err(error) = normalize_compaction_window_spec(normalized.compaction_window.clone()) {
+            errors.push(validation_error("invalid", "compactionWindow", &error));
+        }
+
         if !errors.is_empty() {
             return Err(format_validation_errors(&errors));
         }
@@ -414,6 +431,8 @@ fn update_agent_in(
         }
     }
     let now = now_iso();
+    let compaction_window = normalize_compaction_window_spec(normalized.compaction_window.clone())
+        .map_err(|error| format!("Unable to normalize agent compaction window: {error}"))?;
     let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let tx = connection
         .transaction()
@@ -426,7 +445,8 @@ fn update_agent_in(
             SET provider = ?2,
                 model = ?3,
                 thinking_level = ?4,
-                updated_at = ?5
+                compaction_window = ?5,
+                updated_at = ?6
             WHERE id = ?1
             "#,
             params![
@@ -437,6 +457,7 @@ fn update_agent_in(
                     .thinking_level
                     .clone()
                     .unwrap_or_else(|| existing.thinking_level.clone()),
+                compaction_window.clone(),
                 now,
             ],
         )
@@ -454,8 +475,9 @@ fn update_agent_in(
                 scope = ?8,
                 project_id = ?9,
                 thinking_level = ?10,
-                direct_permissions = ?11,
-                updated_at = ?12
+                compaction_window = ?11,
+                direct_permissions = ?12,
+                updated_at = ?13
             WHERE id = ?1
             "#,
             params![
@@ -475,6 +497,7 @@ fn update_agent_in(
                     .thinking_level
                     .clone()
                     .unwrap_or_else(|| "off".into()),
+                compaction_window,
                 direct_permissions,
                 now,
             ],
@@ -622,6 +645,7 @@ fn normalize_input(input: AgentUpsertInput) -> AgentUpsertInput {
         },
         thinking_level: normalized_optional_string(input.thinking_level)
             .map(|value| value.to_lowercase()),
+        compaction_window: normalized_optional_string(input.compaction_window),
         policy_ids: policies::normalize_string_list(input.policy_ids),
         direct_permissions: policies::normalize_string_list(input.direct_permissions),
     }
@@ -727,6 +751,7 @@ mod tests {
             scope: Some("global".into()),
             project_id: None,
             thinking_level: Some("medium".into()),
+            compaction_window: None,
             policy_ids: Vec::new(),
             direct_permissions: vec!["tasks.read".into()],
         }
@@ -757,6 +782,7 @@ mod tests {
                 scope: Some("global".into()),
                 project_id: None,
                 thinking_level: Some("turbo".into()),
+                compaction_window: None,
                 policy_ids: vec![policy.id, "missing-policy".into()],
                 direct_permissions: Vec::new(),
             },
@@ -825,6 +851,7 @@ mod tests {
                 scope: Some("global".into()),
                 project_id: None,
                 thinking_level: Some("high".into()),
+                compaction_window: None,
                 policy_ids: vec![policy.id.clone(), policy.id.clone()],
                 direct_permissions: vec!["tasks.comment".into(), "tasks.comment".into()],
             },
@@ -890,6 +917,7 @@ mod tests {
                 scope: Some("project".into()),
                 project_id: Some("orchestra".into()),
                 thinking_level: Some("high".into()),
+                compaction_window: None,
                 policy_ids: vec!["policy-supervisor".into()],
                 direct_permissions: vec!["tasks.read".into()],
             },

@@ -135,7 +135,7 @@ describe("desktop agent chat navigation", () => {
       await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
       await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
       await clickSelector(sessionId, '[data-role="session-action-reload"]');
-      await waitForText(sessionId, '/reload');
+      await waitForText(sessionId, 'Session reloaded.');
 
       const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
       await setInputValue(sessionId, '[data-role="composer-input"]', longLine);

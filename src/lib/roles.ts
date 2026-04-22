@@ -57,6 +57,7 @@ function buildMockRoleValidation(input: RoleUpsertInput): RoleValidationResult {
   const provider = input.provider?.trim() || "";
   const model = input.model?.trim() || "";
   const thinkingLevel = input.thinkingLevel?.trim().toLowerCase() || "off";
+  const compactionWindow = input.compactionWindow?.trim() || null;
 
   if (!name) {
     errors.push({ code: "required", path: "name", message: "Role name is required." });
@@ -72,6 +73,10 @@ function buildMockRoleValidation(input: RoleUpsertInput): RoleValidationResult {
 
   if (!provider && model) {
     errors.push({ code: "required", path: "provider", message: "Select a provider when a model is configured." });
+  }
+
+  if (compactionWindow && !(/^(?:[1-9]\d?|99)%$/.test(compactionWindow) || /^\d+$/.test(compactionWindow) || /^off$/i.test(compactionWindow))) {
+    errors.push({ code: "invalid", path: "compactionWindow", message: "Compaction window must be `10%`, a positive token reserve like `16000`, or `off`." });
   }
 
   if (!["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel)) {
@@ -91,6 +96,7 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
   const provider = input.provider?.trim() || null;
   const model = input.model?.trim() || null;
   const thinkingLevel = input.thinkingLevel?.trim().toLowerCase() || "off";
+  const compactionWindow = input.compactionWindow?.trim() || null;
   const timestamp = nowIso();
   const existingRoles = ensureMockRoles();
   const baseSlug = slugifyRoleName(name);
@@ -112,6 +118,7 @@ function normalizeMockRoleInput(input: RoleUpsertInput, existing?: RoleDefinitio
     model,
     thinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh"].includes(thinkingLevel) ? thinkingLevel : "off",
     capacity: Math.max(1, Math.floor(input.capacity || 0)),
+    compactionWindow,
     policyIds: Array.from(new Set(input.policyIds ?? existing?.policyIds ?? [])).sort(),
     directPermissions: Array.from(new Set(input.directPermissions ?? existing?.directPermissions ?? [])).sort(),
     archived: existing?.archived ?? false,
@@ -129,6 +136,7 @@ function ensureMockRoles() {
   if (existing) {
     const migrated = existing.map((role) => ({
       ...role,
+      compactionWindow: role.compactionWindow ?? null,
       policyIds: role.policyIds ?? [],
       directPermissions: role.directPermissions ?? [],
     }));

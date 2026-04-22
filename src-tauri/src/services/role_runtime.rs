@@ -836,6 +836,7 @@ mod tests {
                 model: None,
                 thinking_level: Some("off".into()),
                 capacity,
+                compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
             },

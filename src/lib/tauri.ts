@@ -580,6 +580,14 @@ export function createMockSessionRecord(title: string, openingAssistantMessage: 
       createEvent("system", `${title} created from Orchestra runtime.`),
       createEvent("assistant", openingAssistantMessage),
     ],
+    controlCapabilities: {
+      reload: { status: "supported", reason: null },
+      compact: { status: "supported", reason: null },
+      autoCompact: { status: "supported", reason: null },
+      effectiveCompactionWindow: "10%",
+      effectiveCompactionWindowSource: "global",
+    },
+    controlOperation: null,
   };
 }
 
@@ -2201,6 +2209,8 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
       notes: session.subscribed
         ? ["Browser-mode mock simulates an active runtime for subscribed sessions."]
         : ["No live runtime is active in browser mode; these are the extensions Orchestra would load the next time this session spawns a runtime."],
+      controlCapabilities: session.controlCapabilities ?? null,
+      controlOperation: session.controlOperation ?? null,
     };
   }
 
@@ -2596,6 +2606,16 @@ export async function compactSession(sessionId: string, customInstructions?: str
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
       updatedAt: timestamp,
+      controlOperation: {
+        kind: "compact",
+        trigger: "manual",
+        status: "succeeded",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        message: customInstructions?.trim()
+          ? `Session compacted. ${customInstructions.trim()}`
+          : "Session compacted.",
+      },
       events: [
         ...current.events,
         createEvent(
@@ -2617,21 +2637,40 @@ export async function compactSession(sessionId: string, customInstructions?: str
     return session;
   }
 
-  const session = await invoke<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null });
-  return {
-    ...session,
-    updatedAt: timestamp,
-    events: [
-      ...session.events,
-      createEvent(
-        "system",
-        customInstructions?.trim()
-          ? `Session compacted. ${customInstructions.trim()}`
-          : "Session compacted.",
-        { id: `compact-${sessionId}-${timestamp}`, timestamp },
-      ),
-    ],
-  };
+  return invoke<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null });
+}
+
+export async function reloadSession(sessionId: string): Promise<SessionRecord> {
+  const timestamp = nowIso();
+
+  if (!isTauriAvailable()) {
+    const session = updateMockSession(sessionId, (current) => ({
+      ...current,
+      updatedAt: timestamp,
+      controlOperation: {
+        kind: "reload",
+        trigger: "manual",
+        status: "succeeded",
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        message: "Session reloaded.",
+      },
+      events: [
+        ...current.events,
+        createEvent("system", "Session reloaded.", { id: `reload-${sessionId}-${timestamp}` }),
+      ],
+    }));
+
+    if (!session) {
+      throw new Error(`Unable to find session ${sessionId}`);
+    }
+
+    appendMockLog("info", "sessions.reload", `Reloaded session ${sessionId}`);
+    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.reload" });
+    return session;
+  }
+
+  return invoke<SessionRecord>("reload_session", { sessionId });
 }
 
 export async function sendSessionMessage(sessionId: string, message: string, runId: string): Promise<QueuedSessionMessage> {

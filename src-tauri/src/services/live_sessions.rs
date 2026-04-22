@@ -16,16 +16,47 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, SessionModel, SessionModelState, SessionRuntimeDetails, SessionStats,
-        SessionStreamEnvelope,
+        AuthorizationContext, SessionControlCapabilities, SessionControlCapability,
+        SessionControlOperationState, SessionModel, SessionModelState, SessionRuntimeDetails,
+        SessionStats, SessionStreamEnvelope,
     },
     services::{
-        app_events, database, harness_settings, pi_sessions::get_session_path, task_runtime,
+        app_events, database, harness_settings,
+        pi_sessions::get_session_path,
+        session_compaction::{
+            parse_compaction_window_spec, resolve_session_compaction_policy, CompactionWindowSpec,
+        },
+        task_runtime,
     },
 };
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const NON_PROMPT_DELIVERY_GRACE: Duration = Duration::from_secs(90);
+
+fn supported_control_capability() -> SessionControlCapability {
+    SessionControlCapability {
+        status: "supported".into(),
+        reason: None,
+    }
+}
+
+fn unknown_control_capability() -> SessionControlCapability {
+    SessionControlCapability {
+        status: "unknown".into(),
+        reason: None,
+    }
+}
+
+fn unsupported_control_capability(reason: &str) -> SessionControlCapability {
+    SessionControlCapability {
+        status: "unsupported".into(),
+        reason: Some(reason.into()),
+    }
+}
+
+fn is_unknown_command_error(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("unknown command")
+}
 
 fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(project_root) = env::var("ORCHESTRA_PROJECT_ROOT") {
@@ -106,6 +137,11 @@ pub struct SessionRuntime {
     current_run_id: Mutex<Option<String>>,
     closed: Mutex<bool>,
     last_non_prompt_delivery_at: Mutex<Option<Instant>>,
+    reload_capability: Mutex<SessionControlCapability>,
+    compact_capability: Mutex<SessionControlCapability>,
+    auto_compact_capability: Mutex<SessionControlCapability>,
+    control_operation: Mutex<Option<SessionControlOperationState>>,
+    last_auto_compaction_context_tokens: Mutex<Option<i64>>,
     app: AppHandle,
 }
 
@@ -247,6 +283,11 @@ impl SessionRuntime {
             current_run_id: Mutex::new(None),
             closed: Mutex::new(false),
             last_non_prompt_delivery_at: Mutex::new(None),
+            reload_capability: Mutex::new(unknown_control_capability()),
+            compact_capability: Mutex::new(supported_control_capability()),
+            auto_compact_capability: Mutex::new(unknown_control_capability()),
+            control_operation: Mutex::new(None),
+            last_auto_compaction_context_tokens: Mutex::new(None),
             app,
         });
 
@@ -416,7 +457,19 @@ impl SessionRuntime {
                 );
                 let _ = crate::services::role_dispatch::complete_role_run(&self.session_id);
             }
-            self.close_if_idle();
+
+            if let Some(runtime) = maybe_runtime(
+                &self.app.state::<crate::state::AppState>().session_runtimes,
+                &self.session_id,
+            ) {
+                runtime.mark_non_prompt_delivery();
+                thread::spawn(move || {
+                    let _ = maybe_auto_compact(Arc::clone(&runtime));
+                    runtime.close_if_idle();
+                });
+            } else {
+                self.close_if_idle();
+            }
         }
     }
 
@@ -604,6 +657,144 @@ impl SessionRuntime {
             .unwrap_or(false)
     }
 
+    pub fn has_active_control_operation(&self) -> bool {
+        self.control_operation
+            .lock()
+            .ok()
+            .and_then(|operation| operation.clone())
+            .map(|operation| operation.status == "running")
+            .unwrap_or(false)
+    }
+
+    pub fn control_operation(&self) -> Option<SessionControlOperationState> {
+        self.control_operation
+            .lock()
+            .ok()
+            .and_then(|operation| operation.clone())
+    }
+
+    fn set_control_capability(&self, control: &str, capability: SessionControlCapability) {
+        let target = match control {
+            "reload" => &self.reload_capability,
+            "compact" => &self.compact_capability,
+            "auto_compact" => &self.auto_compact_capability,
+            _ => return,
+        };
+        if let Ok(mut current) = target.lock() {
+            *current = capability;
+        }
+    }
+
+    fn control_capability(&self, control: &str) -> SessionControlCapability {
+        let target = match control {
+            "reload" => &self.reload_capability,
+            "compact" => &self.compact_capability,
+            "auto_compact" => &self.auto_compact_capability,
+            _ => return unknown_control_capability(),
+        };
+        target
+            .lock()
+            .ok()
+            .map(|current| current.clone())
+            .unwrap_or_else(unknown_control_capability)
+    }
+
+    fn start_control_operation(&self, kind: &str, trigger: &str) -> (String, String) {
+        let operation_id = format!("session-control-{}", Uuid::new_v4().simple());
+        let started_at = crate::state::now_iso();
+        if let Ok(mut operation) = self.control_operation.lock() {
+            *operation = Some(SessionControlOperationState {
+                kind: kind.into(),
+                trigger: trigger.into(),
+                status: "running".into(),
+                started_at: started_at.clone(),
+                finished_at: None,
+                message: None,
+            });
+        }
+        self.emit_stream_event(json!({
+            "type": "session_control_start",
+            "operationId": operation_id,
+            "control": kind,
+            "trigger": trigger,
+            "startedAt": started_at,
+        }));
+        (operation_id, started_at)
+    }
+
+    fn finish_control_operation(
+        &self,
+        operation_id: &str,
+        kind: &str,
+        trigger: &str,
+        started_at: &str,
+        success: bool,
+        message: Option<String>,
+        error: Option<String>,
+    ) {
+        let finished_at = crate::state::now_iso();
+        if let Ok(mut operation) = self.control_operation.lock() {
+            *operation = Some(SessionControlOperationState {
+                kind: kind.into(),
+                trigger: trigger.into(),
+                status: if success { "succeeded" } else { "failed" }.into(),
+                started_at: started_at.into(),
+                finished_at: Some(finished_at.clone()),
+                message: message.clone().or_else(|| error.clone()),
+            });
+        }
+        self.emit_stream_event(json!({
+            "type": "session_control_end",
+            "operationId": operation_id,
+            "control": kind,
+            "trigger": trigger,
+            "startedAt": started_at,
+            "finishedAt": finished_at,
+            "success": success,
+            "message": message,
+            "error": error,
+        }));
+    }
+
+    pub fn snapshot_control_capabilities(
+        &self,
+        effective_compaction_window: Option<&str>,
+        effective_compaction_window_source: Option<&str>,
+        terminal_attached: bool,
+        pi_available: bool,
+    ) -> SessionControlCapabilities {
+        let base_unavailable_reason = if terminal_attached {
+            Some("terminal_attached")
+        } else if !pi_available {
+            Some("pi_unavailable")
+        } else {
+            None
+        };
+
+        let reload = base_unavailable_reason
+            .map(unsupported_control_capability)
+            .unwrap_or_else(|| self.control_capability("reload"));
+        let compact = base_unavailable_reason
+            .map(unsupported_control_capability)
+            .unwrap_or_else(|| self.control_capability("compact"));
+        let auto_compact = if let Some(reason) = base_unavailable_reason {
+            unsupported_control_capability(reason)
+        } else if matches!(effective_compaction_window, Some("off")) {
+            unsupported_control_capability("compaction_window_disabled")
+        } else {
+            self.control_capability("auto_compact")
+        };
+
+        SessionControlCapabilities {
+            reload,
+            compact,
+            auto_compact,
+            effective_compaction_window: effective_compaction_window.map(str::to_string),
+            effective_compaction_window_source: effective_compaction_window_source
+                .map(str::to_string),
+        }
+    }
+
     pub fn shutdown(&self) {
         self.teardown_process();
     }
@@ -741,6 +932,9 @@ impl SessionRuntime {
                 "Wait for the current response to finish before compacting this session".into(),
             );
         }
+        if self.has_active_control_operation() {
+            return Err("Wait for the current session control operation to finish".into());
+        }
 
         let mut command = json!({
             "id": format!("compact-{}", Uuid::new_v4()),
@@ -755,6 +949,30 @@ impl SessionRuntime {
         }
 
         self.send_command(command)
+    }
+
+    pub fn reload(&self) -> Result<Value, String> {
+        if self.current_run_id().is_some() {
+            return Err(
+                "Wait for the current response to finish before reloading this session".into(),
+            );
+        }
+        if self.has_active_control_operation() {
+            return Err("Wait for the current session control operation to finish".into());
+        }
+
+        self.send_command(json!({
+            "id": format!("reload-{}", Uuid::new_v4()),
+            "type": "reload",
+        }))
+    }
+
+    pub fn set_auto_compaction_enabled(&self, enabled: bool) -> Result<Value, String> {
+        self.send_command(json!({
+            "id": format!("auto-compact-{}", Uuid::new_v4()),
+            "type": "set_auto_compaction",
+            "enabled": enabled,
+        }))
     }
 
     fn is_subscribed(&self) -> bool {
@@ -789,6 +1007,8 @@ impl SessionRuntime {
             notes: vec![
                 "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
             ],
+            control_capabilities: None,
+            control_operation: self.control_operation(),
         }
     }
 
@@ -985,6 +1205,26 @@ pub fn ensure_runtime(
         session_path,
     )?;
 
+    match runtime.set_auto_compaction_enabled(false) {
+        Ok(_) => runtime.set_control_capability("auto_compact", supported_control_capability()),
+        Err(error) => {
+            let reason = if is_unknown_command_error(&error) {
+                "runtime_control_unsupported"
+            } else {
+                "runtime_control_failed"
+            };
+            runtime.set_control_capability("auto_compact", unsupported_control_capability(reason));
+            runtime.app.state::<crate::state::AppState>().log(
+                "warn",
+                "sessions.auto_compact.init_failed",
+                &format!(
+                    "Session {} could not disable PI auto-compaction: {}",
+                    session_id, error
+                ),
+            );
+        }
+    }
+
     if let Ok(mut runtimes_guard) = runtimes.lock() {
         runtimes_guard.insert(session_id.to_string(), Arc::clone(&runtime));
         Ok(runtime)
@@ -1004,13 +1244,371 @@ pub fn maybe_runtime(
         .filter(|runtime| !runtime.is_closed())
 }
 
+fn resolve_effective_compaction_policy(
+    session_id: &str,
+) -> Result<crate::services::session_compaction::ResolvedCompactionPolicy, String> {
+    let settings = harness_settings::get_pi_runtime_settings()?;
+    let connection = database::open_connection()?;
+    resolve_session_compaction_policy(
+        &connection,
+        session_id,
+        Some(settings.default_compaction_window.as_str()),
+    )
+}
+
+pub fn get_session_control_snapshot(
+    state: &crate::state::AppState,
+    session_id: &str,
+    terminal_attached: bool,
+) -> Result<
+    (
+        SessionControlCapabilities,
+        Option<SessionControlOperationState>,
+    ),
+    String,
+> {
+    let policy = resolve_effective_compaction_policy(session_id)?;
+    let pi_available = state.sync_pi_runtime_health().is_ok();
+
+    if let Some(runtime) = maybe_runtime(&state.session_runtimes, session_id) {
+        return Ok((
+            runtime.snapshot_control_capabilities(
+                Some(policy.window_spec.as_str()),
+                Some(policy.source.as_str()),
+                terminal_attached,
+                pi_available,
+            ),
+            runtime.control_operation(),
+        ));
+    }
+
+    let unavailable_reason = if terminal_attached {
+        Some("terminal_attached")
+    } else if !pi_available {
+        Some("pi_unavailable")
+    } else {
+        None
+    };
+
+    let compact = unavailable_reason
+        .map(unsupported_control_capability)
+        .unwrap_or_else(supported_control_capability);
+    let reload = unavailable_reason
+        .map(unsupported_control_capability)
+        .unwrap_or_else(unknown_control_capability);
+    let auto_compact = if let Some(reason) = unavailable_reason {
+        unsupported_control_capability(reason)
+    } else if policy.window_spec == "off" {
+        unsupported_control_capability("compaction_window_disabled")
+    } else {
+        unknown_control_capability()
+    };
+
+    Ok((
+        SessionControlCapabilities {
+            reload,
+            compact,
+            auto_compact,
+            effective_compaction_window: Some(policy.window_spec),
+            effective_compaction_window_source: Some(policy.source),
+        },
+        None,
+    ))
+}
+
+pub fn perform_session_compaction(
+    runtime: Arc<SessionRuntime>,
+    trigger: &str,
+    custom_instructions: Option<String>,
+) -> Result<(), String> {
+    let (operation_id, started_at) = runtime.start_control_operation("compact", trigger);
+    let result = runtime.compact(custom_instructions.as_deref());
+
+    match result {
+        Ok(_) => {
+            runtime.set_control_capability("compact", supported_control_capability());
+            if trigger == "auto" {
+                runtime.set_control_capability("auto_compact", supported_control_capability());
+            }
+            if let Ok(mut last) = runtime.last_auto_compaction_context_tokens.lock() {
+                if trigger != "auto" {
+                    *last = None;
+                }
+            }
+            runtime.finish_control_operation(
+                &operation_id,
+                "compact",
+                trigger,
+                &started_at,
+                true,
+                Some(if trigger == "auto" {
+                    "Session auto-compacted.".into()
+                } else {
+                    "Session compacted.".into()
+                }),
+                None,
+            );
+            let _ = app_events::emit_session_change(
+                &runtime.app,
+                if trigger == "auto" {
+                    "sessions.compact.auto"
+                } else {
+                    "sessions.compact"
+                },
+                [runtime.session_id.clone()],
+            );
+            Ok(())
+        }
+        Err(error) => {
+            if is_unknown_command_error(&error) {
+                runtime.set_control_capability(
+                    "compact",
+                    unsupported_control_capability("runtime_control_unsupported"),
+                );
+                if trigger == "auto" {
+                    runtime.set_control_capability(
+                        "auto_compact",
+                        unsupported_control_capability("runtime_control_unsupported"),
+                    );
+                }
+            }
+            runtime.finish_control_operation(
+                &operation_id,
+                "compact",
+                trigger,
+                &started_at,
+                false,
+                None,
+                Some(error.clone()),
+            );
+            let _ = app_events::emit_session_change(
+                &runtime.app,
+                "sessions.compact.failed",
+                [runtime.session_id.clone()],
+            );
+            Err(error)
+        }
+    }
+}
+
+pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Result<(), String> {
+    let (operation_id, started_at) = runtime.start_control_operation("reload", trigger);
+    let result = runtime.reload();
+
+    match result {
+        Ok(_) => {
+            runtime.set_control_capability("reload", supported_control_capability());
+            runtime.finish_control_operation(
+                &operation_id,
+                "reload",
+                trigger,
+                &started_at,
+                true,
+                Some("Session reloaded.".into()),
+                None,
+            );
+            let _ = app_events::emit_session_change(
+                &runtime.app,
+                "sessions.reload",
+                [runtime.session_id.clone()],
+            );
+            Ok(())
+        }
+        Err(error) => {
+            if is_unknown_command_error(&error) {
+                runtime.set_control_capability(
+                    "reload",
+                    unsupported_control_capability("runtime_control_unsupported"),
+                );
+            }
+            runtime.finish_control_operation(
+                &operation_id,
+                "reload",
+                trigger,
+                &started_at,
+                false,
+                None,
+                Some(error.clone()),
+            );
+            let _ = app_events::emit_session_change(
+                &runtime.app,
+                "sessions.reload.failed",
+                [runtime.session_id.clone()],
+            );
+            Err(error)
+        }
+    }
+}
+
+fn should_auto_compact_for_usage(
+    context_window: i64,
+    context_tokens: i64,
+    window_spec: &str,
+) -> Result<bool, String> {
+    if context_window <= 0 {
+        return Ok(false);
+    }
+
+    let remaining = context_window - context_tokens;
+    let threshold = match parse_compaction_window_spec(window_spec)? {
+        CompactionWindowSpec::RemainingPercent(percent) => {
+            (context_window * i64::from(percent) + 99) / 100
+        }
+        CompactionWindowSpec::RemainingTokens(tokens) => tokens,
+        CompactionWindowSpec::Off => return Ok(false),
+    };
+
+    Ok(remaining <= threshold)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AutoCompactionEvaluation {
+    capability_status: String,
+    capability_reason: Option<String>,
+    trigger: bool,
+    context_tokens: Option<i64>,
+    reset_last_context_tokens: bool,
+}
+
+fn evaluate_auto_compaction(
+    stats: &SessionStats,
+    window_spec: &str,
+    last_auto_compaction_context_tokens: Option<i64>,
+) -> Result<AutoCompactionEvaluation, String> {
+    if window_spec == "off" {
+        return Ok(AutoCompactionEvaluation {
+            capability_status: "unsupported".into(),
+            capability_reason: Some("compaction_window_disabled".into()),
+            trigger: false,
+            context_tokens: None,
+            reset_last_context_tokens: false,
+        });
+    }
+
+    let Some(context_usage) = stats.context_usage.as_ref() else {
+        return Ok(AutoCompactionEvaluation {
+            capability_status: "unsupported".into(),
+            capability_reason: Some("context_usage_unavailable".into()),
+            trigger: false,
+            context_tokens: None,
+            reset_last_context_tokens: false,
+        });
+    };
+    let Some(context_tokens) = context_usage.tokens else {
+        return Ok(AutoCompactionEvaluation {
+            capability_status: "unsupported".into(),
+            capability_reason: Some("context_usage_unavailable".into()),
+            trigger: false,
+            context_tokens: None,
+            reset_last_context_tokens: false,
+        });
+    };
+    if context_usage.context_window <= 0 {
+        return Ok(AutoCompactionEvaluation {
+            capability_status: "unsupported".into(),
+            capability_reason: Some("context_usage_unavailable".into()),
+            trigger: false,
+            context_tokens: None,
+            reset_last_context_tokens: false,
+        });
+    }
+
+    if !should_auto_compact_for_usage(context_usage.context_window, context_tokens, window_spec)? {
+        return Ok(AutoCompactionEvaluation {
+            capability_status: "supported".into(),
+            capability_reason: None,
+            trigger: false,
+            context_tokens: None,
+            reset_last_context_tokens: true,
+        });
+    }
+
+    if last_auto_compaction_context_tokens == Some(context_tokens) {
+        return Ok(AutoCompactionEvaluation {
+            capability_status: "supported".into(),
+            capability_reason: None,
+            trigger: false,
+            context_tokens: None,
+            reset_last_context_tokens: false,
+        });
+    }
+
+    Ok(AutoCompactionEvaluation {
+        capability_status: "supported".into(),
+        capability_reason: None,
+        trigger: true,
+        context_tokens: Some(context_tokens),
+        reset_last_context_tokens: false,
+    })
+}
+
+pub fn maybe_auto_compact(runtime: Arc<SessionRuntime>) -> Result<bool, String> {
+    if runtime.has_active_prompt() || runtime.has_active_control_operation() {
+        return Ok(false);
+    }
+
+    let policy = resolve_effective_compaction_policy(&runtime.session_id)?;
+    let stats = match runtime.get_stats() {
+        Ok(stats) => stats,
+        Err(error) => {
+            runtime.set_control_capability(
+                "auto_compact",
+                unsupported_control_capability("context_usage_unavailable"),
+            );
+            return Err(error);
+        }
+    };
+    let last_auto_compaction_context_tokens = runtime
+        .last_auto_compaction_context_tokens
+        .lock()
+        .ok()
+        .and_then(|last| *last);
+    let evaluation = evaluate_auto_compaction(
+        &stats,
+        &policy.window_spec,
+        last_auto_compaction_context_tokens,
+    )?;
+
+    runtime.set_control_capability(
+        "auto_compact",
+        SessionControlCapability {
+            status: evaluation.capability_status,
+            reason: evaluation.capability_reason,
+        },
+    );
+
+    if !evaluation.trigger {
+        if evaluation.reset_last_context_tokens {
+            if let Ok(mut last) = runtime.last_auto_compaction_context_tokens.lock() {
+                *last = None;
+            }
+        }
+        return Ok(false);
+    }
+
+    perform_session_compaction(Arc::clone(&runtime), "auto", None)?;
+    if let Ok(mut last) = runtime.last_auto_compaction_context_tokens.lock() {
+        *last = evaluation.context_tokens;
+    }
+    Ok(true)
+}
+
 pub fn get_session_runtime_details(
     app: &AppHandle,
     state: &crate::state::AppState,
     session_id: &str,
 ) -> Result<SessionRuntimeDetails, String> {
     if let Some(runtime) = maybe_runtime(&state.session_runtimes, session_id) {
-        return Ok(runtime.runtime_details());
+        let terminal_attached = state
+            .terminal_attached_session_ids()
+            .map(|sessions| sessions.contains(session_id))
+            .unwrap_or(false);
+        let (control_capabilities, control_operation) =
+            get_session_control_snapshot(state, session_id, terminal_attached)?;
+        let mut details = runtime.runtime_details();
+        details.control_capabilities = Some(control_capabilities);
+        details.control_operation = control_operation;
+        return Ok(details);
     }
 
     let context = crate::services::pi_sessions::find_session_context_for_session(session_id)?;
@@ -1025,6 +1623,13 @@ pub fn get_session_runtime_details(
     let loaded_extensions = std::iter::once(orchestra_extension_path.display().to_string())
         .chain(extra_extensions.iter().cloned())
         .collect::<Vec<_>>();
+
+    let terminal_attached = state
+        .terminal_attached_session_ids()
+        .map(|sessions| sessions.contains(session_id))
+        .unwrap_or(false);
+    let (control_capabilities, control_operation) =
+        get_session_control_snapshot(state, session_id, terminal_attached)?;
 
     Ok(SessionRuntimeDetails {
         session_id: session_id.to_string(),
@@ -1048,6 +1653,8 @@ pub fn get_session_runtime_details(
             "No live runtime is currently attached to this session. These details describe what Orchestra will load the next time it spawns the live runtime for this session.".into(),
             "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
         ],
+        control_capabilities: Some(control_capabilities),
+        control_operation,
     })
 }
 
@@ -1354,6 +1961,115 @@ mod tests {
                 "./extensions/local-extra.ts".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn auto_compaction_thresholds_trigger_at_expected_headroom() {
+        assert!(should_auto_compact_for_usage(200_000, 181_000, "10%")
+            .expect("percent threshold should parse"));
+        assert!(!should_auto_compact_for_usage(200_000, 170_000, "10%")
+            .expect("percent threshold should parse"));
+        assert!(should_auto_compact_for_usage(200_000, 184_100, "16000")
+            .expect("token threshold should parse"));
+        assert!(!should_auto_compact_for_usage(200_000, 180_000, "16000")
+            .expect("token threshold should parse"));
+    }
+
+    #[test]
+    fn disabled_auto_compaction_never_triggers() {
+        assert!(!should_auto_compact_for_usage(200_000, 199_500, "off").expect("off should parse"));
+    }
+
+    fn make_auto_compaction_stats(
+        context_window: i64,
+        context_tokens: Option<i64>,
+    ) -> SessionStats {
+        SessionStats {
+            session_id: "session-1".into(),
+            session_file: None,
+            user_messages: 0,
+            assistant_messages: 0,
+            tool_calls: 0,
+            tool_results: 0,
+            total_messages: 0,
+            tokens: crate::models::SessionTokenUsage {
+                input: 0,
+                output: 0,
+                cache_read: 0,
+                cache_write: 0,
+                total: context_tokens.unwrap_or(0),
+            },
+            cost: 0.0,
+            context_usage: Some(crate::models::SessionContextUsage {
+                tokens: context_tokens,
+                context_window,
+                percent: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn auto_compaction_evaluation_triggers_when_threshold_is_crossed() {
+        let evaluation = evaluate_auto_compaction(
+            &make_auto_compaction_stats(200_000, Some(181_000)),
+            "10%",
+            None,
+        )
+        .expect("evaluation should succeed");
+
+        assert_eq!(evaluation.capability_status, "supported");
+        assert_eq!(evaluation.capability_reason, None);
+        assert!(evaluation.trigger);
+        assert_eq!(evaluation.context_tokens, Some(181_000));
+        assert!(!evaluation.reset_last_context_tokens);
+    }
+
+    #[test]
+    fn auto_compaction_evaluation_marks_context_usage_unavailable_when_tokens_are_missing() {
+        let evaluation =
+            evaluate_auto_compaction(&make_auto_compaction_stats(200_000, None), "10%", None)
+                .expect("evaluation should succeed");
+
+        assert_eq!(evaluation.capability_status, "unsupported");
+        assert_eq!(
+            evaluation.capability_reason.as_deref(),
+            Some("context_usage_unavailable")
+        );
+        assert!(!evaluation.trigger);
+        assert_eq!(evaluation.context_tokens, None);
+        assert!(!evaluation.reset_last_context_tokens);
+    }
+
+    #[test]
+    fn auto_compaction_evaluation_skips_duplicate_threshold_crossings() {
+        let evaluation = evaluate_auto_compaction(
+            &make_auto_compaction_stats(200_000, Some(181_000)),
+            "10%",
+            Some(181_000),
+        )
+        .expect("evaluation should succeed");
+
+        assert_eq!(evaluation.capability_status, "supported");
+        assert_eq!(evaluation.capability_reason, None);
+        assert!(!evaluation.trigger);
+        assert_eq!(evaluation.context_tokens, None);
+        assert!(!evaluation.reset_last_context_tokens);
+    }
+
+    #[test]
+    fn auto_compaction_evaluation_resets_duplicate_guard_after_headroom_recovers() {
+        let evaluation = evaluate_auto_compaction(
+            &make_auto_compaction_stats(200_000, Some(170_000)),
+            "10%",
+            Some(181_000),
+        )
+        .expect("evaluation should succeed");
+
+        assert_eq!(evaluation.capability_status, "supported");
+        assert_eq!(evaluation.capability_reason, None);
+        assert!(!evaluation.trigger);
+        assert_eq!(evaluation.context_tokens, None);
+        assert!(evaluation.reset_last_context_tokens);
     }
 }
 

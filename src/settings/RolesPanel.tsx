@@ -25,6 +25,7 @@ function createBlankRoleDraft(): RoleUpsertInput {
     model: "",
     thinkingLevel: "off",
     capacity: 1,
+    compactionWindow: "",
     policyIds: [],
     directPermissions: [],
   };
@@ -39,6 +40,7 @@ function roleToDraft(role: RoleDefinition): RoleUpsertInput {
     model: role.model ?? "",
     thinkingLevel: role.thinkingLevel,
     capacity: role.capacity,
+    compactionWindow: role.compactionWindow ?? "",
     policyIds: role.policyIds ?? [],
     directPermissions: role.directPermissions ?? [],
   };
@@ -470,6 +472,22 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
                     <option value="xhigh">XHigh</option>
                   </select>
                   {getRoleValidationForPath(roleValidation, "thinkingLevel").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Compaction window override</span>
+                  <input
+                    className="text-input"
+                    data-role="role-compaction-window"
+                    type="text"
+                    placeholder="Inherit global default"
+                    value={roleDraft.compactionWindow ?? ""}
+                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, compactionWindow: event.target.value }))}
+                  />
+                  <span className="field-group__hint">Optional. Use `10%`, a token reserve like `16000`, `off`, or leave blank to inherit.</span>
+                  {getRoleValidationForPath(roleValidation, "compactionWindow").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
                 </label>

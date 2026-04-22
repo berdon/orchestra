@@ -97,7 +97,10 @@ pub fn ensure_project_exists(connection: &Connection, project_id: &str) -> Resul
     }
 }
 
-pub fn get_project_task_prefix(connection: &Connection, project_id: &str) -> Result<String, String> {
+pub fn get_project_task_prefix(
+    connection: &Connection,
+    project_id: &str,
+) -> Result<String, String> {
     ensure_default_project(connection)?;
     let task_prefix = connection
         .query_row(
@@ -720,7 +723,9 @@ fn normalize_task_prefix(value: &str) -> Result<String, String> {
     let Some(first) = characters.next() else {
         return Err("Task prefix is required.".into());
     };
-    if !first.is_ascii_alphabetic() || !characters.all(|character| character.is_ascii_alphanumeric()) {
+    if !first.is_ascii_alphabetic()
+        || !characters.all(|character| character.is_ascii_alphanumeric())
+    {
         return Err("Task prefix must start with a letter and contain only A-Z or 0-9.".into());
     }
     Ok(normalized)

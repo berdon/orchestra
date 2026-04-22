@@ -653,6 +653,7 @@ mod tests {
                 scope: Some("global".into()),
                 project_id: None,
                 thinking_level: Some("medium".into()),
+                compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: vec!["tasks.read".into()],
             },

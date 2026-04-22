@@ -1215,12 +1215,17 @@ fn invoke_bridge_command(
                     .get("projectId")
                     .and_then(Value::as_str)
                     .filter(|value| !value.trim().is_empty()),
-            )? else {
+            )?
+            else {
                 return serde_json::to_value(Vec::<crate::models::TaskSummary>::new())
                     .map_err(|error| format!("Unable to serialize tasks: {error}"));
             };
-            serde_json::to_value(tasks::list_tasks(connection, &project_id, include_archived)?)
-                .map_err(|error| format!("Unable to serialize tasks: {error}"))
+            serde_json::to_value(tasks::list_tasks(
+                connection,
+                &project_id,
+                include_archived,
+            )?)
+            .map_err(|error| format!("Unable to serialize tasks: {error}"))
         }
         "get_task" | "get_task_context" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -2401,6 +2406,7 @@ mod tests {
                 scope: Some("global".into()),
                 project_id: None,
                 thinking_level: Some("medium".into()),
+                compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: vec!["tasks.read".into(), "tasks.update".into()],
             },
@@ -3173,6 +3179,7 @@ mod tests {
                 scope: Some("global".into()),
                 project_id: None,
                 thinking_level: Some("medium".into()),
+                compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: vec!["tasks.read".into()],
             },
@@ -3359,6 +3366,7 @@ mod tests {
                 scope: Some("global".into()),
                 project_id: None,
                 thinking_level: Some("medium".into()),
+                compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: vec!["tasks.read".into(), "tasks.comment".into()],
             },

@@ -279,6 +279,28 @@ export interface SessionDebugInfo {
   sessionCwd?: string | null;
 }
 
+export interface SessionControlCapability {
+  status: "supported" | "unsupported" | "unknown";
+  reason?: string | null;
+}
+
+export interface SessionControlCapabilities {
+  reload: SessionControlCapability;
+  compact: SessionControlCapability;
+  autoCompact: SessionControlCapability;
+  effectiveCompactionWindow?: string | null;
+  effectiveCompactionWindowSource?: string | null;
+}
+
+export interface SessionControlOperationState {
+  kind: "reload" | "compact";
+  trigger: "manual" | "auto";
+  status: "running" | "succeeded" | "failed";
+  startedAt: string;
+  finishedAt?: string | null;
+  message?: string | null;
+}
+
 export interface SessionRuntimeDetails {
   sessionId: string;
   source: string;
@@ -295,6 +317,8 @@ export interface SessionRuntimeDetails {
   sessionDir?: string | null;
   sessionPath?: string | null;
   notes: string[];
+  controlCapabilities?: SessionControlCapabilities | null;
+  controlOperation?: SessionControlOperationState | null;
 }
 
 export interface SessionTokenUsage {
@@ -347,6 +371,8 @@ export interface SessionRecord {
   activeTaskTitle?: string | null;
   workerType?: string | null;
   workerName?: string | null;
+  controlCapabilities?: SessionControlCapabilities | null;
+  controlOperation?: SessionControlOperationState | null;
 }
 
 export interface SessionScrollState {
@@ -384,6 +410,7 @@ export interface AgentDefinition {
   scope: AgentScope;
   projectId?: string | null;
   thinkingLevel: string;
+  compactionWindow?: string | null;
   policyIds?: string[];
   directPermissions?: string[];
   system?: boolean;
@@ -403,6 +430,7 @@ export interface AgentUpsertInput {
   scope?: AgentScope | null;
   projectId?: string | null;
   thinkingLevel?: string | null;
+  compactionWindow?: string | null;
   policyIds?: string[];
   directPermissions?: string[];
 }
@@ -517,6 +545,7 @@ export interface ProjectTaskAutomationSettings {
 
 export interface PiRuntimeSettings {
   extraExtensions: string[];
+  defaultCompactionWindow: string;
   updatedAt?: string | null;
 }
 
@@ -700,6 +729,7 @@ export interface RoleDefinition {
   model?: string | null;
   thinkingLevel: string;
   capacity: number;
+  compactionWindow?: string | null;
   policyIds?: string[];
   directPermissions?: string[];
   archived: boolean;
@@ -731,6 +761,7 @@ export interface RoleUpsertInput {
   model?: string | null;
   thinkingLevel?: string | null;
   capacity: number;
+  compactionWindow?: string | null;
   policyIds?: string[];
   directPermissions?: string[];
 }

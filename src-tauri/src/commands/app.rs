@@ -251,8 +251,9 @@ pub fn get_pi_runtime_settings() -> Result<PiRuntimeSettings, String> {
 #[tauri::command]
 pub fn update_pi_runtime_settings(
     extra_extensions: Vec<String>,
+    default_compaction_window: Option<String>,
 ) -> Result<PiRuntimeSettings, String> {
-    harness_settings::update_pi_runtime_settings(extra_extensions)
+    harness_settings::update_pi_runtime_settings(extra_extensions, default_compaction_window)
 }
 
 #[tauri::command]
@@ -310,6 +311,7 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
             model: None,
             thinking_level: Some("medium".into()),
             capacity: 1,
+            compaction_window: None,
             policy_ids: Vec::new(),
             direct_permissions: Vec::new(),
         },

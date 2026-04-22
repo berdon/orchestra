@@ -36,7 +36,8 @@ pub fn list_task_schedules(project_id: Option<String>) -> Result<Vec<TaskSchedul
     let Some(project_id) = crate::services::projects::resolve_requested_or_default_project_id(
         &connection,
         project_id.as_deref(),
-    )? else {
+    )?
+    else {
         return Ok(Vec::new());
     };
     task_schedules::list_task_schedules(&connection, &project_id)

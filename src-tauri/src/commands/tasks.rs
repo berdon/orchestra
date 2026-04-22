@@ -84,7 +84,8 @@ pub fn list_tasks(
     let Some(project_id) = crate::services::projects::resolve_requested_or_default_project_id(
         &connection,
         project_id.as_deref(),
-    )? else {
+    )?
+    else {
         return Ok(Vec::new());
     };
     tasks::list_tasks(&connection, &project_id, include_archived.unwrap_or(false))

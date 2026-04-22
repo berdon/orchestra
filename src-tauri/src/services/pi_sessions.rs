@@ -694,6 +694,8 @@ fn fallback_session_file_summary(
             active_task_title: None,
             worker_type: None,
             worker_name: None,
+            control_capabilities: None,
+            control_operation: None,
         },
     })
 }
@@ -900,6 +902,8 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
             active_task_title: None,
             worker_type: None,
             worker_name: None,
+            control_capabilities: None,
+            control_operation: None,
         },
     })
 }
@@ -1048,6 +1052,8 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
             active_task_title: None,
             worker_type: None,
             worker_name: None,
+            control_capabilities: None,
+            control_operation: None,
         },
     })
 }

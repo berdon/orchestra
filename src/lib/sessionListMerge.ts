@@ -76,6 +76,8 @@ export function reconcileListedSessions(
       lastActivityAt: preserveDerivedState
         ? existingSession.lastActivityAt ?? listedSession.lastActivityAt
         : listedSession.lastActivityAt,
+      controlCapabilities: preserveRuntimeState ? existingSession.controlCapabilities ?? listedSession.controlCapabilities : listedSession.controlCapabilities,
+      controlOperation: preserveRuntimeState ? existingSession.controlOperation ?? listedSession.controlOperation : listedSession.controlOperation,
     };
   });
 }

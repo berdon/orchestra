@@ -148,6 +148,7 @@ mod tests {
                 model: None,
                 thinking_level: Some("off".into()),
                 capacity: 1,
+                compaction_window: None,
                 policy_ids,
                 direct_permissions,
             },

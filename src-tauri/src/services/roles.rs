@@ -6,7 +6,10 @@ use crate::{
     models::{
         RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError, RoleValidationResult,
     },
-    services::{orchestra_paths::sanitize_slug, policies},
+    services::{
+        orchestra_paths::sanitize_slug, policies,
+        session_compaction::normalize_compaction_window_spec,
+    },
 };
 
 pub fn list_roles(
@@ -70,7 +73,7 @@ pub fn get_role(connection: &Connection, role_id: &str) -> Result<RoleDefinition
     let row = connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, direct_permissions, archived, created_at, updated_at
+            SELECT id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, compaction_window, direct_permissions, archived, created_at, updated_at
             FROM roles
             WHERE id = ?1
             "#,
@@ -87,9 +90,10 @@ pub fn get_role(connection: &Connection, role_id: &str) -> Result<RoleDefinition
                     row.get::<_, String>(7)?,
                     row.get::<_, i64>(8)?,
                     row.get::<_, Option<String>>(9)?,
-                    row.get::<_, i64>(10)?,
-                    row.get::<_, String>(11)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, i64>(11)?,
                     row.get::<_, String>(12)?,
+                    row.get::<_, String>(13)?,
                 ))
             },
         )
@@ -107,11 +111,12 @@ pub fn get_role(connection: &Connection, role_id: &str) -> Result<RoleDefinition
         model: row.6,
         thinking_level: row.7,
         capacity: row.8,
+        compaction_window: row.9,
         policy_ids: policies::load_role_policy_ids(connection, &row.0)?,
-        direct_permissions: policies::decode_string_list(row.9)?,
-        archived: row.10 != 0,
-        created_at: row.11,
-        updated_at: row.12,
+        direct_permissions: policies::decode_string_list(row.10)?,
+        archived: row.11 != 0,
+        created_at: row.12,
+        updated_at: row.13,
     })
 }
 
@@ -160,6 +165,10 @@ pub fn validate_role(
         ));
     }
 
+    if let Err(error) = normalize_compaction_window_spec(normalized.compaction_window.clone()) {
+        errors.push(validation_error("invalid", "compactionWindow", &error));
+    }
+
     for (index, policy_id) in normalized.policy_ids.iter().enumerate() {
         let exists = connection
             .query_row(
@@ -197,6 +206,8 @@ pub fn create_role(
     }
 
     let normalized = normalize_input(input);
+    let compaction_window = normalize_compaction_window_spec(normalized.compaction_window.clone())
+        .map_err(|error| format!("Unable to normalize role compaction window: {error}"))?;
     let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let now = now_iso();
     let role_id = role_id();
@@ -217,12 +228,13 @@ pub fn create_role(
             model,
             thinking_level,
             capacity,
+            compaction_window,
             direct_permissions,
             archived,
             created_at,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?11)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?12)
         "#,
         params![
             role_id,
@@ -237,6 +249,7 @@ pub fn create_role(
                 .clone()
                 .unwrap_or_else(|| "off".into()),
             normalized.capacity,
+            compaction_window,
             direct_permissions,
             now,
         ],
@@ -263,6 +276,8 @@ pub fn update_role(
     }
 
     let normalized = normalize_input(input);
+    let compaction_window = normalize_compaction_window_spec(normalized.compaction_window.clone())
+        .map_err(|error| format!("Unable to normalize role compaction window: {error}"))?;
     let direct_permissions = policies::encode_string_list(&normalized.direct_permissions)?;
     let next_slug = if role_slug(&normalized.name) == role_slug(&existing.name) {
         existing.slug
@@ -285,8 +300,9 @@ pub fn update_role(
             model = ?7,
             thinking_level = ?8,
             capacity = ?9,
-            direct_permissions = ?10,
-            updated_at = ?11
+            compaction_window = ?10,
+            direct_permissions = ?11,
+            updated_at = ?12
         WHERE id = ?1
         "#,
         params![
@@ -302,6 +318,7 @@ pub fn update_role(
                 .clone()
                 .unwrap_or_else(|| "off".into()),
             normalized.capacity,
+            compaction_window,
             direct_permissions,
             now,
         ],
@@ -384,6 +401,7 @@ fn normalize_input(input: RoleUpsertInput) -> RoleUpsertInput {
         thinking_level: normalized_optional_string(input.thinking_level)
             .map(|value| value.to_lowercase()),
         capacity: input.capacity,
+        compaction_window: normalized_optional_string(input.compaction_window),
         policy_ids: policies::normalize_string_list(input.policy_ids),
         direct_permissions: policies::normalize_string_list(input.direct_permissions),
     }
@@ -470,6 +488,7 @@ mod tests {
             model: Some("claude-sonnet-4-20250514".into()),
             thinking_level: Some("medium".into()),
             capacity: 2,
+            compaction_window: None,
             policy_ids: Vec::new(),
             direct_permissions: vec!["tasks.read".into(), "tasks.comment".into()],
         }
@@ -488,6 +507,7 @@ mod tests {
                 model: None,
                 thinking_level: Some("turbo".into()),
                 capacity: 0,
+                compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
             },
@@ -543,6 +563,7 @@ mod tests {
                 model: created.model.clone(),
                 thinking_level: Some("high".into()),
                 capacity: 3,
+                compaction_window: None,
                 policy_ids: vec![supervisor_policy.id.clone(), supervisor_policy.id.clone()],
                 direct_permissions: vec!["tasks.transition".into(), "tasks.transition".into()],
             },

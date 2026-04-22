@@ -13,7 +13,7 @@ function getStoredHarnessSettings(): PiRuntimeSettings {
   const value = window.localStorage.getItem(HARNESS_SETTINGS_STORAGE_KEY);
   return value
     ? (JSON.parse(value) as PiRuntimeSettings)
-    : { extraExtensions: [], updatedAt: null };
+    : { extraExtensions: [], defaultCompactionWindow: "10%", updatedAt: null };
 }
 
 function saveStoredHarnessSettings(settings: PiRuntimeSettings) {
@@ -40,10 +40,14 @@ export async function getPiRuntimeSettings(): Promise<PiRuntimeSettings> {
   return invoke<PiRuntimeSettings>("get_pi_runtime_settings");
 }
 
-export async function updatePiRuntimeSettings(extraExtensions: string[]): Promise<PiRuntimeSettings> {
+export async function updatePiRuntimeSettings(input: {
+  extraExtensions: string[];
+  defaultCompactionWindow?: string | null;
+}): Promise<PiRuntimeSettings> {
   if (!isTauriAvailable()) {
     const nextSettings: PiRuntimeSettings = {
-      extraExtensions: normalizeExtensions(extraExtensions),
+      extraExtensions: normalizeExtensions(input.extraExtensions),
+      defaultCompactionWindow: input.defaultCompactionWindow?.trim() || "10%",
       updatedAt: nowIso(),
     };
     saveStoredHarnessSettings(nextSettings);
@@ -51,6 +55,7 @@ export async function updatePiRuntimeSettings(extraExtensions: string[]): Promis
   }
 
   return invoke<PiRuntimeSettings>("update_pi_runtime_settings", {
-    extraExtensions,
+    extraExtensions: input.extraExtensions,
+    defaultCompactionWindow: input.defaultCompactionWindow ?? null,
   });
 }

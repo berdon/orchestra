@@ -29,7 +29,7 @@ interface GeneralPanelProps {
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
   onSaveSessionPromptTemplate: (template: string | null) => void;
-  onSavePiRuntimeSettings: (extraExtensions: string[]) => void;
+  onSavePiRuntimeSettings: (input: { extraExtensions: string[]; defaultCompactionWindow: string }) => void;
   onRefreshSystemNotificationPermission: () => void;
   onRequestSystemNotificationPermission: () => void;
   onSendTestSystemNotification: () => void;
@@ -99,6 +99,7 @@ export function GeneralPanel({
 }: GeneralPanelProps) {
   const [templateDraft, setTemplateDraft] = useState("");
   const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
+  const [defaultCompactionWindowDraft, setDefaultCompactionWindowDraft] = useState("10%");
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
 
   useEffect(() => {
@@ -107,7 +108,8 @@ export function GeneralPanel({
 
   useEffect(() => {
     setPiExtensionsDraft(piRuntimeSettings?.extraExtensions.join("\n") ?? "");
-  }, [piRuntimeSettings?.extraExtensions]);
+    setDefaultCompactionWindowDraft(piRuntimeSettings?.defaultCompactionWindow ?? "10%");
+  }, [piRuntimeSettings?.defaultCompactionWindow, piRuntimeSettings?.extraExtensions]);
   return (
     <section className="panel-stack">
       <section className="panel general-panel">
@@ -202,19 +204,37 @@ export function GeneralPanel({
                 <p className="muted-copy">Add extra pi extensions to load for newly spawned Orchestra runtime sessions. Enter one extension name or path per line. Orchestra still loads its built-in extension, and existing sessions keep their current extension set.</p>
               </div>
               <div className="action-cluster action-cluster--wrap">
-                <button className="secondary-button" data-role="reset-pi-runtime-extensions" type="button" onClick={() => setPiExtensionsDraft("")}>
-                  Reset to built-in only
+                <button className="secondary-button" data-role="reset-pi-runtime-extensions" type="button" onClick={() => {
+                  setPiExtensionsDraft("");
+                  setDefaultCompactionWindowDraft("10%");
+                }}>
+                  Reset to built-in defaults
                 </button>
                 <button
                   className="secondary-button"
                   data-role="save-pi-runtime-extensions"
                   type="button"
-                  onClick={() => onSavePiRuntimeSettings(piExtensionsDraft.split(/\r?\n/g))}
+                  onClick={() => onSavePiRuntimeSettings({
+                    extraExtensions: piExtensionsDraft.split(/\r?\n/g),
+                    defaultCompactionWindow: defaultCompactionWindowDraft,
+                  })}
                 >
                   Save PI settings
                 </button>
               </div>
             </div>
+            <label className="field-group field-group--compact">
+              <span className="field-group__label">Default compaction window</span>
+              <input
+                className="text-input"
+                data-role="pi-runtime-default-compaction-window"
+                type="text"
+                placeholder="10%"
+                value={defaultCompactionWindowDraft}
+                onChange={(event) => setDefaultCompactionWindowDraft(event.target.value)}
+              />
+              <span className="field-group__hint">Use `10%`, a token reserve like `16000`, or `off` to disable Orchestra-managed auto-compaction by default.</span>
+            </label>
             <label className="field-group">
               <span className="field-group__label">Extra runtime extensions</span>
               <textarea

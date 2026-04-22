@@ -41,6 +41,7 @@ function createBlankAgentDraft(activeProjectId?: string | null): AgentUpsertInpu
     roleId: null,
     scope: "global",
     projectId: activeProjectId ?? null,
+    compactionWindow: "",
     policyIds: [],
     directPermissions: [],
   };
@@ -57,6 +58,7 @@ function agentToDraft(agent: AgentDefinition): AgentUpsertInput {
     scope: agent.scope,
     projectId: agent.projectId ?? null,
     thinkingLevel: agent.thinkingLevel,
+    compactionWindow: agent.compactionWindow ?? "",
     policyIds: agent.policyIds ?? [],
     directPermissions: agent.directPermissions ?? [],
   };
@@ -608,6 +610,22 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
                     <option value="xhigh">XHigh</option>
                   </select>
                   {getAgentValidationForPath(agentValidation, "thinkingLevel").map((error) => (
+                    <span className="field-error" key={error.message}>{error.message}</span>
+                  ))}
+                </label>
+
+                <label className="field-group">
+                  <span className="field-group__label">Compaction window override</span>
+                  <input
+                    className="text-input"
+                    data-role="agent-compaction-window"
+                    type="text"
+                    placeholder="Inherit global/role default"
+                    value={agentDraft.compactionWindow ?? ""}
+                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, compactionWindow: event.target.value }))}
+                  />
+                  <span className="field-group__hint">Optional. Use `10%`, a token reserve like `16000`, `off`, or leave blank to inherit.</span>
+                  {getAgentValidationForPath(agentValidation, "compactionWindow").map((error) => (
                     <span className="field-error" key={error.message}>{error.message}</span>
                   ))}
                 </label>

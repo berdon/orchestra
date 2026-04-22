@@ -6,7 +6,7 @@ use std::{
 
 use chrono::{Duration, Utc};
 use rusqlite::{params, OptionalExtension};
-use serde_json::{json, Value};
+use serde_json::json;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
@@ -16,7 +16,10 @@ use crate::{
     },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
-        live_sessions::{ensure_runtime, maybe_runtime},
+        live_sessions::{
+            ensure_runtime, get_session_control_snapshot, maybe_auto_compact, maybe_runtime,
+            perform_session_compaction, perform_session_reload,
+        },
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
@@ -552,6 +555,17 @@ fn load_decorated_session_record(
     decorate_session_record(terminal_attached_session_ids, record, true)
 }
 
+fn attach_session_control_metadata(
+    state: &AppState,
+    mut record: SessionRecord,
+) -> Result<SessionRecord, String> {
+    let (control_capabilities, control_operation) =
+        get_session_control_snapshot(state, &record.id, record.terminal_attached)?;
+    record.control_capabilities = Some(control_capabilities);
+    record.control_operation = control_operation;
+    Ok(record)
+}
+
 fn resolve_session_runtime_root(
     connection: &rusqlite::Connection,
     session_id: &str,
@@ -687,7 +701,7 @@ pub async fn list_sessions(
 ) -> Result<Vec<SessionRecord>, String> {
     let subscribed = state.subscribed_session_ids()?;
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
-    spawn_blocking(move || {
+    let sessions = spawn_blocking(move || {
         let connection = database::open_connection()?;
         cleanup_dismissed_sessions(&connection)?;
         let dismissed_ids = load_dismissed_session_ids(&connection)?;
@@ -713,7 +727,12 @@ pub async fn list_sessions(
         Ok::<_, String>(sessions)
     })
     .await
-    .map_err(|error| format!("Unable to join list_sessions task: {error}"))?
+    .map_err(|error| format!("Unable to join list_sessions task: {error}"))??;
+
+    sessions
+        .into_iter()
+        .map(|record| attach_session_control_metadata(state.inner(), record))
+        .collect()
 }
 
 #[tauri::command]
@@ -724,7 +743,7 @@ pub async fn get_session_record(
     let subscribed = state.subscribed_session_ids()?.contains(&session_id);
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
-    spawn_blocking(move || {
+    let record = spawn_blocking(move || {
         let context = find_session_context_for_session(&session_id_for_task)?;
         load_decorated_session_record(
             &context.session_dir,
@@ -734,7 +753,8 @@ pub async fn get_session_record(
         )
     })
     .await
-    .map_err(|error| format!("Unable to join get_session_record task: {error}"))?
+    .map_err(|error| format!("Unable to join get_session_record task: {error}"))??;
+    attach_session_control_metadata(state.inner(), record)
 }
 
 #[tauri::command]
@@ -825,7 +845,7 @@ pub async fn create_session(
     .await
     .map_err(|error| format!("Unable to join create_session record task: {error}"))??;
 
-    Ok(decorated_record)
+    attach_session_control_metadata(state.inner(), decorated_record)
 }
 
 #[tauri::command]
@@ -1296,7 +1316,7 @@ pub async fn create_contextual_session(
         let _ = app_events::emit_task_change(&app, "task.assignment.session_rotated", [task_id]);
     }
 
-    Ok(decorated_record)
+    attach_session_control_metadata(state.inner(), decorated_record)
 }
 
 #[tauri::command]
@@ -1389,7 +1409,7 @@ pub async fn resume_session(
             json!({ "sessionId": record.id.clone() }),
         );
     }
-    Ok(record)
+    attach_session_control_metadata(state.inner(), record)
 }
 
 #[tauri::command]
@@ -1451,7 +1471,7 @@ pub async fn subscribe_session(
         );
     }
 
-    result
+    result.and_then(|record| attach_session_control_metadata(state.inner(), record))
 }
 
 #[tauri::command]
@@ -1479,7 +1499,7 @@ pub async fn unsubscribe_session(
         "sessions.unsubscribe",
         &format!("Unsubscribed from pi session {}", record.id),
     );
-    Ok(record)
+    attach_session_control_metadata(state.inner(), record)
 }
 
 #[tauri::command]
@@ -1668,10 +1688,11 @@ pub async fn compact_session(
     runtime.set_subscribed(true);
 
     let custom_instructions_for_task = custom_instructions.clone();
-    let compact_result: Result<Value, String> =
-        spawn_blocking(move || runtime.compact(custom_instructions_for_task.as_deref()))
-            .await
-            .map_err(|error| format!("Unable to join compact_session runtime task: {error}"))?;
+    let compact_result = spawn_blocking(move || {
+        perform_session_compaction(runtime, "manual", custom_instructions_for_task)
+    })
+    .await
+    .map_err(|error| format!("Unable to join compact_session runtime task: {error}"))?;
 
     if let Err(error) = &compact_result {
         log_session_command_failure(
@@ -1703,7 +1724,70 @@ pub async fn compact_session(
         &format!("Compacted session {}", session_id),
     );
     let _ = app_events::emit_session_change(&app, "sessions.compact", [session_id.clone()]);
-    Ok(record)
+    attach_session_control_metadata(state.inner(), record)
+}
+
+#[tauri::command]
+pub async fn reload_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionRecord, String> {
+    let session_id_for_task = session_id.clone();
+    let (project_root, session_dir) =
+        spawn_blocking(move || resolve_session_paths(&session_id_for_task))
+            .await
+            .map_err(|error| format!("Unable to join reload_session context task: {error}"))??;
+
+    state.set_session_subscription(&session_id, true)?;
+    let runtime = if let Some(runtime) = maybe_runtime(&state.session_runtimes, &session_id) {
+        runtime
+    } else {
+        ensure_runtime(
+            &state.session_runtimes,
+            app.clone(),
+            project_root,
+            session_dir.clone(),
+            &session_id,
+        )?
+    };
+    runtime.set_subscribed(true);
+
+    let reload_result = spawn_blocking(move || perform_session_reload(runtime, "manual"))
+        .await
+        .map_err(|error| format!("Unable to join reload_session runtime task: {error}"))?;
+
+    if let Err(error) = &reload_result {
+        log_session_command_failure(
+            &state,
+            "sessions.reload.failed",
+            &session_id,
+            "reload the session",
+            error,
+        );
+        return Err(error.clone());
+    }
+
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let session_id_for_task = session_id.clone();
+    let record = spawn_blocking(move || {
+        load_decorated_session_record(
+            &session_dir,
+            &session_id_for_task,
+            true,
+            &terminal_attached_session_ids,
+        )
+    })
+    .await
+    .map_err(|error| format!("Unable to join reload_session record task: {error}"))??;
+
+    state.log(
+        "info",
+        "sessions.reload",
+        &format!("Reloaded session {}", session_id),
+    );
+    let _ = app_events::emit_session_change(&app, "sessions.reload", [session_id.clone()]);
+    attach_session_control_metadata(state.inner(), record)
 }
 
 #[tauri::command]
@@ -1761,7 +1845,7 @@ pub async fn stop_session_runtime(
         );
     }
     let _ = app_events::emit_session_change(&app, "sessions.stop", [session_id.clone()]);
-    Ok(record)
+    attach_session_control_metadata(state.inner(), record)
 }
 
 #[tauri::command]
@@ -1794,6 +1878,23 @@ pub async fn send_session_message(
         &session_id,
     )?;
     runtime.set_subscribed(true);
+
+    if let Err(error) = spawn_blocking({
+        let runtime = runtime.clone();
+        move || maybe_auto_compact(runtime)
+    })
+    .await
+    .map_err(|error| format!("Unable to join send_session_message auto-compact task: {error}"))?
+    {
+        state.log(
+            "warn",
+            "sessions.auto_compact.failed",
+            &format!(
+                "Session {} auto-compaction check failed: {}",
+                session_id, error
+            ),
+        );
+    }
 
     let mut delivery_mode = "prompt";
     let mut owns_prompt_run = false;
@@ -1901,6 +2002,8 @@ mod tests {
             active_task_title: None,
             worker_type: None,
             worker_name: None,
+            control_capabilities: None,
+            control_operation: None,
         }
     }
 
