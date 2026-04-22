@@ -15,11 +15,15 @@
     "scan:artifacts:release": "./scripts/scan-release-artifacts.sh release",
     "build:adhoc:verified": "npm run scan:guardrails && ORCHESTRA_BUILD_PROFILE=release ORCHESTRA_SANITIZE_BUILD_PATHS=1 ./scripts/build-adhoc.sh && npm run scan:artifacts:release",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run tests/*.test.ts",
+    "test:coverage": "vitest run tests/*.test.ts --coverage",
+    "test:ui:matrix": "node ./scripts/check-ui-coverage-matrix.mjs",
+    "verify": "npm run test:coverage && npm run test:ui:matrix",
+    "ci": "npm run verify",
     "test:e2e": "playwright test",
     "test:web-driver:e2e": "playwright test --config playwright.web-driver.config.ts",
-    "test:desktop-e2e:host": "./scripts/run-desktop-e2e-suite.sh tests/desktop-e2e/desktop-harness.test.ts tests/desktop-e2e/project-setup.test.ts tests/desktop-e2e/project-local-repo.test.ts tests/desktop-e2e/file-workflow.test.ts tests/desktop-e2e/role-runtime-single-use.test.ts tests/desktop-e2e/task-repo-files-tab.test.ts tests/desktop-e2e/task-comment-replies.test.ts tests/desktop-e2e/task-comment-file-mentions.test.ts tests/desktop-e2e/task-comment-file-links.test.ts tests/desktop-e2e/task-comment-unread-badges.test.ts tests/desktop-e2e/task-quick-comment-file-mentions.test.ts tests/desktop-e2e/task-close-button.test.ts tests/desktop-e2e/task-detail-nav.test.ts tests/desktop-e2e/agent-queue-delete.test.ts tests/desktop-e2e/bridge-diagnostics.test.ts tests/desktop-e2e/session-controls.test.ts tests/desktop-e2e/session-error-logging.test.ts tests/desktop-e2e/session-missing-cwd-logging.test.ts tests/desktop-e2e/session-runtime-details.test.ts tests/desktop-e2e/session-restart-resume.test.ts tests/desktop-e2e/session-refresh-churn.test.ts tests/desktop-e2e/task-board-scroll.test.ts tests/desktop-e2e/task-schedules.test.ts tests/desktop-e2e/theme-selection.test.ts tests/desktop-e2e/task-todos.test.ts tests/desktop-e2e/task-auto-dispatch-on-blocker-completion.test.ts tests/desktop-e2e/task-whip.test.ts tests/desktop-e2e/lane-approval.test.ts tests/desktop-e2e/inbox-messaging.test.ts tests/desktop-e2e/system-notifications.test.ts tests/desktop-e2e/chat-nav.test.ts tests/desktop-e2e/channels-telegram.test.ts",
-    "test:desktop-e2e": "./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/desktop-harness.test.ts tests/desktop-e2e/project-setup.test.ts tests/desktop-e2e/project-local-repo.test.ts tests/desktop-e2e/file-workflow.test.ts tests/desktop-e2e/role-runtime-single-use.test.ts tests/desktop-e2e/task-repo-files-tab.test.ts tests/desktop-e2e/task-comment-replies.test.ts tests/desktop-e2e/task-comment-file-mentions.test.ts tests/desktop-e2e/task-comment-file-links.test.ts tests/desktop-e2e/task-comment-unread-badges.test.ts tests/desktop-e2e/task-quick-comment-file-mentions.test.ts tests/desktop-e2e/task-close-button.test.ts tests/desktop-e2e/task-detail-nav.test.ts tests/desktop-e2e/agent-queue-delete.test.ts tests/desktop-e2e/bridge-diagnostics.test.ts tests/desktop-e2e/session-controls.test.ts tests/desktop-e2e/session-error-logging.test.ts tests/desktop-e2e/session-missing-cwd-logging.test.ts tests/desktop-e2e/session-runtime-details.test.ts tests/desktop-e2e/session-restart-resume.test.ts tests/desktop-e2e/session-refresh-churn.test.ts tests/desktop-e2e/task-board-scroll.test.ts tests/desktop-e2e/task-schedules.test.ts tests/desktop-e2e/theme-selection.test.ts tests/desktop-e2e/task-todos.test.ts tests/desktop-e2e/task-auto-dispatch-on-blocker-completion.test.ts tests/desktop-e2e/task-whip.test.ts tests/desktop-e2e/lane-approval.test.ts tests/desktop-e2e/inbox-messaging.test.ts tests/desktop-e2e/system-notifications.test.ts tests/desktop-e2e/chat-nav.test.ts tests/desktop-e2e/channels-telegram.test.ts"
+    "test:desktop-e2e:host": "./scripts/run-desktop-e2e-suite.sh",
+    "test:desktop-e2e": "./scripts/run-desktop-e2e-suite-podman.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
@@ -36,6 +40,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^3.2.4",
     "typescript": "^5.9.3",
     "vite": "^8.0.0",
     "vitest": "^3.2.4"

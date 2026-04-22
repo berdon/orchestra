@@ -17,6 +17,13 @@ import {
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const tauriBinary = process.env.ORCHESTRA_TAURI_BINARY;
 const testHome = process.env.ORCHESTRA_TEST_HOME;
+const expectedPreviewUrl = process.env.ORCHESTRA_DESKTOP_E2E_PREVIEW_URL ?? "http://127.0.0.1:1420";
+const normalizeUrl = (value: string) => (value.endsWith("/") ? value : `${value}/`);
+const matchesExpectedLaunchUrl = (value: string) => (
+  value.startsWith("tauri://localhost")
+  || value === expectedPreviewUrl
+  || value.startsWith(normalizeUrl(expectedPreviewUrl))
+);
 
 describe("desktop Tauri webdriver harness", () => {
   it.skipIf(!isDesktopE2E)("launches the real app and creates a real session file", async () => {
@@ -32,7 +39,7 @@ describe("desktop Tauri webdriver harness", () => {
       const initialUrl = await getCurrentUrl(sessionId);
       const initialDom = await ensureReactReady(sessionId);
       writeFileSync(debugSourcePath, initialDom.html, "utf8");
-      expect(initialUrl === "tauri://localhost" || initialUrl === "http://localhost:1420/").toBe(true);
+      expect(matchesExpectedLaunchUrl(initialUrl)).toBe(true);
 
       const createSessionState = await waitForSelector(sessionId, '[data-role="create-session"]');
       writeFileSync(debugSourcePath, createSessionState.html, "utf8");

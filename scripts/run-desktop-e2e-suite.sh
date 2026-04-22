@@ -12,8 +12,12 @@ PREVIEW_LOG="${SUITE_RUN_DIR}/vite-preview.log"
 SCRIPT_LOG="${SUITE_RUN_DIR}/suite.log"
 
 if [[ "$#" -eq 0 ]]; then
-  echo "Usage: $0 <test-file> [<test-file> ...]" >&2
-  exit 1
+  mapfile -t AUTO_TEST_FILES < <(node "${ROOT_DIR}/scripts/desktop-e2e-suite.mjs")
+  if (( ${#AUTO_TEST_FILES[@]} == 0 )); then
+    echo "No desktop E2E specs were discovered by tests/desktop-e2e-suite.json" >&2
+    exit 1
+  fi
+  set -- "${AUTO_TEST_FILES[@]}"
 fi
 
 if ! [[ "${JOBS}" =~ ^[0-9]+$ ]] || (( JOBS < 1 )); then
@@ -74,7 +78,20 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+ensure_preview_assets() {
+  if [[ -f "${ROOT_DIR}/dist/index.html" ]]; then
+    return
+  fi
+
+  echo "[desktop-e2e-suite] frontend dist missing; running npm run build" | tee -a "${SCRIPT_LOG}"
+  (
+    cd "${ROOT_DIR}"
+    npm run build
+  ) >>"${SCRIPT_LOG}" 2>&1
+}
+
 start_shared_preview() {
+  ensure_preview_assets
   ensure_port_available "${PREVIEW_PORT}"
   echo "[desktop-e2e-suite] starting shared vite preview at ${PREVIEW_URL}" | tee -a "${SCRIPT_LOG}"
   start_detached npx vite preview --host 127.0.0.1 --port "${PREVIEW_PORT}" --strictPort >"${PREVIEW_LOG}" 2>&1

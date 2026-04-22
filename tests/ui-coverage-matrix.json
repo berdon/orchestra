@@ -1,0 +1,347 @@
+{
+  "version": 1,
+  "thresholdPercent": 90,
+  "journeys": [
+    {
+      "id": "tasks-overview-browse",
+      "surface": "Tasks",
+      "journey": "Browse, filter, and sort the main task surfaces",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/tasks.spec.ts",
+        "tests/desktop-e2e/task-board-scroll.test.ts",
+        "tests/desktop-e2e/task-table-row.test.ts"
+      ]
+    },
+    {
+      "id": "task-detail-navigation",
+      "surface": "Tasks",
+      "journey": "Open task detail, move between linked task/session views, and keep the detail shell coherent",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-detail-nav.test.ts",
+        "tests/desktop-e2e/task-detail-reorg.test.ts"
+      ]
+    },
+    {
+      "id": "task-comments-and-file-links",
+      "surface": "Tasks",
+      "journey": "Create and read threaded task comments, file mentions, file links, unread badges, and default file comments",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/task-default-file-comments.spec.ts",
+        "tests/desktop-e2e/task-comment-replies.test.ts",
+        "tests/desktop-e2e/task-comment-file-mentions.test.ts",
+        "tests/desktop-e2e/task-quick-comment-file-mentions.test.ts",
+        "tests/desktop-e2e/task-comment-file-links.test.ts",
+        "tests/desktop-e2e/task-comment-ordering.test.ts",
+        "tests/desktop-e2e/task-comment-unread-badges.test.ts",
+        "tests/desktop-e2e/task-default-file-comments.test.ts"
+      ]
+    },
+    {
+      "id": "task-todos",
+      "surface": "Tasks",
+      "journey": "Track lane todo items and enforce completion gating",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-todos.test.ts"
+      ]
+    },
+    {
+      "id": "task-project-files",
+      "surface": "Tasks",
+      "journey": "Inspect project files, repo references, and file viewer controls from task detail",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-repo-files-tab.test.ts",
+        "tests/desktop-e2e/task-repository-info-pane.test.ts",
+        "tests/desktop-e2e/task-file-viewer-controls.test.ts"
+      ]
+    },
+    {
+      "id": "task-schedules",
+      "surface": "Tasks",
+      "journey": "Create and inspect scheduled or recurring task automation",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/task-schedules.spec.ts",
+        "tests/desktop-e2e/task-schedules.test.ts"
+      ]
+    },
+    {
+      "id": "task-dispatch-and-approval",
+      "surface": "Tasks",
+      "journey": "Dispatch workflow work, request approval or user intervention, and complete/re-lane task work",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-dispatch.test.ts",
+        "tests/desktop-e2e/workflow-lifecycle.test.ts",
+        "tests/desktop-e2e/lane-approval.test.ts"
+      ]
+    },
+    {
+      "id": "task-blockers-and-whip",
+      "surface": "Tasks",
+      "journey": "Handle blocked dependencies, auto-dispatch after unblock, and whip limits",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-auto-dispatch-on-blocker-completion.test.ts",
+        "tests/desktop-e2e/task-whip.test.ts"
+      ]
+    },
+    {
+      "id": "task-close-and-markdown-rendering",
+      "surface": "Tasks",
+      "journey": "Close task detail and render task markdown-rich content correctly",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-close-button.test.ts",
+        "tests/desktop-e2e/task-markdown-lists.test.ts"
+      ]
+    },
+    {
+      "id": "inbox-delivery",
+      "surface": "Inbox",
+      "journey": "Read inbox mail and direct task-linked messaging flows",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/inbox.spec.ts",
+        "tests/desktop-e2e/inbox-messaging.test.ts"
+      ]
+    },
+    {
+      "id": "system-notifications",
+      "surface": "Inbox",
+      "journey": "Surface task and approval notifications in the UI shell",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/system-notifications.spec.ts",
+        "tests/desktop-e2e/system-notifications.test.ts"
+      ]
+    },
+    {
+      "id": "agents-queue-operations",
+      "surface": "Agents",
+      "journey": "Inspect and delete queued agent or role work from workforce views",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/agents.spec.ts",
+        "tests/desktop-e2e/agent-queue-delete.test.ts"
+      ]
+    },
+    {
+      "id": "scoped-agents-and-workforce-filters",
+      "surface": "Agents",
+      "journey": "Filter workforce views and respect scoped-agent behavior across projects",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/scoped-agents.spec.ts",
+        "tests/desktop-e2e/scoped-agents.test.ts",
+        "tests/desktop-e2e/workforce-filters.test.ts"
+      ]
+    },
+    {
+      "id": "projects-and-local-repos",
+      "surface": "Settings",
+      "journey": "Create projects and wire local repositories from Settings",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/projects.spec.ts",
+        "tests/desktop-e2e/project-setup.test.ts",
+        "tests/desktop-e2e/project-local-repo.test.ts"
+      ]
+    },
+    {
+      "id": "roles-and-workflows-settings",
+      "surface": "Settings",
+      "journey": "Manage roles and workflows in the settings surfaces",
+      "requiredHarnesses": ["browser"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/roles.spec.ts",
+        "tests/e2e/workflows.spec.ts"
+      ]
+    },
+    {
+      "id": "channels-and-telegram",
+      "surface": "Settings",
+      "journey": "Manage channels and exercise Telegram-backed flows",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/channels.spec.ts",
+        "tests/desktop-e2e/channels-telegram.test.ts"
+      ]
+    },
+    {
+      "id": "general-settings",
+      "surface": "Settings",
+      "journey": "Exercise the general settings surface for user-facing defaults and preferences",
+      "requiredHarnesses": ["browser"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/general.spec.ts"
+      ]
+    },
+    {
+      "id": "remote-access-and-pairing",
+      "surface": "Remote",
+      "journey": "Configure remote access, exercise the desktop remote flow, and verify driver pairing",
+      "requiredHarnesses": ["browser", "desktop", "web-driver"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/remote.spec.ts",
+        "tests/desktop-e2e/remote-access.test.ts",
+        "tests/web-driver-e2e/pairing.spec.ts"
+      ]
+    },
+    {
+      "id": "chat-navigation-and-mentions",
+      "surface": "Chat",
+      "journey": "Navigate chat surfaces and use mention autocomplete in runtime messaging",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/chat.spec.ts",
+        "tests/desktop-e2e/chat-nav.test.ts",
+        "tests/desktop-e2e/chat-mention-autocomplete.test.ts"
+      ]
+    },
+    {
+      "id": "session-list-and-transcript",
+      "surface": "Sessions",
+      "journey": "Browse sessions and read the live transcript surface",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/sessions.spec.ts",
+        "tests/desktop-e2e/session-transcript.test.ts"
+      ]
+    },
+    {
+      "id": "session-runtime-controls-and-recovery",
+      "surface": "Sessions",
+      "journey": "Use runtime controls and survive restart, refresh-churn, and recovery flows",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/session-controls.test.ts",
+        "tests/desktop-e2e/session-runtime-details.test.ts",
+        "tests/desktop-e2e/session-restart-resume.test.ts",
+        "tests/desktop-e2e/session-refresh-churn.test.ts",
+        "tests/desktop-e2e/sessions-delete-closed.test.ts"
+      ]
+    },
+    {
+      "id": "diagnostics-and-runtime-logging",
+      "surface": "Sessions",
+      "journey": "Inspect diagnostics, error logging, and missing-cwd recovery signals",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/bridge-diagnostics.test.ts",
+        "tests/desktop-e2e/session-error-logging.test.ts",
+        "tests/desktop-e2e/session-missing-cwd-logging.test.ts"
+      ]
+    },
+    {
+      "id": "command-palette",
+      "surface": "Navigation",
+      "journey": "Use the command palette to drive shell navigation and actions",
+      "requiredHarnesses": ["browser"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/command-palette.spec.ts"
+      ]
+    },
+    {
+      "id": "navigation-shell-and-badges",
+      "surface": "Navigation",
+      "journey": "Use the shell header, navigation badges, and desktop layout affordances",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/app-header.spec.ts",
+        "tests/e2e/navigation-badges.spec.ts",
+        "tests/desktop-e2e/navigation-badges.test.ts",
+        "tests/desktop-e2e/navigation-layout.test.ts"
+      ]
+    },
+    {
+      "id": "theme-selection",
+      "surface": "Navigation",
+      "journey": "Switch application themes across browser and desktop shells",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/theme.spec.ts",
+        "tests/desktop-e2e/theme-selection.test.ts"
+      ]
+    },
+    {
+      "id": "agent-terminal-window",
+      "surface": "Sessions",
+      "journey": "Open and interact with the detached agent terminal window",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/agent-terminal-window.test.ts"
+      ]
+    },
+    {
+      "id": "lane-workspace-selection",
+      "surface": "Workflows",
+      "journey": "Choose shared versus separate lane workspaces during workflow execution",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/lane-workspace-selection.test.ts"
+      ]
+    },
+    {
+      "id": "project-task-scoping",
+      "surface": "Tasks",
+      "journey": "Keep task execution and filtering scoped to the correct project",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/project-task-scoping.test.ts"
+      ]
+    },
+    {
+      "id": "autonomous-workflow",
+      "surface": "Workflows",
+      "journey": "Run an end-to-end autonomous workflow with file creation and completion",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/autonomous-workflow.test.ts"
+      ]
+    },
+    {
+      "id": "desktop-harness-smoke",
+      "surface": "Infrastructure",
+      "journey": "Boot the desktop harness itself before higher-level desktop journeys run",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/desktop-harness.test.ts"
+      ]
+    }
+  ]
+}

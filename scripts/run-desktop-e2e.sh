@@ -11,8 +11,9 @@ mkdir -p "${RUN_DIR}" "${TEST_HOME}"
 PREVIEW_URL="${ORCHESTRA_DESKTOP_E2E_PREVIEW_URL:-http://127.0.0.1:1420}"
 PREVIEW_PORT="${ORCHESTRA_DESKTOP_E2E_PREVIEW_PORT:-1420}"
 REUSE_PREVIEW="${ORCHESTRA_DESKTOP_E2E_REUSE_PREVIEW:-0}"
-BINARY_PATH="${ROOT_DIR}/src-tauri/target/debug/orchestra"
-BUILD_LOCK_DIR="${ROOT_DIR}/src-tauri/target/debug/.desktop-e2e-build-lock"
+TARGET_DEBUG_DIR="${ROOT_DIR}/src-tauri/target/debug"
+BINARY_PATH="${TARGET_DEBUG_DIR}/orchestra"
+BUILD_LOCK_DIR="${TARGET_DEBUG_DIR}/.desktop-e2e-build-lock"
 
 binary_matches_preview_url() {
   [[ -x "${BINARY_PATH}" ]] || return 1
@@ -26,6 +27,8 @@ ensure_binary_matches_preview_url() {
 
   (
     set -euo pipefail
+
+    mkdir -p "${TARGET_DEBUG_DIR}"
 
     while ! mkdir "${BUILD_LOCK_DIR}" 2>/dev/null; do
       echo "[desktop-e2e-runner] waiting for desktop E2E build lock ${BUILD_LOCK_DIR}"
@@ -217,6 +220,7 @@ run_inner() {
   fi
 
   ORCHESTRA_DESKTOP_E2E=1 \
+  ORCHESTRA_DESKTOP_E2E_PREVIEW_URL="${PREVIEW_URL}" \
   ORCHESTRA_TAURI_BINARY="${BINARY_PATH}" \
   ORCHESTRA_TEST_HOME="${TEST_HOME}" \
   ORCHESTRA_WEBDRIVER_URL="http://127.0.0.1:${WEBDRIVER_PORT}" \

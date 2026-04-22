@@ -1,0 +1,5 @@
+{
+  "directory": "tests/desktop-e2e",
+  "quarantined": [],
+  "notes": "The required desktop E2E suite is every *.test.ts file under tests/desktop-e2e unless it is explicitly quarantined here with a checked-in reason. Keep this empty by default so authored coverage and executed coverage stay aligned."
+}

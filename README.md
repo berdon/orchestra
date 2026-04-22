@@ -20,6 +20,7 @@ Agent orchestration framework focused on getting project work done.
 - [Task system plan](docs/task-system-plan.md)
 - [Bridge hardening plan](docs/bridge-hardening-plan.md)
 - [Mobile driver client design](docs/mobile-driver-client-design.md)
+- [UI coverage matrix + build-gate semantics](docs/ui-coverage-matrix.md)
 
 ## App scaffold
 
@@ -51,9 +52,22 @@ npm run dev
 
 ### Tests
 
+Fast unit/integration suite:
+
 ```bash
 npm test
 ```
+
+Coverage and UI gating:
+
+```bash
+npm run test:coverage
+npm run test:ui:matrix
+npm run verify
+```
+
+`npm run test:coverage` writes terminal, HTML, `json-summary`, and `lcov` reports to `coverage/vitest/`.
+`npm run test:ui:matrix` validates the critical-journey UI coverage matrix in `tests/ui-coverage-matrix.json` and enforces the >=90% UI threshold.
 
 ### Release guardrails
 
@@ -96,6 +110,14 @@ Use:
 
 ```bash
 ./scripts/run-desktop-e2e.sh tests/desktop-e2e/<spec>.test.ts
+./scripts/run-desktop-e2e-suite.sh
+```
+
+The suite runner now derives its required spec list from `tests/desktop-e2e-suite.json`, so `npm run test:desktop-e2e:host` and `npm run test:desktop-e2e` stay aligned with the authored desktop specs by default.
+
+You can still pass an explicit subset when needed:
+
+```bash
 ./scripts/run-desktop-e2e-suite.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
 ```
 
@@ -103,6 +125,12 @@ For containerized runs, use the Podman wrappers:
 
 ```bash
 ./scripts/run-desktop-e2e-podman.sh tests/desktop-e2e/<spec>.test.ts
+./scripts/run-desktop-e2e-suite-podman.sh
+```
+
+You can also pass an explicit subset to the suite wrapper when needed:
+
+```bash
 ./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
 ```
 

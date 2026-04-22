@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 
 const webdriverUrl = process.env.ORCHESTRA_WEBDRIVER_URL ?? "http://127.0.0.1:4444";
 const tauriBinary = process.env.ORCHESTRA_TAURI_BINARY;
+const previewUrl = process.env.ORCHESTRA_DESKTOP_E2E_PREVIEW_URL ?? "http://127.0.0.1:1420";
 const execFileAsync = promisify(execFile);
 
 export function sleep(ms: number) {
@@ -676,7 +677,15 @@ export async function ensureReactReady(sessionId: string, timeoutMs = 60_000) {
         if (recoveryAttempts === 0) {
           console.error(`[desktop-e2e] waiting for app shell at ${currentUrl}: ${dom.text.trim()}`);
         }
-        if (recoveryAttempts < 3 && (currentUrl.startsWith('http://localhost') || currentUrl.startsWith('http://tauri.localhost'))) {
+        if (
+          recoveryAttempts < 3
+          && (
+            currentUrl.startsWith('http://localhost')
+            || currentUrl.startsWith('http://127.0.0.1')
+            || currentUrl.startsWith('http://tauri.localhost')
+            || currentUrl.startsWith(previewUrl)
+          )
+        ) {
           recoveryAttempts += 1;
           try {
             await navigateTo(sessionId, 'tauri://localhost/index.html');
