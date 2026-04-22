@@ -1986,7 +1986,7 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Review me");
 });
 
-test("task comment unread badges track non-user comments and clear when the comments tab is opened", async ({ page }) => {
+test("task comment unread badges hide on completed tasks but still clear for active tasks when comments are opened", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -2025,11 +2025,11 @@ test("task comment unread badges track non-user comments and clear when the comm
       "orchestra.mock.tasks",
       JSON.stringify([
         {
-          id: "task-comment-unread",
+          id: "task-comment-unread-active",
           projectId: "orchestra",
           number: "ORC-7",
-          title: "Unread task comments",
-          description: "Unread comment badge coverage.",
+          title: "Unread active task comments",
+          description: "Unread comment badge coverage for active work.",
           type: "task",
           status: "in_review",
           priority: "P1",
@@ -2062,8 +2062,8 @@ test("task comment unread badges track non-user comments and clear when the comm
           fileReferences: [],
           comments: [
             {
-              id: "comment-agent",
-              taskId: "task-comment-unread",
+              id: "comment-agent-active",
+              taskId: "task-comment-unread-active",
               author: "Reviewer",
               originType: "agent",
               originId: "agent-reviewer",
@@ -2073,12 +2073,66 @@ test("task comment unread badges track non-user comments and clear when the comm
               updatedAt: timestamp,
             },
             {
-              id: "comment-user",
-              taskId: "task-comment-unread",
+              id: "comment-user-active",
+              taskId: "task-comment-unread-active",
               author: "User",
               originType: "user",
               originId: null,
               message: "Acknowledged.",
+              interruptAgent: false,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+          ],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        {
+          id: "task-comment-unread-completed",
+          projectId: "orchestra",
+          number: "ORC-8",
+          title: "Unread completed task comments",
+          description: "Unread comment badge coverage for completed work.",
+          type: "task",
+          status: "completed",
+          priority: "P2",
+          workflowId: "workflow-comment-unread",
+          currentLaneId: "lane-user-review",
+          assigneeType: "user",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 1,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [
+            {
+              id: "comment-agent-completed",
+              taskId: "task-comment-unread-completed",
+              author: "Reviewer",
+              originType: "agent",
+              originId: "agent-reviewer",
+              message: "Final follow-up after completion.",
               interruptAgent: false,
               createdAt: timestamp,
               updatedAt: timestamp,
@@ -2095,16 +2149,32 @@ test("task comment unread badges track non-user comments and clear when the comm
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.locator('[data-role="nav-item-tasks"]').click();
   await expect(page.locator('[data-role="nav-badge-tasks"]')).toContainText("1");
   await expect(
-    page.locator('[data-role="task-card"]').filter({ hasText: "Unread task comments" }).first().locator('[data-role="task-card-unread-comments-badge"]'),
+    page.locator('[data-role="task-card"]').filter({ hasText: "Unread active task comments" }).first().locator('[data-role="task-card-unread-comments-badge"]'),
   ).toContainText("1 unread");
+
+  await page.locator('[data-role="task-filter-done"]').click();
+  await expect(
+    page.locator('[data-role="task-card"]').filter({ hasText: "Unread completed task comments" }).first().locator('[data-role="task-card-unread-comments-badge"]'),
+  ).toHaveCount(0);
+
   await page.locator('[data-role="task-view-table"]').click();
   await expect(
-    page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread task comments" }).locator('[data-role="task-table-unread-comments-badge"]'),
+    page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread completed task comments" }).locator('[data-role="task-table-unread-comments-badge"]'),
+  ).toHaveCount(0);
+  await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread completed task comments" }).first().click();
+  await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-unread-comments-tab-badge"]')).toHaveCount(0);
+
+  await page.locator('[data-role="nav-item-tasks"]').click();
+  await page.locator('[data-role="task-filter-all"]').click();
+  await page.locator('[data-role="task-view-table"]').click();
+  await expect(
+    page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread active task comments" }).locator('[data-role="task-table-unread-comments-badge"]'),
   ).toContainText("1 unread");
-  await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread task comments" }).first().click();
+  await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread active task comments" }).first().click();
   await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toContainText("1 unread");
   await page.locator('[data-role="open-task-comments"]').click();
   await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute("aria-selected", "true");

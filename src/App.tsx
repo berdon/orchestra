@@ -50,6 +50,7 @@ import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSett
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
 import { getSystemNotificationEnvironmentStatus, getSystemNotificationPermissionState, requestSystemNotificationPermission, sendSystemNotification, sendTestSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
+import { countVisibleUnreadTaskComments } from "./lib/taskUnreadCommentVisibility";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { ProjectSwitcher } from "./components/ProjectSwitcher";
@@ -340,7 +341,7 @@ function countInboxUnreadThings(messages: MailboxMessage[], tasks: TaskSummary[]
 }
 
 function countUnreadTaskComments(tasks: TaskSummary[]) {
-  return tasks.reduce((total, task) => total + (task.unreadCommentCount ?? 0), 0);
+  return countVisibleUnreadTaskComments(tasks);
 }
 
 function truncateNotificationText(value: string, maxLength = 140) {

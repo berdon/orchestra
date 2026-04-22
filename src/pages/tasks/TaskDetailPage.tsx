@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { getTaskFileContent } from "../../lib/tauri";
+import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
 import { MarkdownContent } from "../../components/MarkdownContent";
@@ -1900,7 +1901,7 @@ export function TaskDetailPage({
                 <button className="secondary-button" data-role="open-task-comments" type="button" onClick={() => handleTabSelect("comments")}>
                   View all comments
                 </button>
-                {task.unreadCommentCount > 0 ? (
+                {shouldShowUnreadCommentAttention(task) ? (
                   <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-footer-badge">
                     {task.unreadCommentCount} unread
                   </span>
@@ -1997,7 +1998,7 @@ export function TaskDetailPage({
                 onClick={() => handleTabSelect(tab.id)}
               >
                 <span>{tab.label}</span>
-                {tab.id === "comments" && task.unreadCommentCount > 0 ? (
+                {tab.id === "comments" && shouldShowUnreadCommentAttention(task) ? (
                   <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-tab-badge">
                     {task.unreadCommentCount}
                   </span>

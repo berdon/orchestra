@@ -1,3 +1,4 @@
+import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import type { TaskSummary } from "../../types";
 import { TaskTagList } from "./TaskTagList";
 import { TaskSummaryStatusBadges } from "./taskStatusBadges";
@@ -27,7 +28,7 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCard
       <TaskTagList className="task-compact-card__tags" maxVisible={2} task={task} />
       <div className="task-compact-card__meta">
         <span title={assigneeLabel}>{assigneeLabel}</span>
-        {task.unreadCommentCount > 0 ? (
+        {shouldShowUnreadCommentAttention(task) ? (
           <span
             className="status-badge status-badge--warning status-badge--compact"
             data-role="task-card-unread-comments-badge"

@@ -1,3 +1,4 @@
+import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import type { AgentSummary, RoleSummary, TaskSummary } from "../../types";
 import { TaskCompactCard } from "./TaskCompactCard";
 import { TaskTagList } from "./TaskTagList";
@@ -107,7 +108,7 @@ export function WorkflowTaskBoardSection({
                   <td>
                     <div className="task-table__comments-cell">
                       <span>{task.commentCount}</span>
-                      {task.unreadCommentCount > 0 ? (
+                      {shouldShowUnreadCommentAttention(task) ? (
                         <span
                           className="status-badge status-badge--warning status-badge--compact"
                           data-role="task-table-unread-comments-badge"
