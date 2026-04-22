@@ -716,6 +716,19 @@ pub struct PiRuntimeSettings {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelegramNotificationScope {
+    AllProjects,
+    ActiveProject,
+}
+
+impl Default for TelegramNotificationScope {
+    fn default() -> Self {
+        Self::AllProjects
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TelegramChannelConfig {
@@ -725,6 +738,8 @@ pub struct TelegramChannelConfig {
     pub chat_title: Option<String>,
     pub chat_type: Option<String>,
     pub commands_enabled: bool,
+    #[serde(default)]
+    pub notification_scope: TelegramNotificationScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -742,6 +757,8 @@ pub struct TelegramChannelConfigInput {
     pub chat_type: Option<String>,
     #[serde(default)]
     pub commands_enabled: bool,
+    #[serde(default)]
+    pub notification_scope: Option<TelegramNotificationScope>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

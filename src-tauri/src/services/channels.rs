@@ -20,7 +20,7 @@ use crate::{
     models::{
         ChannelActivityEntry, ChannelDetail, ChannelSummary, ChannelUpsertInput, MailboxMessage,
         SendMailboxMessageInput, TaskDetail, TelegramBotValidation, TelegramChannelConfig,
-        TelegramChannelConfigInput, TelegramChatCandidate, WorkflowLane,
+        TelegramChannelConfigInput, TelegramChatCandidate, TelegramNotificationScope, WorkflowLane,
     },
     services::{
         agent_dispatch, database,
@@ -50,6 +50,17 @@ const ACTIVITY_STATUS_DISPATCHED: &str = "dispatched";
 const ACTIVITY_STATUS_COMPLETED: &str = "completed";
 const ACTIVITY_STATUS_FAILED: &str = "failed";
 
+fn default_telegram_notification_scope() -> TelegramNotificationScope {
+    TelegramNotificationScope::AllProjects
+}
+
+fn telegram_notification_scope_label(scope: TelegramNotificationScope) -> &'static str {
+    match scope {
+        TelegramNotificationScope::AllProjects => "all projects",
+        TelegramNotificationScope::ActiveProject => "active project only",
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredTelegramConfig {
@@ -59,6 +70,8 @@ struct StoredTelegramConfig {
     chat_title: Option<String>,
     chat_type: Option<String>,
     commands_enabled: bool,
+    #[serde(default = "default_telegram_notification_scope")]
+    notification_scope: TelegramNotificationScope,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -596,7 +609,7 @@ pub fn notify_task_user_attention_channels(
     let channels = load_runnable_channels(connection)?
         .into_iter()
         .filter(|channel| channel.kind == CHANNEL_KIND_TELEGRAM)
-        .filter(|channel| channel.default_project_id.as_deref() == Some(task.project_id.as_str()))
+        .filter(|channel| channel_matches_task_notification_scope(channel, &task.project_id))
         .collect::<Vec<_>>();
 
     let mut delivered = 0usize;
@@ -1100,9 +1113,20 @@ fn telegram_status_text(
         .unwrap_or_else(|| "unconfigured".into());
     let _ = app;
     let project_name = projects::get_project(&connection, &resolved.project_id)?.name;
+    let notification_scope = channel
+        .config
+        .telegram
+        .as_ref()
+        .map(|telegram| telegram.notification_scope)
+        .unwrap_or_else(default_telegram_notification_scope);
     Ok(format!(
-        "Supervisor session: {}\nStatus: {}\nDefault project: {}\nModel: {}\nUpdated: {}",
-        session.title, session.status, project_name, current_model, session.updated_at,
+        "Supervisor session: {}\nStatus: {}\nDefault project: {}\nNotification scope: {}\nModel: {}\nUpdated: {}",
+        session.title,
+        session.status,
+        project_name,
+        telegram_notification_scope_label(notification_scope),
+        current_model,
+        session.updated_at,
     ))
 }
 
@@ -2423,6 +2447,26 @@ fn load_runnable_channels(connection: &Connection) -> Result<Vec<StoredChannelRe
         .map_err(|error| format!("Unable to read runnable channels: {error}"))
 }
 
+fn channel_matches_task_notification_scope(
+    channel: &StoredChannelRecord,
+    task_project_id: &str,
+) -> bool {
+    let Some(telegram) = channel.config.telegram.as_ref() else {
+        return false;
+    };
+
+    match telegram.notification_scope {
+        TelegramNotificationScope::AllProjects => true,
+        TelegramNotificationScope::ActiveProject => {
+            channel
+                .default_project_id
+                .as_deref()
+                .unwrap_or(DEFAULT_PROJECT_ID)
+                == task_project_id
+        }
+    }
+}
+
 fn normalize_channel_input(
     connection: &Connection,
     input: ChannelUpsertInput,
@@ -2477,6 +2521,15 @@ fn normalize_channel_input(
         .as_ref()
         .and_then(|telegram| telegram.bot_token.as_ref())
         .is_some();
+    let existing_notification_scope = existing
+        .and_then(|value| {
+            value
+                .config
+                .telegram
+                .as_ref()
+                .map(|telegram| telegram.notification_scope)
+        })
+        .unwrap_or_else(default_telegram_notification_scope);
     let telegram_input = input
         .telegram
         .clone()
@@ -2495,6 +2548,7 @@ fn normalize_channel_input(
                         .map(|telegram| telegram.commands_enabled)
                 })
                 .unwrap_or(true),
+            notification_scope: Some(existing_notification_scope),
         });
     let existing_config = existing
         .and_then(|value| value.config.telegram.clone())
@@ -2541,6 +2595,9 @@ fn normalize_channel_input(
                 .and_then(|telegram| telegram.chat_type.clone())
         })),
         commands_enabled: telegram_input.commands_enabled || existing_config.commands_enabled,
+        notification_scope: telegram_input
+            .notification_scope
+            .unwrap_or(existing_notification_scope),
     };
 
     let bot_token = normalize_optional(telegram_input.bot_token).or(existing_secrets.bot_token);
@@ -2653,6 +2710,7 @@ fn detail_channel(
                 chat_title: telegram.chat_title,
                 chat_type: telegram.chat_type,
                 commands_enabled: telegram.commands_enabled,
+                notification_scope: telegram.notification_scope,
             }),
         last_error: record.last_error,
         last_activity_at: record.last_activity_at,
@@ -2814,7 +2872,43 @@ fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_channel_dispatch_plan, ChannelDispatchPlan};
+    use super::{
+        channel_matches_task_notification_scope, default_telegram_notification_scope,
+        resolve_channel_dispatch_plan, ChannelDispatchPlan, StoredChannelConfig,
+        StoredChannelRecord, StoredChannelState, StoredTelegramConfig,
+    };
+    use crate::models::TelegramNotificationScope;
+
+    fn test_channel(
+        default_project_id: Option<&str>,
+        notification_scope: TelegramNotificationScope,
+    ) -> StoredChannelRecord {
+        StoredChannelRecord {
+            id: "channel-1".into(),
+            kind: "telegram".into(),
+            name: "Telegram".into(),
+            enabled: true,
+            status: "ready".into(),
+            target_agent_id: "agent-supervisor".into(),
+            default_project_id: default_project_id.map(ToOwned::to_owned),
+            config: StoredChannelConfig {
+                telegram: Some(StoredTelegramConfig {
+                    bot_username: None,
+                    api_base_url: None,
+                    chat_id: Some("chat-1".into()),
+                    chat_title: Some("Ops".into()),
+                    chat_type: Some("private".into()),
+                    commands_enabled: true,
+                    notification_scope,
+                }),
+            },
+            state: StoredChannelState::default(),
+            last_error: None,
+            last_activity_at: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
 
     #[test]
     fn dispatches_immediately_when_session_is_idle() {
@@ -2842,5 +2936,93 @@ mod tests {
             resolve_channel_dispatch_plan(true, false),
             ChannelDispatchPlan::RecoverStaleRunState
         );
+    }
+
+    #[test]
+    fn missing_notification_scope_defaults_to_all_projects() {
+        let config: StoredChannelConfig =
+            serde_json::from_str(r#"{"telegram":{"commandsEnabled":true,"chatId":"chat-1"}}"#)
+                .expect("config should deserialize");
+
+        assert_eq!(
+            config
+                .telegram
+                .expect("telegram config should exist")
+                .notification_scope,
+            default_telegram_notification_scope()
+        );
+    }
+
+    #[test]
+    fn active_project_scope_matches_only_the_current_default_project() {
+        let channel = test_channel(
+            Some("project-alpha"),
+            TelegramNotificationScope::ActiveProject,
+        );
+
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-alpha"
+        ));
+        assert!(!channel_matches_task_notification_scope(
+            &channel,
+            "project-beta"
+        ));
+    }
+
+    #[test]
+    fn switching_active_project_changes_active_project_scope_routing() {
+        let mut channel = test_channel(
+            Some("project-alpha"),
+            TelegramNotificationScope::ActiveProject,
+        );
+
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-alpha"
+        ));
+        assert!(!channel_matches_task_notification_scope(
+            &channel,
+            "project-beta"
+        ));
+
+        channel.default_project_id = Some("project-beta".into());
+
+        assert!(!channel_matches_task_notification_scope(
+            &channel,
+            "project-alpha"
+        ));
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-beta"
+        ));
+    }
+
+    #[test]
+    fn all_projects_scope_ignores_active_project_changes() {
+        let mut channel = test_channel(
+            Some("project-alpha"),
+            TelegramNotificationScope::AllProjects,
+        );
+
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-alpha"
+        ));
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-beta"
+        ));
+
+        channel.default_project_id = Some("project-beta".into());
+
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-alpha"
+        ));
+        assert!(channel_matches_task_notification_scope(
+            &channel,
+            "project-beta"
+        ));
     }
 }

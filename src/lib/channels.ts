@@ -89,6 +89,7 @@ export async function createChannel(input: ChannelUpsertInput): Promise<ChannelD
         chatTitle: input.telegram?.chatTitle ?? null,
         chatType: input.telegram?.chatType ?? null,
         commandsEnabled: input.telegram?.commandsEnabled ?? true,
+        notificationScope: input.telegram?.notificationScope ?? "all_projects",
       },
       lastError: null,
       lastActivityAt: null,
@@ -122,12 +123,14 @@ export async function updateChannel(channelId: string, input: ChannelUpsertInput
           chatTitle: null,
           chatType: null,
           commandsEnabled: true,
+          notificationScope: "all_projects",
         }),
         apiBaseUrl: normalizeOptionalString(input.telegram?.apiBaseUrl) ?? existing.telegram?.apiBaseUrl ?? null,
         chatId: input.telegram?.chatId ?? existing.telegram?.chatId ?? null,
         chatTitle: input.telegram?.chatTitle ?? existing.telegram?.chatTitle ?? null,
         chatType: input.telegram?.chatType ?? existing.telegram?.chatType ?? null,
         commandsEnabled: input.telegram?.commandsEnabled ?? existing.telegram?.commandsEnabled ?? true,
+        notificationScope: input.telegram?.notificationScope ?? existing.telegram?.notificationScope ?? "all_projects",
       },
       status: (existing.secretConfigured || Boolean(input.telegram?.botToken)) && (input.telegram?.chatId ?? existing.telegram?.chatId)
         ? "ready"

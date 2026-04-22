@@ -36,6 +36,7 @@ function createDraft(defaultProjectId: string | null): ChannelUpsertInput {
       chatTitle: "",
       chatType: "private",
       commandsEnabled: true,
+      notificationScope: "all_projects",
     },
   };
 }
@@ -108,6 +109,7 @@ export function ChannelsPanel() {
           chatTitle: detail.telegram?.chatTitle ?? "",
           chatType: detail.telegram?.chatType ?? "private",
           commandsEnabled: detail.telegram?.commandsEnabled ?? true,
+          notificationScope: detail.telegram?.notificationScope ?? "all_projects",
         },
       });
       setBotValidation(
@@ -150,6 +152,7 @@ export function ChannelsPanel() {
         chatTitle: current.telegram?.chatTitle ?? "",
         chatType: current.telegram?.chatType ?? "private",
         commandsEnabled: current.telegram?.commandsEnabled ?? true,
+        notificationScope: current.telegram?.notificationScope ?? "all_projects",
         ...patch,
       },
     }));
@@ -343,14 +346,15 @@ export function ChannelsPanel() {
               <span className="field-group__label">Channel name</span>
               <input className="text-input" data-role="channel-name" value={draft.name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
             </label>
-            <label className="field-group">
-              <span className="field-group__label">Default project</span>
+            <div className="field-group">
+              <span className="field-group__label">Active project for commands</span>
               <select className="text-input" data-role="channel-default-project" value={draft.defaultProjectId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, defaultProjectId: event.target.value || null }))}>
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>{project.name}</option>
                 ))}
               </select>
-            </label>
+              <p className="muted-copy">Telegram commands like /tasks, /task, /mail, /approve, and /needs-work use this project context.</p>
+            </div>
           </div>
 
           <section className="task-section task-section--compact" data-role="telegram-step-token">
@@ -418,9 +422,18 @@ export function ChannelsPanel() {
               <div>
                 <p className="eyebrow">Step 4</p>
                 <h4>Enable behavior</h4>
+                <p className="muted-copy">Choose which project notifications Telegram should receive independently from the command project above.</p>
               </div>
             </div>
             <div className="task-editor-grid">
+              <label className="field-group task-editor-grid__full">
+                <span className="field-group__label">Notification scope</span>
+                <select className="text-input" data-role="telegram-notification-scope" value={draft.telegram?.notificationScope ?? "all_projects"} onChange={(event) => updateTelegramDraft({ notificationScope: event.target.value as "all_projects" | "active_project" })}>
+                  <option value="all_projects">All projects</option>
+                  <option value="active_project">Active project only</option>
+                </select>
+                <span className="muted-copy">Choose All projects to send task-attention notifications for every project. Choose Active project only to limit notifications to the command project selected above.</span>
+              </label>
               <label className="checkbox-field task-editor-grid__full">
                 <input data-role="telegram-commands-enabled" type="checkbox" checked={draft.telegram?.commandsEnabled ?? true} onChange={(event) => updateTelegramDraft({ commandsEnabled: event.target.checked })} />
                 <span>Enable Telegram supervisor commands (/help, /status, /projects, /tasks, /task, /approve, /needs-work, /mail, /model, /stop, /resume)</span>

@@ -19,6 +19,8 @@ test("settings channels panel creates a Telegram channel", async ({ page }) => {
 
   await page.locator('[data-role="detect-telegram-chats"]').click();
   await page.locator('[data-role="telegram-chat-select"]').selectOption({ label: "Mock Telegram Chat" });
+  await expect(page.locator('[data-role="telegram-notification-scope"]')).toHaveValue("all_projects");
+  await page.locator('[data-role="telegram-notification-scope"]').selectOption("active_project");
   await page.locator('[data-role="channel-enabled"]').check();
   await page.locator('[data-role="save-channel"]').click();
 
@@ -27,4 +29,5 @@ test("settings channels panel creates a Telegram channel", async ({ page }) => {
   expect(stored).toHaveLength(1);
   expect(stored[0]?.name).toBe("Telegram Ops");
   expect(stored[0]?.telegram?.chatId).toBe("mock-chat");
+  expect(stored[0]?.telegram?.notificationScope).toBe("active_project");
 });

@@ -141,10 +141,15 @@ describe("desktop channels telegram flow", () => {
     try {
       await ensureReactReady(sessionId);
 
+      const secondProjectTaskPrefix = `TG${suffix.slice(-6)}`.toUpperCase();
       const secondProject = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
-        input: { name: secondProjectName, description: "Second project for Telegram command routing" },
+        input: {
+          name: secondProjectName,
+          description: "Second project for Telegram command routing",
+          taskPrefix: secondProjectTaskPrefix,
+        },
       });
-      await invokeCommand(sessionId, "create_task", {
+      const secondProjectTask = await invokeCommand<{ id: string; number: string }>(sessionId, "create_task", {
         projectId: secondProject.id,
         input: {
           title: taskTitle,
@@ -229,6 +234,7 @@ describe("desktop channels telegram flow", () => {
       await clickSelector(sessionId, '[data-role="detect-telegram-chats"]');
       await waitForSelectOption(sessionId, '[data-role="telegram-chat-select"]', { value: chatId });
       await selectValue(sessionId, '[data-role="telegram-chat-select"]', chatId);
+      await selectValue(sessionId, '[data-role="telegram-notification-scope"]', "active_project");
       await clickSelector(sessionId, '[data-role="channel-enabled"]');
       await clickSelector(sessionId, '[data-role="save-channel"]');
       await waitForText(sessionId, `Telegram Ops ${suffix}`);
@@ -255,7 +261,10 @@ describe("desktop channels telegram flow", () => {
       await waitForSentMessage(harness, (message) => message.text.includes(`Default project set to ${secondProjectName}.`));
 
       await harness.pushUpdate({ chatId, title: chatTitle, text: "/status" });
-      await waitForSentMessage(harness, (message) => message.text.includes(`Default project: ${secondProjectName}`));
+      await waitForSentMessage(
+        harness,
+        (message) => message.text.includes(`Default project: ${secondProjectName}`) && message.text.includes("Notification scope: active project only"),
+      );
 
       await harness.pushUpdate({ chatId, title: chatTitle, text: "/tasks" });
       await waitForSentMessage(
@@ -263,10 +272,10 @@ describe("desktop channels telegram flow", () => {
         (message) => message.text.includes(`Tasks for ${secondProjectName}:`) && message.text.includes(taskTitle),
       );
 
-      await harness.pushUpdate({ chatId, title: chatTitle, text: "/task ORC-1" });
+      await harness.pushUpdate({ chatId, title: chatTitle, text: `/task ${secondProjectTask.number}` });
       await waitForSentMessage(
         harness,
-        (message) => message.text.includes("ORC-1") && message.text.includes(taskTitle) && message.text.includes(`Project: ${secondProjectName}`),
+        (message) => message.text.includes(secondProjectTask.number) && message.text.includes(taskTitle) && message.text.includes(`Project: ${secondProjectName}`),
       );
 
       await dispatchTaskLaneWhenReady(sessionId, approvalTask.id);

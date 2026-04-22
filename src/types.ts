@@ -549,6 +549,8 @@ export interface PiRuntimeSettings {
   updatedAt?: string | null;
 }
 
+export type TelegramNotificationScope = "all_projects" | "active_project";
+
 export interface TelegramChannelConfig {
   botUsername?: string | null;
   apiBaseUrl?: string | null;
@@ -556,6 +558,7 @@ export interface TelegramChannelConfig {
   chatTitle?: string | null;
   chatType?: string | null;
   commandsEnabled: boolean;
+  notificationScope: TelegramNotificationScope;
 }
 
 export interface TelegramChannelConfigInput {
@@ -565,6 +568,7 @@ export interface TelegramChannelConfigInput {
   chatTitle?: string | null;
   chatType?: string | null;
   commandsEnabled: boolean;
+  notificationScope?: TelegramNotificationScope | null;
 }
 
 export interface ChannelUpsertInput {
