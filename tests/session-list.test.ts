@@ -42,6 +42,15 @@ describe("sessionList", () => {
     ]);
   });
 
+  it("sorts task sessions with alphanumeric prefixes by numeric suffix", () => {
+    const sessions = [
+      makeSession({ id: "session-1", taskNumber: "WEB2-10", taskTitle: "Tenth web task" }),
+      makeSession({ id: "session-2", taskNumber: "WEB2-2", taskTitle: "Second web task" }),
+    ];
+
+    expect(sortSessionRecords(sessions).map((session) => session.id)).toEqual(["session-2", "session-1"]);
+  });
+
   it("prefers task title and combined task/worker metadata for session rows", () => {
     const session = makeSession({
       title: "Internal runtime session title",

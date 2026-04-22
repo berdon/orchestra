@@ -349,7 +349,8 @@ pub fn create_task_from_blueprint(
     projects::ensure_project_exists(connection, project_id)?;
     let normalized = prepare_task_input_for_project(connection, project_id, input, None)?;
     let sequence_number = next_task_sequence_number(connection, project_id)?;
-    let number = format!("ORC-{sequence_number}");
+    let task_prefix = projects::get_project_task_prefix(connection, project_id)?;
+    let number = format!("{task_prefix}-{sequence_number}");
     let task_id = task_id();
     let now = now_iso();
     let tx = connection
@@ -2823,11 +2824,11 @@ mod tests {
         seed_workflow(&connection);
         let now = now_iso();
         connection.execute(
-            "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, NULL, ?1, ?1)",
+            "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, 'PA', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project A should insert");
         connection.execute(
-            "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, NULL, ?1, ?1)",
+            "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, 'PB', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project B should insert");
 
@@ -2880,8 +2881,81 @@ mod tests {
         assert_eq!(project_b.len(), 1);
         assert_eq!(project_a[0].id, task_a.id);
         assert_eq!(project_b[0].id, task_b.id);
-        assert_eq!(task_a.number, "ORC-1");
-        assert_eq!(task_b.number, "ORC-1");
+        assert_eq!(task_a.number, "PA-1");
+        assert_eq!(task_b.number, "PB-1");
+    }
+
+    #[test]
+    fn changing_project_task_prefix_only_affects_future_tasks() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+        let project = crate::services::projects::create_project(
+            &connection,
+            crate::models::ProjectUpsertInput {
+                name: "Prefix Change Project".into(),
+                description: None,
+                task_prefix: "APP".into(),
+            },
+        )
+        .expect("project should create");
+
+        let first = create_task(
+            &mut connection,
+            Some(&project.id),
+            TaskUpsertInput {
+                title: "First task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("first task should create");
+
+        crate::services::projects::update_project(
+            &connection,
+            &project.id,
+            crate::models::ProjectUpsertInput {
+                name: project.name.clone(),
+                description: project.description.clone(),
+                task_prefix: "WEB2".into(),
+            },
+        )
+        .expect("project should update");
+
+        let second = create_task(
+            &mut connection,
+            Some(&project.id),
+            TaskUpsertInput {
+                title: "Second task".into(),
+                description: None,
+                task_type: "task".into(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("second task should create");
+
+        assert_eq!(first.number, "APP-1");
+        assert_eq!(second.number, "WEB2-2");
     }
 
     #[test]
@@ -2892,6 +2966,7 @@ mod tests {
             crate::models::ProjectUpsertInput {
                 name: "Project With Default Repo".into(),
                 description: None,
+                task_prefix: "PWD".into(),
             },
         )
         .expect("project should create");
@@ -3158,13 +3233,13 @@ mod tests {
         seed_workflow(&connection);
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, 'PA', NULL, ?1, ?1)",
                 [now_iso()],
             )
             .expect("project A should insert");
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, 'PB', NULL, ?1, ?1)",
                 [now_iso()],
             )
             .expect("project B should insert");

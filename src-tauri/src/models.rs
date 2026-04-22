@@ -167,6 +167,7 @@ pub struct ProjectSummary {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
+    pub task_prefix: String,
     pub default_repository_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -195,6 +196,7 @@ pub struct ProjectDetail {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
+    pub task_prefix: String,
     pub default_repository_id: Option<String>,
     pub repositories: Vec<RepositoryRecord>,
     pub created_at: String,
@@ -206,6 +208,7 @@ pub struct ProjectDetail {
 pub struct ProjectUpsertInput {
     pub name: String,
     pub description: Option<String>,
+    pub task_prefix: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4779,7 +4779,7 @@ mod tests {
             .expect("design file should write");
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'repo-prompt', ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', 'repo-prompt', ?1, ?1)",
                 params![now],
             )
             .expect("project should insert");
@@ -5012,7 +5012,7 @@ mod tests {
         let now = now_iso();
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-1', 'prompt-project', 'Prompt Project', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'prompt-project', 'Prompt Project', NULL, 'PRM', NULL, ?1, ?1)",
                 params![now],
             )
             .expect("project should insert");
@@ -6248,6 +6248,7 @@ mod tests {
             crate::models::ProjectUpsertInput {
                 name: "Comment Queue Project".into(),
                 description: None,
+                task_prefix: "CQP".into(),
             },
         )
         .expect("project should create");
@@ -7571,7 +7572,7 @@ mod tests {
         let now = now_iso();
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-client', 'client-project', 'Client Project', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-client', 'client-project', 'Client Project', NULL, 'CLI', NULL, ?1, ?1)",
                 params![now.as_str()],
             )
             .expect("project should insert");

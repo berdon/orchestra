@@ -59,7 +59,7 @@ Suggested first-pass task fields:
 
 - `id`
 - `projectId`
-- `number` — project-local human-readable sequence such as `ORC-42`
+- `number` — project-local human-readable sequence such as `<PROJECT_PREFIX>-42`
 - `title`
 - `description`
 - `type` (`task`, `bug`, `feature`, `chore`, `epic`)
@@ -162,7 +162,7 @@ If task B is blocked by task A:
 - B remains visible in task views
 - B can still collect comments and attachments
 - B is not dispatchable to an agent or role until A is resolved
-- B should show an explicit blocked reason such as `Blocked by ORC-12 Set up auth schema`
+- B should show an explicit blocked reason such as `Blocked by APP-12 Set up auth schema`
 
 ### Derived readiness
 

@@ -1304,7 +1304,7 @@ mod tests {
         apply_migrations(&connection).expect("migrations should apply");
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'P1', NULL, ?1, ?1)",
                 [now_iso()],
             )
             .expect("project should insert");

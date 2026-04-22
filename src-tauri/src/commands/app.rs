@@ -289,11 +289,13 @@ pub struct DebugTaskWhipScenario {
 #[tauri::command]
 pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, String> {
     let mut connection = database::open_connection()?;
+    let task_prefix_suffix = uuid::Uuid::new_v4().simple().to_string();
     let project = projects::create_project(
         &mut connection,
         ProjectUpsertInput {
             name: format!("Whip Debug Project {}", uuid::Uuid::new_v4().simple()),
             description: Some("Seeded idle task whip debug scenario.".into()),
+            task_prefix: format!("WD{}", &task_prefix_suffix[..4]).to_uppercase(),
         },
     )?;
     let role = roles::create_role(

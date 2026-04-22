@@ -1,22 +1,5 @@
+import { parseTaskNumber } from "./taskPrefixes";
 import type { SessionRecord } from "../types";
-
-function parseTaskNumber(taskNumber?: string | null) {
-  if (!taskNumber) {
-    return { hasTask: false, prefix: "", sequence: Number.POSITIVE_INFINITY, suffix: "" };
-  }
-
-  const match = taskNumber.match(/^([A-Za-z]+)-([0-9]+)(.*)$/);
-  if (!match) {
-    return { hasTask: true, prefix: taskNumber.toLowerCase(), sequence: Number.POSITIVE_INFINITY, suffix: "" };
-  }
-
-  return {
-    hasTask: true,
-    prefix: match[1].toLowerCase(),
-    sequence: Number.parseInt(match[2] ?? "", 10),
-    suffix: (match[3] ?? "").toLowerCase(),
-  };
-}
 
 export function getSessionListMetadata(session: SessionRecord) {
   const metadata = [session.taskNumber, session.workerName].filter(Boolean).join(" · ");

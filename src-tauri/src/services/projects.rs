@@ -20,7 +20,7 @@ pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, Str
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, slug, name, description, default_repository_id, created_at, updated_at
+            SELECT id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at
             FROM projects
             ORDER BY updated_at DESC, name ASC
             "#,
@@ -34,9 +34,10 @@ pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, Str
                 slug: row.get(1)?,
                 name: row.get(2)?,
                 description: row.get(3)?,
-                default_repository_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
+                task_prefix: row.get(4)?,
+                default_repository_id: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|error| format!("Unable to query projects: {error}"))?;
@@ -49,7 +50,7 @@ pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectD
     let project = connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, default_repository_id, created_at, updated_at
+            SELECT id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -60,10 +61,11 @@ pub fn get_project(connection: &Connection, project_id: &str) -> Result<ProjectD
                     slug: row.get(1)?,
                     name: row.get(2)?,
                     description: row.get(3)?,
-                    default_repository_id: row.get(4)?,
+                    task_prefix: row.get(4)?,
+                    default_repository_id: row.get(5)?,
                     repositories: Vec::new(),
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
                 })
             },
         )
@@ -95,6 +97,22 @@ pub fn ensure_project_exists(connection: &Connection, project_id: &str) -> Resul
     }
 }
 
+pub fn get_project_task_prefix(connection: &Connection, project_id: &str) -> Result<String, String> {
+    ensure_default_project(connection)?;
+    let task_prefix = connection
+        .query_row(
+            "SELECT task_prefix FROM projects WHERE id = ?1",
+            [project_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query project {project_id}: {error}"))?
+        .flatten()
+        .ok_or_else(|| format!("Project {project_id} was not found"))?;
+
+    normalize_task_prefix(&task_prefix)
+}
+
 pub fn ensure_repository_belongs_to_project(
     connection: &Connection,
     project_id: &str,
@@ -116,7 +134,7 @@ pub fn get_project_by_slug(
     let project = connection
         .query_row(
             r#"
-            SELECT id, slug, name, description, default_repository_id, created_at, updated_at
+            SELECT id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at
             FROM projects
             WHERE slug = ?1
             "#,
@@ -127,10 +145,11 @@ pub fn get_project_by_slug(
                     slug: row.get(1)?,
                     name: row.get(2)?,
                     description: row.get(3)?,
-                    default_repository_id: row.get(4)?,
+                    task_prefix: row.get(4)?,
+                    default_repository_id: row.get(5)?,
                     repositories: Vec::new(),
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
                 })
             },
         )
@@ -256,9 +275,15 @@ pub fn create_project(
     connection: &Connection,
     input: ProjectUpsertInput,
 ) -> Result<ProjectDetail, String> {
-    let normalized = normalize_project_input(input);
+    let normalized = normalize_project_input(input)?;
     if normalized.name.is_empty() {
         return Err("Project name is required.".into());
+    }
+    if task_prefix_exists(connection, &normalized.task_prefix, None)? {
+        return Err(format!(
+            "Task prefix {} is already used by another project.",
+            normalized.task_prefix
+        ));
     }
 
     let project_id = format!("project-{}", Uuid::new_v4().simple());
@@ -267,10 +292,10 @@ pub fn create_project(
     connection
         .execute(
             r#"
-            INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?5)
+            INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)
             "#,
-            params![project_id, slug, normalized.name, normalized.description, now],
+            params![project_id, slug, normalized.name, normalized.description, normalized.task_prefix, now],
         )
         .map_err(|error| format!("Unable to create project: {error}"))?;
 
@@ -285,17 +310,23 @@ pub fn update_project(
     project_id: &str,
     input: ProjectUpsertInput,
 ) -> Result<ProjectDetail, String> {
-    let normalized = normalize_project_input(input);
+    let normalized = normalize_project_input(input)?;
     let existing = get_project(connection, project_id)?;
     let slug = if sanitize_slug(&normalized.name) == sanitize_slug(&existing.name) {
         existing.slug.clone()
     } else {
         unique_project_slug(connection, &normalized.name, Some(project_id))?
     };
+    if task_prefix_exists(connection, &normalized.task_prefix, Some(project_id))? {
+        return Err(format!(
+            "Task prefix {} is already used by another project.",
+            normalized.task_prefix
+        ));
+    }
     connection
         .execute(
-            "UPDATE projects SET slug = ?2, name = ?3, description = ?4, updated_at = ?5 WHERE id = ?1",
-            params![project_id, slug, normalized.name, normalized.description, now_iso()],
+            "UPDATE projects SET slug = ?2, name = ?3, description = ?4, task_prefix = ?5, updated_at = ?6 WHERE id = ?1",
+            params![project_id, slug, normalized.name, normalized.description, normalized.task_prefix, now_iso()],
         )
         .map_err(|error| format!("Unable to update project {project_id}: {error}"))?;
     get_project(connection, project_id)
@@ -625,7 +656,45 @@ pub fn get_repository(
         .ok_or_else(|| format!("Repository {repository_id} was not found"))
 }
 
-fn normalize_project_input(mut input: ProjectUpsertInput) -> ProjectUpsertInput {
+const DEFAULT_PROJECT_ID: &str = "orchestra";
+const DEFAULT_REPOSITORY_ID: &str = "repo-orchestra";
+
+fn ensure_default_project(connection: &Connection) -> Result<(), String> {
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+        .map_err(|error| format!("Unable to count projects: {error}"))?;
+    if count > 0 {
+        return Ok(());
+    }
+
+    let now = now_iso();
+    let default_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .map(|path| path.join("orchestra").join("repository"))
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        });
+    connection
+        .execute(
+            "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', 'ORC', ?2, ?3, ?3)",
+            params![DEFAULT_PROJECT_ID, DEFAULT_REPOSITORY_ID, now],
+        )
+        .map_err(|error| format!("Unable to seed default project: {error}"))?;
+    connection
+        .execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'existing', 'main', ?4, ?4)",
+            params![DEFAULT_REPOSITORY_ID, DEFAULT_PROJECT_ID, default_path.display().to_string(), now],
+        )
+        .map_err(|error| format!("Unable to seed default repository: {error}"))?;
+    Ok(())
+}
+
+fn normalize_project_input(mut input: ProjectUpsertInput) -> Result<ProjectUpsertInput, String> {
     input.name = input.name.trim().to_string();
     input.description = input.description.and_then(|value| {
         let trimmed = value.trim();
@@ -635,7 +704,42 @@ fn normalize_project_input(mut input: ProjectUpsertInput) -> ProjectUpsertInput 
             Some(trimmed.to_string())
         }
     });
-    input
+    input.task_prefix = normalize_task_prefix(&input.task_prefix)?;
+    Ok(input)
+}
+
+fn normalize_task_prefix(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_uppercase();
+    if normalized.is_empty() {
+        return Err("Task prefix is required.".into());
+    }
+    if normalized.len() < 2 || normalized.len() > 8 {
+        return Err("Task prefix must start with a letter and contain only A-Z or 0-9.".into());
+    }
+    let mut characters = normalized.chars();
+    let Some(first) = characters.next() else {
+        return Err("Task prefix is required.".into());
+    };
+    if !first.is_ascii_alphabetic() || !characters.all(|character| character.is_ascii_alphanumeric()) {
+        return Err("Task prefix must start with a letter and contain only A-Z or 0-9.".into());
+    }
+    Ok(normalized)
+}
+
+fn task_prefix_exists(
+    connection: &Connection,
+    task_prefix: &str,
+    exclude_project_id: Option<&str>,
+) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT 1 FROM projects WHERE UPPER(task_prefix) = ?1 AND (?2 IS NULL OR id != ?2) LIMIT 1",
+            params![task_prefix, exclude_project_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query task prefix {task_prefix}: {error}"))
+        .map(|value| value.is_some())
 }
 
 fn normalize_repository_input(mut input: RepositoryUpsertInput) -> RepositoryUpsertInput {
@@ -1050,13 +1154,13 @@ mod tests {
         let now = "2026-04-03T00:00:00Z";
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-a', 'project-a', 'Project A', NULL, 'PA', NULL, ?1, ?1)",
                 [now],
             )
             .expect("project A should insert");
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, NULL, ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-b', 'project-b', 'Project B', NULL, 'PB', NULL, ?1, ?1)",
                 [now],
             )
             .expect("project B should insert");
@@ -1088,7 +1192,7 @@ mod tests {
 
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?5)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, 'PSS', ?4, ?5, ?5)",
                 params!["project-1", "pss-frontend", "PSS Frontend", "repo-1", "2026-04-02T00:00:00Z"],
             )
             .expect("project should insert");
@@ -1102,5 +1206,77 @@ mod tests {
         let resolved = resolve_project_runtime_root(&connection, "pss-frontend")
             .expect("runtime root should resolve");
         assert_eq!(resolved, repository_root);
+    }
+
+    #[test]
+    fn create_project_requires_unique_valid_task_prefix() {
+        let connection = in_memory_connection();
+        let created = create_project(
+            &connection,
+            ProjectUpsertInput {
+                name: "Client Project".into(),
+                description: None,
+                task_prefix: " cli ".into(),
+            },
+        )
+        .expect("project should create");
+        assert_eq!(created.task_prefix, "CLI");
+
+        let duplicate_error = create_project(
+            &connection,
+            ProjectUpsertInput {
+                name: "Another Client Project".into(),
+                description: None,
+                task_prefix: "cli".into(),
+            },
+        )
+        .expect_err("duplicate prefixes should fail");
+        assert!(duplicate_error.contains("Task prefix CLI is already used by another project."));
+
+        let missing_error = create_project(
+            &connection,
+            ProjectUpsertInput {
+                name: "Missing Prefix".into(),
+                description: None,
+                task_prefix: " ".into(),
+            },
+        )
+        .expect_err("missing prefixes should fail");
+        assert!(missing_error.contains("Task prefix is required."));
+    }
+
+    #[test]
+    fn update_project_rejects_duplicate_task_prefixes() {
+        let connection = in_memory_connection();
+        let project_a = create_project(
+            &connection,
+            ProjectUpsertInput {
+                name: "Project A".into(),
+                description: None,
+                task_prefix: "PA".into(),
+            },
+        )
+        .expect("project A should create");
+        let project_b = create_project(
+            &connection,
+            ProjectUpsertInput {
+                name: "Project B".into(),
+                description: None,
+                task_prefix: "PB".into(),
+            },
+        )
+        .expect("project B should create");
+
+        let error = update_project(
+            &connection,
+            &project_b.id,
+            ProjectUpsertInput {
+                name: project_b.name.clone(),
+                description: project_b.description.clone(),
+                task_prefix: project_a.task_prefix.clone(),
+            },
+        )
+        .expect_err("duplicate update should fail");
+        assert!(error.contains("Task prefix PA is already used by another project."));
     }
 }

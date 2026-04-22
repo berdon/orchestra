@@ -96,7 +96,7 @@ pub fn available_session_prompt_tokens() -> Vec<SessionPromptToken> {
         },
         SessionPromptToken {
             token: "{TASK.NUMBER}".into(),
-            description: "Human-readable task number such as ORC-42.".into(),
+            description: "Human-readable task number such as <PROJECT_PREFIX>-42.".into(),
         },
         SessionPromptToken {
             token: "{TASK.SLUG}".into(),

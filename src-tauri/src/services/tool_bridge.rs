@@ -2501,7 +2501,7 @@ mod tests {
         let now = "2026-03-22T00:00:00Z";
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'repo-1', ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'P1', 'repo-1', ?1, ?1)",
                 [now],
             )
             .expect("project should seed");
@@ -2572,7 +2572,7 @@ mod tests {
             let project_slug = project_id.clone();
             connection
                 .execute(
-                    "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES (?1, ?2, 'Project 2', NULL, NULL, ?3, ?3)",
+                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, 'Project 2', NULL, 'P2', NULL, ?3, ?3)",
                     rusqlite::params![project_id, project_slug, now],
                 )
                 .expect("project should seed");

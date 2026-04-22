@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { buildSeededMockProjects, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
+import { normalizeTaskPrefix, suggestTaskPrefix, validateTaskPrefix } from "./taskPrefixes";
 import type {
   ProjectDetail,
   ProjectSummary,
@@ -123,10 +124,53 @@ function seedMockProjects(): ProjectDetail[] {
   return buildSeededMockProjects(nowIso());
 }
 
+function validateMockProjectInput(input: ProjectUpsertInput, existingProjects: ProjectDetail[], projectId?: string) {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Project name is required.");
+  }
+
+  const taskPrefixError = validateTaskPrefix(input.taskPrefix);
+  if (taskPrefixError) {
+    throw new Error(taskPrefixError);
+  }
+
+  const normalizedTaskPrefix = normalizeTaskPrefix(input.taskPrefix);
+  const duplicate = existingProjects.some((project) => project.id !== projectId && normalizeTaskPrefix(project.taskPrefix) === normalizedTaskPrefix);
+  if (duplicate) {
+    throw new Error(`Task prefix ${normalizedTaskPrefix} is already used by another project.`);
+  }
+
+  return { name, taskPrefix: normalizedTaskPrefix };
+}
+
+function migrateStoredProjects(projects: ProjectDetail[]) {
+  const usedPrefixes = new Set<string>();
+  let changed = false;
+  const migratedProjects = projects.map((project) => {
+    const normalizedTaskPrefix = normalizeTaskPrefix(project.taskPrefix);
+    const nextTaskPrefix = !validateTaskPrefix(normalizedTaskPrefix) && !usedPrefixes.has(normalizedTaskPrefix)
+      ? normalizedTaskPrefix
+      : suggestTaskPrefix(project.id === DEFAULT_INSTALL_BASELINE_PROJECT_ID ? "Orchestra" : project.name, usedPrefixes);
+    usedPrefixes.add(nextTaskPrefix);
+    if (project.taskPrefix === nextTaskPrefix) {
+      return project;
+    }
+    changed = true;
+    return { ...project, taskPrefix: nextTaskPrefix };
+  });
+
+  if (changed) {
+    saveStoredProjects(migratedProjects);
+  }
+
+  return migratedProjects;
+}
+
 function ensureMockProjects() {
   const existing = getStoredProjects();
   if (existing) {
-    return existing;
+    return migrateStoredProjects(existing);
   }
 
   const seeded = seedMockProjects();
@@ -224,19 +268,21 @@ function emitProjectsChanged() {
 export async function createProject(input: ProjectUpsertInput): Promise<ProjectDetail> {
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
+    const { name, taskPrefix } = validateMockProjectInput(input, projects);
     const timestamp = nowIso();
     const project: ProjectDetail = {
       id: createId("project"),
-      slug: slugify(input.name),
-      name: input.name.trim(),
+      slug: slugify(name),
+      name,
       description: input.description?.trim() || null,
+      taskPrefix,
       defaultRepositoryId: null,
       repositories: [],
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     saveStoredProjects([project, ...projects]);
-    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, project.id);
+    setActiveProjectId(project.id);
     return project;
   }
 
@@ -252,11 +298,13 @@ export async function updateProject(projectId: string, input: ProjectUpsertInput
     if (!existing) {
       throw new Error(`Project ${projectId} was not found`);
     }
+    const { name, taskPrefix } = validateMockProjectInput(input, projects, projectId);
     const updated: ProjectDetail = {
       ...existing,
-      slug: slugify(input.name),
-      name: input.name.trim(),
+      slug: slugify(name),
+      name,
       description: input.description?.trim() || null,
+      taskPrefix,
       updatedAt: nowIso(),
     };
     saveStoredProjects(projects.map((project) => (project.id === projectId ? updated : project)));

@@ -17,6 +17,7 @@ import {
   getTaskAutomationSettings,
   updateTaskAutomationSettings,
 } from "../lib/projectSettings";
+import { normalizeTaskPrefix, suggestTaskPrefix, validateTaskPrefix } from "../lib/taskPrefixes";
 import type {
   ProjectDetail,
   ProjectSummary,
@@ -27,7 +28,7 @@ import type {
 } from "../types";
 
 function createBlankProjectDraft(): ProjectUpsertInput {
-  return { name: "", description: "" };
+  return { name: "", description: "", taskPrefix: "" };
 }
 
 function createBlankRepositoryDraft(): RepositoryUpsertInput {
@@ -49,6 +50,7 @@ export function ProjectsPanel() {
   const [taskAutomationSettings, setTaskAutomationSettings] = useState<ProjectTaskAutomationSettings | null>(null);
   const [autoDispatchOnBlockerCompletion, setAutoDispatchOnBlockerCompletion] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [projectTaskPrefixEdited, setProjectTaskPrefixEdited] = useState(false);
   const [deleteProjectConfirmationArmed, setDeleteProjectConfirmationArmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -58,6 +60,21 @@ export function ProjectsPanel() {
     () => (isCreatingProject ? null : projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null),
     [isCreatingProject, projects, selectedProjectId],
   );
+  const projectTaskPrefixError = useMemo(() => {
+    const formatError = validateTaskPrefix(projectDraft.taskPrefix);
+    if (formatError) {
+      return formatError;
+    }
+
+    const normalizedTaskPrefix = normalizeTaskPrefix(projectDraft.taskPrefix);
+    const duplicate = projects.some((project) => project.id !== selectedProject?.id && normalizeTaskPrefix(project.taskPrefix) === normalizedTaskPrefix);
+    if (duplicate) {
+      return `Task prefix ${normalizedTaskPrefix} is already used by another project.`;
+    }
+
+    return null;
+  }, [projectDraft.taskPrefix, projects, selectedProject?.id]);
+  const saveProjectDisabled = saving || !projectDraft.name.trim() || Boolean(projectTaskPrefixError);
 
   async function loadProjects() {
     setLoading(true);
@@ -80,8 +97,9 @@ export function ProjectsPanel() {
       const detail = await getProject(projectId);
       const automationSettings = await getTaskAutomationSettings(detail.slug);
       setProjectDetail(detail);
-      setProjectDraft({ name: detail.name, description: detail.description ?? "" });
+      setProjectDraft({ name: detail.name, description: detail.description ?? "", taskPrefix: detail.taskPrefix });
       setTaskAutomationSettings(automationSettings);
+      setProjectTaskPrefixEdited(false);
       setAutoDispatchOnBlockerCompletion(automationSettings.autoDispatchOnBlockerCompletion);
       setIsCreatingProject(false);
     } catch (nextError) {
@@ -102,7 +120,21 @@ export function ProjectsPanel() {
     }
   }, [selectedProject?.id]);
 
+  function handleProjectNameChange(value: string) {
+    setProjectDraft((current) => ({
+      ...current,
+      name: value,
+      taskPrefix: isCreatingProject && !projectTaskPrefixEdited
+        ? (value.trim() ? suggestTaskPrefix(value, projects.map((project) => project.taskPrefix)) : "")
+        : current.taskPrefix,
+    }));
+  }
+
   async function handleSaveProject() {
+    if (saveProjectDisabled) {
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -270,6 +302,7 @@ export function ProjectsPanel() {
             setRemoteDraft(createBlankRemoteDraft());
             setTaskAutomationSettings(null);
             setAutoDispatchOnBlockerCompletion(false);
+            setProjectTaskPrefixEdited(false);
             setIsCreatingProject(true);
           }}>
             New project
@@ -290,7 +323,7 @@ export function ProjectsPanel() {
                 setSelectedProjectId(project.id);
               }}
             >
-              <span className="task-list-link__eyebrow">{project.slug}</span>
+              <span className="task-list-link__eyebrow">{project.slug} · {project.taskPrefix}</span>
               <strong>{project.name}</strong>
             </a>
           ))}
@@ -304,6 +337,7 @@ export function ProjectsPanel() {
             <div>
               <p className="eyebrow">Project detail</p>
               <h3>{selectedProject ? selectedProject.name : "New project"}</h3>
+              <p className="muted-copy">Task prefix: {selectedProject?.taskPrefix ?? (normalizeTaskPrefix(projectDraft.taskPrefix) || "—")}</p>
             </div>
             <div className="row-actions">
               {selectedProject ? (
@@ -331,7 +365,7 @@ export function ProjectsPanel() {
                   ) : null}
                 </>
               ) : null}
-              <button className="primary-button" type="button" disabled={saving} onClick={() => void handleSaveProject()}>
+              <button className="primary-button" type="button" disabled={saveProjectDisabled} onClick={() => void handleSaveProject()}>
                 {saving ? "Saving…" : selectedProject ? "Save project" : "Create project"}
               </button>
             </div>
@@ -340,7 +374,22 @@ export function ProjectsPanel() {
           <div className="task-editor-grid">
             <label className="field-group">
               <span className="field-group__label">Name</span>
-              <input className="text-input" data-role="project-name" value={projectDraft.name} onChange={(event) => setProjectDraft((current) => ({ ...current, name: event.target.value }))} />
+              <input className="text-input" data-role="project-name" value={projectDraft.name} onChange={(event) => handleProjectNameChange(event.target.value)} />
+            </label>
+            <label className="field-group">
+              <span className="field-group__label">Task prefix</span>
+              <input
+                className="text-input"
+                data-role="project-task-prefix"
+                value={projectDraft.taskPrefix}
+                onChange={(event) => {
+                  setProjectTaskPrefixEdited(true);
+                  setProjectDraft((current) => ({ ...current, taskPrefix: event.target.value }));
+                }}
+              />
+              <span className="muted-copy">Used for new task numbers such as {normalizeTaskPrefix(projectDraft.taskPrefix) || "APP"}-42.</span>
+              <span className="muted-copy">Changing the prefix only affects tasks created after this change.</span>
+              {projectTaskPrefixError ? <span className="error-copy">{projectTaskPrefixError}</span> : null}
             </label>
             <label className="field-group task-editor-grid__full">
               <span className="field-group__label">Description</span>

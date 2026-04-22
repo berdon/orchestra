@@ -28,6 +28,7 @@ struct SeedProject {
     slug: String,
     name: String,
     description: Option<String>,
+    task_prefix: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -135,10 +136,10 @@ fn table_count(connection: &Connection, table: &str) -> Result<i64, String> {
 fn seed_project(tx: &Transaction<'_>, project: &SeedProject, now: &str) -> Result<(), String> {
     tx.execute(
         r#"
-        INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?5)
+        INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)
         "#,
-        params![project.id, project.slug, project.name, project.description, now],
+        params![project.id, project.slug, project.name, project.description, project.task_prefix, now],
     )
     .map_err(|error| format!("Unable to seed default project: {error}"))?;
     Ok(())

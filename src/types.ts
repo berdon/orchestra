@@ -200,6 +200,7 @@ export interface ProjectSummary {
   slug: string;
   name: string;
   description?: string | null;
+  taskPrefix: string;
   defaultRepositoryId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -226,6 +227,7 @@ export interface ProjectDetail extends ProjectSummary {
 export interface ProjectUpsertInput {
   name: string;
   description?: string | null;
+  taskPrefix: string;
 }
 
 export interface RepositoryUpsertInput {

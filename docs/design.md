@@ -267,7 +267,7 @@ Tasks are workflow-driven work items, but they also need to model planning struc
 Suggested task fields:
 - `id`
 - `projectId`
-- `number`  # project-local human-readable id such as `ORC-42`
+- `number`  # project-local human-readable id such as `<PROJECT_PREFIX>-42`
 - `title`
 - `description`
 - `type` (`task`, `bug`, `feature`, `chore`, `epic`)

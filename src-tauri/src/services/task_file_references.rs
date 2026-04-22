@@ -374,7 +374,7 @@ mod tests {
         let now = now_iso();
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project', 'Project', NULL, 'repo-1', ?1, ?1)",
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project', 'Project', NULL, 'PRJ', 'repo-1', ?1, ?1)",
                 [now.as_str()],
             )
             .expect("insert project");

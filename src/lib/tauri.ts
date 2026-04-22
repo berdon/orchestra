@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildSeededMockProjects, buildSeededMockWorkflows, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
-import { sortSessionRecords } from "./sessionList";
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
+import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
+import { sortSessionRecords } from "./sessionList";
 import type {
   AgentSummary,
   AppInfo,
@@ -1626,24 +1627,37 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
+function getMockProjectTaskPrefix(projectId: string) {
+  const value = window.localStorage.getItem("orchestra.mock.projects");
+  if (!value) {
+    return "ORC";
+  }
+
+  const projects = JSON.parse(value) as Array<{ id: string; taskPrefix?: string | null }>;
+  return projects.find((project) => project.id === projectId)?.taskPrefix?.trim().toUpperCase() || "ORC";
+}
+
+function getTaskSequenceNumber(taskNumber?: string | null) {
+  const parsed = parseTaskNumber(taskNumber);
+  return Number.isFinite(parsed.sequence) ? parsed.sequence : 0;
+}
+
 function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMockTask, projectId?: string | null): StoredMockTask {
   const timestamp = nowIso();
   const previousTasks = ensureMockTasks();
   const workflow = input.workflowId ? ensureMockWorkflows().find((entry) => entry.id === input.workflowId) : null;
   const resolvedLaneId = input.currentLaneId?.trim() || workflow?.lanes.slice().sort((left, right) => left.order - right.order)[0]?.id || null;
   const resolvedLane = workflow?.lanes.find((entry) => entry.id === resolvedLaneId) ?? null;
-  const nextSequence = existingTask
-    ? Number(existingTask.number.replace(/^ORC-/, "")) || previousTasks.length + 1
-    : previousTasks.reduce((highest, task) => {
-        const sequence = Number(task.number.replace(/^ORC-/, "")) || 0;
-        return Math.max(highest, sequence);
-      }, 0) + 1;
   const resolvedProjectId = existingTask?.projectId ?? resolveMockProjectIdOrThrow(projectId ?? getActiveProjectId());
+  const projectTasks = previousTasks.filter((task) => task.projectId === resolvedProjectId);
+  const nextSequence = existingTask
+    ? getTaskSequenceNumber(existingTask.number) || projectTasks.length + 1
+    : projectTasks.reduce((highest, task) => Math.max(highest, getTaskSequenceNumber(task.number)), 0) + 1;
 
   return {
     id: existingTask?.id ?? createId("task"),
     projectId: resolvedProjectId,
-    number: existingTask?.number ?? `ORC-${nextSequence}`,
+    number: existingTask?.number ?? formatTaskNumber(getMockProjectTaskPrefix(resolvedProjectId), nextSequence),
     title: input.title.trim(),
     description: input.description?.trim() || null,
     type: input.type,

@@ -83,7 +83,7 @@ const DEFAULT_SESSION_PROMPT_TEMPLATE = [
 
 const SESSION_PROMPT_TOKENS = [
   { token: "{TASK.ID}", description: "Canonical Orchestra task id." },
-  { token: "{TASK.NUMBER}", description: "Human-readable task number such as ORC-42." },
+  { token: "{TASK.NUMBER}", description: "Human-readable task number such as <PROJECT_PREFIX>-42." },
   { token: "{TASK.SLUG}", description: "Slugified task title for prompt customization." },
   { token: "{TASK.NAME}", description: "Task title/name." },
   { token: "{TASK.STATUS}", description: "Current task status." },

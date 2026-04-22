@@ -4,7 +4,8 @@
     "id": "orchestra",
     "slug": "orchestra",
     "name": "Orchestra",
-    "description": "Seeded starter workspace for strategy, planning, and development work. You can rename, replace, archive, or delete it at any time."
+    "description": "Seeded starter workspace for strategy, planning, and development work. You can rename, replace, archive, or delete it at any time.",
+    "taskPrefix": "ORC"
   },
   "roles": [
     {

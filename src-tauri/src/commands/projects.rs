@@ -41,7 +41,7 @@ pub fn create_project(
             topic: "project.created".into(),
             entity_type: "project".into(),
             entity_id: Some(project.id.clone()),
-            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone() }),
+            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone(), "taskPrefix": project.task_prefix.clone() }),
         },
     );
     Ok(project)
@@ -67,7 +67,7 @@ pub fn update_project(
             topic: "project.updated".into(),
             entity_type: "project".into(),
             entity_id: Some(project.id.clone()),
-            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone() }),
+            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone(), "taskPrefix": project.task_prefix.clone() }),
         },
     );
     Ok(project)
@@ -105,7 +105,7 @@ pub fn delete_project(
             topic: "project.deleted".into(),
             entity_type: "project".into(),
             entity_id: Some(deleted.id.clone()),
-            payload: json!({ "projectId": deleted.id.clone(), "slug": deleted.slug.clone(), "name": deleted.name.clone() }),
+            payload: json!({ "projectId": deleted.id.clone(), "slug": deleted.slug.clone(), "name": deleted.name.clone(), "taskPrefix": deleted.task_prefix.clone() }),
         },
     );
     Ok(deleted)
@@ -250,7 +250,7 @@ pub fn set_project_default_repository(
             topic: "project.updated".into(),
             entity_type: "project".into(),
             entity_id: Some(project.id.clone()),
-            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone() }),
+            payload: json!({ "projectId": project.id.clone(), "slug": project.slug.clone(), "name": project.name.clone(), "taskPrefix": project.task_prefix.clone() }),
         },
     );
     Ok(project)

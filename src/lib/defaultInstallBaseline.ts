@@ -9,6 +9,7 @@ type DefaultInstallBaselineCatalog = {
     slug: string;
     name: string;
     description?: string | null;
+    taskPrefix: string;
   };
   roles: Array<{
     id: string;
@@ -78,6 +79,7 @@ export function buildSeededMockProjects(timestamp = new Date().toISOString()): P
       slug: baselineCatalog.project.slug,
       name: baselineCatalog.project.name,
       description: baselineCatalog.project.description ?? null,
+      taskPrefix: baselineCatalog.project.taskPrefix,
       defaultRepositoryId: null,
       createdAt: timestamp,
       updatedAt: timestamp,

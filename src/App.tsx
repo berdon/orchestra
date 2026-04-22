@@ -1628,8 +1628,12 @@ export function App() {
   useEffect(() => {
     const loadProjectCatalog = () => {
       void listProjects().then((nextProjects) => {
+        const storedActiveProjectId = getActiveProjectId();
         setProjects(nextProjects);
         setActiveProjectIdState((current) => {
+          if (storedActiveProjectId && nextProjects.some((project) => project.id === storedActiveProjectId)) {
+            return storedActiveProjectId;
+          }
           if (current && nextProjects.some((project) => project.id === current)) {
             return current;
           }

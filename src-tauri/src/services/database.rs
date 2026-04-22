@@ -92,6 +92,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 slug TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 description TEXT,
+                task_prefix TEXT NOT NULL,
                 default_repository_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -823,6 +824,9 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|error| format!("Unable to initialize Orchestra database schema: {error}"))?;
 
+    ensure_projects_table_columns(connection)?;
+    backfill_missing_project_task_prefixes(connection)?;
+    ensure_projects_task_prefix_index(connection)?;
     ensure_agents_table_columns(connection)?;
     backfill_missing_agent_slugs(connection)?;
     ensure_agents_slug_index(connection)?;
@@ -843,6 +847,215 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
     Ok(())
+}
+
+fn ensure_projects_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "projects")?;
+
+    if !columns.contains("task_prefix") {
+        connection
+            .execute("ALTER TABLE projects ADD COLUMN task_prefix TEXT", [])
+            .map_err(|error| format!("Unable to add task_prefix column to projects table: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn backfill_missing_project_task_prefixes(connection: &Connection) -> Result<(), String> {
+    let projects = connection
+        .prepare(
+            r#"
+            SELECT id, slug, name, task_prefix
+            FROM projects
+            ORDER BY CASE WHEN id = 'orchestra' OR slug = 'orchestra' THEN 0 ELSE 1 END, created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare project prefix backfill query: {error}"))?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to query projects for prefix backfill: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect projects for prefix backfill: {error}"))?;
+
+    let mut used_prefixes = HashSet::new();
+
+    for (project_id, project_slug, project_name, stored_prefix) in projects {
+        let normalized_existing = stored_prefix
+            .as_deref()
+            .and_then(normalize_task_prefix_candidate)
+            .filter(|prefix| !used_prefixes.contains(prefix));
+
+        let task_prefix = if let Some(prefix) = normalized_existing {
+            prefix
+        } else if let Some(prefix) = infer_existing_project_task_prefix(connection, &project_id)?
+            .filter(|prefix| !used_prefixes.contains(prefix))
+        {
+            prefix
+        } else if is_default_project(&project_id, &project_slug) && !used_prefixes.contains("ORC") {
+            "ORC".into()
+        } else {
+            next_available_project_task_prefix(&project_name, &project_slug, &used_prefixes)
+        };
+
+        used_prefixes.insert(task_prefix.clone());
+
+        if stored_prefix.as_deref() != Some(task_prefix.as_str()) {
+            connection
+                .execute(
+                    "UPDATE projects SET task_prefix = ?2 WHERE id = ?1",
+                    params![project_id, task_prefix],
+                )
+                .map_err(|error| {
+                    format!("Unable to backfill task prefix for project {project_id}: {error}")
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_projects_task_prefix_index(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_task_prefix_unique ON projects(UPPER(task_prefix))",
+            [],
+        )
+        .map_err(|error| format!("Unable to create unique projects task prefix index: {error}"))?;
+    Ok(())
+}
+
+fn is_default_project(project_id: &str, project_slug: &str) -> bool {
+    project_id == "orchestra" || project_slug == "orchestra"
+}
+
+fn infer_existing_project_task_prefix(
+    connection: &Connection,
+    project_id: &str,
+) -> Result<Option<String>, String> {
+    let numbers = connection
+        .prepare(
+            "SELECT number FROM tasks WHERE project_id = ?1 ORDER BY sequence_number ASC, created_at ASC",
+        )
+        .map_err(|error| format!("Unable to prepare task number query for project {project_id}: {error}"))?
+        .query_map([project_id], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query task numbers for project {project_id}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect task numbers for project {project_id}: {error}"))?;
+
+    let prefixes = numbers
+        .into_iter()
+        .filter_map(|number| task_prefix_from_number(&number))
+        .filter(|prefix| prefix != "ORC")
+        .collect::<HashSet<_>>();
+
+    if prefixes.len() == 1 {
+        Ok(prefixes.into_iter().next())
+    } else {
+        Ok(None)
+    }
+}
+
+fn task_prefix_from_number(number: &str) -> Option<String> {
+    let (prefix, suffix) = number.rsplit_once('-')?;
+    if suffix.is_empty() || !suffix.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    normalize_task_prefix_candidate(prefix)
+}
+
+fn normalize_task_prefix_candidate(value: &str) -> Option<String> {
+    let normalized = value.trim().to_uppercase();
+    if normalized.len() < 2 || normalized.len() > 8 {
+        return None;
+    }
+    let mut characters = normalized.chars();
+    let first = characters.next()?;
+    if !first.is_ascii_alphabetic() || !characters.all(|character| character.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn next_available_project_task_prefix(
+    project_name: &str,
+    project_slug: &str,
+    used_prefixes: &HashSet<String>,
+) -> String {
+    let base = project_task_prefix_base(project_name, project_slug);
+    let mut candidate = base.clone();
+    let mut suffix = 2;
+
+    while used_prefixes.contains(&candidate) {
+        let suffix_text = suffix.to_string();
+        let base_length = (8usize.saturating_sub(suffix_text.len())).max(1);
+        let trimmed_base = &base[..base.len().min(base_length)];
+        candidate = format!("{trimmed_base}{suffix_text}");
+        suffix += 1;
+    }
+
+    candidate
+}
+
+fn project_task_prefix_base(project_name: &str, project_slug: &str) -> String {
+    let words = project_name
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter_map(|part| {
+            let normalized = uppercase_ascii_alphanumeric(part);
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut candidate = if words.len() > 1 {
+        words
+            .iter()
+            .filter_map(|word| word.chars().next())
+            .collect::<String>()
+    } else {
+        uppercase_ascii_alphanumeric(project_name)
+            .chars()
+            .take(3)
+            .collect::<String>()
+    };
+
+    if candidate.len() < 2 {
+        candidate = uppercase_ascii_alphanumeric(project_name);
+    }
+    if candidate.len() < 2 {
+        candidate = uppercase_ascii_alphanumeric(project_slug);
+    }
+    if candidate.is_empty() {
+        candidate = "PR".into();
+    }
+    if !candidate.chars().next().is_some_and(|character| character.is_ascii_alphabetic()) {
+        candidate = format!("P{candidate}");
+    }
+    if candidate.len() < 2 {
+        candidate.push('X');
+    }
+    candidate.truncate(8);
+    if candidate.len() < 2 {
+        candidate = format!("{candidate}X");
+        candidate.truncate(2);
+    }
+    candidate
+}
+
+fn uppercase_ascii_alphanumeric(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(|character| character.to_uppercase())
+        .collect()
 }
 
 fn ensure_remote_access_settings_columns(connection: &Connection) -> Result<(), String> {
@@ -1851,6 +2064,117 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .expect("journal mode should query");
         assert_eq!(journal_mode.to_lowercase(), "wal");
+    }
+
+    #[test]
+    fn migrates_legacy_projects_table_and_backfills_task_prefixes() {
+        let path = unique_temp_db("projects-task-prefix-migration");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE projects (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    default_repository_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL,
+                    number TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    workflow_id TEXT,
+                    current_lane_id TEXT,
+                    assignee_type TEXT NOT NULL,
+                    assignee_id TEXT,
+                    repository_id TEXT,
+                    parent_task_id TEXT,
+                    whip_max_attempts INTEGER NOT NULL DEFAULT 10,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at)
+                VALUES
+                    ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z'),
+                    ('project-client', 'client-portal', 'Client Portal', NULL, NULL, '2026-04-01T00:00:01Z', '2026-04-01T00:00:01Z'),
+                    ('project-web', 'web-platform', 'Web Platform', NULL, NULL, '2026-04-01T00:00:02Z', '2026-04-01T00:00:02Z');
+
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status, priority,
+                    workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id,
+                    whip_max_attempts, archived, created_at, updated_at
+                ) VALUES
+                    ('task-orc-1', 'orchestra', 1, 'ORC-1', 'Default task', NULL, 'task', 'ready', 'P2', NULL, NULL, 'user', NULL, NULL, NULL, 10, 0, '2026-04-01T00:00:10Z', '2026-04-01T00:00:10Z'),
+                    ('task-client-1', 'project-client', 1, 'ORC-1', 'Legacy client task', NULL, 'task', 'ready', 'P2', NULL, NULL, 'user', NULL, NULL, NULL, 10, 0, '2026-04-01T00:00:11Z', '2026-04-01T00:00:11Z'),
+                    ('task-web-1', 'project-web', 1, 'WEB2-1', 'Web task', NULL, 'task', 'ready', 'P2', NULL, NULL, 'user', NULL, NULL, NULL, 10, 0, '2026-04-01T00:00:12Z', '2026-04-01T00:00:12Z');
+                "#,
+            )
+            .expect("legacy schema should seed");
+        drop(connection);
+
+        initialize_database_at(&path).expect("database migration should succeed");
+        let connection = Connection::open(&path).expect("migrated database should open");
+
+        let columns = table_columns(&connection, "projects").expect("projects columns should load");
+        assert!(columns.contains("task_prefix"));
+
+        let prefixes = connection
+            .prepare("SELECT id, task_prefix FROM projects ORDER BY id ASC")
+            .expect("prefix query should prepare")
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .expect("prefix query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("prefix rows should collect");
+        assert_eq!(
+            prefixes,
+            vec![
+                ("orchestra".into(), "ORC".into()),
+                ("project-client".into(), "CP".into()),
+                ("project-web".into(), "WEB2".into()),
+            ]
+        );
+
+        let task_numbers = connection
+            .prepare("SELECT id, number FROM tasks ORDER BY id ASC")
+            .expect("task query should prepare")
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .expect("task query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("task numbers should collect");
+        assert_eq!(
+            task_numbers,
+            vec![
+                ("task-client-1".into(), "ORC-1".into()),
+                ("task-orc-1".into(), "ORC-1".into()),
+                ("task-web-1".into(), "WEB2-1".into()),
+            ]
+        );
+
+        let indexes = connection
+            .prepare("PRAGMA index_list('projects')")
+            .expect("index query should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("index query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("indexes should collect");
+        assert!(indexes
+            .iter()
+            .any(|name| name == "idx_projects_task_prefix_unique"));
     }
 
     #[test]
