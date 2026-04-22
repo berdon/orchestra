@@ -52,15 +52,32 @@ describe("taskListQuery", () => {
     ];
 
     expect(applyTaskListQuery(tasks, {
-      tags: ["backend", "urgent"],
+      tags: [" backend ", "URGENT", "urgent"],
       tagMatch: "all",
       sort: { field: "tags", direction: "asc" },
     }).map((task) => task.id)).toEqual(["mixed"]);
 
     expect(applyTaskListQuery(tasks, {
-      tags: ["backend", "frontend"],
+      tags: ["backend", "FRONTEND"],
       tagMatch: "any",
       sort: { field: "tags", direction: "asc" },
     }).map((task) => task.id)).toEqual(["backend", "mixed", "frontend"]);
+  });
+
+  test("keeps untagged tasks last for tag sorting in both directions", () => {
+    const tasks = [
+      makeTask({ id: "backend", number: "ORC-1", title: "Backend", tags: ["backend"] }),
+      makeTask({ id: "mixed", number: "ORC-2", title: "Mixed", tags: ["backend", "urgent"] }),
+      makeTask({ id: "api", number: "ORC-3", title: "API", tags: ["api"] }),
+      makeTask({ id: "untagged", number: "ORC-4", title: "Untagged", tags: [] }),
+    ];
+
+    expect(applyTaskListQuery(tasks, {
+      sort: { field: "tags", direction: "asc" },
+    }).map((task) => task.id)).toEqual(["api", "backend", "mixed", "untagged"]);
+
+    expect(applyTaskListQuery(tasks, {
+      sort: { field: "tags", direction: "desc" },
+    }).map((task) => task.id)).toEqual(["mixed", "backend", "api", "untagged"]);
   });
 });

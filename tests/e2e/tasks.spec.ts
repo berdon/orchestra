@@ -683,7 +683,7 @@ test("tasks overview filters and sorts by tags and renders compact tags across c
   await page.locator('[data-role="task-sort-direction"]').selectOption("asc");
 
   await expect(page.locator('[data-role="task-table"]')).toBeVisible();
-  await expect(page.locator('[data-role="task-table-row"]').first()).toContainText("Untagged task");
+  await expect(page.locator('[data-role="task-table-row"]').last()).toContainText("Untagged task");
   await expect(page.locator('[data-role="task-table-row"]').filter({ hasText: "Untagged task" })).toContainText("—");
   await expect(page.locator('[data-role="task-table-row"]').filter({ hasText: "Mixed tagged task" }).locator('[data-role="task-tag-list"]')).toContainText("#backend");
   await expect(page.locator('[data-role="task-table-row"]').filter({ hasText: "Mixed tagged task" }).locator('[data-role="task-tag-overflow"]')).toContainText("+1");

@@ -3194,6 +3194,53 @@ mod tests {
 
         let loaded = get_task(&connection, &created.id).expect("task should load");
         assert_eq!(loaded.tags, vec!["backend", "ops_1", "urgent"]);
+
+        let context = get_task_context(&connection, &created.id).expect("task context should load");
+        assert_eq!(context.tags, vec!["backend", "ops_1", "urgent"]);
+    }
+
+    #[test]
+    fn list_task_filters_and_sorts_do_not_duplicate_multi_tag_tasks() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let shared = create_task_with_tags(
+            &mut connection,
+            "Backend urgent ops",
+            vec!["backend", "urgent", "ops"],
+        );
+        let backend = create_task_with_tags(&mut connection, "Backend only", vec!["backend"]);
+        let urgent = create_task_with_tags(&mut connection, "Urgent only", vec!["urgent"]);
+        create_task_with_tags(&mut connection, "Untagged", vec![]);
+
+        let query = TaskListQuery::from_raw(
+            Some(false),
+            Some(vec!["backend".into(), "urgent".into()]),
+            Some("any"),
+            Some("title"),
+            Some("asc"),
+        )
+        .expect("query should parse");
+        let listed = list_tasks_with_query(&connection, DEFAULT_PROJECT_ID, query)
+            .expect("tasks should list");
+        let listed_ids = listed
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>();
+        let listed_titles = listed
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(listed_titles, vec!["Backend only", "Backend urgent ops", "Urgent only"]);
+        assert!(listed_ids.contains(&backend.id.as_str()));
+        assert!(listed_ids.contains(&shared.id.as_str()));
+        assert!(listed_ids.contains(&urgent.id.as_str()));
+        assert_eq!(listed_ids.len(), 3);
+        assert_eq!(
+            listed_ids.iter().copied().collect::<std::collections::HashSet<_>>().len(),
+            listed_ids.len()
+        );
     }
 
     #[test]
@@ -3573,6 +3620,72 @@ mod tests {
 
         assert!(cleared.tags.is_empty());
         assert!(load_persisted_task_tags(&connection, &created.id).is_empty());
+    }
+
+    #[test]
+    fn invalid_tag_updates_do_not_partially_write() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let created = create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Stable tags".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: vec!["backend".into(), "urgent".into()],
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let error = update_task(
+            &mut connection,
+            &created.id,
+            TaskUpsertInput {
+                title: created.title.clone(),
+                description: created.description.clone(),
+                task_type: created.task_type.clone(),
+                tags: vec!["ops".into(), "bad tag".into()],
+                status: created.status.clone(),
+                priority: created.priority.clone(),
+                workflow_id: created.workflow_id.clone(),
+                current_lane_id: created.current_lane_id.clone(),
+                assignee_type: created.assignee_type.clone(),
+                assignee_id: created.assignee_id.clone(),
+                repository_id: created.repository_id.clone(),
+                repository_ids: created.repository_ids.clone(),
+                parent_task_id: created.parent_task_id.clone(),
+                whip_max_attempts: Some(created.whip_max_attempts),
+                archived: Some(created.archived),
+            },
+        )
+        .expect_err("invalid update should fail");
+
+        assert!(error.contains(
+            "Task tags may only contain lowercase letters, digits, hyphens, and underscores."
+        ));
+        assert_eq!(
+            load_persisted_task_tags(&connection, &created.id),
+            vec!["backend", "urgent"]
+        );
+        assert_eq!(
+            get_task_context(&connection, &created.id)
+                .expect("task context should load")
+                .tags,
+            vec!["backend", "urgent"]
+        );
     }
 
     #[test]

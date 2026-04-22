@@ -1,3 +1,4 @@
+import { normalizeTaskTags } from "./taskTags";
 import type { TaskListQuery, TaskListSort, TaskSummary } from "../types";
 
 export const DEFAULT_TASK_LIST_SORT: TaskListSort = {
@@ -24,12 +25,16 @@ const STATUS_ORDER: Record<string, number> = {
 };
 
 function normalizeTagValue(tag: string) {
-  return tag.trim();
+  return tag.trim().toLowerCase();
+}
+
+function buildTagSortKey(task: Pick<TaskSummary, "tags">) {
+  return getTaskTags(task).join("\u0000");
 }
 
 export function getTaskTags(task: Pick<TaskSummary, "tags">) {
   const tags = Array.isArray(task.tags) ? task.tags : [];
-  return Array.from(new Set(tags.map(normalizeTagValue).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  return normalizeTaskTags(tags);
 }
 
 function compareStrings(left: string, right: string) {
@@ -44,6 +49,20 @@ function compareTimestamps(left: string, right: string) {
   return compareNumbers(Date.parse(left), Date.parse(right));
 }
 
+function compareTagSortValues(left: Pick<TaskSummary, "tags">, right: Pick<TaskSummary, "tags">, direction: TaskListSort["direction"]) {
+  const leftKey = buildTagSortKey(left);
+  const rightKey = buildTagSortKey(right);
+  const leftUntagged = leftKey.length === 0;
+  const rightUntagged = rightKey.length === 0;
+
+  if (leftUntagged !== rightUntagged) {
+    return leftUntagged ? 1 : -1;
+  }
+
+  const directionMultiplier = direction === "asc" ? 1 : -1;
+  return compareStrings(leftKey, rightKey) * directionMultiplier;
+}
+
 function compareTaskValues(left: TaskSummary, right: TaskSummary, sort: TaskListSort) {
   switch (sort.field) {
     case "createdAt":
@@ -54,8 +73,6 @@ function compareTaskValues(left: TaskSummary, right: TaskSummary, sort: TaskList
       return compareStrings(left.title, right.title);
     case "status":
       return compareNumbers(STATUS_ORDER[left.status] ?? Number.MAX_SAFE_INTEGER, STATUS_ORDER[right.status] ?? Number.MAX_SAFE_INTEGER);
-    case "tags":
-      return compareStrings(getTaskTags(left).join("\u0000"), getTaskTags(right).join("\u0000"));
     case "updatedAt":
     default:
       return compareTimestamps(left.updatedAt, right.updatedAt);
@@ -64,7 +81,9 @@ function compareTaskValues(left: TaskSummary, right: TaskSummary, sort: TaskList
 
 function compareTaskSummaries(left: TaskSummary, right: TaskSummary, sort: TaskListSort) {
   const direction = sort.direction === "asc" ? 1 : -1;
-  const primary = compareTaskValues(left, right, sort) * direction;
+  const primary = sort.field === "tags"
+    ? compareTagSortValues(left, right, sort.direction)
+    : compareTaskValues(left, right, sort) * direction;
   if (primary !== 0) {
     return primary;
   }
@@ -88,7 +107,7 @@ function compareTaskSummaries(left: TaskSummary, right: TaskSummary, sort: TaskL
 }
 
 export function filterTasksByTags(tasks: TaskSummary[], query?: Pick<TaskListQuery, "tags" | "tagMatch"> | null) {
-  const selectedTags = Array.from(new Set((query?.tags ?? []).map(normalizeTagValue).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  const selectedTags = normalizeTaskTags((query?.tags ?? []).map(normalizeTagValue));
   if (selectedTags.length === 0) {
     return tasks;
   }
