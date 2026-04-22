@@ -17,6 +17,7 @@ type TaskInputParams = {
   repositoryId?: string;
   repositoryIds?: string[];
   parentTaskId?: string;
+  tags?: string[];
   whipMaxAttempts?: number;
   archived?: boolean;
 };
@@ -194,6 +195,7 @@ function buildTaskInput(params: TaskInputParams) {
     ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
     ...(params.repositoryIds !== undefined ? { repositoryIds: params.repositoryIds } : {}),
     ...(params.parentTaskId !== undefined ? { parentTaskId: params.parentTaskId } : {}),
+    ...(params.tags !== undefined ? { tags: params.tags } : {}),
     ...(params.whipMaxAttempts !== undefined ? { whipMaxAttempts: params.whipMaxAttempts } : {}),
     ...(params.archived !== undefined ? { archived: params.archived } : {}),
   };
@@ -780,15 +782,33 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId and includeArchived to scope the task list.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId, includeArchived, tag filters, and sort controls to scope the task list.`,
       parameters: Type.Object({
         projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the task list." })),
         includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived tasks should be included." })),
+        tags: Type.Optional(Type.Array(Type.String({ description: "Exact task tag filter value." }))),
+        tagMatch: Type.Optional(Type.String({ description: "How multiple requested tags should match: all or any." })),
+        sortBy: Type.Optional(Type.String({ description: "Task sort field such as updatedAt, createdAt, priority, number, title, or tags." })),
+        sortDirection: Type.Optional(Type.String({ description: "Task sort direction: asc or desc." })),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string; includeArchived?: boolean }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId?: string;
+          includeArchived?: boolean;
+          tags?: string[];
+          tagMatch?: string;
+          sortBy?: string;
+          sortDirection?: string;
+        },
+      ) {
         const payload = {
           ...(params.projectId ? { projectId: params.projectId } : {}),
           ...(params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {}),
+          ...(params.tags !== undefined ? { tags: params.tags } : {}),
+          ...(params.tagMatch !== undefined ? { tagMatch: params.tagMatch } : {}),
+          ...(params.sortBy !== undefined ? { sortBy: params.sortBy } : {}),
+          ...(params.sortDirection !== undefined ? { sortDirection: params.sortDirection } : {}),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
@@ -818,12 +838,50 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         repositoryId: Type.Optional(Type.String({ description: "Optional primary repository id for the task." })),
         repositoryIds: Type.Optional(Type.Array(Type.String({ description: "Repository id linked to the task." }))),
         parentTaskId: Type.Optional(Type.String({ description: "Optional parent task id for hierarchy." })),
+        tags: Type.Optional(Type.Array(Type.String({ description: "Canonical task tag value." }))),
         whipMaxAttempts: Type.Optional(Type.Number({ description: "Optional maximum whip count for the task lane." })),
         archived: Type.Optional(Type.Boolean({ description: "Whether the task should be created archived." })),
       }),
       async execute(_toolCallId: string, params: { projectId?: string } & TaskInputParams) {
         const payload = {
           ...(params.projectId ? { projectId: params.projectId } : {}),
+          input: buildTaskInput(params),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_task") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId plus task fields to update.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        title: Type.String({ description: "Task title." }),
+        description: Type.Optional(Type.String({ description: "Optional task description." })),
+        type: Type.Optional(Type.String({ description: "Optional task type such as task, bug, feature, chore, or epic." })),
+        status: Type.Optional(Type.String({ description: "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled." })),
+        priority: Type.Optional(Type.String({ description: "Optional priority such as P0 through P4." })),
+        workflowId: Type.Optional(Type.String({ description: "Optional workflow id to attach to the task." })),
+        currentLaneId: Type.Optional(Type.String({ description: "Optional current workflow lane id." })),
+        assigneeType: Type.Optional(Type.String({ description: "Optional assignee type such as unassigned, user, agent, or role." })),
+        assigneeId: Type.Optional(Type.String({ description: "Optional assignee id when the task is assigned." })),
+        repositoryId: Type.Optional(Type.String({ description: "Optional primary repository id for the task." })),
+        repositoryIds: Type.Optional(Type.Array(Type.String({ description: "Repository id linked to the task." }))),
+        parentTaskId: Type.Optional(Type.String({ description: "Optional parent task id for hierarchy." })),
+        tags: Type.Optional(Type.Array(Type.String({ description: "Canonical task tag value." }))),
+        whipMaxAttempts: Type.Optional(Type.Number({ description: "Optional maximum whip count for the task lane." })),
+        archived: Type.Optional(Type.Boolean({ description: "Whether the task should be archived." })),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string } & TaskInputParams) {
+        const payload = {
+          taskId: params.taskId,
           input: buildTaskInput(params),
         };
         const result = await invokeBridge(tool.name, payload);

@@ -72,6 +72,16 @@ struct InboxListQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TaskListQueryParams {
+    include_archived: Option<bool>,
+    tags: Option<String>,
+    tag_match: Option<String>,
+    sort_by: Option<String>,
+    sort_direction: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionMessageInput {
     message: String,
 }
@@ -480,6 +490,24 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn task_list_query_params_deserialize_tag_filters_and_sort_fields() {
+        let params: TaskListQueryParams = serde_json::from_value(json!({
+            "includeArchived": true,
+            "tags": "backend,urgent",
+            "tagMatch": "any",
+            "sortBy": "tags",
+            "sortDirection": "asc"
+        }))
+        .expect("task list query params should deserialize");
+
+        assert_eq!(params.include_archived, Some(true));
+        assert_eq!(params.tags.as_deref(), Some("backend,urgent"));
+        assert_eq!(params.tag_match.as_deref(), Some("any"));
+        assert_eq!(params.sort_by.as_deref(), Some("tags"));
+        assert_eq!(params.sort_direction.as_deref(), Some("asc"));
     }
 }
 
@@ -1122,11 +1150,24 @@ async fn get_project_tasks(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(project_id): Path<String>,
+    Query(query_params): Query<TaskListQueryParams>,
 ) -> Result<Json<Vec<TaskSummary>>, (StatusCode, Json<ApiError>)> {
     let _device = resolve_remote_auth(&context.app, &headers, None)?;
     let connection = database::open_connection()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    tasks::list_tasks(&connection, &project_id, false)
+    let tags = query_params
+        .tags
+        .as_deref()
+        .map(|raw| raw.split(',').map(str::to_string).collect::<Vec<_>>());
+    let query = tasks::TaskListQuery::from_raw(
+        query_params.include_archived,
+        tags,
+        query_params.tag_match.as_deref(),
+        query_params.sort_by.as_deref(),
+        query_params.sort_direction.as_deref(),
+    )
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    tasks::list_tasks_with_query(&connection, &project_id, query)
         .map(Json)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))
 }

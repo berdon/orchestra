@@ -6,7 +6,7 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use crate::{
@@ -59,30 +59,216 @@ struct CommentAnchorMetadata {
     has_uncommitted_changes: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskTagMatchMode {
+    All,
+    Any,
+}
+
+impl Default for TaskTagMatchMode {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl TaskTagMatchMode {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("all") => Ok(Self::All),
+            Some("any") => Ok(Self::Any),
+            Some(other) => Err(format!(
+                "tagMatch: Unsupported task tag match mode `{other}`. Expected `all` or `any`."
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSortField {
+    UpdatedAt,
+    CreatedAt,
+    Priority,
+    Number,
+    Title,
+    Tags,
+}
+
+impl Default for TaskSortField {
+    fn default() -> Self {
+        Self::UpdatedAt
+    }
+}
+
+impl TaskSortField {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("updatedAt") => Ok(Self::UpdatedAt),
+            Some("createdAt") => Ok(Self::CreatedAt),
+            Some("priority") => Ok(Self::Priority),
+            Some("number") => Ok(Self::Number),
+            Some("title") => Ok(Self::Title),
+            Some("tags") => Ok(Self::Tags),
+            Some(other) => Err(format!(
+                "sortBy: Unsupported task sort field `{other}`. Expected one of `updatedAt`, `createdAt`, `priority`, `number`, `title`, or `tags`."
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSortDirection {
+    Asc,
+    Desc,
+}
+
+impl Default for TaskSortDirection {
+    fn default() -> Self {
+        Self::Desc
+    }
+}
+
+impl TaskSortDirection {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("desc") => Ok(Self::Desc),
+            Some("asc") => Ok(Self::Asc),
+            Some(other) => Err(format!(
+                "sortDirection: Unsupported task sort direction `{other}`. Expected `asc` or `desc`."
+            )),
+        }
+    }
+
+    fn sql_keyword(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskListQuery {
+    pub include_archived: bool,
+    pub tags: Vec<String>,
+    pub tag_match: TaskTagMatchMode,
+    pub sort_by: TaskSortField,
+    pub sort_direction: TaskSortDirection,
+}
+
+impl TaskListQuery {
+    pub fn from_raw(
+        include_archived: Option<bool>,
+        tags: Option<Vec<String>>,
+        tag_match: Option<&str>,
+        sort_by: Option<&str>,
+        sort_direction: Option<&str>,
+    ) -> Result<Self, String> {
+        let tags = normalize_task_tags(tags.unwrap_or_default());
+        let validation_errors = validate_task_tags(&tags);
+        if !validation_errors.is_empty() {
+            return Err(validation_errors.join(" "));
+        }
+
+        Ok(Self {
+            include_archived: include_archived.unwrap_or(false),
+            tags,
+            tag_match: TaskTagMatchMode::parse(tag_match)?,
+            sort_by: TaskSortField::parse(sort_by)?,
+            sort_direction: TaskSortDirection::parse(sort_direction)?,
+        })
+    }
+}
+
 pub fn list_tasks(
     connection: &Connection,
     project_id: &str,
     include_archived: bool,
 ) -> Result<Vec<TaskSummary>, String> {
+    list_tasks_with_query(
+        connection,
+        project_id,
+        TaskListQuery {
+            include_archived,
+            ..TaskListQuery::default()
+        },
+    )
+}
+
+pub fn list_tasks_with_query(
+    connection: &Connection,
+    project_id: &str,
+    query: TaskListQuery,
+) -> Result<Vec<TaskSummary>, String> {
     projects::ensure_project_exists(connection, project_id)?;
+
+    let matching_tags_cte = if query.tags.is_empty() {
+        "matching_tags AS (SELECT NULL AS task_id, 0 AS matched_tag_count WHERE 0)".to_string()
+    } else {
+        let placeholders = (1..=query.tags.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "matching_tags AS (SELECT tt.task_id, COUNT(DISTINCT tt.tag) AS matched_tag_count FROM task_tags tt WHERE tt.tag IN ({placeholders}) GROUP BY tt.task_id)"
+        )
+    };
+    let tag_filter_sql = match (query.tags.is_empty(), query.tag_match) {
+        (true, _) => String::new(),
+        (false, TaskTagMatchMode::All) => format!(
+            " AND COALESCE(mt.matched_tag_count, 0) = {}",
+            query.tags.len()
+        ),
+        (false, TaskTagMatchMode::Any) => " AND COALESCE(mt.matched_tag_count, 0) >= 1".into(),
+    };
+    let project_param_index = query.tags.len() + 1;
+    let archived_param_index = query.tags.len() + 2;
     let mut statement = connection
         .prepare(&format!(
             r#"
+            WITH
+                {matching_tags_cte},
+                tag_rollup AS (
+                    SELECT
+                        ordered_tags.task_id,
+                        COUNT(*) AS tag_count,
+                        GROUP_CONCAT(ordered_tags.tag, ',') AS tag_sort_key
+                    FROM (
+                        SELECT tt.task_id, tt.tag
+                        FROM task_tags tt
+                        ORDER BY tt.task_id ASC, tt.tag ASC
+                    ) ordered_tags
+                    GROUP BY ordered_tags.task_id
+                )
             SELECT
                 {summary_columns}
             FROM tasks t
-            WHERE t.project_id = ?1 AND (?2 = 1 OR t.archived = 0)
-            ORDER BY t.archived ASC, t.updated_at DESC, t.sequence_number DESC
+            LEFT JOIN matching_tags mt ON mt.task_id = t.id
+            LEFT JOIN tag_rollup tr ON tr.task_id = t.id
+            WHERE t.project_id = ?{project_param_index}
+              AND (?{archived_param_index} = 1 OR t.archived = 0)
+              {tag_filter_sql}
+            ORDER BY {order_clause}
             "#,
+            matching_tags_cte = matching_tags_cte,
             summary_columns = task_summary_columns("t"),
+            project_param_index = project_param_index,
+            archived_param_index = archived_param_index,
+            tag_filter_sql = tag_filter_sql,
+            order_clause = task_list_order_clause(&query),
         ))
         .map_err(|error| format!("Unable to prepare task list query: {error}"))?;
 
+    let mut parameters = query
+        .tags
+        .iter()
+        .cloned()
+        .map(Value::from)
+        .collect::<Vec<_>>();
+    parameters.push(Value::from(project_id.to_string()));
+    parameters.push(Value::from(if query.include_archived { 1 } else { 0 }));
+
     let rows = statement
-        .query_map(
-            params![project_id, if include_archived { 1 } else { 0 }],
-            map_task_summary_row,
-        )
+        .query_map(params_from_iter(parameters), map_task_summary_row)
         .map_err(|error| format!("Unable to query tasks for project {project_id}: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -2651,6 +2837,37 @@ fn task_tags_csv_sql(alias: &str) -> String {
     )
 }
 
+fn task_priority_sort_sql(alias: &str) -> String {
+    format!(
+        "CASE {alias}.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 WHEN 'P4' THEN 4 ELSE 5 END"
+    )
+}
+
+fn default_task_list_tiebreak(sort_by: TaskSortField) -> &'static str {
+    match sort_by {
+        TaskSortField::UpdatedAt => "t.sequence_number DESC",
+        _ => "t.updated_at DESC, t.sequence_number DESC",
+    }
+}
+
+fn task_list_order_clause(query: &TaskListQuery) -> String {
+    let direction = query.sort_direction.sql_keyword();
+    let primary = match query.sort_by {
+        TaskSortField::UpdatedAt => format!("t.updated_at {direction}"),
+        TaskSortField::CreatedAt => format!("t.created_at {direction}"),
+        TaskSortField::Priority => format!("{} {direction}", task_priority_sort_sql("t")),
+        TaskSortField::Number => format!("t.sequence_number {direction}"),
+        TaskSortField::Title => format!("t.title COLLATE NOCASE {direction}"),
+        TaskSortField::Tags => format!(
+            "CASE WHEN COALESCE(tr.tag_count, 0) = 0 THEN 1 ELSE 0 END ASC, COALESCE(tr.tag_sort_key, '') {direction}"
+        ),
+    };
+    format!(
+        "t.archived ASC, {primary}, {}",
+        default_task_list_tiebreak(query.sort_by)
+    )
+}
+
 fn unread_user_comment_count_sql(alias: &str) -> String {
     format!(
         "COALESCE((SELECT COUNT(*) FROM task_comments c WHERE c.task_id = {alias}.id AND c.origin_type != 'user' AND NOT EXISTS (SELECT 1 FROM task_comment_user_receipts r WHERE r.comment_id = c.id AND r.user_id = '{user_id}')), 0)",
@@ -2843,6 +3060,43 @@ mod tests {
             .expect("task tag rows should collect")
     }
 
+    fn create_task_with_tags(
+        connection: &mut Connection,
+        title: &str,
+        tags: Vec<&str>,
+    ) -> TaskDetail {
+        create_task(
+            connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: title.into(),
+                description: None,
+                task_type: "task".into(),
+                tags: tags.into_iter().map(str::to_string).collect(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create")
+    }
+
+    fn list_task_titles_with_query(connection: &Connection, query: TaskListQuery) -> Vec<String> {
+        list_tasks_with_query(connection, DEFAULT_PROJECT_ID, query)
+            .expect("tasks should list")
+            .into_iter()
+            .map(|task| task.title)
+            .collect()
+    }
+
     #[test]
     fn create_and_load_task_round_trip() {
         let mut connection = in_memory_connection();
@@ -2940,6 +3194,142 @@ mod tests {
 
         let loaded = get_task(&connection, &created.id).expect("task should load");
         assert_eq!(loaded.tags, vec!["backend", "ops_1", "urgent"]);
+    }
+
+    #[test]
+    fn list_task_filters_support_all_and_any_tag_matching() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        create_task_with_tags(&mut connection, "Backend urgent", vec!["backend", "urgent"]);
+        create_task_with_tags(&mut connection, "Backend only", vec!["backend"]);
+        create_task_with_tags(&mut connection, "Ops urgent", vec!["ops", "urgent"]);
+        create_task_with_tags(&mut connection, "Untagged", vec![]);
+
+        let all_query = TaskListQuery::from_raw(
+            Some(false),
+            Some(vec![" backend ".into(), "URGENT".into(), "urgent".into()]),
+            Some("all"),
+            Some("title"),
+            Some("asc"),
+        )
+        .expect("all query should parse");
+        assert_eq!(
+            list_task_titles_with_query(&connection, all_query),
+            vec!["Backend urgent"]
+        );
+
+        let any_query = TaskListQuery::from_raw(
+            Some(false),
+            Some(vec!["urgent".into(), "ops".into()]),
+            Some("any"),
+            Some("title"),
+            Some("asc"),
+        )
+        .expect("any query should parse");
+        assert_eq!(
+            list_task_titles_with_query(&connection, any_query),
+            vec!["Backend urgent", "Ops urgent"]
+        );
+    }
+
+    #[test]
+    fn list_task_filter_rejects_invalid_tags() {
+        let error = TaskListQuery::from_raw(
+            Some(false),
+            Some(vec!["valid".into(), "not ok".into()]),
+            Some("all"),
+            Some("updatedAt"),
+            Some("desc"),
+        )
+        .expect_err("invalid filter tags should be rejected");
+
+        assert!(error.contains(
+            "Task tags may only contain lowercase letters, digits, hyphens, and underscores."
+        ));
+    }
+
+    #[test]
+    fn list_task_sorts_by_canonical_tag_string_and_keeps_untagged_last() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        create_task_with_tags(&mut connection, "backend", vec!["backend"]);
+        create_task_with_tags(&mut connection, "api+backend", vec!["backend", "api"]);
+        create_task_with_tags(&mut connection, "api", vec!["api"]);
+        create_task_with_tags(&mut connection, "untagged", vec![]);
+
+        let ascending =
+            TaskListQuery::from_raw(Some(false), None, Some("all"), Some("tags"), Some("asc"))
+                .expect("ascending query should parse");
+        assert_eq!(
+            list_task_titles_with_query(&connection, ascending),
+            vec!["api", "api+backend", "backend", "untagged"]
+        );
+
+        let descending =
+            TaskListQuery::from_raw(Some(false), None, Some("all"), Some("tags"), Some("desc"))
+                .expect("descending query should parse");
+        assert_eq!(
+            list_task_titles_with_query(&connection, descending),
+            vec!["backend", "api+backend", "api", "untagged"]
+        );
+    }
+
+    #[test]
+    fn list_task_filters_respect_include_archived_with_tags() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        create_task_with_tags(&mut connection, "Live backend", vec!["backend"]);
+        create_task(
+            &mut connection,
+            Some(DEFAULT_PROJECT_ID),
+            TaskUpsertInput {
+                title: "Archived backend".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: vec!["backend".into()],
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some("workflow-dev".into()),
+                current_lane_id: Some("lane-plan".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: Some(true),
+            },
+        )
+        .expect("archived task should create");
+
+        let hidden = TaskListQuery::from_raw(
+            Some(false),
+            Some(vec!["backend".into()]),
+            Some("all"),
+            Some("title"),
+            Some("asc"),
+        )
+        .expect("hidden query should parse");
+        assert_eq!(
+            list_task_titles_with_query(&connection, hidden),
+            vec!["Live backend"]
+        );
+
+        let visible = TaskListQuery::from_raw(
+            Some(true),
+            Some(vec!["backend".into()]),
+            Some("all"),
+            Some("title"),
+            Some("asc"),
+        )
+        .expect("visible query should parse");
+        assert_eq!(
+            list_task_titles_with_query(&connection, visible),
+            vec!["Live backend", "Archived backend"]
+        );
     }
 
     #[test]

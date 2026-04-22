@@ -1204,10 +1204,6 @@ fn invoke_bridge_command(
             .map_err(|error| format!("Unable to serialize stopped session runtime: {error}"))
         }
         "list_tasks" => {
-            let include_archived = payload
-                .get("includeArchived")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let Some(project_id) = projects::resolve_requested_or_default_project_id(
                 connection,
@@ -1220,10 +1216,24 @@ fn invoke_bridge_command(
                 return serde_json::to_value(Vec::<crate::models::TaskSummary>::new())
                     .map_err(|error| format!("Unable to serialize tasks: {error}"));
             };
-            serde_json::to_value(tasks::list_tasks(
+            let tags = match payload.get("tags") {
+                Some(value) if !value.is_null() => Some(
+                    serde_json::from_value::<Vec<String>>(value.clone())
+                        .map_err(|error| format!("Unable to parse list_tasks tags: {error}"))?,
+                ),
+                _ => None,
+            };
+            let query = tasks::TaskListQuery::from_raw(
+                payload.get("includeArchived").and_then(Value::as_bool),
+                tags,
+                payload.get("tagMatch").and_then(Value::as_str),
+                payload.get("sortBy").and_then(Value::as_str),
+                payload.get("sortDirection").and_then(Value::as_str),
+            )?;
+            serde_json::to_value(tasks::list_tasks_with_query(
                 connection,
                 &project_id,
-                include_archived,
+                query,
             )?)
             .map_err(|error| format!("Unable to serialize tasks: {error}"))
         }
@@ -2576,6 +2586,12 @@ mod tests {
             let connection = crate::services::database::open_connection()
                 .expect("database should open in the temp Orchestra home");
             let now = "2026-03-22T00:00:00Z";
+            connection
+                .execute(
+                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                    [now],
+                )
+                .expect("default project should seed");
             let project_id = format!("project-{}", Uuid::new_v4().simple());
             let project_slug = project_id.clone();
             connection
@@ -2602,7 +2618,8 @@ mod tests {
                     "type": "task",
                     "status": "ready",
                     "priority": "P2",
-                    "assigneeType": "unassigned"
+                    "assigneeType": "unassigned",
+                    "tags": ["urgent", "backend"]
                 }),
             )
             .expect("create_task should honor the provided project id");
@@ -2610,6 +2627,35 @@ mod tests {
             assert_eq!(
                 created.get("projectId").and_then(Value::as_str),
                 Some(project_id.as_str())
+            );
+            assert_eq!(
+                created.get("tags").and_then(Value::as_array).cloned(),
+                Some(vec![json!("backend"), json!("urgent")])
+            );
+
+            let second = invoke_bridge_command(
+                &config,
+                &connection,
+                "create_task",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({
+                    "projectId": project_id,
+                    "title": "API bridge task",
+                    "type": "task",
+                    "status": "ready",
+                    "priority": "P2",
+                    "assigneeType": "unassigned",
+                    "tags": ["api"]
+                }),
+            )
+            .expect("second create_task should succeed");
+            assert_eq!(
+                second.get("tags").and_then(Value::as_array).cloned(),
+                Some(vec![json!("api")])
             );
 
             let scoped_tasks = invoke_bridge_command(
@@ -2621,7 +2667,14 @@ mod tests {
                     actor_id: "tester".into(),
                 }),
                 None,
-                json!({ "projectId": project_id, "includeArchived": false }),
+                json!({
+                    "projectId": project_id,
+                    "includeArchived": false,
+                    "tags": ["backend", "urgent"],
+                    "tagMatch": "all",
+                    "sortBy": "tags",
+                    "sortDirection": "asc"
+                }),
             )
             .expect("list_tasks should respect the provided project id")
             .as_array()
@@ -2631,6 +2684,13 @@ mod tests {
             assert_eq!(
                 scoped_tasks[0].get("projectId").and_then(Value::as_str),
                 Some(project_id.as_str())
+            );
+            assert_eq!(
+                scoped_tasks[0]
+                    .get("tags")
+                    .and_then(Value::as_array)
+                    .cloned(),
+                Some(vec![json!("backend"), json!("urgent")])
             );
 
             let orchestra_tasks = invoke_bridge_command(
@@ -2649,6 +2709,73 @@ mod tests {
             .cloned()
             .expect("task list should serialize as an array");
             assert!(orchestra_tasks.is_empty());
+        });
+    }
+
+    #[test]
+    fn update_task_bridge_round_trips_tags() {
+        with_temp_home("tool-bridge-update-tags", || {
+            let connection = crate::services::database::open_connection()
+                .expect("database should open in the temp Orchestra home");
+            let now = "2026-03-22T00:00:00Z";
+            connection
+                .execute(
+                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'P1', NULL, ?1, ?1)",
+                    [now],
+                )
+                .expect("project should seed");
+            let config = dummy_bridge_config("update-tags");
+            let authorization = Some(&AuthorizationContext {
+                actor_type: "user".into(),
+                actor_id: "tester".into(),
+            });
+            let created = invoke_bridge_command(
+                &config,
+                &connection,
+                "create_task",
+                authorization,
+                None,
+                json!({
+                    "projectId": "project-1",
+                    "title": "Mutable bridge task",
+                    "type": "task",
+                    "status": "ready",
+                    "priority": "P2",
+                    "assigneeType": "unassigned",
+                    "tags": ["alpha"]
+                }),
+            )
+            .expect("create_task should succeed");
+            let task_id = created
+                .get("id")
+                .and_then(Value::as_str)
+                .expect("task id should serialize")
+                .to_string();
+
+            let updated = invoke_bridge_command(
+                &config,
+                &connection,
+                "update_task",
+                authorization,
+                None,
+                json!({
+                    "taskId": task_id,
+                    "input": {
+                        "title": "Mutable bridge task",
+                        "type": "task",
+                        "status": "ready",
+                        "priority": "P2",
+                        "assigneeType": "unassigned",
+                        "tags": ["beta", " alpha ", "BETA"]
+                    }
+                }),
+            )
+            .expect("update_task should succeed");
+
+            assert_eq!(
+                updated.get("tags").and_then(Value::as_array).cloned(),
+                Some(vec![json!("alpha"), json!("beta")])
+            );
         });
     }
 
