@@ -54,7 +54,7 @@ fn unsupported_control_capability(reason: &str) -> SessionControlCapability {
     }
 }
 
-fn is_unknown_command_error(error: &str) -> bool {
+pub(crate) fn is_unknown_command_error(error: &str) -> bool {
     error.to_ascii_lowercase().contains("unknown command")
 }
 
@@ -363,16 +363,37 @@ impl SessionRuntime {
 
     fn handle_payload(&self, payload: Value) {
         if payload.get("type").and_then(Value::as_str) == Some("response") {
-            if let Some(id) = payload.get("id").and_then(Value::as_str) {
-                if let Ok(mut pending) = self.pending.lock() {
-                    if let Some(sender) = pending.remove(id) {
+            if let Ok(mut pending) = self.pending.lock() {
+                let response_id = payload.get("id").and_then(Value::as_str).map(str::to_string);
+                let response_command = payload
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+
+                let matched_pending_id = response_id.clone().filter(|id| pending.contains_key(id)).or_else(|| {
+                    let command = response_command.as_deref()?;
+                    let prefix = format!("{command}-");
+                    let matches = pending
+                        .keys()
+                        .filter(|id| id.starts_with(&prefix))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if matches.len() == 1 {
+                        matches.into_iter().next()
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(matched_id) = matched_pending_id {
+                    if let Some(sender) = pending.remove(&matched_id) {
                         let success = payload.get("success").and_then(Value::as_bool) == Some(true);
                         self.app.state::<crate::state::AppState>().log(
                             "info",
                             "sessions.rpc.response",
                             &format!(
                                 "Session {} received response {} success={}",
-                                self.session_id, id, success
+                                self.session_id, matched_id, success
                             ),
                         );
                         let result = if success {
@@ -384,6 +405,17 @@ impl SessionRuntime {
                         return;
                     }
                 }
+
+                if let Some(id) = response_id {
+                    self.app.state::<crate::state::AppState>().log(
+                        "warn",
+                        "sessions.rpc.response.unmatched",
+                        &format!(
+                            "Session {} received unmatched response {}: {}",
+                            self.session_id, id, payload
+                        ),
+                    );
+                }
             }
         }
 
@@ -391,6 +423,14 @@ impl SessionRuntime {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
+
+        if event_type == "response" {
+            self.app.state::<crate::state::AppState>().log(
+                "warn",
+                "sessions.rpc.response.unhandled",
+                &format!("Session {} received unhandled response payload: {}", self.session_id, payload),
+            );
+        }
 
         self.app.state::<crate::state::AppState>().log(
             "info",
@@ -756,6 +796,25 @@ impl SessionRuntime {
         }));
     }
 
+    pub fn mark_control_operation_success(&self, kind: &str, trigger: &str, message: &str) {
+        match kind {
+            "reload" => self.set_control_capability("reload", supported_control_capability()),
+            "compact" => self.set_control_capability("compact", supported_control_capability()),
+            _ => {}
+        }
+        let operation_id = format!("session-control-fallback-{}", Uuid::new_v4().simple());
+        let started_at = crate::state::now_iso();
+        self.finish_control_operation(
+            &operation_id,
+            kind,
+            trigger,
+            &started_at,
+            true,
+            Some(message.to_string()),
+            None,
+        );
+    }
+
     pub fn snapshot_control_capabilities(
         &self,
         effective_compaction_window: Option<&str>,
@@ -932,9 +991,6 @@ impl SessionRuntime {
                 "Wait for the current response to finish before compacting this session".into(),
             );
         }
-        if self.has_active_control_operation() {
-            return Err("Wait for the current session control operation to finish".into());
-        }
 
         let mut command = json!({
             "id": format!("compact-{}", Uuid::new_v4()),
@@ -956,9 +1012,6 @@ impl SessionRuntime {
             return Err(
                 "Wait for the current response to finish before reloading this session".into(),
             );
-        }
-        if self.has_active_control_operation() {
-            return Err("Wait for the current session control operation to finish".into());
         }
 
         self.send_command(json!({
@@ -1321,6 +1374,10 @@ pub fn perform_session_compaction(
     trigger: &str,
     custom_instructions: Option<String>,
 ) -> Result<(), String> {
+    if runtime.has_active_control_operation() {
+        return Err("Wait for the current session control operation to finish".into());
+    }
+
     let (operation_id, started_at) = runtime.start_control_operation("compact", trigger);
     let result = runtime.compact(custom_instructions.as_deref());
 
@@ -1392,6 +1449,10 @@ pub fn perform_session_compaction(
 }
 
 pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Result<(), String> {
+    if runtime.has_active_control_operation() {
+        return Err("Wait for the current session control operation to finish".into());
+    }
+
     let (operation_id, started_at) = runtime.start_control_operation("reload", trigger);
     let result = runtime.reload();
 
@@ -1420,6 +1481,7 @@ pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Re
                     "reload",
                     unsupported_control_capability("runtime_control_unsupported"),
                 );
+                return Err(error);
             }
             runtime.finish_control_operation(
                 &operation_id,

@@ -17,8 +17,9 @@ use crate::{
     services::{
         agent_runtime, agents, app_events, database, domain_events,
         live_sessions::{
-            ensure_runtime, get_session_control_snapshot, maybe_auto_compact, maybe_runtime,
-            perform_session_compaction, perform_session_reload,
+            ensure_runtime, get_session_control_snapshot, is_unknown_command_error,
+            maybe_auto_compact, maybe_runtime, perform_session_compaction,
+            perform_session_reload,
         },
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
@@ -1746,7 +1747,7 @@ pub async fn reload_session(
         ensure_runtime(
             &state.session_runtimes,
             app.clone(),
-            project_root,
+            project_root.clone(),
             session_dir.clone(),
             &session_id,
         )?
@@ -1758,14 +1759,38 @@ pub async fn reload_session(
         .map_err(|error| format!("Unable to join reload_session runtime task: {error}"))?;
 
     if let Err(error) = &reload_result {
-        log_session_command_failure(
-            &state,
-            "sessions.reload.failed",
-            &session_id,
-            "reload the session",
-            error,
-        );
-        return Err(error.clone());
+        if is_unknown_command_error(error) {
+            if let Some(runtime) = state.remove_session_runtime(&session_id)? {
+                runtime.shutdown();
+            }
+            state.clear_active_session_run(&session_id)?;
+            let replacement = ensure_runtime(
+                &state.session_runtimes,
+                app.clone(),
+                project_root,
+                session_dir.clone(),
+                &session_id,
+            )?;
+            replacement.set_subscribed(true);
+            replacement.mark_control_operation_success("reload", "manual", "Session reloaded.");
+            state.log(
+                "info",
+                "sessions.reload.fallback",
+                &format!(
+                    "Reload command unsupported for session {}; restarted the runtime locally instead",
+                    session_id
+                ),
+            );
+        } else {
+            log_session_command_failure(
+                &state,
+                "sessions.reload.failed",
+                &session_id,
+                "reload the session",
+                error,
+            );
+            return Err(error.clone());
+        }
     }
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;

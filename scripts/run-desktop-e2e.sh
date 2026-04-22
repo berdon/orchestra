@@ -111,6 +111,15 @@ echo "[desktop-e2e-runner] test_file=${TEST_FILE}"
 echo "[desktop-e2e-runner] webdriver_port=${WEBDRIVER_PORT} native_port=${NATIVE_WEBDRIVER_PORT}"
 echo "[desktop-e2e-runner] preview_url=${PREVIEW_URL} reuse_preview=${REUSE_PREVIEW}"
 
+ensure_preview_assets() {
+  if [[ -f "${ROOT_DIR}/dist/index.html" ]]; then
+    return
+  fi
+
+  echo "[desktop-e2e-runner] frontend dist missing; running npm run build"
+  npm run build
+}
+
 run_inner() {
   cd "${ROOT_DIR}"
 
@@ -124,6 +133,7 @@ run_inner() {
   export ORCHESTRA_PROJECT_ROOT="${ROOT_DIR}"
   export PATH="${REAL_HOME}/.cargo/bin:/workspace/orchestra/node_modules/.bin:${PATH}"
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
+  ensure_preview_assets
   rm -rf "${TEST_HOME}/.pi"
   if [[ -d "${REAL_HOME}/.pi" ]]; then
     ln -s "${REAL_HOME}/.pi" "${TEST_HOME}/.pi"

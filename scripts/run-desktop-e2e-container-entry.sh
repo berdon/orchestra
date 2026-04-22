@@ -29,10 +29,14 @@ cp -a /src/tests "${WORKSPACE_DIR}/tests"
 cp -a /src/scripts "${WORKSPACE_DIR}/scripts"
 cp -a /src/extensions "${WORKSPACE_DIR}/extensions"
 cp -a /src/docs "${WORKSPACE_DIR}/docs"
-cp -a /src/dist "${WORKSPACE_DIR}/dist"
+if [[ -d /src/dist ]]; then
+  cp -a /src/dist "${WORKSPACE_DIR}/dist"
+fi
 mkdir -p "${WORKSPACE_DIR}/mobile"
 if [[ -d /src/mobile/dist-web ]]; then
   cp -a /src/mobile/dist-web "${WORKSPACE_DIR}/mobile/dist-web"
+else
+  mkdir -p "${WORKSPACE_DIR}/mobile/dist-web"
 fi
 cp -a /src/src-tauri/Cargo.toml /src/src-tauri/Cargo.lock /src/src-tauri/build.rs /src/src-tauri/tauri.conf.json "${WORKSPACE_DIR}/src-tauri/"
 cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
