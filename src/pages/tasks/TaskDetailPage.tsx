@@ -9,6 +9,7 @@ import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
+import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 
 interface TaskTimelineItem {
   id: string;
@@ -389,6 +390,7 @@ export function TaskDetailPage({
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
   const canClose = !["completed", "canceled"].includes(task.status);
   const activeSessionId = task.activeLaneAssignment?.sessionId ?? null;
+  const effectiveActiveLaneAssignmentStatus = getEffectiveTaskDetailAssignmentStatus(task);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
 
@@ -695,7 +697,7 @@ export function TaskDetailPage({
       });
     }
 
-    if (task.activeLaneAssignment?.status === "awaiting_user_approval") {
+    if (effectiveActiveLaneAssignmentStatus === "awaiting_user_approval") {
       actions.push({
         id: "approve-pending",
         label: "Approve",
@@ -717,7 +719,7 @@ export function TaskDetailPage({
         variant: "secondary",
         dataRole: "stop-task-activity",
       });
-    } else if (["awaiting_user_intervention", "paused_by_user"].includes(task.activeLaneAssignment?.status ?? "")) {
+    } else if (["awaiting_user_intervention", "paused_by_user"].includes(effectiveActiveLaneAssignmentStatus ?? "")) {
       actions.push({
         id: "resume-pending",
         label: "Resume",
@@ -749,7 +751,7 @@ export function TaskDetailPage({
       });
     }
 
-    if (["active", "queued"].includes(task.activeLaneAssignment?.status ?? "")) {
+    if (["active", "queued"].includes(effectiveActiveLaneAssignmentStatus ?? "")) {
       actions.push({
         id: "pause",
         label: "Pause",
@@ -892,8 +894,8 @@ export function TaskDetailPage({
               <div className="task-runtime-card" data-role="task-runtime-assignment">
                 <div className="workflow-section__header">
                   <strong>{task.activeLaneAssignment.workerType} · {task.activeLaneAssignment.workerId ?? "unassigned"}</strong>
-                  <span className={`status-badge status-badge--${task.activeLaneAssignment.status === "active" ? "success" : task.activeLaneAssignment.status === "queued" ? "warning" : "neutral"}`}>
-                    {task.activeLaneAssignment.status}
+                  <span className={`status-badge status-badge--${effectiveActiveLaneAssignmentStatus === "active" ? "success" : effectiveActiveLaneAssignmentStatus === "queued" ? "warning" : "neutral"}`}>
+                    {effectiveActiveLaneAssignmentStatus ?? task.activeLaneAssignment.status}
                   </span>
                 </div>
                 <div className="workforce-meta-grid muted-copy">
@@ -903,19 +905,19 @@ export function TaskDetailPage({
                   <span>Whips: {task.activeLaneAssignment.whipCount ?? 0} / {task.whipMaxAttempts ?? 10}</span>
                   <span>Last whip: {task.activeLaneAssignment.lastWhipAt ?? "—"}</span>
                 </div>
-                {task.activeLaneAssignment.status === "awaiting_user_approval" ? (
+                {effectiveActiveLaneAssignmentStatus === "awaiting_user_approval" ? (
                   <p className="muted-copy" data-role="task-awaiting-approval-note">
                     This lane reported success and is paused for user approval before the workflow continues.
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
-                {task.activeLaneAssignment.status === "awaiting_user_intervention" ? (
+                {effectiveActiveLaneAssignmentStatus === "awaiting_user_intervention" ? (
                   <p className="muted-copy" data-role="task-awaiting-user-intervention-note">
                     This lane asked for user intervention and is paused until you decide how to continue it.
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
-                {task.activeLaneAssignment.status === "paused_by_user" ? (
+                {effectiveActiveLaneAssignmentStatus === "paused_by_user" ? (
                   <p className="muted-copy" data-role="task-paused-by-user-note">
                     This lane was paused by a user or operator. Resume keeps the current lane active, while Stop ends the current assignment and returns the task to a same-lane ready state.
                     {task.activeLaneAssignment.completionNotes ? ` Notes: ${task.activeLaneAssignment.completionNotes}` : ""}
@@ -2010,9 +2012,9 @@ export function TaskDetailPage({
             <p>
               Orchestra will move this task into <strong>{relaneConfirmTarget.name}</strong>
               {task.activeLaneAssignment ? " and close the current lane assignment" : ""}.
-              {task.activeLaneAssignment?.status === "awaiting_user_approval"
+              {effectiveActiveLaneAssignmentStatus === "awaiting_user_approval"
                 ? " If you want to keep working in the current lane and reuse the same session, use Needs work instead."
-                : task.activeLaneAssignment?.status === "awaiting_user_intervention"
+                : effectiveActiveLaneAssignmentStatus === "awaiting_user_intervention"
                   ? " If you want to keep working in the current lane and reuse the same session, use Resume instead."
                   : " Worker-owned lanes will auto-dispatch after the move."}
             </p>

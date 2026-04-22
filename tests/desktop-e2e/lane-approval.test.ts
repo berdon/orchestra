@@ -79,6 +79,32 @@ async function cycleIdleSessionSubscription(sessionId: string, workerSessionId: 
   expect(responsiveRecord.id).toBe(workerSessionId);
 }
 
+async function expectTaskDetailHeaderActions(
+  sessionId: string,
+  expected: { approve: boolean; needsWork: boolean; pause: boolean; resume?: boolean },
+  timeoutMs = 30_000,
+) {
+  await waitForCondition(
+    () => executeScript<{ approve: boolean; needsWork: boolean; pause: boolean; resume: boolean }>(sessionId, `
+      const isVisible = (selector) => {
+        const element = document.querySelector(selector);
+        return element instanceof HTMLElement && element.offsetParent !== null;
+      };
+      return {
+        approve: isVisible('[data-role="approve-task-lane"], [data-role="complete-task-success"]'),
+        needsWork: isVisible('[data-role="send-task-back-for-work"], [data-role="complete-task-failure"]'),
+        pause: isVisible('[data-role="pause-task-runtime"]'),
+        resume: isVisible('[data-role="resume-task-lane"]'),
+      };
+    `),
+    (value) => value.approve === expected.approve
+      && value.needsWork === expected.needsWork
+      && value.pause === expected.pause
+      && value.resume === (expected.resume ?? false),
+    timeoutMs,
+  );
+}
+
 describe("desktop approval-gated workflow lanes", () => {
   it.skipIf(!isDesktopE2E)("holds worker success for approval and resumes the same session for rework", async () => {
     expect(testHome).toBeTruthy();
@@ -150,23 +176,27 @@ describe("desktop approval-gated workflow lanes", () => {
       const workerSessionId = dispatchedTask.activeLaneAssignment?.sessionId;
       expect(workerSessionId).toBeTruthy();
 
-      const taskBeforeApprovalPause = await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
-        (task) => ['active', 'queued', 'awaiting_user_approval'].includes(task.activeLaneAssignment?.status ?? ''),
-      );
-      if (taskBeforeApprovalPause.activeLaneAssignment?.status === 'active') {
-        await completeTaskLaneWithRetries(sessionId, createdTask!.id);
-      }
-
       await openTaskCard(sessionId, 'Approval gated desktop task');
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
       await waitForText(sessionId, 'Lane execution');
+      await expectTaskDetailHeaderActions(sessionId, {
+        approve: false,
+        needsWork: false,
+        pause: true,
+      });
+
+      await completeTaskLaneWithRetries(sessionId, createdTask!.id);
 
       await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
         (task) => task.status === "in_review" && task.activeLaneAssignment?.status === "awaiting_user_approval",
       );
       await waitForText(sessionId, "paused for user approval", 15_000);
+      await expectTaskDetailHeaderActions(sessionId, {
+        approve: true,
+        needsWork: true,
+        pause: false,
+      });
       const waitingRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
       expect(waitingRoleOps.activeInstanceCount).toBe(0);
       const waitingSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, 'list_sessions');
@@ -179,13 +209,14 @@ describe("desktop approval-gated workflow lanes", () => {
         (task) => task.status === "in_progress" && task.activeLaneAssignment?.status === "active",
       );
       expect(reworkedTask.activeLaneAssignment?.sessionId).toBe(workerSessionId);
+      await expectTaskDetailHeaderActions(sessionId, {
+        approve: false,
+        needsWork: false,
+        pause: true,
+      });
       const runningRoleOps = await invokeCommand<any>(sessionId, 'get_role_operations', { roleId: role!.id });
       expect(runningRoleOps.activeInstanceCount).toBe(1);
 
-      await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
-        (task) => task.status === "in_progress" && task.activeLaneAssignment?.status === "active",
-      );
       await completeTaskLaneWithRetries(sessionId, createdTask!.id);
       const postReworkTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
@@ -194,7 +225,12 @@ describe("desktop approval-gated workflow lanes", () => {
 
       let completedTask = postReworkTask;
       if (postReworkTask.status === "in_review") {
-        await invokeCommand(sessionId, 'approve_lane_completion', { taskId: createdTask!.id });
+        await expectTaskDetailHeaderActions(sessionId, {
+          approve: true,
+          needsWork: true,
+          pause: false,
+        });
+        await clickSelector(sessionId, '[data-role="approve-task-lane"]');
         completedTask = await waitForCondition(
           () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),
           (task) => task.status === "completed",
