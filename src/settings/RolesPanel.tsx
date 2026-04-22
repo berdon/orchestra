@@ -50,6 +50,20 @@ function getRoleValidationForPath(errors: RoleValidationError[], path: string) {
   return errors.filter((error) => error.path === path);
 }
 
+function formatPiRuntimeDiagnostic(diagnostic: PiExecutableDiagnostic | null) {
+  if (!diagnostic) {
+    return "Loading…";
+  }
+
+  if (diagnostic.status !== "healthy") {
+    const kind = diagnostic.errorKind ? ` (${diagnostic.errorKind})` : "";
+    return `Pi runtime error${kind}: ${diagnostic.errorMessage ?? "Unknown runtime error."}`;
+  }
+
+  const version = diagnostic.version ? ` ${diagnostic.version}` : "";
+  return `${diagnostic.source} runtime${version}: ${diagnostic.resolvedPath ?? "Unknown path"}`;
+}
+
 interface RolesPanelProps {
   selectionRequest?: { roleId: string; token: number } | null;
 }
@@ -147,11 +161,36 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
   useEffect(() => {
     let cancelled = false;
     setLoadingModelOptions(true);
-    void Promise.all([listPiModels(), getPiExecutableDiagnostic()])
-      .then(([models, diagnostic]) => {
+
+    void getPiExecutableDiagnostic()
+      .then((diagnostic) => {
+        if (!cancelled) {
+          setPiExecutableDiagnostic(diagnostic);
+        }
+      })
+      .catch(async (error) => {
+        if (!cancelled) {
+          const message = await reportClientError("ui.roles.pi_runtime.load", error, "Unable to load Pi runtime diagnostics.");
+          setPiExecutableDiagnostic({
+            source: "unknown",
+            mode: "unknown",
+            status: "runtime_error",
+            resolvedPath: null,
+            packageDir: null,
+            agentDir: null,
+            version: null,
+            builtAt: null,
+            manifestPath: null,
+            errorKind: "runtime_diagnostic_unavailable",
+            errorMessage: message,
+          });
+        }
+      });
+
+    void listPiModels()
+      .then((models) => {
         if (!cancelled) {
           setAvailableModels(models);
-          setPiExecutableDiagnostic(diagnostic);
         }
       })
       .catch(async (error) => {
@@ -493,9 +532,7 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
                 </label>
 
                 <div className="workflow-form-grid__full muted-copy" data-role="role-pi-executable-diagnostic">
-                  PI runtime ({piExecutableDiagnostic?.source ?? "loading"}): {piExecutableDiagnostic?.resolvedPath ?? piExecutableDiagnostic?.error ?? "Loading…"}
-                  {piExecutableDiagnostic?.agentDir ? <><br />Agent dir: {piExecutableDiagnostic.agentDir}</> : null}
-                  <br />Auth configured: {piExecutableDiagnostic ? (piExecutableDiagnostic.authConfigured ? "Yes" : "No") : "Loading…"}
+                  Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
                 </div>
 
                 <label className="field-group workflow-form-grid__full">

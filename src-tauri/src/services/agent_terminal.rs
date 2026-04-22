@@ -1,6 +1,7 @@
 use std::{
+    fs,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -20,6 +21,7 @@ pub struct AgentTerminalSession {
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
     buffer: Mutex<String>,
+    temp_home_dir: Option<PathBuf>,
     app: AppHandle,
 }
 
@@ -42,15 +44,16 @@ impl AgentTerminalSession {
             })
             .map_err(|error| format!("Unable to create terminal PTY: {error}"))?;
 
-        let runtime_context = crate::services::pi_runtime::resolve_pi_runtime_context(None)?;
-        crate::services::pi_runtime::ensure_pi_agent_dir(&runtime_context.pi_agent_dir)?;
-        let orchestra_extension_path =
-            crate::services::live_sessions::resolve_orchestra_extension_path(&app)?;
+        let runtime = crate::services::pi_runtime::resolve_pi_runtime(None)?;
+        let pi_executable = runtime.executable_path.clone();
+        let (temp_home_dir, temp_agent_dir) =
+            prepare_terminal_home_dir(session_id, &runtime.agent_dir, &pi_executable)?;
+        let orchestra_extension_path = crate::services::live_sessions::resolve_orchestra_extension_path(&app)?;
         let extra_extensions = crate::services::harness_settings::resolve_spawn_extra_extensions(
             crate::services::harness_settings::get_pi_runtime_settings()?.extra_extensions,
         )?;
 
-        let mut command = CommandBuilder::new(&runtime_context.executable_path);
+        let mut command = CommandBuilder::new(&pi_executable);
         command.cwd(runtime_cwd);
         command.arg("--session");
         command.arg(session_path.to_string_lossy().to_string());
@@ -65,14 +68,21 @@ impl AgentTerminalSession {
         }
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
-        command.env(
-            "PI_CODING_AGENT_DIR",
-            runtime_context.pi_agent_dir.to_string_lossy().to_string(),
-        );
         if let Some(environment) = crate::services::pi_sessions::resolve_user_shell_environment() {
             for (key, value) in environment {
                 command.env(key, value);
             }
+        }
+        command.env("HOME", &temp_home_dir);
+        command.env("PI_CODING_AGENT_DIR", &temp_agent_dir);
+        if runtime.source == "bundled" {
+            if let Some(package_dir) = runtime.package_dir.as_ref() {
+                command.env("PI_PACKAGE_DIR", package_dir);
+            }
+        }
+        if let Some(prefix) = infer_npm_prefix(&pi_executable, &temp_home_dir) {
+            command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
+            command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
         }
 
         let child = pair
@@ -95,6 +105,7 @@ impl AgentTerminalSession {
             master: Mutex::new(pair.master),
             child: Mutex::new(child),
             buffer: Mutex::new(TERMINAL_BOOTSTRAP_TEXT.to_string()),
+            temp_home_dir: Some(temp_home_dir),
             app: app.clone(),
         });
 
@@ -168,6 +179,7 @@ impl AgentTerminalSession {
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
         }
+        self.cleanup_temp_home_dir();
     }
 
     fn read_loop(&self, mut reader: Box<dyn Read + Send>) {
@@ -193,6 +205,7 @@ impl AgentTerminalSession {
             }
         }
 
+        self.cleanup_temp_home_dir();
         let state = self.app.state::<AppState>();
         let _ = state.clear_terminal_window(&self.session_id);
         let _ = state.remove_terminal_session(&self.session_id);
@@ -201,4 +214,126 @@ impl AgentTerminalSession {
             serde_json::json!({ "sessionIds": [self.session_id.clone()], "reason": "sessions.terminal.detach" }),
         );
     }
+
+    fn cleanup_temp_home_dir(&self) {
+        if let Some(temp_home_dir) = self.temp_home_dir.as_ref() {
+            let _ = fs::remove_dir_all(temp_home_dir);
+        }
+    }
+}
+
+fn prepare_terminal_home_dir(
+    session_id: &str,
+    source_agent_dir: &Path,
+    pi_executable: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let temp_home_dir = std::env::temp_dir().join(format!(
+        "orchestra-agent-terminal-home-{}-{}",
+        sanitize_for_path(session_id),
+        std::process::id()
+    ));
+    let temp_agent_dir = temp_home_dir.join("pi-agent");
+    fs::create_dir_all(&temp_agent_dir).map_err(|error| {
+        format!(
+            "Unable to create temporary terminal agent directory {}: {error}",
+            temp_agent_dir.display()
+        )
+    })?;
+
+    copy_if_exists(
+        &source_agent_dir.join("auth.json"),
+        &temp_agent_dir.join("auth.json"),
+    )?;
+    copy_if_exists(
+        &source_agent_dir.join("models.json"),
+        &temp_agent_dir.join("models.json"),
+    )?;
+    copy_filtered_settings(
+        &source_agent_dir.join("settings.json"),
+        &temp_agent_dir.join("settings.json"),
+    )?;
+
+    if let Some(prefix) = infer_npm_prefix(pi_executable, &temp_home_dir) {
+        let npmrc_path = temp_home_dir.join(".npmrc");
+        fs::write(&npmrc_path, format!("prefix={}\n", prefix.display())).map_err(|error| {
+            format!(
+                "Unable to write temporary terminal npmrc {}: {error}",
+                npmrc_path.display()
+            )
+        })?;
+    }
+
+    Ok((temp_home_dir, temp_agent_dir))
+}
+
+fn sanitize_for_path(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect()
+}
+
+fn copy_if_exists(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        format!(
+            "Unable to copy {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+fn copy_filtered_settings(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    let mut settings: serde_json::Value = serde_json::from_slice(
+        &fs::read(source)
+            .map_err(|error| format!("Unable to read {}: {error}", source.display()))?,
+    )
+    .map_err(|error| format!("Unable to parse {}: {error}", source.display()))?;
+
+    if let Some(packages) = settings
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        packages.retain(|entry| entry.as_str() != Some("npm:pi-powerline-footer"));
+    }
+
+    fs::write(
+        destination,
+        serde_json::to_vec_pretty(&settings)
+            .map_err(|error| format!("Unable to serialize filtered settings: {error}"))?,
+    )
+    .map_err(|error| format!("Unable to write {}: {error}", destination.display()))
+}
+
+fn infer_npm_prefix(pi_executable: &Path, temp_home_dir: &Path) -> Option<PathBuf> {
+    if let Ok(prefix) = std::env::var("NPM_CONFIG_PREFIX") {
+        let path = PathBuf::from(prefix);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    if let Ok(prefix) = std::env::var("npm_config_prefix") {
+        let path = PathBuf::from(prefix);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    let parent = pi_executable.parent()?;
+    if parent.file_name()? == "bin" {
+        return parent
+            .parent()
+            .map(Path::to_path_buf)
+            .filter(|path| path.exists());
+    }
+
+    let fallback = temp_home_dir.join(".npm-global");
+    Some(fallback)
 }

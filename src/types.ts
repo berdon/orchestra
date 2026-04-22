@@ -80,12 +80,17 @@ export interface PiRuntimeDiagnostics {
 }
 
 export interface PiExecutableDiagnostic {
-  resolvedPath?: string | null;
-  error?: string | null;
   source: string;
-  packagedMode: boolean;
+  mode: string;
+  status: string;
+  resolvedPath?: string | null;
+  packageDir?: string | null;
   agentDir?: string | null;
-  authConfigured: boolean;
+  version?: string | null;
+  builtAt?: string | null;
+  manifestPath?: string | null;
+  errorKind?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface PiImportLegacyResult {
@@ -362,9 +367,17 @@ export interface SessionRuntimeDetails {
   extraExtensions: string[];
   blockedExtraExtensions: string[];
   loadedExtensions: string[];
-  piExecutablePath?: string | null;
   piRuntimeSource?: string | null;
+  piRuntimeMode?: string | null;
+  piRuntimeStatus?: string | null;
+  piExecutablePath?: string | null;
+  piPackageDir?: string | null;
   piAgentDir?: string | null;
+  piRuntimeVersion?: string | null;
+  piRuntimeBuiltAt?: string | null;
+  piRuntimeManifestPath?: string | null;
+  piRuntimeErrorKind?: string | null;
+  piRuntimeErrorMessage?: string | null;
   shellPath?: string | null;
   projectRoot?: string | null;
   sessionDir?: string | null;

@@ -327,175 +327,24 @@ pub fn list_available_models() -> Result<Vec<SessionModel>, String> {
 }
 
 pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String> {
-    let mut searched = Vec::new();
-
-    if let Ok(value) = env::var("ORCHESTRA_PI_EXECUTABLE") {
-        let candidate = PathBuf::from(value);
-        if let Some(resolved) = resolve_pi_candidate(&candidate) {
-            return Ok(resolved);
-        }
-        searched.push(candidate.display().to_string());
-    }
-
-    if let Some(candidate) = preferred {
-        if let Some(resolved) = resolve_pi_candidate(candidate) {
-            return Ok(resolved);
-        }
-        searched.push(candidate.display().to_string());
-    }
-
-    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
-        for candidate in [
-            home.join(".npm-global/bin/pi"),
-            home.join(".local/bin/pi"),
-            home.join(".volta/bin/pi"),
-            home.join(".pi/agent/bin/pi"),
-            PathBuf::from("/opt/homebrew/bin/pi"),
-        ] {
-            if let Some(resolved) = resolve_pi_candidate(&candidate) {
-                return Ok(resolved);
-            }
-            searched.push(candidate.display().to_string());
-        }
-    }
-
-    if let Some(resolved) = resolve_pi_via_user_shell(&mut searched) {
-        return Ok(resolved);
-    }
-
-    Err(format!(
-        "Unable to locate the pi executable. Checked: {}. Set ORCHESTRA_PI_EXECUTABLE to the full pi path if Orchestra cannot find it from the app environment.",
-        searched.join(", ")
-    ))
+    crate::services::pi_runtime::resolve_pi_runtime(preferred)
+        .map(|runtime| runtime.executable_path)
 }
 
 pub fn user_shell() -> Result<PathBuf, String> {
-    user_shell_candidates().into_iter().next().ok_or_else(|| {
-        "Unable to locate a usable login shell for Orchestra subprocesses".to_string()
-    })
+    crate::services::pi_runtime::user_shell()
 }
 
 pub fn resolve_user_shell_environment() -> Option<HashMap<String, String>> {
-    for shell in user_shell_candidates() {
-        let Ok(output) = run_shell_command(&shell, "env -0") else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        let parsed = parse_shell_environment(&output.stdout);
-        if !parsed.is_empty() {
-            return Some(parsed);
-        }
-    }
-
-    None
+    crate::services::pi_runtime::resolve_user_shell_environment()
 }
 
 pub fn resolve_user_shell_path() -> Option<String> {
-    resolve_user_shell_environment().and_then(|environment| environment.get("PATH").cloned())
+    crate::services::pi_runtime::resolve_user_shell_path()
 }
 
 pub fn apply_user_shell_environment(command: &mut Command) {
-    if let Some(environment) = resolve_user_shell_environment() {
-        command.env_clear();
-        for (key, value) in environment {
-            command.env(key, value);
-        }
-    }
-}
-
-fn resolve_pi_via_user_shell(searched: &mut Vec<String>) -> Option<PathBuf> {
-    for shell in user_shell_candidates() {
-        searched.push(format!("{} -lc 'command -v pi'", shell.display()));
-        let Ok(output) = run_shell_command(&shell, "command -v pi") else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for candidate in stdout
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-        {
-            if let Some(resolved) = resolve_pi_candidate(Path::new(candidate)) {
-                return Some(resolved);
-            }
-        }
-    }
-
-    None
-}
-
-fn user_shell_candidates() -> Vec<PathBuf> {
-    let mut shells = Vec::new();
-    if let Ok(shell) = env::var("SHELL") {
-        shells.push(PathBuf::from(shell));
-    }
-    shells.push(PathBuf::from("/bin/bash"));
-    shells.push(PathBuf::from("/bin/zsh"));
-    shells.push(PathBuf::from("/bin/sh"));
-
-    let mut seen = HashSet::new();
-    shells
-        .into_iter()
-        .filter(|shell| {
-            let key = shell.display().to_string();
-            seen.insert(key) && shell.exists()
-        })
-        .collect()
-}
-
-fn run_shell_command(shell: &Path, command: &str) -> Result<std::process::Output, std::io::Error> {
-    if shell.file_name().and_then(|name| name.to_str()) == Some("fish") {
-        Command::new(shell)
-            .arg("-l")
-            .arg("-c")
-            .arg(command)
-            .output()
-    } else {
-        Command::new(shell).arg("-lc").arg(command).output()
-    }
-}
-
-fn parse_shell_environment(output: &[u8]) -> HashMap<String, String> {
-    let mut environment = HashMap::new();
-    for chunk in output.split(|byte| *byte == 0) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(chunk);
-        for line in text.lines() {
-            if let Some((key, value)) = line.split_once('=') {
-                if is_environment_key(key) {
-                    environment.insert(key.to_string(), value.to_string());
-                }
-            }
-        }
-    }
-    environment
-}
-
-fn is_environment_key(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-}
-
-fn resolve_pi_candidate(candidate: &Path) -> Option<PathBuf> {
-    if candidate.components().count() > 1 || candidate.is_absolute() {
-        return candidate.exists().then(|| candidate.to_path_buf());
-    }
-
-    env::var_os("PATH").and_then(|path| {
-        env::split_paths(&path)
-            .map(|entry| entry.join(candidate))
-            .find(|entry| entry.exists())
-    })
+    crate::services::pi_runtime::apply_user_shell_environment(command)
 }
 
 fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
@@ -1510,9 +1359,8 @@ fn set_session_thinking_level_with_executable(
 }
 
 fn list_available_models_with_executable(executable: &Path) -> Result<Vec<SessionModel>, String> {
-    let runtime_context =
-        crate::services::pi_runtime::resolve_pi_runtime_context(Some(executable))?;
-    let resolved_executable = runtime_context.executable_path.clone();
+    let runtime = crate::services::pi_runtime::resolve_pi_runtime(Some(executable))?;
+    let resolved_executable = runtime.executable_path.clone();
     let temp_root = std::env::temp_dir().join(format!("orchestra-models-{}", Uuid::new_v4()));
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("Unable to create temporary model query directory: {error}"))?;
@@ -1563,7 +1411,7 @@ fn spawn_rpc_process(
     ),
     String,
 > {
-    let pi_executable = resolve_pi_executable(Some(executable))?;
+    let runtime = crate::services::pi_runtime::resolve_pi_runtime(Some(executable))?;
     let args = vec![
         "--offline".to_string(),
         "--mode".to_string(),
@@ -1574,11 +1422,9 @@ fn spawn_rpc_process(
         session_dir.display().to_string(),
         "--no-extensions".to_string(),
     ];
-    let runtime_context =
-        crate::services::pi_runtime::resolve_pi_runtime_context(Some(executable))?;
-    let mut command = Command::new(&pi_executable);
+    let mut command = Command::new(&runtime.executable_path);
     apply_user_shell_environment(&mut command);
-    crate::services::pi_runtime::apply_pi_runtime_environment(&mut command, &runtime_context)?;
+    crate::services::pi_runtime::apply_runtime_environment(&mut command, &runtime, None);
     let mut child = command
         .args(&args)
         .current_dir(project_root)

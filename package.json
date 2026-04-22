@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "prepare:bundled-pi-runtime": "node ./scripts/prepare-bundled-pi-runtime.mjs",
     "scan:secrets": "./scripts/run-secret-scan.sh source",
     "scan:history": "./scripts/run-secret-scan.sh history",
     "scan:machine-refs": "node ./scripts/scan-machine-references.mjs --mode source",

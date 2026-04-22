@@ -484,16 +484,44 @@ export function SessionsPage({
                     ) : <p className="session-debug-value">None</p>}
                   </section>
                   <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime source</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeSource ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime mode</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeMode ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime status</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeStatus ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime version</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeVersion ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
                     <p className="eyebrow">PI executable</p>
                     <p className="session-debug-value">{runtimeDetails.piExecutablePath ?? "—"}</p>
                   </section>
                   <section className="session-debug-item">
-                    <p className="eyebrow">PI runtime source</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeSource ?? "—"}</p>
+                    <p className="eyebrow">Pi package directory</p>
+                    <p className="session-debug-value">{runtimeDetails.piPackageDir ?? "—"}</p>
                   </section>
                   <section className="session-debug-item">
-                    <p className="eyebrow">PI agent dir</p>
+                    <p className="eyebrow">Pi agent directory</p>
                     <p className="session-debug-value">{runtimeDetails.piAgentDir ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime manifest</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeManifestPath ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime build</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeBuiltAt ?? "—"}</p>
+                  </section>
+                  <section className="session-debug-item">
+                    <p className="eyebrow">Pi runtime error</p>
+                    <p className="session-debug-value">{runtimeDetails.piRuntimeErrorMessage ?? runtimeDetails.piRuntimeErrorKind ?? "—"}</p>
                   </section>
                   <section className="session-debug-item">
                     <p className="eyebrow">Shell PATH source</p>

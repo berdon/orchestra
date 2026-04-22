@@ -660,9 +660,9 @@ impl AppState {
     }
 
     pub fn sync_pi_runtime_health(&self) -> Result<PathBuf, String> {
-        match crate::services::pi_runtime::resolve_pi_runtime_context(None) {
-            Ok(context) => {
-                let path = context.executable_path;
+        match crate::services::pi_runtime::resolve_pi_runtime(None) {
+            Ok(runtime) => {
+                let path = runtime.executable_path.clone();
                 let was_blocked = self
                     .pi_dispatch_block_reason
                     .lock()
@@ -674,7 +674,8 @@ impl AppState {
                         "info",
                         "pi.dispatch.unblocked",
                         &format!(
-                            "PI runtime is available again at {}. Dispatching re-enabled.",
+                            "Pi runtime is available again from {} at {}. Dispatching re-enabled.",
+                            runtime.source,
                             path.display()
                         ),
                     );
@@ -693,7 +694,9 @@ impl AppState {
                     self.log(
                         "error",
                         "pi.dispatch.blocked",
-                        &format!("Dispatching disabled: {error}"),
+                        &format!(
+                            "Dispatching disabled because Pi runtime resolution failed: {error}"
+                        ),
                     );
                 }
                 Err(error)

@@ -7,4 +7,5 @@ mobile/.expo/
 .DS_Store
 src-tauri/target/
 guardrails/*.local.json
+src-tauri/gen/
 *.swp
