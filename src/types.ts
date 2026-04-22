@@ -40,8 +40,17 @@ export interface SystemNotificationEnvironmentStatus {
 }
 
 export interface PiExecutableDiagnostic {
+  source: string;
+  mode: string;
+  status: string;
   resolvedPath?: string | null;
-  error?: string | null;
+  packageDir?: string | null;
+  agentDir?: string | null;
+  version?: string | null;
+  builtAt?: string | null;
+  manifestPath?: string | null;
+  errorKind?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface RemoteAccessSettings {
@@ -311,7 +320,17 @@ export interface SessionRuntimeDetails {
   orchestraExtensionPath?: string | null;
   extraExtensions: string[];
   loadedExtensions: string[];
+  piRuntimeSource?: string | null;
+  piRuntimeMode?: string | null;
+  piRuntimeStatus?: string | null;
   piExecutablePath?: string | null;
+  piPackageDir?: string | null;
+  piAgentDir?: string | null;
+  piRuntimeVersion?: string | null;
+  piRuntimeBuiltAt?: string | null;
+  piRuntimeManifestPath?: string | null;
+  piRuntimeErrorKind?: string | null;
+  piRuntimeErrorMessage?: string | null;
   shellPath?: string | null;
   projectRoot?: string | null;
   sessionDir?: string | null;

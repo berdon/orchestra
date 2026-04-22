@@ -16,9 +16,9 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, SessionControlCapabilities, SessionControlCapability,
-        SessionControlOperationState, SessionModel, SessionModelState, SessionRuntimeDetails,
-        SessionStats, SessionStreamEnvelope,
+        AuthorizationContext, PiRuntimeHealth, SessionControlCapabilities,
+        SessionControlCapability, SessionControlOperationState, SessionModel, SessionModelState,
+        SessionRuntimeDetails, SessionStats, SessionStreamEnvelope,
     },
     services::{
         app_events, database, harness_settings,
@@ -126,6 +126,7 @@ pub struct SessionRuntime {
     project_root: Mutex<PathBuf>,
     session_dir: PathBuf,
     session_path: PathBuf,
+    pi_runtime_health: PiRuntimeHealth,
     pi_executable_path: PathBuf,
     shell_path: Option<String>,
     orchestra_extension_path: PathBuf,
@@ -163,9 +164,9 @@ impl SessionRuntime {
         let extension_path = resolve_orchestra_extension_path(&app)?;
         let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
 
-        let pi_executable = app
-            .state::<crate::state::AppState>()
-            .sync_pi_runtime_health()?;
+        let pi_runtime = crate::services::pi_runtime::resolve_pi_runtime(None)?;
+        let pi_runtime_health = pi_runtime.health();
+        let pi_executable = pi_runtime.executable_path.clone();
         let args = build_runtime_pi_args(
             &session_path,
             &session_dir,
@@ -189,9 +190,12 @@ impl SessionRuntime {
             "info",
             "sessions.runtime.spawn.request",
             &format!(
-                "Session {} spawn request: pi={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} shell_path={}",
+                "Session {} spawn request: pi={} runtime_source={} runtime_mode={} runtime_version={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} shell_path={}",
                 session_id,
                 pi_executable_diagnostic,
+                pi_runtime_health.source,
+                pi_runtime_health.mode,
+                pi_runtime_health.version.as_deref().unwrap_or("<unknown>"),
                 requested_project_root_diagnostic,
                 session_dir_diagnostic,
                 session_path_diagnostic,
@@ -203,6 +207,7 @@ impl SessionRuntime {
 
         let mut command = Command::new(&pi_executable);
         crate::services::pi_sessions::apply_user_shell_environment(&mut command);
+        crate::services::pi_runtime::apply_runtime_environment(&mut command, &pi_runtime, None);
         let mut child = command
             .args(&args)
             .env("ORCHESTRA_BRIDGE_URL", &bridge_config.url)
@@ -272,6 +277,7 @@ impl SessionRuntime {
             project_root: Mutex::new(requested_project_root),
             session_dir,
             session_path,
+            pi_runtime_health,
             pi_executable_path: pi_executable,
             shell_path,
             orchestra_extension_path: extension_path,
@@ -364,26 +370,32 @@ impl SessionRuntime {
     fn handle_payload(&self, payload: Value) {
         if payload.get("type").and_then(Value::as_str) == Some("response") {
             if let Ok(mut pending) = self.pending.lock() {
-                let response_id = payload.get("id").and_then(Value::as_str).map(str::to_string);
+                let response_id = payload
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 let response_command = payload
                     .get("command")
                     .and_then(Value::as_str)
                     .map(str::to_string);
 
-                let matched_pending_id = response_id.clone().filter(|id| pending.contains_key(id)).or_else(|| {
-                    let command = response_command.as_deref()?;
-                    let prefix = format!("{command}-");
-                    let matches = pending
-                        .keys()
-                        .filter(|id| id.starts_with(&prefix))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if matches.len() == 1 {
-                        matches.into_iter().next()
-                    } else {
-                        None
-                    }
-                });
+                let matched_pending_id = response_id
+                    .clone()
+                    .filter(|id| pending.contains_key(id))
+                    .or_else(|| {
+                        let command = response_command.as_deref()?;
+                        let prefix = format!("{command}-");
+                        let matches = pending
+                            .keys()
+                            .filter(|id| id.starts_with(&prefix))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if matches.len() == 1 {
+                            matches.into_iter().next()
+                        } else {
+                            None
+                        }
+                    });
 
                 if let Some(matched_id) = matched_pending_id {
                     if let Some(sender) = pending.remove(&matched_id) {
@@ -428,7 +440,10 @@ impl SessionRuntime {
             self.app.state::<crate::state::AppState>().log(
                 "warn",
                 "sessions.rpc.response.unhandled",
-                &format!("Session {} received unhandled response payload: {}", self.session_id, payload),
+                &format!(
+                    "Session {} received unhandled response payload: {}",
+                    self.session_id, payload
+                ),
             );
         }
 
@@ -1048,7 +1063,17 @@ impl SessionRuntime {
             orchestra_extension_path: Some(self.orchestra_extension_path.display().to_string()),
             extra_extensions: self.extra_extensions.clone(),
             loaded_extensions,
+            pi_runtime_source: Some(self.pi_runtime_health.source.clone()),
+            pi_runtime_mode: Some(self.pi_runtime_health.mode.clone()),
+            pi_runtime_status: Some(self.pi_runtime_health.status.clone()),
             pi_executable_path: Some(self.pi_executable_path.display().to_string()),
+            pi_package_dir: self.pi_runtime_health.package_dir.clone(),
+            pi_agent_dir: self.pi_runtime_health.agent_dir.clone(),
+            pi_runtime_version: self.pi_runtime_health.version.clone(),
+            pi_runtime_built_at: self.pi_runtime_health.built_at.clone(),
+            pi_runtime_manifest_path: self.pi_runtime_health.manifest_path.clone(),
+            pi_runtime_error_kind: self.pi_runtime_health.error_kind.clone(),
+            pi_runtime_error_message: self.pi_runtime_health.error_message.clone(),
             shell_path: self.shell_path.clone(),
             project_root: self
                 .project_root
@@ -1677,10 +1702,7 @@ pub fn get_session_runtime_details(
     let session_path = get_session_path(&context.session_dir, session_id)?;
     let orchestra_extension_path = resolve_orchestra_extension_path(app)?;
     let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
-    let pi_executable_path = state
-        .sync_pi_runtime_health()
-        .ok()
-        .map(|path| path.display().to_string());
+    let pi_runtime_health = crate::services::pi_runtime::current_pi_runtime_health();
     let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
     let loaded_extensions = std::iter::once(orchestra_extension_path.display().to_string())
         .chain(extra_extensions.iter().cloned())
@@ -1706,7 +1728,17 @@ pub fn get_session_runtime_details(
         orchestra_extension_path: Some(orchestra_extension_path.display().to_string()),
         extra_extensions,
         loaded_extensions,
-        pi_executable_path,
+        pi_runtime_source: Some(pi_runtime_health.source.clone()),
+        pi_runtime_mode: Some(pi_runtime_health.mode.clone()),
+        pi_runtime_status: Some(pi_runtime_health.status.clone()),
+        pi_executable_path: pi_runtime_health.resolved_path.clone(),
+        pi_package_dir: pi_runtime_health.package_dir.clone(),
+        pi_agent_dir: pi_runtime_health.agent_dir.clone(),
+        pi_runtime_version: pi_runtime_health.version.clone(),
+        pi_runtime_built_at: pi_runtime_health.built_at.clone(),
+        pi_runtime_manifest_path: pi_runtime_health.manifest_path.clone(),
+        pi_runtime_error_kind: pi_runtime_health.error_kind.clone(),
+        pi_runtime_error_message: pi_runtime_health.error_message.clone(),
         shell_path,
         project_root: Some(context.project_root.display().to_string()),
         session_dir: Some(context.session_dir.display().to_string()),

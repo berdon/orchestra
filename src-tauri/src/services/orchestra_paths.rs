@@ -42,6 +42,18 @@ pub fn orchestra_settings_path(root: &Path) -> PathBuf {
     root.join("settings.json")
 }
 
+pub fn orchestra_runtime_root(root: &Path) -> PathBuf {
+    root.join("runtime")
+}
+
+pub fn pi_runtime_root(root: &Path) -> PathBuf {
+    orchestra_runtime_root(root).join("pi")
+}
+
+pub fn pi_agent_dir(root: &Path) -> PathBuf {
+    pi_runtime_root(root).join("agent")
+}
+
 pub fn project_root(root: &Path, project_slug: &str) -> PathBuf {
     root.join("projects").join(sanitize_slug(project_slug))
 }
@@ -107,6 +119,18 @@ mod tests {
         assert_eq!(
             project_settings_path(&root, "Orchestra App"),
             PathBuf::from("/tmp/home/.orchestra/projects/orchestra-app/settings.json")
+        );
+        assert_eq!(
+            orchestra_runtime_root(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime")
+        );
+        assert_eq!(
+            pi_runtime_root(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi")
+        );
+        assert_eq!(
+            pi_agent_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent")
         );
     }
 }

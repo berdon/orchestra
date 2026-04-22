@@ -21,6 +21,7 @@ use crate::{
     services::{
         database, harness_settings,
         orchestra_paths::default_orchestra_root,
+        pi_runtime,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
@@ -258,23 +259,15 @@ pub fn update_pi_runtime_settings(
 
 #[tauri::command]
 pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableDiagnostic {
-    match state.sync_pi_runtime_health() {
-        Ok(path) => PiExecutableDiagnostic {
-            resolved_path: Some(path.display().to_string()),
-            error: None,
-        },
-        Err(error) => {
-            state.log(
-                "error",
-                "pi.executable.resolve",
-                &format!("Unable to resolve pi executable: {error}"),
-            );
-            PiExecutableDiagnostic {
-                resolved_path: None,
-                error: Some(error),
-            }
-        }
+    let diagnostic = pi_runtime::current_pi_runtime_health();
+    if let Some(error) = diagnostic.error_message.as_ref() {
+        state.log(
+            "error",
+            "pi.runtime.resolve",
+            &format!("Unable to resolve Pi runtime: {error}"),
+        );
     }
+    diagnostic
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

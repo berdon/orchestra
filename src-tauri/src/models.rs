@@ -309,12 +309,23 @@ pub struct SessionStorageInfo {
     pub session_dir: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PiExecutableDiagnostic {
+pub struct PiRuntimeHealth {
+    pub source: String,
+    pub mode: String,
+    pub status: String,
     pub resolved_path: Option<String>,
-    pub error: Option<String>,
+    pub package_dir: Option<String>,
+    pub agent_dir: Option<String>,
+    pub version: Option<String>,
+    pub built_at: Option<String>,
+    pub manifest_path: Option<String>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
 }
+
+pub type PiExecutableDiagnostic = PiRuntimeHealth;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -430,7 +441,17 @@ pub struct SessionRuntimeDetails {
     pub orchestra_extension_path: Option<String>,
     pub extra_extensions: Vec<String>,
     pub loaded_extensions: Vec<String>,
+    pub pi_runtime_source: Option<String>,
+    pub pi_runtime_mode: Option<String>,
+    pub pi_runtime_status: Option<String>,
     pub pi_executable_path: Option<String>,
+    pub pi_package_dir: Option<String>,
+    pub pi_agent_dir: Option<String>,
+    pub pi_runtime_version: Option<String>,
+    pub pi_runtime_built_at: Option<String>,
+    pub pi_runtime_manifest_path: Option<String>,
+    pub pi_runtime_error_kind: Option<String>,
+    pub pi_runtime_error_message: Option<String>,
     pub shell_path: Option<String>,
     pub project_root: Option<String>,
     pub session_dir: Option<String>,

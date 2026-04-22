@@ -44,8 +44,10 @@ impl AgentTerminalSession {
             })
             .map_err(|error| format!("Unable to create terminal PTY: {error}"))?;
 
-        let pi_executable = crate::services::pi_sessions::resolve_pi_executable(None)?;
-        let temp_home_dir = prepare_terminal_home_dir(session_id, &pi_executable)?;
+        let runtime = crate::services::pi_runtime::resolve_pi_runtime(None)?;
+        let pi_executable = runtime.executable_path.clone();
+        let (temp_home_dir, temp_agent_dir) =
+            prepare_terminal_home_dir(session_id, &runtime.agent_dir, &pi_executable)?;
 
         let mut command = CommandBuilder::new(&pi_executable);
         command.cwd(runtime_cwd);
@@ -60,12 +62,16 @@ impl AgentTerminalSession {
                 command.env(key, value);
             }
         }
-        if let Some(temp_home_dir) = temp_home_dir.as_ref() {
-            command.env("HOME", temp_home_dir);
-            if let Some(prefix) = infer_npm_prefix(&pi_executable, temp_home_dir) {
-                command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
-                command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
+        command.env("HOME", &temp_home_dir);
+        command.env("PI_CODING_AGENT_DIR", &temp_agent_dir);
+        if runtime.source == "bundled" {
+            if let Some(package_dir) = runtime.package_dir.as_ref() {
+                command.env("PI_PACKAGE_DIR", package_dir);
             }
+        }
+        if let Some(prefix) = infer_npm_prefix(&pi_executable, &temp_home_dir) {
+            command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
+            command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
         }
 
         let child = pair
@@ -88,7 +94,7 @@ impl AgentTerminalSession {
             master: Mutex::new(pair.master),
             child: Mutex::new(child),
             buffer: Mutex::new(TERMINAL_BOOTSTRAP_TEXT.to_string()),
-            temp_home_dir,
+            temp_home_dir: Some(temp_home_dir),
             app: app.clone(),
         });
 
@@ -207,23 +213,15 @@ impl AgentTerminalSession {
 
 fn prepare_terminal_home_dir(
     session_id: &str,
+    source_agent_dir: &Path,
     pi_executable: &Path,
-) -> Result<Option<PathBuf>, String> {
-    let real_home = std::env::var("HOME").map(PathBuf::from).ok();
-    let agent_dir = real_home
-        .as_ref()
-        .map(|home: &PathBuf| home.join(".pi").join("agent"))
-        .filter(|dir: &PathBuf| dir.exists());
-    let Some(agent_dir) = agent_dir else {
-        return Ok(None);
-    };
-
+) -> Result<(PathBuf, PathBuf), String> {
     let temp_home_dir = std::env::temp_dir().join(format!(
         "orchestra-agent-terminal-home-{}-{}",
         sanitize_for_path(session_id),
         std::process::id()
     ));
-    let temp_agent_dir = temp_home_dir.join(".pi").join("agent");
+    let temp_agent_dir = temp_home_dir.join("pi-agent");
     fs::create_dir_all(&temp_agent_dir).map_err(|error| {
         format!(
             "Unable to create temporary terminal agent directory {}: {error}",
@@ -232,15 +230,15 @@ fn prepare_terminal_home_dir(
     })?;
 
     copy_if_exists(
-        &agent_dir.join("auth.json"),
+        &source_agent_dir.join("auth.json"),
         &temp_agent_dir.join("auth.json"),
     )?;
     copy_if_exists(
-        &agent_dir.join("models.json"),
+        &source_agent_dir.join("models.json"),
         &temp_agent_dir.join("models.json"),
     )?;
     copy_filtered_settings(
-        &agent_dir.join("settings.json"),
+        &source_agent_dir.join("settings.json"),
         &temp_agent_dir.join("settings.json"),
     )?;
 
@@ -254,7 +252,7 @@ fn prepare_terminal_home_dir(
         })?;
     }
 
-    Ok(Some(temp_home_dir))
+    Ok((temp_home_dir, temp_agent_dir))
 }
 
 fn sanitize_for_path(value: &str) -> String {

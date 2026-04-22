@@ -2365,7 +2365,17 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
       orchestraExtensionPath,
       extraExtensions,
       loadedExtensions: [orchestraExtensionPath, ...extraExtensions],
-      piExecutablePath: "pi (mock)",
+      piRuntimeSource: "bundled",
+      piRuntimeMode: "packaged",
+      piRuntimeStatus: "healthy",
+      piExecutablePath: "/mock/orchestra/pi-runtime/runtime/pi",
+      piPackageDir: "/mock/orchestra/pi-runtime/runtime",
+      piAgentDir: "/mock/.orchestra/runtime/pi/agent",
+      piRuntimeVersion: "0.68.1",
+      piRuntimeBuiltAt: "2026-04-22T00:00:00Z",
+      piRuntimeManifestPath: "/mock/orchestra/pi-runtime/manifest.json",
+      piRuntimeErrorKind: null,
+      piRuntimeErrorMessage: null,
       shellPath: "/mock/bin",
       projectRoot: session.debugInfo?.projectRoot ?? "/mock/orchestra/project",
       sessionDir: "/mock/orchestra/sessions",
@@ -2724,7 +2734,19 @@ export async function stopSessionRuntime(sessionId: string, notes?: string): Pro
 
 export async function getPiExecutableDiagnostic(): Promise<PiExecutableDiagnostic> {
   if (!isTauriAvailable()) {
-    return { resolvedPath: "/mock/bin/pi", error: null };
+    return {
+      source: "bundled",
+      mode: "packaged",
+      status: "healthy",
+      resolvedPath: "/mock/orchestra/pi-runtime/runtime/pi",
+      packageDir: "/mock/orchestra/pi-runtime/runtime",
+      agentDir: "/mock/.orchestra/runtime/pi/agent",
+      version: "0.68.1",
+      builtAt: "2026-04-22T00:00:00Z",
+      manifestPath: "/mock/orchestra/pi-runtime/manifest.json",
+      errorKind: null,
+      errorMessage: null,
+    };
   }
 
   return invoke<PiExecutableDiagnostic>("get_pi_executable_diagnostic");

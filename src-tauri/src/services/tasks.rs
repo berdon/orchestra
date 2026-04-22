@@ -3232,13 +3232,20 @@ mod tests {
             .map(|task| task.title.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(listed_titles, vec!["Backend only", "Backend urgent ops", "Urgent only"]);
+        assert_eq!(
+            listed_titles,
+            vec!["Backend only", "Backend urgent ops", "Urgent only"]
+        );
         assert!(listed_ids.contains(&backend.id.as_str()));
         assert!(listed_ids.contains(&shared.id.as_str()));
         assert!(listed_ids.contains(&urgent.id.as_str()));
         assert_eq!(listed_ids.len(), 3);
         assert_eq!(
-            listed_ids.iter().copied().collect::<std::collections::HashSet<_>>().len(),
+            listed_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
             listed_ids.len()
         );
     }
@@ -3805,7 +3812,12 @@ mod tests {
             )
             .expect("default project should insert");
 
-        let task = create_named_task(&mut connection, "Queued implementation", "in_progress", None);
+        let task = create_named_task(
+            &mut connection,
+            "Queued implementation",
+            "in_progress",
+            None,
+        );
         connection
             .execute(
                 "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, 'workflow-dev', 'lane-plan', 'role', 'developer', 'queued', NULL, NULL, NULL, NULL, 'Implement it', 0, NULL, ?3, NULL, ?3, ?3)",
@@ -3820,7 +3832,10 @@ mod tests {
             .expect("task summary should be present");
 
         assert_eq!(summary.status, "in_progress");
-        assert_eq!(summary.active_lane_assignment_status.as_deref(), Some("queued"));
+        assert_eq!(
+            summary.active_lane_assignment_status.as_deref(),
+            Some("queued")
+        );
         assert!(!summary.ready_for_dispatch);
     }
 

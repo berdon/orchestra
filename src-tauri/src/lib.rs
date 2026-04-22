@@ -145,6 +145,7 @@ pub fn run() {
         .manage(app_state)
         .setup(|app| {
             let state = app.state::<AppState>();
+            services::pi_runtime::register_app_handle(app.handle().clone());
             state.tool_bridge.attach_app_handle(app.handle().clone());
             state.log(
                 "info",

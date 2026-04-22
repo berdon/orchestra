@@ -18,8 +18,7 @@ use crate::{
         agent_runtime, agents, app_events, database, domain_events,
         live_sessions::{
             ensure_runtime, get_session_control_snapshot, is_unknown_command_error,
-            maybe_auto_compact, maybe_runtime, perform_session_compaction,
-            perform_session_reload,
+            maybe_auto_compact, maybe_runtime, perform_session_compaction, perform_session_reload,
         },
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
