@@ -2374,7 +2374,15 @@ mod tests {
     fn open_test_connection(label: &str) -> Connection {
         let path = unique_temp_db(label);
         initialize_database_at(&path).expect("database should initialize");
-        Connection::open(path).expect("database should open")
+        let connection = Connection::open(path).expect("database should open");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("default project should seed");
+        connection
     }
 
     fn dummy_bridge_config(label: &str) -> ToolBridgeConfig {
@@ -2586,18 +2594,20 @@ mod tests {
             let connection = crate::services::database::open_connection()
                 .expect("database should open in the temp Orchestra home");
             let now = "2026-03-22T00:00:00Z";
+            let default_prefix = format!("T{}", &Uuid::new_v4().simple().to_string()[..7]);
             connection
                 .execute(
-                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
-                    [now],
+                    "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, ?1, NULL, ?2, ?2)",
+                    rusqlite::params![default_prefix, now],
                 )
                 .expect("default project should seed");
             let project_id = format!("project-{}", Uuid::new_v4().simple());
             let project_slug = project_id.clone();
+            let project_prefix = format!("P{}", &Uuid::new_v4().simple().to_string()[..7]);
             connection
                 .execute(
-                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, 'Project 2', NULL, 'P2', NULL, ?3, ?3)",
-                    rusqlite::params![project_id, project_slug, now],
+                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, 'Project 2', NULL, ?3, NULL, ?4, ?4)",
+                    rusqlite::params![project_id, project_slug, project_prefix, now],
                 )
                 .expect("project should seed");
 
@@ -2718,10 +2728,12 @@ mod tests {
             let connection = crate::services::database::open_connection()
                 .expect("database should open in the temp Orchestra home");
             let now = "2026-03-22T00:00:00Z";
+            let project_id = format!("project-{}", Uuid::new_v4().simple());
+            let project_prefix = format!("U{}", &Uuid::new_v4().simple().to_string()[..7]);
             connection
                 .execute(
-                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'P1', NULL, ?1, ?1)",
-                    [now],
+                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?1, 'Project 1', NULL, ?2, NULL, ?3, ?3)",
+                    rusqlite::params![project_id, project_prefix, now],
                 )
                 .expect("project should seed");
             let config = dummy_bridge_config("update-tags");
@@ -2736,7 +2748,7 @@ mod tests {
                 authorization,
                 None,
                 json!({
-                    "projectId": "project-1",
+                    "projectId": project_id,
                     "title": "Mutable bridge task",
                     "type": "task",
                     "status": "ready",
@@ -2789,6 +2801,7 @@ mod tests {
                 actor_id: "tester".into(),
             });
 
+            let project_prefix = format!("B{}", &Uuid::new_v4().simple().to_string()[..7]);
             let created_project = invoke_bridge_command(
                 &config,
                 &connection,
@@ -2798,7 +2811,8 @@ mod tests {
                 json!({
                     "input": {
                         "name": "Bridge Project",
-                        "description": "Project bridge test"
+                        "description": "Project bridge test",
+                        "taskPrefix": project_prefix
                     }
                 }),
             )
@@ -2834,7 +2848,8 @@ mod tests {
                     "projectId": project_id,
                     "input": {
                         "name": "Bridge Project Updated",
-                        "description": "Updated over the bridge"
+                        "description": "Updated over the bridge",
+                        "taskPrefix": project_prefix
                     }
                 }),
             )

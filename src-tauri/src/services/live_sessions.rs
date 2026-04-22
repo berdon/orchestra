@@ -364,26 +364,32 @@ impl SessionRuntime {
     fn handle_payload(&self, payload: Value) {
         if payload.get("type").and_then(Value::as_str) == Some("response") {
             if let Ok(mut pending) = self.pending.lock() {
-                let response_id = payload.get("id").and_then(Value::as_str).map(str::to_string);
+                let response_id = payload
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 let response_command = payload
                     .get("command")
                     .and_then(Value::as_str)
                     .map(str::to_string);
 
-                let matched_pending_id = response_id.clone().filter(|id| pending.contains_key(id)).or_else(|| {
-                    let command = response_command.as_deref()?;
-                    let prefix = format!("{command}-");
-                    let matches = pending
-                        .keys()
-                        .filter(|id| id.starts_with(&prefix))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if matches.len() == 1 {
-                        matches.into_iter().next()
-                    } else {
-                        None
-                    }
-                });
+                let matched_pending_id = response_id
+                    .clone()
+                    .filter(|id| pending.contains_key(id))
+                    .or_else(|| {
+                        let command = response_command.as_deref()?;
+                        let prefix = format!("{command}-");
+                        let matches = pending
+                            .keys()
+                            .filter(|id| id.starts_with(&prefix))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if matches.len() == 1 {
+                            matches.into_iter().next()
+                        } else {
+                            None
+                        }
+                    });
 
                 if let Some(matched_id) = matched_pending_id {
                     if let Some(sender) = pending.remove(&matched_id) {
@@ -428,7 +434,10 @@ impl SessionRuntime {
             self.app.state::<crate::state::AppState>().log(
                 "warn",
                 "sessions.rpc.response.unhandled",
-                &format!("Session {} received unhandled response payload: {}", self.session_id, payload),
+                &format!(
+                    "Session {} received unhandled response payload: {}",
+                    self.session_id, payload
+                ),
             );
         }
 

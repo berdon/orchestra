@@ -6,7 +6,9 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row};
+use rusqlite::{
+    params, params_from_iter, types::Value, Connection, OptionalExtension, Row, TransactionBehavior,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -41,6 +43,36 @@ const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "canceled"];
 const TASK_TAG_SEPARATOR: char = '\u{001F}';
 const MAX_TASK_TAG_LENGTH: usize = 32;
 const MAX_TASK_TAG_COUNT: usize = 20;
+
+#[cfg(test)]
+type PostTaskNumberAllocationHook = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+#[cfg(test)]
+static POST_TASK_NUMBER_ALLOCATION_HOOK: std::sync::OnceLock<
+    std::sync::Mutex<Option<PostTaskNumberAllocationHook>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn set_post_task_number_allocation_hook(hook: Option<PostTaskNumberAllocationHook>) {
+    let hook_slot = POST_TASK_NUMBER_ALLOCATION_HOOK.get_or_init(|| std::sync::Mutex::new(None));
+    let mut active_hook = hook_slot
+        .lock()
+        .expect("post-allocation hook mutex should lock");
+    *active_hook = hook;
+}
+
+#[cfg(test)]
+fn run_post_task_number_allocation_hook(task_title: &str) {
+    let hook = POST_TASK_NUMBER_ALLOCATION_HOOK
+        .get()
+        .and_then(|hook_slot| hook_slot.lock().ok().and_then(|hook| hook.clone()));
+    if let Some(hook) = hook {
+        hook(task_title);
+    }
+}
+
+#[cfg(not(test))]
+fn run_post_task_number_allocation_hook(_task_title: &str) {}
 
 #[derive(Debug, Clone)]
 struct CommentAnchorInput {
@@ -543,14 +575,15 @@ pub fn create_task_from_blueprint(
 ) -> Result<TaskDetail, String> {
     projects::ensure_project_exists(connection, project_id)?;
     let normalized = prepare_task_input_for_project(connection, project_id, input, None)?;
-    let sequence_number = next_task_sequence_number(connection, project_id)?;
-    let task_prefix = projects::get_project_task_prefix(connection, project_id)?;
-    let number = format!("{task_prefix}-{sequence_number}");
     let task_id = task_id();
     let now = now_iso();
     let tx = connection
-        .transaction()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("Unable to start task creation transaction: {error}"))?;
+    let sequence_number = next_task_sequence_number(&tx, project_id)?;
+    let task_prefix = projects::get_project_task_prefix(&tx, project_id)?;
+    let number = format!("{task_prefix}-{sequence_number}");
+    run_post_task_number_allocation_hook(&normalized.title);
 
     tx.execute(
         r#"
@@ -2943,6 +2976,85 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
     use crate::services::database;
+    use std::{
+        path::{Path, PathBuf},
+        sync::{Arc, Barrier, Condvar, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    #[derive(Default)]
+    struct PostAllocationHookState {
+        generation: usize,
+        waiters: usize,
+    }
+
+    struct PostAllocationHookGuard;
+
+    impl Drop for PostAllocationHookGuard {
+        fn drop(&mut self) {
+            set_post_task_number_allocation_hook(None);
+        }
+    }
+
+    fn install_post_task_number_allocation_hook(
+        hook: PostTaskNumberAllocationHook,
+    ) -> PostAllocationHookGuard {
+        set_post_task_number_allocation_hook(Some(hook));
+        PostAllocationHookGuard
+    }
+
+    fn unique_temp_database_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("{label}-{}.db", Uuid::new_v4().simple()))
+    }
+
+    fn open_file_backed_connection(path: &Path) -> Connection {
+        let connection = Connection::open(path).expect("database should open");
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .expect("busy timeout should configure");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .expect("wal mode should enable");
+        connection
+    }
+
+    fn file_backed_connection_with_project_and_workflow(label: &str) -> PathBuf {
+        let path = unique_temp_database_path(label);
+        let connection = open_file_backed_connection(&path);
+        database::apply_migrations(&connection).expect("apply migrations");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, NULL, ?5, ?5)",
+                params![DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID, "Orchestra", "ORC", now_iso()],
+            )
+            .expect("default project should insert");
+        seed_workflow(&connection);
+        path
+    }
+
+    fn basic_task_input(title: &str) -> TaskUpsertInput {
+        TaskUpsertInput {
+            title: title.into(),
+            description: None,
+            task_type: "task".into(),
+            tags: Vec::new(),
+            status: "ready".into(),
+            priority: "P2".into(),
+            workflow_id: Some("workflow-dev".into()),
+            current_lane_id: Some("lane-plan".into()),
+            assignee_type: "user".into(),
+            assignee_id: None,
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            whip_max_attempts: None,
+            archived: None,
+        }
+    }
 
     fn in_memory_connection() -> Connection {
         let connection = Connection::open_in_memory().expect("open in-memory db");
@@ -3146,6 +3258,98 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_task_creation_allocates_distinct_numbers() {
+        let database_path =
+            file_backed_connection_with_project_and_workflow("concurrent-task-number-allocation");
+        let start_barrier = Arc::new(Barrier::new(3));
+        let hook_state = Arc::new((
+            Mutex::new(PostAllocationHookState::default()),
+            Condvar::new(),
+        ));
+        let _hook_guard = install_post_task_number_allocation_hook({
+            let hook_state = Arc::clone(&hook_state);
+            Arc::new(move |title: &str| {
+                if !title.starts_with("Concurrent allocator ") {
+                    return;
+                }
+
+                let (lock, condvar) = &*hook_state;
+                let mut state = lock.lock().expect("hook state should lock");
+                state.waiters += 1;
+
+                if state.waiters == 1 {
+                    let observed_generation = state.generation;
+                    let (guard, _) = condvar
+                        .wait_timeout_while(state, Duration::from_millis(150), |state| {
+                            state.generation == observed_generation
+                        })
+                        .expect("hook wait should succeed");
+                    state = guard;
+                } else {
+                    state.generation += 1;
+                    condvar.notify_all();
+                }
+
+                state.waiters -= 1;
+            })
+        });
+
+        let first_handle = {
+            let database_path = database_path.clone();
+            let start_barrier = Arc::clone(&start_barrier);
+            thread::spawn(move || {
+                let mut connection = open_file_backed_connection(&database_path);
+                start_barrier.wait();
+                create_task(
+                    &mut connection,
+                    Some(DEFAULT_PROJECT_ID),
+                    basic_task_input("Concurrent allocator A"),
+                )
+                .map(|task| task.number)
+            })
+        };
+        let second_handle = {
+            let database_path = database_path.clone();
+            let start_barrier = Arc::clone(&start_barrier);
+            thread::spawn(move || {
+                let mut connection = open_file_backed_connection(&database_path);
+                start_barrier.wait();
+                create_task(
+                    &mut connection,
+                    Some(DEFAULT_PROJECT_ID),
+                    basic_task_input("Concurrent allocator B"),
+                )
+                .map(|task| task.number)
+            })
+        };
+
+        start_barrier.wait();
+
+        let first_number = first_handle
+            .join()
+            .expect("first create thread should join")
+            .expect("first create should succeed");
+        let second_number = second_handle
+            .join()
+            .expect("second create thread should join")
+            .expect("second create should succeed");
+
+        let mut numbers = vec![first_number, second_number];
+        numbers.sort();
+        assert_eq!(numbers, vec!["ORC-1".to_string(), "ORC-2".to_string()]);
+
+        let verification_connection = open_file_backed_connection(&database_path);
+        let persisted_numbers = verification_connection
+            .prepare("SELECT number FROM tasks ORDER BY sequence_number ASC")
+            .expect("task number query should prepare")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("task number query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("task numbers should collect");
+        assert_eq!(persisted_numbers, vec!["ORC-1", "ORC-2"]);
+    }
+
+    #[test]
     fn normalizes_persists_and_lists_task_tags() {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
@@ -3232,13 +3436,20 @@ mod tests {
             .map(|task| task.title.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(listed_titles, vec!["Backend only", "Backend urgent ops", "Urgent only"]);
+        assert_eq!(
+            listed_titles,
+            vec!["Backend only", "Backend urgent ops", "Urgent only"]
+        );
         assert!(listed_ids.contains(&backend.id.as_str()));
         assert!(listed_ids.contains(&shared.id.as_str()));
         assert!(listed_ids.contains(&urgent.id.as_str()));
         assert_eq!(listed_ids.len(), 3);
         assert_eq!(
-            listed_ids.iter().copied().collect::<std::collections::HashSet<_>>().len(),
+            listed_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
             listed_ids.len()
         );
     }
@@ -3798,14 +4009,13 @@ mod tests {
         let mut connection = in_memory_connection();
         seed_workflow(&connection);
         let now = now_iso();
-        connection
-            .execute(
-                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?1, 'Orchestra', NULL, 'ORC', NULL, ?2, ?2)",
-                params![DEFAULT_PROJECT_ID, now.as_str()],
-            )
-            .expect("default project should insert");
 
-        let task = create_named_task(&mut connection, "Queued implementation", "in_progress", None);
+        let task = create_named_task(
+            &mut connection,
+            "Queued implementation",
+            "in_progress",
+            None,
+        );
         connection
             .execute(
                 "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, 'workflow-dev', 'lane-plan', 'role', 'developer', 'queued', NULL, NULL, NULL, NULL, 'Implement it', 0, NULL, ?3, NULL, ?3, ?3)",
@@ -3820,7 +4030,10 @@ mod tests {
             .expect("task summary should be present");
 
         assert_eq!(summary.status, "in_progress");
-        assert_eq!(summary.active_lane_assignment_status.as_deref(), Some("queued"));
+        assert_eq!(
+            summary.active_lane_assignment_status.as_deref(),
+            Some("queued")
+        );
         assert!(!summary.ready_for_dispatch);
     }
 

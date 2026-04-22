@@ -1,7 +1,5 @@
 use std::{
-    env,
-    fs,
-    io,
+    env, fs, io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -22,13 +20,19 @@ fn copy_dir_all(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 fn ensure_mobile_web_assets() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set"));
-    let repo_root = manifest_dir.parent().expect("src-tauri should have a repository parent");
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set"));
+    let repo_root = manifest_dir
+        .parent()
+        .expect("src-tauri should have a repository parent");
     let fallback_mobile_dist_web = repo_root.join("mobile/dist-web");
     let desktop_dist = repo_root.join("dist");
 
     println!("cargo:rerun-if-changed={}", desktop_dist.display());
-    println!("cargo:rerun-if-changed={}", fallback_mobile_dist_web.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        fallback_mobile_dist_web.display()
+    );
 
     if fs::symlink_metadata(&fallback_mobile_dist_web).is_ok() {
         return;
@@ -43,7 +47,8 @@ fn ensure_mobile_web_assets() {
     }
 
     if let Some(parent) = fallback_mobile_dist_web.parent() {
-        fs::create_dir_all(parent).expect("failed to create mobile directory for fallback web assets");
+        fs::create_dir_all(parent)
+            .expect("failed to create mobile directory for fallback web assets");
     }
 
     let symlink_result = {

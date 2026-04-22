@@ -1060,7 +1060,15 @@ mod tests {
     fn open_test_connection(label: &str) -> Connection {
         let path = unique_temp_db(label);
         initialize_database_at(&path).expect("database should initialize");
-        Connection::open(path).expect("database should open")
+        let connection = Connection::open(path).expect("database should open");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("default project should seed");
+        connection
     }
 
     fn seed_agent(connection: &Connection, agent_id: &str, name: &str, now: &str) {

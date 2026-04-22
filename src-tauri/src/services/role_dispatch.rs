@@ -1052,7 +1052,15 @@ mod tests {
     fn open_test_connection(label: &str) -> Connection {
         let path = unique_temp_db(label);
         initialize_database_at(&path).expect("database should initialize");
-        Connection::open(path).expect("database should open")
+        let connection = Connection::open(path).expect("database should open");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("default project should seed");
+        connection
     }
 
     fn init_test_repo(label: &str) -> PathBuf {
@@ -1220,7 +1228,7 @@ mod tests {
         .expect("workflow should create");
         let now = crate::state::now_iso();
         connection.execute(
-            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project should insert");
         connection.execute(
@@ -1312,7 +1320,7 @@ mod tests {
         .expect("workflow should create");
         let now = crate::state::now_iso();
         connection.execute(
-            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project should insert");
         connection.execute(
@@ -1412,6 +1420,31 @@ mod tests {
             .join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Lane dispatch flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-implement".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+
         let old_session = pi_sessions::create_session_file(
             &project_root,
             &session_dir,
@@ -1444,8 +1477,8 @@ mod tests {
                 tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
-                workflow_id: None,
-                current_lane_id: None,
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
                 assignee_type: "role".into(),
                 assignee_id: Some(role.id.clone()),
                 repository_id: None,
@@ -1456,12 +1489,6 @@ mod tests {
             },
         )
         .expect("task should create");
-        connection
-            .execute(
-                "UPDATE tasks SET current_lane_id = 'lane-implement', updated_at = ?2 WHERE id = ?1",
-                params![task.id.as_str(), crate::state::now_iso()],
-            )
-            .expect("task should be placed in implement lane");
 
         role_runtime::enqueue_role_work(
             &mut connection,
@@ -1469,7 +1496,7 @@ mod tests {
                 role_id: role.id.clone(),
                 source_type: "workflow_lane".into(),
                 source_task_id: Some(task.id.clone()),
-                source_workflow_id: None,
+                source_workflow_id: Some(workflow.id.clone()),
                 source_lane_id: Some("lane-implement".into()),
                 title: "Enter implement lane".into(),
                 summary: None,
@@ -1511,6 +1538,31 @@ mod tests {
             .join("sessions");
         fs::create_dir_all(&session_dir).expect("session dir should create");
 
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Lane reentry flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-implement".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+
         let stale_session = pi_sessions::create_session_file(
             &project_root,
             &session_dir,
@@ -1550,8 +1602,8 @@ mod tests {
                 tags: Vec::new(),
                 status: "ready".into(),
                 priority: "P2".into(),
-                workflow_id: None,
-                current_lane_id: None,
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
                 assignee_type: "role".into(),
                 assignee_id: Some(role.id.clone()),
                 repository_id: None,
@@ -1562,12 +1614,6 @@ mod tests {
             },
         )
         .expect("task should create");
-        connection
-            .execute(
-                "UPDATE tasks SET current_lane_id = 'lane-implement', updated_at = ?2 WHERE id = ?1",
-                params![task.id.as_str(), crate::state::now_iso()],
-            )
-            .expect("task should be placed in implement lane");
 
         connection
             .execute(
@@ -1577,12 +1623,17 @@ mod tests {
                     session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
                     started_at, completed_at, created_at, updated_at
                 ) VALUES (
-                    'prior-assignment', ?1, 'workflow-1', 'lane-implement', 'role', ?2, 'completed',
-                    ?3, NULL, NULL, 'old-instance', NULL,
+                    'prior-assignment', ?1, ?2, 'lane-implement', 'role', ?3, 'completed',
+                    ?4, NULL, NULL, 'old-instance', NULL,
                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
                 )
                 "#,
-                params![task.id.as_str(), role.id.as_str(), prior_lane_session.record.id.as_str()],
+                params![
+                    task.id.as_str(),
+                    workflow.id.as_str(),
+                    role.id.as_str(),
+                    prior_lane_session.record.id.as_str()
+                ],
             )
             .expect("prior assignment should insert");
 
@@ -1592,7 +1643,7 @@ mod tests {
                 role_id: role.id.clone(),
                 source_type: "workflow_lane".into(),
                 source_task_id: Some(task.id.clone()),
-                source_workflow_id: None,
+                source_workflow_id: Some(workflow.id.clone()),
                 source_lane_id: Some("lane-implement".into()),
                 title: "Re-enter implement lane".into(),
                 summary: None,
@@ -1742,7 +1793,7 @@ mod tests {
         fs::create_dir_all(&session_dir).expect("session dir should create");
         let now = crate::state::now_iso();
         connection.execute(
-            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project should insert");
         connection.execute(
@@ -1862,7 +1913,7 @@ mod tests {
         fs::create_dir_all(&session_dir).expect("session dir should create");
         let now = crate::state::now_iso();
         connection.execute(
-            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project should insert");
         connection.execute(
@@ -1948,7 +1999,7 @@ mod tests {
         fs::create_dir_all(&session_dir).expect("session dir should create");
         let now = crate::state::now_iso();
         connection.execute(
-            "INSERT OR IGNORE INTO projects (id, slug, name, description, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, NULL, ?1, ?1)",
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
             params![now.as_str()],
         ).expect("project should insert");
         connection.execute(
