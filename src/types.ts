@@ -1060,6 +1060,21 @@ export interface TaskLaneAssignment {
   updatedAt: string;
 }
 
+export type TaskTagMatchMode = "any" | "all";
+export type TaskListSortField = "updatedAt" | "createdAt" | "priority" | "title" | "status" | "tags";
+export type TaskListSortDirection = "asc" | "desc";
+
+export interface TaskListSort {
+  field: TaskListSortField;
+  direction: TaskListSortDirection;
+}
+
+export interface TaskListQuery {
+  tags?: string[];
+  tagMatch?: TaskTagMatchMode;
+  sort?: TaskListSort | null;
+}
+
 export interface TaskSummary {
   id: string;
   projectId: string;
@@ -1067,7 +1082,6 @@ export interface TaskSummary {
   title: string;
   description?: string | null;
   type: TaskType | string;
-  tags: string[];
   status: TaskStatus | string;
   priority: TaskPriority | string;
   workflowId?: string | null;
@@ -1090,6 +1104,7 @@ export interface TaskSummary {
   dependencyBlocked: boolean;
   activeLaneAssignmentStatus?: string | null;
   readyForDispatch: boolean;
+  tags: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1116,7 +1131,6 @@ export interface TaskUpsertInput {
   title: string;
   description?: string | null;
   type: TaskType | string;
-  tags: string[];
   status: TaskStatus | string;
   priority: TaskPriority | string;
   workflowId?: string | null;
@@ -1128,6 +1142,7 @@ export interface TaskUpsertInput {
   parentTaskId?: string | null;
   whipMaxAttempts?: number | null;
   archived?: boolean;
+  tags: string[];
 }
 
 export type TaskTagMatchMode = "all" | "any";

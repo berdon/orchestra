@@ -2,20 +2,21 @@ import type { AgentSummary, RoleSummary, TaskScheduleSummary, TaskSummary } from
 import { TaskCompactCard } from "./TaskCompactCard";
 import type { TaskBoardModel } from "./taskBoardModel";
 import { resolveTaskAssigneeLabel } from "./taskBoardModel";
+import {
+  TASK_OVERVIEW_SORT_DIRECTION_OPTIONS,
+  TASK_OVERVIEW_SORT_FIELD_OPTIONS,
+  type TaskOverviewState,
+} from "./taskOverviewState";
 import { WorkflowTaskBoardSection } from "./WorkflowTaskBoardSection";
-
-export type TaskBoardFilter = "all" | "attention" | "review" | "blocked" | "active" | "done" | "epics";
-export type TaskBoardViewMode = "cards" | "table";
 
 interface TasksOverviewPageProps {
   board: TaskBoardModel;
-  allTasks: TaskSummary[];
+  tagScopedTasks: TaskSummary[];
+  availableTags: string[];
   attentionTasks: TaskSummary[];
   schedules: TaskScheduleSummary[];
-  filter: TaskBoardFilter;
-  viewMode: TaskBoardViewMode;
-  onFilterChange: (filter: TaskBoardFilter) => void;
-  onViewModeChange: (viewMode: TaskBoardViewMode) => void;
+  overviewState: TaskOverviewState;
+  onOverviewStateChange: (nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) => void;
   agents: AgentSummary[];
   roles: RoleSummary[];
   onOpenTask: (taskId: string) => void;
@@ -45,27 +46,35 @@ function formatScheduleTrigger(schedule: TaskScheduleSummary) {
 
 export function TasksOverviewPage({
   board,
-  allTasks,
+  tagScopedTasks,
+  availableTags,
   attentionTasks,
   schedules,
-  filter,
-  viewMode,
-  onFilterChange,
-  onViewModeChange,
+  overviewState,
+  onOverviewStateChange,
   agents,
   roles,
   onOpenTask,
   onOpenSchedule,
 }: TasksOverviewPageProps) {
   const filterCounts = {
-    all: allTasks.length,
+    all: tagScopedTasks.length,
     attention: attentionTasks.length,
-    review: allTasks.filter((task) => task.status === "in_review").length,
-    blocked: allTasks.filter((task) => task.status === "blocked" || task.dependencyBlocked).length,
-    active: allTasks.filter((task) => task.status === "in_progress" || task.readyForDispatch).length,
-    done: allTasks.filter((task) => task.status === "completed" || task.status === "canceled").length,
-    epics: allTasks.filter((task) => task.type === "epic").length,
+    review: tagScopedTasks.filter((task) => task.status === "in_review").length,
+    blocked: tagScopedTasks.filter((task) => task.status === "blocked" || task.dependencyBlocked).length,
+    active: tagScopedTasks.filter((task) => task.status === "in_progress" || task.readyForDispatch).length,
+    done: tagScopedTasks.filter((task) => task.status === "completed" || task.status === "canceled").length,
+    epics: tagScopedTasks.filter((task) => task.type === "epic").length,
   };
+
+  const canToggleTagMatch = overviewState.tags.length > 1;
+  const availableTagSet = new Set(availableTags);
+  const visibleTags = Array.from(new Set([...availableTags, ...overviewState.tags])).sort((left, right) => left.localeCompare(right));
+  const unavailableSelectedTags = overviewState.tags.filter((tag) => !availableTagSet.has(tag));
+
+  function updateOverviewState(nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) {
+    onOverviewStateChange(nextState);
+  }
 
   return (
     <section className="tasks-overview-page">
@@ -80,13 +89,13 @@ export function TasksOverviewPage({
               ["active", "Active", filterCounts.active],
               ["done", "Done", filterCounts.done],
               ["epics", "Epics", filterCounts.epics],
-            ] as Array<[TaskBoardFilter, string, number]>).map(([key, label, count]) => (
+            ] as Array<[TaskOverviewState["boardFilter"], string, number]>).map(([key, label, count]) => (
               <button
                 key={key}
-                className={filter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
+                className={overviewState.boardFilter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
                 data-role={`task-filter-${key}`}
                 type="button"
-                onClick={() => onFilterChange(key)}
+                onClick={() => updateOverviewState((current) => ({ ...current, boardFilter: key }))}
               >
                 <span>{label}</span>
                 <span>{count}</span>
@@ -96,25 +105,140 @@ export function TasksOverviewPage({
 
           <div className="task-view-toggle" data-role="task-view-toggle">
             <button
-              className={viewMode === "cards" ? "task-view-toggle__button task-view-toggle__button--active" : "task-view-toggle__button"}
+              className={overviewState.viewMode === "cards" ? "task-view-toggle__button task-view-toggle__button--active" : "task-view-toggle__button"}
               data-role="task-view-cards"
               type="button"
-              aria-pressed={viewMode === "cards"}
-              onClick={() => onViewModeChange("cards")}
+              aria-pressed={overviewState.viewMode === "cards"}
+              onClick={() => updateOverviewState((current) => ({ ...current, viewMode: "cards" }))}
             >
               <span aria-hidden="true">▥</span>
               <span>Cards</span>
             </button>
             <button
-              className={viewMode === "table" ? "task-view-toggle__button task-view-toggle__button--active" : "task-view-toggle__button"}
+              className={overviewState.viewMode === "table" ? "task-view-toggle__button task-view-toggle__button--active" : "task-view-toggle__button"}
               data-role="task-view-table"
               type="button"
-              aria-pressed={viewMode === "table"}
-              onClick={() => onViewModeChange("table")}
+              aria-pressed={overviewState.viewMode === "table"}
+              onClick={() => updateOverviewState((current) => ({ ...current, viewMode: "table" }))}
             >
               <span aria-hidden="true">☰</span>
               <span>Table</span>
             </button>
+          </div>
+        </div>
+
+        <div className="task-overview-toolbar" data-role="task-overview-toolbar">
+          {visibleTags.length ? (
+            <div className="task-overview-toolbar__group task-overview-toolbar__group--grow">
+              <div className="task-overview-toolbar__group-header">
+                <div>
+                  <p className="eyebrow">Exact tags</p>
+                  <h3>Filter by tags</h3>
+                </div>
+                <button
+                  className="secondary-button task-overview-toolbar__clear"
+                  data-role="task-clear-tags"
+                  type="button"
+                  disabled={overviewState.tags.length === 0}
+                  onClick={() => updateOverviewState((current) => ({ ...current, tags: [] }))}
+                >
+                  Clear tags
+                </button>
+              </div>
+              {unavailableSelectedTags.length ? (
+                <p className="muted-copy" data-role="task-tag-filter-note">
+                  Saved tag filters for {unavailableSelectedTags.map((tag) => `#${tag}`).join(", ")} no longer match any current task tags. Clear or deselect them to show all work.
+                </p>
+              ) : null}
+              <div className="filter-chip-row" data-role="task-tag-filters">
+                {visibleTags.map((tag) => {
+                  const selected = overviewState.tags.includes(tag);
+                  return (
+                    <button
+                      className={selected ? "filter-chip filter-chip--active" : "filter-chip"}
+                      data-role="task-tag-filter-chip"
+                      data-tag={tag}
+                      key={tag}
+                      type="button"
+                      onClick={() => updateOverviewState((current) => ({
+                        ...current,
+                        tags: current.tags.includes(tag)
+                          ? current.tags.filter((entry) => entry !== tag)
+                          : [...current.tags, tag].sort((left, right) => left.localeCompare(right)),
+                      }))}
+                    >
+                      #{tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {visibleTags.length ? (
+            <div className="task-overview-toolbar__group">
+              <span className="task-overview-toolbar__label">Match</span>
+              <div className="task-match-toggle" data-role="task-tag-match-toggle">
+                <button
+                  className={overviewState.tagMatch === "any" ? "task-match-toggle__button task-match-toggle__button--active" : "task-match-toggle__button"}
+                  data-role="task-tag-match-any"
+                  type="button"
+                  aria-pressed={overviewState.tagMatch === "any"}
+                  disabled={!canToggleTagMatch}
+                  onClick={() => updateOverviewState((current) => ({ ...current, tagMatch: "any" }))}
+                >
+                  Match any
+                </button>
+                <button
+                  className={overviewState.tagMatch === "all" ? "task-match-toggle__button task-match-toggle__button--active" : "task-match-toggle__button"}
+                  data-role="task-tag-match-all"
+                  type="button"
+                  aria-pressed={overviewState.tagMatch === "all"}
+                  disabled={!canToggleTagMatch}
+                  onClick={() => updateOverviewState((current) => ({ ...current, tagMatch: "all" }))}
+                >
+                  Match all
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="task-overview-toolbar__group">
+            <span className="task-overview-toolbar__label">Sort</span>
+            <div className="task-overview-toolbar__sort-fields">
+              <label className="task-overview-toolbar__field">
+                <span className="task-overview-toolbar__field-label">Field</span>
+                <select
+                  className="select-input"
+                  data-role="task-sort-field"
+                  value={overviewState.sort.field}
+                  onChange={(event) => updateOverviewState((current) => ({
+                    ...current,
+                    sort: { ...current.sort, field: event.target.value as TaskOverviewState["sort"]["field"] },
+                  }))}
+                >
+                  {TASK_OVERVIEW_SORT_FIELD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="task-overview-toolbar__field">
+                <span className="task-overview-toolbar__field-label">Direction</span>
+                <select
+                  className="select-input"
+                  data-role="task-sort-direction"
+                  value={overviewState.sort.direction}
+                  onChange={(event) => updateOverviewState((current) => ({
+                    ...current,
+                    sort: { ...current.sort, direction: event.target.value as TaskOverviewState["sort"]["direction"] },
+                  }))}
+                >
+                  {TASK_OVERVIEW_SORT_DIRECTION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -194,12 +318,12 @@ export function TasksOverviewPage({
         {board.workflowSections.map((section) => (
           <WorkflowTaskBoardSection
             agents={agents}
-            displayMode={viewMode}
+            displayMode={overviewState.viewMode}
             key={section.workflowId}
             onOpenTask={onOpenTask}
             roles={roles}
             section={section}
-            showDoneTasks={filter === "done"}
+            showDoneTasks={overviewState.boardFilter === "done"}
           />
         ))}
       </section>

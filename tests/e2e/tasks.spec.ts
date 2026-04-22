@@ -444,6 +444,374 @@ test("queued assignment badges do not replace lifecycle status badges in card an
   await expect(blockedRow.locator('[data-role="task-lifecycle-status-badge"]')).not.toHaveText("queued");
 });
 
+test("tasks overview filters and sorts by tags and renders compact tags across cards and table rows", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-tags",
+          slug: "tags",
+          name: "Tagged Flow",
+          description: "Single lane for task tags.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-backend",
+          projectId: "orchestra",
+          number: "ORC-1",
+          title: "Backend only task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: "workflow-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["backend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T10:00:00.000Z",
+        },
+        {
+          id: "task-urgent",
+          projectId: "orchestra",
+          number: "ORC-2",
+          title: "Urgent only task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: "workflow-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["urgent"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T11:00:00.000Z",
+        },
+        {
+          id: "task-mixed",
+          projectId: "orchestra",
+          number: "ORC-3",
+          title: "Mixed tagged task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: "workflow-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["backend", "ops", "qa", "urgent"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T12:00:00.000Z",
+        },
+        {
+          id: "task-untagged",
+          projectId: "orchestra",
+          number: "ORC-4",
+          title: "Untagged task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P3",
+          workflowId: "workflow-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: [],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T13:00:00.000Z",
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  await expect(page.locator('[data-role="task-tag-filters"]')).toContainText("#backend");
+  await page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]').click();
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Backend only task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Mixed tagged task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).not.toContainText("Urgent only task");
+
+  await page.locator('[data-role="task-tag-filter-chip"][data-tag="urgent"]').click();
+  await expect(page.locator('[data-role="task-tag-match-all"]')).toBeEnabled();
+  await page.locator('[data-role="task-tag-match-all"]').click();
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Mixed tagged task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).not.toContainText("Backend only task");
+  await expect(page.locator('[data-role="task-card"]').filter({ hasText: "Mixed tagged task" }).locator('[data-role="task-tag-overflow"]')).toContainText("+2");
+
+  await page.locator('[data-role="task-clear-tags"]').click();
+  await page.locator('[data-role="task-view-table"]').click();
+  await page.locator('[data-role="task-sort-field"]').selectOption("tags");
+  await page.locator('[data-role="task-sort-direction"]').selectOption("asc");
+
+  await expect(page.locator('[data-role="task-table"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-table-row"]').first()).toContainText("Untagged task");
+  await expect(page.locator('[data-role="task-table-row"]').filter({ hasText: "Untagged task" })).toContainText("—");
+  await expect(page.locator('[data-role="task-table-row"]').filter({ hasText: "Mixed tagged task" }).locator('[data-role="task-tag-list"]')).toContainText("#backend");
+  await expect(page.locator('[data-role="task-table-row"]').filter({ hasText: "Mixed tagged task" }).locator('[data-role="task-tag-overflow"]')).toContainText("+1");
+  await expect.poll(async () =>
+    page.evaluate(() => window.localStorage.getItem("orchestra.preferences.task-overview.v1.orchestra"))
+  ).toContain('"sort":{"field":"tags","direction":"asc"}');
+
+  const secondPage = await page.context().newPage();
+  await secondPage.goto("/");
+  await secondPage.getByRole("button", { name: "Tasks" }).click();
+  await expect(secondPage.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(secondPage.locator('[data-role="task-sort-field"]')).toHaveValue("tags");
+  await expect(secondPage.locator('[data-role="task-sort-direction"]')).toHaveValue("asc");
+  await secondPage.close();
+});
+
+test("tasks overview keeps stale persisted tag filters clearable when current tasks have no tags", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-stale-tags",
+          slug: "stale-tags",
+          name: "Stale Tag Flow",
+          description: "Tasks without current tags.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-stale-1",
+          projectId: "orchestra",
+          number: "ORC-10",
+          title: "Visible after clearing stale tags",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: "workflow-stale-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: [],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T09:00:00.000Z",
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.preferences.task-overview.v1.orchestra",
+      JSON.stringify({
+        boardFilter: "all",
+        viewMode: "cards",
+        sort: { field: "updatedAt", direction: "desc" },
+        tags: ["backend"],
+        tagMatch: "any",
+      }),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  await expect(page.locator('[data-role="workflow-task-section"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-tag-filters"]')).toContainText("#backend");
+  await expect(page.locator('[data-role="task-tag-filter-note"]')).toContainText("#backend");
+  await expect(page.locator('[data-role="task-clear-tags"]')).toBeEnabled();
+
+  await page.locator('[data-role="task-clear-tags"]').click();
+
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Visible after clearing stale tags");
+  await expect.poll(async () =>
+    page.evaluate(() => window.localStorage.getItem("orchestra.preferences.task-overview.v1.orchestra"))
+  ).toContain('"tags":[]');
+  await expect(page.locator('[data-role="task-tag-filters"]')).toHaveCount(0);
+});
+
 test("workflow lanes stay within a max height and scroll long task lists", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -1,6 +1,7 @@
 import type { AgentSummary, RoleSummary, TaskSummary } from "../../types";
 import { TaskCompactCard } from "./TaskCompactCard";
-import type { TaskBoardViewMode } from "./TasksOverviewPage";
+import { TaskTagList } from "./TaskTagList";
+import type { TaskBoardViewMode } from "./taskOverviewState";
 import { TaskSummaryStatusBadges } from "./taskStatusBadges";
 import type { TaskWorkflowSection } from "./taskBoardModel";
 import { resolveTaskAssigneeLabel } from "./taskBoardModel";
@@ -65,6 +66,7 @@ export function WorkflowTaskBoardSection({
                 <th>Name</th>
                 <th>Priority</th>
                 <th>Status</th>
+                <th>Tags</th>
                 <th>Workflow</th>
                 <th>Lane</th>
                 <th>Assignee</th>
@@ -97,6 +99,9 @@ export function WorkflowTaskBoardSection({
                   <td>{getPriorityLabel(task.priority)}</td>
                   <td>
                     <TaskSummaryStatusBadges task={task} />
+                  </td>
+                  <td>
+                    <TaskTagList className="task-table__tags" emptyPlaceholder="—" maxVisible={3} task={task} />
                   </td>
                   <td>{section.workflowName}</td>
                   <td>{resolveLaneLabel(task, section)}</td>

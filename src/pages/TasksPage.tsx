@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listAgents } from "../lib/agents";
 import { getProject } from "../lib/projects";
 import { listRoles } from "../lib/roles";
+import { applyTaskListQuery, getTaskTags } from "../lib/taskListQuery";
 import {
   addTaskAttachment,
   addTaskDependency,
@@ -71,7 +72,8 @@ import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
 import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetailRouteState } from "./tasks/taskDetailLoadGuards";
 import { buildTaskBoardModel, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
-import { TasksOverviewPage, type TaskBoardFilter, type TaskBoardViewMode } from "./tasks/TasksOverviewPage";
+import { TasksOverviewPage } from "./tasks/TasksOverviewPage";
+import { DEFAULT_TASK_OVERVIEW_STATE, type TaskOverviewState } from "./tasks/taskOverviewState";
 
 type TasksRoute =
   | { kind: "overview" }
@@ -97,7 +99,6 @@ function createBlankTaskDraft(): TaskUpsertInput {
     title: "",
     description: "",
     type: "task",
-    tags: [],
     status: "draft",
     priority: "P2",
     workflowId: null,
@@ -109,6 +110,7 @@ function createBlankTaskDraft(): TaskUpsertInput {
     parentTaskId: null,
     whipMaxAttempts: 10,
     archived: false,
+    tags: [],
   };
 }
 
@@ -157,7 +159,6 @@ function taskToDraft(task: TaskDetail): TaskUpsertInput {
     title: task.title,
     description: task.description ?? "",
     type: task.type,
-    tags: task.tags ?? [],
     status: task.status,
     priority: task.priority,
     workflowId: task.workflowId ?? null,
@@ -169,6 +170,7 @@ function taskToDraft(task: TaskDetail): TaskUpsertInput {
     parentTaskId: task.parentTaskId ?? null,
     whipMaxAttempts: task.whipMaxAttempts ?? 10,
     archived: task.archived,
+    tags: task.tags ?? [],
   };
 }
 
@@ -186,9 +188,9 @@ interface TasksPageProps {
   createTaskToken?: number;
   createTaskProjectId?: string | null;
   openTaskRequest?: { taskId: string; token: number; projectId: string | null } | null;
-  taskBoardViewMode?: TaskBoardViewMode;
+  taskOverviewState?: TaskOverviewState;
   tasksOverviewToken?: number;
-  onTaskBoardViewModeChange?: (viewMode: TaskBoardViewMode) => void;
+  onTaskOverviewStateChange?: (nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) => void;
   onSelectedTaskIdChange?: (taskId: string | null) => void;
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
@@ -245,9 +247,9 @@ export function TasksPage({
   createTaskToken = 0,
   createTaskProjectId = null,
   openTaskRequest = null,
-  taskBoardViewMode = "cards",
+  taskOverviewState = DEFAULT_TASK_OVERVIEW_STATE,
   tasksOverviewToken = 0,
-  onTaskBoardViewModeChange,
+  onTaskOverviewStateChange,
   onSelectedTaskIdChange,
   onOpenAgent,
   onOpenRole,
@@ -281,7 +283,6 @@ export function TasksPage({
   const [closingTask, setClosingTask] = useState(false);
   const [sendingTaskMail, setSendingTaskMail] = useState(false);
   const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
-  const [taskFilter, setTaskFilter] = useState<TaskBoardFilter>("all");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
@@ -291,30 +292,40 @@ export function TasksPage({
   const taskDetailLoadRequestRef = useRef(0);
   const taskScheduleLoadRequestRef = useRef(0);
 
+  const availableTags = useMemo(
+    () => Array.from(new Set(tasks.flatMap((task) => getTaskTags(task)))).sort((left, right) => left.localeCompare(right)),
+    [tasks],
+  );
+
+  const tagScopedTasks = useMemo(
+    () => applyTaskListQuery(tasks, { tags: taskOverviewState.tags, tagMatch: taskOverviewState.tagMatch, sort: taskOverviewState.sort }),
+    [taskOverviewState.sort, taskOverviewState.tagMatch, taskOverviewState.tags, tasks],
+  );
+
   const filteredTasks = useMemo(() => {
-    switch (taskFilter) {
+    switch (taskOverviewState.boardFilter) {
       case "attention":
-        return tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked);
+        return tagScopedTasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked);
       case "review":
-        return tasks.filter((task) => task.status === "in_review");
+        return tagScopedTasks.filter((task) => task.status === "in_review");
       case "blocked":
-        return tasks.filter((task) => task.status === "blocked" || task.dependencyBlocked);
+        return tagScopedTasks.filter((task) => task.status === "blocked" || task.dependencyBlocked);
       case "active":
-        return tasks.filter((task) => task.status === "in_progress" || task.readyForDispatch);
+        return tagScopedTasks.filter((task) => task.status === "in_progress" || task.readyForDispatch);
       case "done":
-        return tasks.filter((task) => task.status === "completed" || task.status === "canceled");
+        return tagScopedTasks.filter((task) => task.status === "completed" || task.status === "canceled");
       case "epics":
-        return tasks.filter((task) => task.type === "epic");
+        return tagScopedTasks.filter((task) => task.type === "epic");
       default:
-        return tasks;
+        return tagScopedTasks;
     }
-  }, [taskFilter, tasks]);
+  }, [tagScopedTasks, taskOverviewState.boardFilter]);
 
   const boardModel: TaskBoardModel = useMemo(() => buildTaskBoardModel(filteredTasks, workflowDefinitions), [filteredTasks, workflowDefinitions]);
 
   const attentionTasks = useMemo(
-    () => tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
-    [tasks],
+    () => tagScopedTasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
+    [tagScopedTasks],
   );
 
   async function runDetailAction(actionId: string, operation: () => Promise<void>, fallbackMessage: string) {
@@ -692,8 +703,8 @@ export function TasksPage({
     setRoute({ kind: "create", parentTaskId: parentTaskId ?? null, workflowId: workflowId ?? null, scheduled });
   }
 
-  function handleTaskBoardViewModeChange(viewMode: TaskBoardViewMode) {
-    onTaskBoardViewModeChange?.(viewMode);
+  function updateTaskOverviewState(nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) {
+    onTaskOverviewStateChange?.(nextState);
   }
 
   function openTaskDetail(taskId: string) {
@@ -1318,17 +1329,16 @@ export function TasksPage({
       {route.kind === "overview" ? (
         <TasksOverviewPage
           agents={agents}
-          allTasks={tasks}
           attentionTasks={attentionTasks}
+          availableTags={availableTags}
           board={boardModel}
-          filter={taskFilter}
-          onFilterChange={setTaskFilter}
           onOpenTask={openTaskDetail}
           onOpenSchedule={openTaskScheduleDetail}
-          onViewModeChange={handleTaskBoardViewModeChange}
+          onOverviewStateChange={updateTaskOverviewState}
+          overviewState={taskOverviewState}
           roles={roles}
           schedules={taskSchedules}
-          viewMode={taskBoardViewMode}
+          tagScopedTasks={tagScopedTasks}
         />
       ) : route.kind === "create" ? (
         <TaskCreatePage
