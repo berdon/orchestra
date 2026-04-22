@@ -1145,7 +1145,6 @@ export interface TaskUpsertInput {
   tags: string[];
 }
 
-export type TaskTagMatchMode = "all" | "any";
 export type TaskSortField = "updatedAt" | "createdAt" | "priority" | "number" | "title" | "tags";
 export type TaskSortDirection = "asc" | "desc";
 
