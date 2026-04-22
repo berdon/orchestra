@@ -134,4 +134,32 @@ describe("sessionListMerge", () => {
     expect(merged?.events).toEqual([]);
     expect(merged?.debugInfo).toBeNull();
   });
+
+  it("preserves pinned sessions that temporarily disappear from the listed response", () => {
+    const existing = makeSession({
+      id: "session-pinned",
+      title: "Pinned quick chat",
+      status: "active",
+      updatedAt: "2026-04-08T00:00:07Z",
+      events: [
+        {
+          id: "assistant-pinned-1",
+          kind: "assistant",
+          message: "Keep this session alive during refresh churn.",
+          timestamp: "2026-04-08T00:00:07Z",
+        },
+      ],
+    });
+    const listed = makeSession({
+      id: "session-other",
+      title: "Another listed session",
+    });
+
+    const merged = reconcileListedSessions([existing], [listed], {
+      preserveMissingSessionIds: [existing.id],
+    });
+
+    expect(merged).toHaveLength(2);
+    expect(merged.find((session) => session.id === existing.id)).toEqual(existing);
+  });
 });

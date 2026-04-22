@@ -758,15 +758,20 @@ export function App() {
   const [commandPaletteItems, setCommandPaletteItems] = useState<CommandPaletteItem[]>([]);
   const [supervisorQuickChatOpen, setSupervisorQuickChatOpen] = useState(false);
   const [supervisorSessionId, setSupervisorSessionId] = useState<string | null>(null);
+  const [supervisorQuickChatStorageReadyProjectKey, setSupervisorQuickChatStorageReadyProjectKey] = useState<string | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
   const chatSessionAgentIdRef = useRef<string | null>(null);
   const chatSessionRecoveryMissRef = useRef<{ sessionId: string; startedAt: number } | null>(null);
+  const supervisorSessionRecoveryMissRef = useRef<{ sessionId: string; startedAt: number } | null>(null);
   const lastKnownChatSessionRef = useRef<SessionRecord | null>(null);
   const lastKnownChatSessionIdRef = useRef<string | null>(null);
   const lastKnownChatSessionAgentIdRef = useRef<string | null>(null);
   const lastKnownChatSessionDraftRef = useRef("");
+  const lastKnownSupervisorSessionRef = useRef<SessionRecord | null>(null);
+  const lastKnownSupervisorSessionIdRef = useRef<string | null>(null);
+  const lastKnownSupervisorDraftRef = useRef("");
   const sessionsRef = useRef<SessionRecord[]>([]);
   const scheduledSessionRefreshRef = useRef<number | null>(null);
   const backgroundSessionRefreshInFlightRef = useRef(false);
@@ -844,6 +849,10 @@ export function App() {
     () => sessions.find((session) => session.id === chatSessionId) ?? null,
     [chatSessionId, sessions],
   );
+  const liveSupervisorSession = useMemo(
+    () => sessions.find((session) => session.id === supervisorSessionId) ?? null,
+    [sessions, supervisorSessionId],
+  );
 
   const chatSession = useMemo(() => {
     if (liveChatSession) {
@@ -863,12 +872,21 @@ export function App() {
   const viewedSessionStats = viewedSession ? sessionStats[viewedSession.id] : undefined;
   const displayedEvents = viewedSession?.events ?? [];
   const viewedSessionDraftMessage = viewedSession ? draftMessages[viewedSession.id] ?? "" : "";
-  const supervisorSession = useMemo(
-    () => sessions.find((session) => session.id === supervisorSessionId) ?? null,
-    [sessions, supervisorSessionId],
-  );
-  const supervisorSessionDraftMessage = supervisorSession ? draftMessages[supervisorSession.id] ?? "" : "";
-  const supervisorPendingRun = supervisorSession ? pendingRuns[supervisorSession.id] : undefined;
+  const supervisorSession = useMemo(() => {
+    if (liveSupervisorSession) {
+      return liveSupervisorSession;
+    }
+
+    if (supervisorSessionId) {
+      return lastKnownSupervisorSessionRef.current;
+    }
+
+    return null;
+  }, [liveSupervisorSession, supervisorSessionId]);
+  const supervisorSessionDraftMessage = supervisorSessionId
+    ? draftMessages[supervisorSessionId] ?? lastKnownSupervisorDraftRef.current
+    : "";
+  const supervisorPendingRun = supervisorSessionId ? pendingRuns[supervisorSessionId] : undefined;
   const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
 
   useEffect(() => {
@@ -880,6 +898,12 @@ export function App() {
       lastKnownChatSessionRef.current = liveChatSession;
     }
   }, [liveChatSession, selectedChatAgentId]);
+
+  useEffect(() => {
+    if (liveSupervisorSession && supervisorSessionId === liveSupervisorSession.id) {
+      lastKnownSupervisorSessionRef.current = liveSupervisorSession;
+    }
+  }, [liveSupervisorSession, supervisorSessionId]);
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -975,6 +999,16 @@ export function App() {
       lastKnownChatSessionDraftRef.current = draftMessages[rememberedSessionId] ?? lastKnownChatSessionDraftRef.current;
     }
   }, [chatSessionId, draftMessages]);
+
+  useEffect(() => {
+    const rememberedSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
+    if (supervisorSessionId) {
+      lastKnownSupervisorSessionIdRef.current = supervisorSessionId;
+    }
+    if (rememberedSessionId) {
+      lastKnownSupervisorDraftRef.current = draftMessages[rememberedSessionId] ?? lastKnownSupervisorDraftRef.current;
+    }
+  }, [draftMessages, supervisorSessionId]);
 
   useEffect(() => {
     storeTaskOverviewState(activeProjectId, taskOverviewState);
@@ -1389,7 +1423,7 @@ export function App() {
 
     try {
       const listedSessions = sortSessionRecords((await listSessions(activeProjectId)).map(normalizeSessionRecord));
-      const hydratedSessions = sortSessionRecords(
+      const nextSessions = sortSessionRecords(
         reconcileListedSessions(sessionsRef.current, listedSessions, {
           preserveDetailedSessionIds: [
             viewedSessionIdRef.current,
@@ -1397,22 +1431,13 @@ export function App() {
             chatSessionId,
             supervisorSessionId,
           ].filter((value): value is string => Boolean(value)),
+          preserveMissingSessionIds: [
+            viewedSessionIdRef.current,
+            supervisorSessionId,
+          ].filter((value): value is string => Boolean(value)),
           pendingSessionIds: Object.keys(pendingRuns),
         }),
       );
-      const viewedSessionId = options?.background ? viewedSessionIdRef.current : null;
-      const preservedViewedSession = viewedSessionId
-        ? sessionsRef.current.find((session) => session.id === viewedSessionId) ?? null
-        : null;
-      const isViewedSessionMissing = Boolean(
-        viewedSessionId
-        && preservedViewedSession
-        && !hydratedSessions.some((session) => session.id === preservedViewedSession.id),
-      );
-
-      const nextSessions = isViewedSessionMissing && preservedViewedSession && viewedSessionId
-        ? sortSessionRecords([preservedViewedSession, ...hydratedSessions])
-        : hydratedSessions;
 
       sessionsRef.current = nextSessions;
       setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
@@ -1833,8 +1858,15 @@ export function App() {
   }, [isDetachedWindow]);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(supervisorQuickChatStorageKey(activeProjectId));
+    const resolvedProjectId = activeProjectId ?? getActiveProjectId();
+    const projectKey = resolvedProjectId ?? "default";
+    const stored = window.localStorage.getItem(supervisorQuickChatStorageKey(resolvedProjectId));
     if (!stored) {
+      lastKnownSupervisorSessionRef.current = null;
+      lastKnownSupervisorSessionIdRef.current = null;
+      lastKnownSupervisorDraftRef.current = "";
+      supervisorSessionRecoveryMissRef.current = null;
+      setSupervisorQuickChatStorageReadyProjectKey(projectKey);
       setSupervisorSessionId(null);
       return;
     }
@@ -1842,30 +1874,48 @@ export function App() {
     try {
       const parsed = JSON.parse(stored) as { sessionId?: string; draft?: string };
       const restoredSessionId = parsed.sessionId ?? null;
+      const restoredDraft = typeof parsed.draft === "string" ? parsed.draft : "";
+      lastKnownSupervisorSessionRef.current = null;
+      lastKnownSupervisorSessionIdRef.current = restoredSessionId;
+      lastKnownSupervisorDraftRef.current = restoredDraft;
+      supervisorSessionRecoveryMissRef.current = null;
+      setSupervisorQuickChatStorageReadyProjectKey(projectKey);
       setSupervisorSessionId(restoredSessionId);
-      if (restoredSessionId && parsed.draft) {
-        const restoredDraft = parsed.draft;
+      if (restoredSessionId && restoredDraft) {
         setDraftMessages((current) => ({
           ...current,
           [restoredSessionId]: restoredDraft,
         }));
       }
     } catch {
+      lastKnownSupervisorSessionRef.current = null;
+      lastKnownSupervisorSessionIdRef.current = null;
+      lastKnownSupervisorDraftRef.current = "";
+      supervisorSessionRecoveryMissRef.current = null;
+      setSupervisorQuickChatStorageReadyProjectKey(projectKey);
       setSupervisorSessionId(null);
     }
   }, [activeProjectId]);
 
   useEffect(() => {
-    if (!activeProjectId) {
+    const resolvedProjectId = activeProjectId ?? getActiveProjectId();
+    if (!resolvedProjectId) {
       return;
     }
 
-    const draft = supervisorSessionId ? draftMessages[supervisorSessionId] ?? "" : "";
+    const projectKey = resolvedProjectId ?? "default";
+    if (supervisorQuickChatStorageReadyProjectKey !== projectKey) {
+      return;
+    }
+
+    const draft = supervisorSessionId
+      ? draftMessages[supervisorSessionId] ?? lastKnownSupervisorDraftRef.current
+      : "";
     window.localStorage.setItem(
-      supervisorQuickChatStorageKey(activeProjectId),
+      supervisorQuickChatStorageKey(resolvedProjectId),
       JSON.stringify({ sessionId: supervisorSessionId, draft }),
     );
-  }, [activeProjectId, draftMessages, supervisorSessionId]);
+  }, [activeProjectId, draftMessages, supervisorQuickChatStorageReadyProjectKey, supervisorSessionId]);
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -1942,7 +1992,7 @@ export function App() {
   }, [activeProjectId, isLogsWindow, isAgentTerminalWindow]);
 
   useEffect(() => {
-    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat")) {
+    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat" && !supervisorQuickChatOpen)) {
       return;
     }
 
@@ -1961,7 +2011,7 @@ export function App() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refreshOnFocus);
     };
-  }, [activePage, isDetachedWindow]);
+  }, [activePage, isDetachedWindow, supervisorQuickChatOpen]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "chat") {
@@ -2065,6 +2115,78 @@ export function App() {
       cancelled = true;
     };
   }, [activePage, activeProject?.id, chatSessionId, draftMessages, isDetachedWindow, liveChatSession?.id, mergeSessionRecord, selectedChatAgentId, selectedChatAgentSnapshot?.runtimeState.mainSessionId, sessions]);
+
+  useEffect(() => {
+    if (isDetachedWindow || (!supervisorQuickChatOpen && !supervisorSessionId)) {
+      return;
+    }
+
+    const currentSupervisorSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
+    const hasLiveSupervisorSession = Boolean(
+      currentSupervisorSessionId
+      && liveSupervisorSession?.id === currentSupervisorSessionId,
+    );
+    if (hasLiveSupervisorSession) {
+      supervisorSessionRecoveryMissRef.current = null;
+      return;
+    }
+
+    const missingSupervisorSessionId = currentSupervisorSessionId;
+    const missingSupervisorDraft = missingSupervisorSessionId
+      ? draftMessages[missingSupervisorSessionId] ?? lastKnownSupervisorDraftRef.current
+      : lastKnownSupervisorDraftRef.current;
+    let cancelled = false;
+    setSessionActionError(null);
+
+    const recoverSupervisorSession = async () => {
+      if (missingSupervisorSessionId) {
+        try {
+          return await getSessionRecord(missingSupervisorSessionId);
+        } catch {
+          if (lastKnownSupervisorSessionRef.current?.id === missingSupervisorSessionId) {
+            const now = Date.now();
+            const existingMiss = supervisorSessionRecoveryMissRef.current;
+            if (!existingMiss || existingMiss.sessionId !== missingSupervisorSessionId) {
+              supervisorSessionRecoveryMissRef.current = { sessionId: missingSupervisorSessionId, startedAt: now };
+              return null;
+            }
+            if (now - existingMiss.startedAt < CHAT_SESSION_RECOVERY_GRACE_MS) {
+              return null;
+            }
+          }
+        }
+      }
+
+      return ensureAgentSession(SUPERVISOR_AGENT_ID, activeProject?.id ?? getActiveProjectId() ?? null);
+    };
+
+    void recoverSupervisorSession()
+      .then((session) => {
+        if (cancelled || !session) {
+          return;
+        }
+        supervisorSessionRecoveryMissRef.current = null;
+        mergeSessionRecord(session, { select: false });
+        setSupervisorSessionId((current) => (current === session.id ? current : session.id));
+        lastKnownSupervisorSessionIdRef.current = session.id;
+        if (missingSupervisorDraft.trim()) {
+          setDraftMessages((current) => ({
+            ...current,
+            [session.id]: current[session.id]?.trim() ? current[session.id] : missingSupervisorDraft,
+          }));
+        }
+        lastKnownSupervisorDraftRef.current = missingSupervisorDraft;
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSessionActionError(error instanceof Error ? error.message : "Unable to open supervisor quick chat.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id, draftMessages, isDetachedWindow, liveSupervisorSession?.id, mergeSessionRecord, supervisorQuickChatOpen, supervisorSessionId]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
@@ -2368,7 +2490,7 @@ export function App() {
   async function handleOpenAgentSession(agentId: string, options?: { openQuickChat?: boolean }) {
     setSessionActionError(null);
     try {
-      const session = await ensureAgentSession(agentId, activeProject?.id ?? null);
+      const session = await ensureAgentSession(agentId, activeProject?.id ?? getActiveProjectId() ?? null);
       mergeSessionRecord(session, { select: !options?.openQuickChat });
       if (options?.openQuickChat) {
         setSupervisorSessionId(session.id);
@@ -2386,7 +2508,7 @@ export function App() {
   async function handleOpenAgentSessionTerminal(agentId: string) {
     setSessionActionError(null);
     try {
-      const session = await openAgentSessionInTerminal(agentId, activeProject?.id ?? null);
+      const session = await openAgentSessionInTerminal(agentId, activeProject?.id ?? getActiveProjectId() ?? null);
       mergeSessionRecord(session);
       setActivePage("sessions");
       setPendingSessionOpenRequest(null);
@@ -2434,7 +2556,38 @@ export function App() {
 
   async function handleOpenSupervisorQuickChat() {
     setCommandPaletteOpen(false);
-    await handleOpenAgentSession(SUPERVISOR_AGENT_ID, { openQuickChat: true });
+    setSessionActionError(null);
+
+    let restoredSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
+    if (!restoredSessionId) {
+      const stored = window.localStorage.getItem(supervisorQuickChatStorageKey(activeProjectId ?? getActiveProjectId()));
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as { sessionId?: string; draft?: string };
+          restoredSessionId = parsed.sessionId ?? null;
+          const restoredDraft = typeof parsed.draft === "string" ? parsed.draft : "";
+          lastKnownSupervisorSessionIdRef.current = restoredSessionId;
+          lastKnownSupervisorDraftRef.current = restoredDraft;
+          if (restoredSessionId) {
+            setSupervisorSessionId(restoredSessionId);
+            if (restoredDraft) {
+              setDraftMessages((current) => ({
+                ...current,
+                [restoredSessionId as string]: restoredDraft,
+              }));
+            }
+          }
+        } catch {
+          restoredSessionId = null;
+        }
+      }
+    }
+
+    if (!restoredSessionId) {
+      await handleOpenAgentSession(SUPERVISOR_AGENT_ID, { openQuickChat: true });
+      return;
+    }
+    setSupervisorQuickChatOpen(true);
   }
 
   async function handleCommandPaletteSelect(item: CommandPaletteItem) {
@@ -2673,7 +2826,7 @@ export function App() {
 
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isDetachedWindow, sessions, draftMessages, pendingRuns]);
+  }, [draftMessages, isDetachedWindow, pendingRuns, sessions, supervisorSessionId]);
 
   useEffect(() => {
     const handleUnhandledError = (event: ErrorEvent) => {
@@ -3105,15 +3258,17 @@ export function App() {
         formatTimestamp={formatTimestamp}
         onClose={() => setSupervisorQuickChatOpen(false)}
         onDraftChange={(value) => {
-          if (supervisorSession) {
-            updateDraftMessage(supervisorSession.id, value);
+          const draftSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
+          if (draftSessionId) {
+            updateDraftMessage(draftSessionId, value);
           }
         }}
         onOpenFullSession={() => {
-          if (supervisorSession) {
+          const targetSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
+          if (targetSessionId) {
             setActivePage("sessions");
             setPendingSessionOpenRequest(null);
-            setSelectedSessionId(supervisorSession.id);
+            setSelectedSessionId(targetSessionId);
             setSupervisorQuickChatOpen(false);
           }
         }}
@@ -3121,8 +3276,9 @@ export function App() {
         onOpenAgent={navigateToChatAgent}
         onOpenRole={navigateToRole}
         onSend={() => {
-          if (supervisorSession) {
-            handleSendMessage(supervisorSession.id);
+          const targetSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
+          if (targetSessionId) {
+            handleSendMessage(targetSessionId);
           }
         }}
         open={supervisorQuickChatOpen}

@@ -3,6 +3,7 @@ import type { SessionRecord } from "../types";
 interface ReconcileListedSessionsOptions {
   preserveDetailedSessionIds?: Iterable<string>;
   pendingSessionIds?: Iterable<string>;
+  preserveMissingSessionIds?: Iterable<string>;
 }
 
 function parseTimestamp(timestamp: string) {
@@ -52,8 +53,10 @@ export function reconcileListedSessions(
   const currentById = new Map(currentSessions.map((session) => [session.id, session]));
   const pendingIds = new Set(options.pendingSessionIds ?? []);
   const preservedDetailedSessionIds = new Set(options.preserveDetailedSessionIds ?? []);
+  const preservedMissingSessionIds = new Set(options.preserveMissingSessionIds ?? []);
+  const listedIds = new Set(listedSessions.map((session) => session.id));
 
-  return listedSessions.map((listedSession) => {
+  const mergedSessions = listedSessions.map((listedSession) => {
     const existingSession = currentById.get(listedSession.id);
     if (!existingSession) {
       return listedSession;
@@ -80,4 +83,12 @@ export function reconcileListedSessions(
       controlOperation: preserveRuntimeState ? existingSession.controlOperation ?? listedSession.controlOperation : listedSession.controlOperation,
     };
   });
+
+  for (const currentSession of currentSessions) {
+    if (preservedMissingSessionIds.has(currentSession.id) && !listedIds.has(currentSession.id)) {
+      mergedSessions.push(currentSession);
+    }
+  }
+
+  return mergedSessions;
 }

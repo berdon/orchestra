@@ -66,6 +66,22 @@ async function triggerShortcut(page: import("@playwright/test").Page, key: strin
   }, key);
 }
 
+async function readStoredSupervisorQuickChat(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const raw = window.localStorage.getItem("orchestra.quick-chat.supervisor.orchestra");
+    return raw ? JSON.parse(raw) as { sessionId?: string | null; draft?: string } : null;
+  });
+}
+
+async function readSessionRefreshCount(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestSessionRefreshStats?: () => { listRefreshCount: number };
+    };
+    return testWindow.__orchestraTestSessionRefreshStats ? testWindow.__orchestraTestSessionRefreshStats().listRefreshCount : 0;
+  });
+}
+
 test("sessions UI creates a session and streams a mock reply", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -1875,4 +1891,168 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   await triggerShortcut(page, "t");
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Check the current project status");
+});
+
+test("quick supervisor chat keeps the same session and draft during a refresh miss outside the sessions pages", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+
+  await page.locator('[data-role="supervisor-composer-input"]').fill("Quick chat message that should stay visible");
+  await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Quick chat message that should stay visible", { timeout: 20_000 });
+
+  await page.locator('[data-role="supervisor-composer-input"]').fill("Unsent quick chat draft");
+  const storedBeforeMiss = await readStoredSupervisorQuickChat(page);
+  expect(storedBeforeMiss?.sessionId).toBeTruthy();
+
+  const baselineRefreshCount = await readSessionRefreshCount(page);
+
+  await page.evaluate(() => {
+    const testWindow = window as Window & { __orchestraTestNow?: number };
+    testWindow.__orchestraTestNow = Date.now();
+    Date.now = () => testWindow.__orchestraTestNow ?? 0;
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  await expect.poll(() => readSessionRefreshCount(page)).toBe(baselineRefreshCount + 1);
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Quick chat message that should stay visible");
+  await expect(page.locator('[data-role="supervisor-composer-input"]')).toHaveValue("Unsent quick chat draft");
+
+  const storedAfterMiss = await readStoredSupervisorQuickChat(page);
+  expect(storedAfterMiss?.sessionId).toBe(storedBeforeMiss?.sessionId ?? null);
+  expect(storedAfterMiss?.draft).toBe("Unsent quick chat draft");
+});
+
+test("quick supervisor chat reopens the same stored session and draft after reload", async ({ page }) => {
+  await page.addInitScript(() => {
+    const marker = "orchestra.test.quick-supervisor-reload-initialized";
+    if (!window.sessionStorage.getItem(marker)) {
+      window.localStorage.clear();
+      window.sessionStorage.setItem(marker, "1");
+    }
+    window.localStorage.setItem("orchestra.mock.active-project-id", "orchestra");
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+
+  await page.locator('[data-role="supervisor-composer-input"]').fill("Reload should preserve this transcript");
+  await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Reload should preserve this transcript", { timeout: 20_000 });
+
+  await expect.poll(async () => {
+    const sessions = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.sessions.orchestra") ?? "[]"));
+    return sessions.some((session: { events?: Array<{ message?: string }> }) =>
+      session.events?.some((event) => event.message?.includes("Acknowledged: Reload should preserve this transcript"))
+    );
+  }).toBe(true);
+
+  await page.locator('[data-role="supervisor-composer-input"]').fill("Draft that should come back after reload");
+  const storedBeforeReload = await readStoredSupervisorQuickChat(page);
+  expect(storedBeforeReload?.sessionId).toBeTruthy();
+
+  await page.reload();
+  const storedAfterPageReload = await readStoredSupervisorQuickChat(page);
+  expect(storedAfterPageReload?.sessionId).toBe(storedBeforeReload?.sessionId ?? null);
+  expect(storedAfterPageReload?.draft).toBe("Draft that should come back after reload");
+
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Reload should preserve this transcript");
+  await expect(page.locator('[data-role="supervisor-composer-input"]')).toHaveValue("Draft that should come back after reload");
+
+  const storedAfterReload = await readStoredSupervisorQuickChat(page);
+  expect(storedAfterReload?.sessionId).toBe(storedBeforeReload?.sessionId ?? null);
+  expect(storedAfterReload?.draft).toBe("Draft that should come back after reload");
+});
+
+test("quick supervisor chat recovers a stored hidden session via getSessionRecord", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem("orchestra.mock.active-project-id", "orchestra");
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-hidden-supervisor",
+          title: "Recovered hidden supervisor session",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "assistant-hidden-1",
+              kind: "assistant",
+              message: "Recovered hidden supervisor transcript.",
+              timestamp,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.dismissed-sessions.orchestra", JSON.stringify(["session-hidden-supervisor"]));
+    window.localStorage.setItem(
+      "orchestra.quick-chat.supervisor.orchestra",
+      JSON.stringify({ sessionId: "session-hidden-supervisor", draft: "Recovered hidden draft" }),
+    );
+  });
+
+  await page.goto("/");
+  const storedBeforeOpen = await readStoredSupervisorQuickChat(page);
+  expect(storedBeforeOpen?.sessionId).toBe("session-hidden-supervisor");
+  expect(storedBeforeOpen?.draft).toBe("Recovered hidden draft");
+
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Recovered hidden supervisor transcript.");
+  await expect(page.locator('[data-role="supervisor-composer-input"]')).toHaveValue("Recovered hidden draft");
+
+  await expect.poll(async () => {
+    const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
+    return logs.filter((entry: { target?: string; message?: string }) => entry.target === "sessions.record" && entry.message?.includes("session-hidden-supervisor")).length;
+  }).toBeGreaterThan(0);
+
+  const storedQuickChat = await readStoredSupervisorQuickChat(page);
+  expect(storedQuickChat?.sessionId).toBe("session-hidden-supervisor");
+  expect(storedQuickChat?.draft).toBe("Recovered hidden draft");
+});
+
+test("quick supervisor chat falls back to a fresh supervisor session when the stored session is gone", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem("orchestra.mock.active-project-id", "orchestra");
+    window.localStorage.setItem(
+      "orchestra.quick-chat.supervisor.orchestra",
+      JSON.stringify({ sessionId: "session-missing-supervisor", draft: "Draft that should survive fallback" }),
+    );
+  });
+
+  await page.goto("/");
+  const storedBeforeOpen = await readStoredSupervisorQuickChat(page);
+  expect(storedBeforeOpen?.sessionId).toBe("session-missing-supervisor");
+  expect(storedBeforeOpen?.draft).toBe("Draft that should survive fallback");
+
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-composer-input"]')).toHaveValue("Draft that should survive fallback");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toContainText("Supervisor main session");
+
+  const storedQuickChat = await readStoredSupervisorQuickChat(page);
+  expect(storedQuickChat?.sessionId).toBeTruthy();
+  expect(storedQuickChat?.sessionId).not.toBe("session-missing-supervisor");
+  expect(storedQuickChat?.draft).toBe("Draft that should survive fallback");
+
+  await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Draft that should survive fallback", { timeout: 20_000 });
 });
