@@ -11,7 +11,7 @@ use crate::{
         TaskUpsertInput,
     },
     services::{
-        app_events, database, domain_events, pi_sessions, task_attachments,
+        app_events, database, domain_events, pi_sessions, pi_setup, task_attachments,
         task_comment_file_mentions, task_file_references, task_repositories, task_runtime, tasks,
     },
     state::AppState,
@@ -981,6 +981,9 @@ pub async fn dispatch_task_lane(
 ) -> Result<TaskDetail, String> {
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to dispatch task lane because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to dispatch task lane because Pi setup is incomplete: {error}")
     })?;
     let task_id_for_context = task_id.clone();
     let context = tauri::async_runtime::spawn_blocking(move || {

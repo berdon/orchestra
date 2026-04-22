@@ -4,7 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    models::PiRuntimeSettings,
+    models::{PiRuntimeSettings, PiSetupMetadata},
     services::{
         orchestra_paths::{default_orchestra_root, orchestra_settings_path},
         pi_runtime,
@@ -35,6 +35,8 @@ struct StoredPiRuntimeSettings {
     updated_at: Option<String>,
     #[serde(default)]
     migration: PiMigrationStateRecord,
+    #[serde(default)]
+    setup: StoredPiSetupMetadata,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -45,6 +47,14 @@ pub struct PiMigrationStateRecord {
     pub models_imported_at: Option<String>,
     pub dismissed_at: Option<String>,
     pub last_detected_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredPiSetupMetadata {
+    imported_at: Option<String>,
+    dismissed_legacy_import_at: Option<String>,
+    updated_at: Option<String>,
 }
 
 pub fn get_pi_runtime_settings() -> Result<PiRuntimeSettings, String> {
@@ -58,6 +68,45 @@ pub fn update_pi_runtime_settings(
 ) -> Result<PiRuntimeSettings, String> {
     let orchestra_root = default_orchestra_root()?;
     update_pi_runtime_settings_in(&orchestra_root, extra_extensions, default_compaction_window)
+}
+
+pub fn get_pi_setup_metadata() -> Result<PiSetupMetadata, String> {
+    let orchestra_root = default_orchestra_root()?;
+    get_pi_setup_metadata_in(&orchestra_root)
+}
+
+pub fn get_pi_setup_metadata_in(orchestra_root: &Path) -> Result<PiSetupMetadata, String> {
+    let settings = load_harness_settings(orchestra_root)?;
+    Ok(PiSetupMetadata {
+        imported_at: settings.harness.pi.setup.imported_at,
+        dismissed_legacy_import_at: settings.harness.pi.setup.dismissed_legacy_import_at,
+        updated_at: settings.harness.pi.setup.updated_at,
+    })
+}
+
+pub fn update_pi_setup_metadata(
+    imported_at: Option<String>,
+    dismissed_legacy_import_at: Option<String>,
+) -> Result<PiSetupMetadata, String> {
+    let orchestra_root = default_orchestra_root()?;
+    update_pi_setup_metadata_in(
+        &orchestra_root,
+        imported_at,
+        dismissed_legacy_import_at,
+    )
+}
+
+pub fn update_pi_setup_metadata_in(
+    orchestra_root: &Path,
+    imported_at: Option<String>,
+    dismissed_legacy_import_at: Option<String>,
+) -> Result<PiSetupMetadata, String> {
+    let mut settings = load_harness_settings(orchestra_root)?;
+    settings.harness.pi.setup.imported_at = imported_at;
+    settings.harness.pi.setup.dismissed_legacy_import_at = dismissed_legacy_import_at;
+    settings.harness.pi.setup.updated_at = Some(Utc::now().to_rfc3339());
+    save_harness_settings(orchestra_root, &settings)?;
+    get_pi_setup_metadata_in(orchestra_root)
 }
 
 pub fn get_pi_runtime_settings_in(orchestra_root: &Path) -> Result<PiRuntimeSettings, String> {
@@ -336,6 +385,32 @@ mod tests {
                 "git:https://example.com/pkg.git".to_string(),
                 "https://example.com/pkg.tgz".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn stores_and_loads_pi_setup_metadata() {
+        let root = unique_temp_dir("harness-settings-pi-setup");
+
+        let saved = update_pi_setup_metadata_in(
+            &root,
+            Some("2026-04-22T00:00:00Z".into()),
+            Some("2026-04-22T00:05:00Z".into()),
+        )
+        .expect("pi setup metadata should save");
+
+        assert_eq!(saved.imported_at.as_deref(), Some("2026-04-22T00:00:00Z"));
+        assert_eq!(
+            saved.dismissed_legacy_import_at.as_deref(),
+            Some("2026-04-22T00:05:00Z")
+        );
+        assert!(saved.updated_at.is_some());
+
+        let loaded = get_pi_setup_metadata_in(&root).expect("pi setup metadata should load");
+        assert_eq!(loaded.imported_at, saved.imported_at);
+        assert_eq!(
+            loaded.dismissed_legacy_import_at,
+            saved.dismissed_legacy_import_at
         );
     }
 }

@@ -85,6 +85,10 @@ pub fn orchestra_runtime_root(root: &Path) -> PathBuf {
     root.join("runtime")
 }
 
+pub fn orchestra_runtime_dir(root: &Path) -> PathBuf {
+    orchestra_runtime_root(root)
+}
+
 pub fn pi_runtime_root(root: &Path) -> PathBuf {
     orchestra_runtime_root(root).join("pi")
 }
@@ -111,6 +115,17 @@ pub fn orchestra_pi_models_path(root: &Path) -> PathBuf {
 
 pub fn orchestra_pi_settings_path(root: &Path) -> PathBuf {
     orchestra_pi_agent_dir(root).join("settings.json")
+}
+
+pub fn legacy_pi_agent_dir_from_home(home_dir: &Path) -> PathBuf {
+    home_dir.join(".pi").join("agent")
+}
+
+pub fn legacy_pi_agent_dir() -> Result<PathBuf, String> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| legacy_pi_agent_dir_from_home(&home))
+        .ok_or_else(|| "HOME is not set; unable to resolve legacy Pi agent directory".into())
 }
 
 pub fn project_root(root: &Path, project_slug: &str) -> PathBuf {
@@ -176,7 +191,23 @@ mod tests {
             PathBuf::from("/tmp/home/.orchestra/runtime")
         );
         assert_eq!(
+            orchestra_runtime_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime")
+        );
+        assert_eq!(
+            orchestra_pi_root(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi")
+        );
+        assert_eq!(
+            pi_runtime_root(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi")
+        );
+        assert_eq!(
             orchestra_pi_agent_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent")
+        );
+        assert_eq!(
+            pi_agent_dir(&root),
             PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent")
         );
         assert_eq!(
@@ -200,16 +231,8 @@ mod tests {
             PathBuf::from("/tmp/home/.orchestra/projects/orchestra-app/settings.json")
         );
         assert_eq!(
-            orchestra_runtime_root(&root),
-            PathBuf::from("/tmp/home/.orchestra/runtime")
-        );
-        assert_eq!(
-            pi_runtime_root(&root),
-            PathBuf::from("/tmp/home/.orchestra/runtime/pi")
-        );
-        assert_eq!(
-            pi_agent_dir(&root),
-            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent")
+            legacy_pi_agent_dir_from_home(Path::new("/tmp/home")),
+            PathBuf::from("/tmp/home/.pi/agent")
         );
     }
 

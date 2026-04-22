@@ -794,6 +794,97 @@ pub struct PiRuntimeSettings {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiSetupMetadata {
+    pub imported_at: Option<String>,
+    pub dismissed_legacy_import_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiProviderSetupSummary {
+    pub id: String,
+    pub name: String,
+    pub auth_modes: Vec<String>,
+    pub connected: bool,
+    pub using_oauth: bool,
+    pub model_count: usize,
+    pub uses_callback_server: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiSetupIssue {
+    pub code: String,
+    pub message: String,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiLegacyImportState {
+    pub can_import_legacy: bool,
+    pub imported_at: Option<String>,
+    pub dismissed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiSetupState {
+    pub status: String,
+    pub agent_dir: String,
+    pub auth_path: String,
+    pub models_path: String,
+    pub legacy_agent_dir: Option<String>,
+    pub available_providers: Vec<PiProviderSetupSummary>,
+    pub available_models: Vec<SessionModel>,
+    pub issues: Vec<PiSetupIssue>,
+    pub warnings: Vec<PiSetupIssue>,
+    pub import_state: PiLegacyImportState,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiLegacyImportPreview {
+    pub legacy_agent_dir: String,
+    pub auth_path: String,
+    pub models_path: String,
+    pub auth_exists: bool,
+    pub models_exists: bool,
+    pub can_import: bool,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiOAuthPromptState {
+    pub kind: String,
+    pub message: String,
+    pub placeholder: Option<String>,
+    pub allow_empty: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiOAuthFlowState {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub uses_callback_server: bool,
+    pub status: String,
+    pub auth_url: Option<String>,
+    pub auth_instructions: Option<String>,
+    pub browser_opened: bool,
+    pub browser_open_error: Option<String>,
+    pub prompt: Option<PiOAuthPromptState>,
+    pub latest_progress_message: Option<String>,
+    pub error: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TelegramNotificationScope {

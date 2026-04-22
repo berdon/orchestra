@@ -21,6 +21,9 @@ import type {
   LogLevel,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
+  PiLegacyImportPreview,
+  PiOAuthFlowState,
+  PiSetupState,
   QueuedSessionMessage,
   RoleSummary,
   SendMailboxMessageInput,
@@ -82,6 +85,9 @@ const ACTIVE_RUN_STORAGE_KEY = "orchestra.mock.active-session-runs";
 const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
 const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
 const HARNESS_SETTINGS_STORAGE_KEY = "orchestra.mock.harness-settings";
+const PI_SETUP_STORAGE_KEY = "orchestra.mock.pi-setup";
+const PI_OAUTH_FLOW_STORAGE_KEY = "orchestra.mock.pi-oauth-flow";
+const PI_MODELS_JSON_STORAGE_KEY = "orchestra.mock.pi-models-json";
 const TASK_SCHEDULE_STORAGE_KEY = "orchestra.mock.task-schedules";
 const DOMAIN_EVENT_STORAGE_KEY = "orchestra.mock.domain-events";
 const NO_PROJECT_STORAGE_KEY = "no-project";
@@ -237,6 +243,48 @@ function createEvent(kind: SessionEvent["kind"], message: string, overrides?: Pa
     timestamp: nowIso(),
     ...overrides,
   };
+}
+
+function getStoredMockPiSetupState(): PiSetupState {
+  return getStoredValue<PiSetupState>(PI_SETUP_STORAGE_KEY) ?? {
+    status: "ready",
+    agentDir: "/mock/.orchestra/runtime/pi/agent",
+    authPath: "/mock/.orchestra/runtime/pi/agent/auth.json",
+    modelsPath: "/mock/.orchestra/runtime/pi/agent/models.json",
+    legacyAgentDir: "/mock/.pi/agent",
+    availableProviders: [
+      { id: "anthropic", name: "Anthropic", authModes: ["api_key"], connected: true, usingOAuth: false, modelCount: 1, usesCallbackServer: false },
+      { id: "openai", name: "OpenAI", authModes: ["api_key"], connected: true, usingOAuth: false, modelCount: 1, usesCallbackServer: false },
+    ],
+    availableModels: MOCK_MODELS,
+    issues: [],
+    warnings: [],
+    importState: { canImportLegacy: false, importedAt: null, dismissedAt: null },
+  } satisfies PiSetupState;
+}
+
+function saveStoredMockPiSetupState(state: PiSetupState) {
+  setStoredValue(PI_SETUP_STORAGE_KEY, state);
+}
+
+function getStoredMockPiOAuthFlowState() {
+  return getStoredValue<PiOAuthFlowState>(PI_OAUTH_FLOW_STORAGE_KEY);
+}
+
+function saveStoredMockPiOAuthFlowState(state: PiOAuthFlowState | null) {
+  if (!state) {
+    window.localStorage.removeItem(PI_OAUTH_FLOW_STORAGE_KEY);
+    return;
+  }
+  setStoredValue(PI_OAUTH_FLOW_STORAGE_KEY, state);
+}
+
+function getStoredMockPiModelsJson() {
+  return window.localStorage.getItem(PI_MODELS_JSON_STORAGE_KEY) ?? '{\n  "providers": {}\n}\n';
+}
+
+function saveStoredMockPiModelsJson(value: string) {
+  window.localStorage.setItem(PI_MODELS_JSON_STORAGE_KEY, value);
 }
 
 function getStoredValue<T>(key: string): T | null {
@@ -2213,13 +2261,14 @@ export async function reportClientError(target: string, error: unknown, fallback
 
 export async function getAppInfo(): Promise<AppInfo> {
   if (!isTauriAvailable()) {
+    const piSetup = getStoredMockPiSetupState();
     return {
       appName: "Orchestra",
       environment: "browser",
       backendStatus: "mock",
       versionDisplay: "0.1.0-mock0000",
-      dispatchBlocked: false,
-      dispatchBlockedReason: null,
+      dispatchBlocked: piSetup.status !== "ready",
+      dispatchBlockedReason: piSetup.status === "ready" ? null : "No Pi models are configured yet. Open Settings → Pi to connect a provider or import an existing Pi setup.",
       piRuntimeDiagnostics: {
         runtime: {
           available: true,
@@ -2230,19 +2279,21 @@ export async function getAppInfo(): Promise<AppInfo> {
           message: "PI runtime resolved in browser-mode mock.",
         },
         auth: {
-          configured: true,
+          configured: piSetup.status === "ready",
           agentDir: "~/.orchestra/runtime/pi/agent",
           authPath: "~/.orchestra/runtime/pi/agent/auth.json",
           modelsPath: "~/.orchestra/runtime/pi/agent/models.json",
           settingsPath: "~/.orchestra/runtime/pi/agent/settings.json",
-          authExists: true,
-          modelsExists: true,
-          legacyAgentDir: "~/.pi/agent",
-          legacyAuthAvailable: true,
-          legacyModelsAvailable: true,
-          authImportedAt: null,
-          modelsImportedAt: null,
-          message: "Browser-mode mock simulates configured Orchestra-managed PI auth.",
+          authExists: piSetup.availableProviders.some((provider) => provider.connected),
+          modelsExists: piSetup.status === "ready",
+          legacyAgentDir: piSetup.legacyAgentDir ?? "~/.pi/agent",
+          legacyAuthAvailable: piSetup.status === "legacy_import_available" || piSetup.importState.canImportLegacy,
+          legacyModelsAvailable: piSetup.status === "legacy_import_available" || piSetup.importState.canImportLegacy,
+          authImportedAt: piSetup.importState.importedAt,
+          modelsImportedAt: piSetup.importState.importedAt,
+          message: piSetup.status === "ready"
+            ? "Browser-mode mock simulates configured Orchestra-managed PI auth."
+            : "Browser-mode mock requires Pi setup before Pi-backed flows are available.",
         },
         addOns: {
           packagedMode: false,
@@ -2805,6 +2856,200 @@ export async function importLegacyPiConfiguration(importAuth: boolean, importMod
   }
 
   return invoke<PiImportLegacyResult>("import_legacy_pi_configuration", { importAuth, importModels });
+}
+
+export async function getPiSetupState(): Promise<PiSetupState> {
+  if (!isTauriAvailable()) {
+    return getStoredMockPiSetupState();
+  }
+
+  return invoke<PiSetupState>("get_pi_setup_state");
+}
+
+export async function previewPiLegacyImport(): Promise<PiLegacyImportPreview> {
+  if (!isTauriAvailable()) {
+    const state = getStoredMockPiSetupState();
+    return {
+      legacyAgentDir: state.legacyAgentDir ?? "/mock/.pi/agent",
+      authPath: `${state.legacyAgentDir ?? "/mock/.pi/agent"}/auth.json`,
+      modelsPath: `${state.legacyAgentDir ?? "/mock/.pi/agent"}/models.json`,
+      authExists: state.status === "legacy_import_available" || state.importState.canImportLegacy,
+      modelsExists: state.status === "legacy_import_available" || state.importState.canImportLegacy,
+      canImport: state.importState.canImportLegacy,
+      warning: null,
+    } satisfies PiLegacyImportPreview;
+  }
+
+  return invoke<PiLegacyImportPreview>("preview_pi_legacy_import");
+}
+
+export async function getPiModelsJson(): Promise<string> {
+  if (!isTauriAvailable()) {
+    return getStoredMockPiModelsJson();
+  }
+
+  return invoke<string>("get_pi_models_json");
+}
+
+export async function savePiModelsJson(content: string): Promise<PiSetupState> {
+  if (!isTauriAvailable()) {
+    saveStoredMockPiModelsJson(content);
+    return getStoredMockPiSetupState();
+  }
+
+  return invoke<PiSetupState>("save_pi_models_json", { content });
+}
+
+export async function setPiProviderApiKey(providerId: string, apiKey: string): Promise<PiSetupState> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiSetupState();
+    const next = {
+      ...current,
+      status: "ready",
+      issues: [],
+      warnings: [],
+      availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: true } : provider),
+    } satisfies PiSetupState;
+    saveStoredMockPiSetupState(next);
+    return next;
+  }
+
+  return invoke<PiSetupState>("set_pi_provider_api_key", { providerId, apiKey });
+}
+
+export async function removePiProviderCredential(providerId: string): Promise<PiSetupState> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiSetupState();
+    const next = {
+      ...current,
+      availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: false, usingOAuth: false } : provider),
+    } satisfies PiSetupState;
+    saveStoredMockPiSetupState(next);
+    return next;
+  }
+
+  return invoke<PiSetupState>("remove_pi_provider_credential", { providerId });
+}
+
+export async function importPiLegacyConfig(replaceExisting = false): Promise<PiSetupState> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiSetupState();
+    const next = {
+      ...current,
+      status: "ready",
+      importState: {
+        ...current.importState,
+        canImportLegacy: false,
+        importedAt: nowIso(),
+      },
+    } satisfies PiSetupState;
+    saveStoredMockPiSetupState(next);
+    return next;
+  }
+
+  return invoke<PiSetupState>("import_pi_legacy_config", { replaceExisting });
+}
+
+export async function dismissPiLegacyImport(): Promise<PiSetupState> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiSetupState();
+    const next = {
+      ...current,
+      importState: {
+        ...current.importState,
+        dismissedAt: nowIso(),
+      },
+    } satisfies PiSetupState;
+    saveStoredMockPiSetupState(next);
+    return next;
+  }
+
+  return invoke<PiSetupState>("dismiss_pi_legacy_import");
+}
+
+export async function getPiOAuthFlowState(): Promise<PiOAuthFlowState | null> {
+  if (!isTauriAvailable()) {
+    return getStoredMockPiOAuthFlowState() ?? null;
+  }
+
+  return invoke<PiOAuthFlowState | null>("get_pi_oauth_flow_state");
+}
+
+export async function startPiOAuthFlow(providerId: string): Promise<PiOAuthFlowState> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiSetupState();
+    const provider = current.availableProviders.find((entry) => entry.id === providerId);
+    if (!provider) {
+      throw new Error(`Unknown Pi provider ${providerId}`);
+    }
+    const next: PiOAuthFlowState = {
+      providerId,
+      providerName: provider.name,
+      usesCallbackServer: provider.usesCallbackServer,
+      status: providerId === "github-copilot" ? "awaiting_input" : "running",
+      authUrl: providerId === "github-copilot" ? null : `https://example.com/oauth/${providerId}`,
+      authInstructions: providerId === "github-copilot" ? null : "Mock OAuth flow started.",
+      browserOpened: providerId !== "github-copilot",
+      browserOpenError: null,
+      prompt: providerId === "github-copilot"
+        ? { kind: "prompt", message: "GitHub Enterprise URL/domain (blank for github.com)", placeholder: "company.ghe.com", allowEmpty: true }
+        : null,
+      latestProgressMessage: `Starting ${provider.name} sign-in…`,
+      error: null,
+      startedAt: nowIso(),
+      finishedAt: null,
+    };
+    saveStoredMockPiOAuthFlowState(next);
+    window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: next }));
+    return next;
+  }
+
+  return invoke<PiOAuthFlowState>("start_pi_oauth_flow", { providerId });
+}
+
+export async function submitPiOAuthFlowInput(value: string): Promise<PiOAuthFlowState> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiOAuthFlowState();
+    if (!current) {
+      throw new Error("No active Pi OAuth flow.");
+    }
+    const next: PiOAuthFlowState = {
+      ...current,
+      status: current.authUrl ? "succeeded" : "running",
+      prompt: null,
+      authUrl: current.authUrl ?? `https://example.com/oauth/${current.providerId}`,
+      authInstructions: current.authInstructions ?? "Continue in your browser.",
+      browserOpened: true,
+      latestProgressMessage: current.authUrl ? "Authentication completed." : "Waiting for browser verification…",
+      finishedAt: current.authUrl ? nowIso() : null,
+    };
+    saveStoredMockPiOAuthFlowState(next);
+    window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: next }));
+    return next;
+  }
+
+  return invoke<PiOAuthFlowState>("submit_pi_oauth_flow_input", { value });
+}
+
+export async function cancelPiOAuthFlow(): Promise<PiOAuthFlowState | null> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiOAuthFlowState();
+    if (!current) {
+      return null;
+    }
+    const next: PiOAuthFlowState = {
+      ...current,
+      status: "cancelled",
+      prompt: null,
+      error: "Login cancelled",
+      finishedAt: nowIso(),
+    };
+    saveStoredMockPiOAuthFlowState(next);
+    window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: next }));
+    return next;
+  }
+
+  return invoke<PiOAuthFlowState | null>("cancel_pi_oauth_flow");
 }
 
 export async function listPiModels(): Promise<SessionModel[]> {

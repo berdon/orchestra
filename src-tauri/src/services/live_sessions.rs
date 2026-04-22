@@ -211,6 +211,7 @@ impl SessionRuntime {
         let mut command = Command::new(&pi_executable);
         crate::services::pi_sessions::apply_user_shell_environment(&mut command);
         crate::services::pi_runtime::apply_runtime_environment(&mut command, &pi_runtime, None);
+        crate::services::pi_sessions::apply_orchestra_pi_environment(&mut command)?;
         let mut child = command
             .args(&args)
             .env("ORCHESTRA_BRIDGE_URL", &bridge_config.url)

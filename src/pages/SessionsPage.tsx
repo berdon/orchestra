@@ -4,7 +4,7 @@ import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatListControlLabel(session: SessionRecord) {
   if (session.controlOperation?.status !== "running") {
@@ -72,6 +72,7 @@ interface SessionsPageProps {
   changingModelSessionId: string | null;
   loadingRuntimeDetailsSessionId: string | null;
   draftMessage: string;
+  piSetupState?: PiSetupState | null;
   sessionActionError: string | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
@@ -92,6 +93,7 @@ interface SessionsPageProps {
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
+  onOpenPiSettings?: () => void;
   onCompactSession: () => void;
   onReloadSession: () => void;
   onLoadRuntimeDetails: (sessionId: string) => Promise<SessionRuntimeDetails>;
@@ -117,6 +119,7 @@ export function SessionsPage({
   changingModelSessionId,
   loadingRuntimeDetailsSessionId,
   draftMessage,
+  piSetupState,
   sessionActionError,
   transcriptRef,
   scrollState,
@@ -137,6 +140,7 @@ export function SessionsPage({
   onOpenAgent,
   onOpenRole,
   onCreateNewSession,
+  onOpenPiSettings,
   onCompactSession,
   onReloadSession,
   onLoadRuntimeDetails,
@@ -318,6 +322,7 @@ export function SessionsPage({
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             draftMessage={draftMessage}
+            piSetupState={piSetupState}
             transcriptRef={transcriptRef}
             scrollState={scrollState}
             onScrollLockChange={onScrollLockChange}
@@ -334,6 +339,7 @@ export function SessionsPage({
             onOpenAgent={onOpenAgent}
             onOpenRole={onOpenRole}
             onCreateNewSession={onCreateNewSession}
+            onOpenPiSettings={onOpenPiSettings}
             onCompactSession={onCompactSession}
             onReloadSession={onReloadSession}
             emptyStateEyebrow={selectedSessionPending ? "Opening session" : undefined}

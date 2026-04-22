@@ -14,6 +14,10 @@ import {
   getInitialLogsWindowFlag,
   getLogs,
   exportLogsBundle,
+  dismissPiLegacyImport,
+  getPiModelsJson,
+  getPiOAuthFlowState,
+  getPiSetupState,
   getSessionModelState,
   getSessionRecord,
   getSessionRuntimeDetails,
@@ -26,14 +30,21 @@ import {
   listInboxMessages,
   listSessions,
   listTasks,
+  importPiLegacyConfig,
+  cancelPiOAuthFlow,
   listWorkflows,
   listenToInboxChanges,
   listenToSessionChanges,
   listenToSessionStream,
   listenToTaskChanges,
   openLogsWindow,
+  removePiProviderCredential,
+  startPiOAuthFlow,
   reportClientError,
+  savePiModelsJson,
+  submitPiOAuthFlowInput,
   sendSessionMessage,
+  setPiProviderApiKey,
   setSessionModel,
   stopSessionRuntime,
   subscribeSession,
@@ -79,6 +90,7 @@ import { ChannelsPanel } from "./settings/ChannelsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
+import { PiPanel } from "./settings/PiPanel";
 import { RemotePanel } from "./settings/RemotePanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
@@ -89,7 +101,9 @@ import type {
   JsonValue,
   LogEntry,
   MailboxMessage,
+  PiOAuthFlowState,
   PiRuntimeSettings,
+  PiSetupState,
   ProjectSessionPromptSettings,
   PrimaryPage,
   SystemNotificationEnvironmentStatus,
@@ -189,6 +203,7 @@ const SETTINGS_TABS = [
   { id: "workflows", label: "Workflows" },
   { id: "channels", label: "Channels" },
   { id: "remote", label: "Remote" },
+  { id: "pi", label: "Pi" },
   { id: "general", label: "General" },
 ] as const;
 
@@ -767,6 +782,11 @@ export function App() {
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
   const [piRuntimeSettings, setPiRuntimeSettings] = useState<PiRuntimeSettings | null>(null);
+  const [piSetupState, setPiSetupState] = useState<PiSetupState | null>(null);
+  const [piOAuthFlowState, setPiOAuthFlowState] = useState<PiOAuthFlowState | null>(null);
+  const [piModelsJson, setPiModelsJson] = useState('{\n  "providers": {}\n}\n');
+  const [loadingPiSetup, setLoadingPiSetup] = useState(false);
+  const [loadingPiModelsJson, setLoadingPiModelsJson] = useState(false);
   const [systemNotificationEnvironment, setSystemNotificationEnvironment] = useState<SystemNotificationEnvironmentStatus | null>(null);
   const [systemNotificationPermission, setSystemNotificationPermission] = useState<SystemNotificationPermissionState>("unsupported");
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -1384,6 +1404,45 @@ export function App() {
     }
   }
 
+  async function loadPiSetup() {
+    setLoadingPiSetup(true);
+    try {
+      setPiSetupState(await getPiSetupState());
+    } catch (error) {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load Pi setup state."));
+    } finally {
+      setLoadingPiSetup(false);
+    }
+  }
+
+  async function loadPiOAuthFlow() {
+    try {
+      setPiOAuthFlowState(await getPiOAuthFlowState());
+    } catch (error) {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load Pi OAuth flow state."));
+    }
+  }
+
+  async function loadPiModelsJsonState() {
+    setLoadingPiModelsJson(true);
+    try {
+      setPiModelsJson(await getPiModelsJson());
+    } catch (error) {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load models.json."));
+    } finally {
+      setLoadingPiModelsJson(false);
+    }
+  }
+
+  async function refreshPiSetupState(options?: { includeModelsJson?: boolean }) {
+    await loadPiSetup();
+    await loadAppInfo();
+    setModelStates({});
+    if (options?.includeModelsJson) {
+      await loadPiModelsJsonState();
+    }
+  }
+
   async function loadSystemNotificationPermission() {
     try {
       const [environment, permission] = await Promise.all([
@@ -1493,10 +1552,51 @@ export function App() {
   async function handleImportLegacyPiConfiguration(input: { importAuth: boolean; importModels: boolean }) {
     try {
       await importLegacyPiConfiguration(input.importAuth, input.importModels);
-      await Promise.all([loadAppInfo(), loadPiRuntimeSettings()]);
+      await Promise.all([loadAppInfo(), loadPiRuntimeSettings(), refreshPiSetupState({ includeModelsJson: true })]);
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to import legacy PI configuration.");
     }
+  }
+
+  async function handleSavePiProviderApiKey(providerId: string, apiKey: string) {
+    setPiSetupState(await setPiProviderApiKey(providerId, apiKey));
+    await refreshPiSetupState({ includeModelsJson: true });
+  }
+
+  async function handleRemovePiProviderCredential(providerId: string) {
+    setPiSetupState(await removePiProviderCredential(providerId));
+    await refreshPiSetupState({ includeModelsJson: true });
+  }
+
+  async function handleImportPiLegacyConfig(replaceExisting = false) {
+    setPiSetupState(await importPiLegacyConfig(replaceExisting));
+    await refreshPiSetupState({ includeModelsJson: true });
+  }
+
+  async function handleDismissPiLegacyImport() {
+    setPiSetupState(await dismissPiLegacyImport());
+    await refreshPiSetupState({ includeModelsJson: false });
+  }
+
+  async function handleSavePiModelsJson(content: string) {
+    setPiSetupState(await savePiModelsJson(content));
+    await refreshPiSetupState({ includeModelsJson: true });
+  }
+
+  async function handleStartPiOAuthFlow(providerId: string) {
+    setPiOAuthFlowState(await startPiOAuthFlow(providerId));
+  }
+
+  async function handleSubmitPiOAuthFlowInput(value: string) {
+    setPiOAuthFlowState(await submitPiOAuthFlowInput(value));
+  }
+
+  async function handleCancelPiOAuthFlow() {
+    setPiOAuthFlowState(await cancelPiOAuthFlow());
+  }
+
+  function handleDismissPiOAuthFlow() {
+    setPiOAuthFlowState(null);
   }
 
   async function loadSessions(options?: { background?: boolean }) {
@@ -1768,14 +1868,30 @@ export function App() {
 
     void loadAppInfo();
     void loadPiRuntimeSettings();
+    void loadPiSetup();
+    void loadPiOAuthFlow();
     void loadSystemNotificationPermission();
     void isCurrentLogsWindow().then(setIsLogsWindow);
     void isCurrentAgentTerminalWindow().then(setIsAgentTerminalWindow);
     void getCurrentAgentTerminalSessionId().then(setAgentTerminalSessionId);
     loadProjectCatalog();
     const onProjectsChanged = () => loadProjectCatalog();
+    const onPiSetupChanged = () => {
+      void refreshPiSetupState({ includeModelsJson: true });
+    };
+    const onPiOAuthFlowChanged = (event: Event) => {
+      if (event instanceof CustomEvent) {
+        setPiOAuthFlowState(event.detail as PiOAuthFlowState);
+      }
+    };
     window.addEventListener("orchestra:projects-changed", onProjectsChanged);
-    return () => window.removeEventListener("orchestra:projects-changed", onProjectsChanged);
+    window.addEventListener("orchestra:pi-setup-change", onPiSetupChanged);
+    window.addEventListener("orchestra:pi-oauth-flow-change", onPiOAuthFlowChanged);
+    return () => {
+      window.removeEventListener("orchestra:projects-changed", onProjectsChanged);
+      window.removeEventListener("orchestra:pi-setup-change", onPiSetupChanged);
+      window.removeEventListener("orchestra:pi-oauth-flow-change", onPiOAuthFlowChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -2276,6 +2392,15 @@ export function App() {
   }, [activeProject?.id, draftMessages, isDetachedWindow, liveSupervisorSession?.id, mergeSessionRecord, supervisorQuickChatOpen, supervisorSessionId]);
 
   useEffect(() => {
+    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "pi") {
+      return;
+    }
+
+    void loadPiSetup();
+    void loadPiModelsJsonState();
+  }, [activePage, settingsTab, isDetachedWindow]);
+
+  useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
       return;
     }
@@ -2554,6 +2679,11 @@ export function App() {
     setActivePage("tasks");
     setSelectedTaskId(null);
     setTasksOverviewToken((current) => current + 1);
+  }
+
+  function navigateToPiSettings() {
+    setActivePage("settings");
+    setSettingsTab("pi");
   }
 
   function navigateToAgent(agentId: string) {
@@ -3178,9 +3308,14 @@ export function App() {
             <div>
               <strong>Dispatching disabled.</strong> {appInfo.dispatchBlockedReason}
             </div>
-            <button className="secondary-button" type="button" data-role="retry-pi-health-check" onClick={() => void loadAppInfo()}>
-              Retry check
-            </button>
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" onClick={navigateToPiSettings}>
+                Open Settings → Pi
+              </button>
+              <button className="secondary-button" type="button" data-role="retry-pi-health-check" onClick={() => void loadAppInfo()}>
+                Retry check
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -3210,15 +3345,33 @@ export function App() {
           settingsTab === "projects" ? (
             <ProjectsPanel />
           ) : settingsTab === "agents" ? (
-            <AgentsPanel activeProjectId={activeProject?.id ?? null} />
+            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={navigateToPiSettings} />
           ) : settingsTab === "roles" ? (
-            <RolesPanel selectionRequest={rolesSelectionRequest} />
+            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={navigateToPiSettings} />
           ) : settingsTab === "workflows" ? (
             <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
           ) : settingsTab === "channels" ? (
             <ChannelsPanel />
           ) : settingsTab === "remote" ? (
             <RemotePanel />
+          ) : settingsTab === "pi" ? (
+            <PiPanel
+              piSetupState={piSetupState}
+              piOAuthFlowState={piOAuthFlowState}
+              piModelsJson={piModelsJson}
+              loadingPiSetup={loadingPiSetup}
+              loadingPiModelsJson={loadingPiModelsJson}
+              onRefresh={() => void refreshPiSetupState({ includeModelsJson: true })}
+              onSaveProviderApiKey={(providerId, apiKey) => handleSavePiProviderApiKey(providerId, apiKey)}
+              onRemoveProviderCredential={(providerId) => handleRemovePiProviderCredential(providerId)}
+              onStartOAuthFlow={(providerId) => handleStartPiOAuthFlow(providerId)}
+              onSubmitOAuthFlowInput={(value) => handleSubmitPiOAuthFlowInput(value)}
+              onCancelOAuthFlow={() => handleCancelPiOAuthFlow()}
+              onDismissOAuthFlow={() => handleDismissPiOAuthFlow()}
+              onImportLegacyConfig={(replaceExisting) => handleImportPiLegacyConfig(replaceExisting)}
+              onDismissLegacyImport={() => handleDismissPiLegacyImport()}
+              onSaveModelsJson={(content) => handleSavePiModelsJson(content)}
+            />
           ) : (
             <GeneralPanel
               availableThemes={BUILT_IN_ORCHESTRA_THEMES}
@@ -3292,6 +3445,7 @@ export function App() {
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             draftMessage={chatSessionDraftMessage}
+            piSetupState={piSetupState}
             error={sessionActionError}
             transcriptRef={transcriptRef}
             scrollState={sessionScrollState}
@@ -3328,6 +3482,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
+            onOpenPiSettings={navigateToPiSettings}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
             onReloadSession={() => handleReloadExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
@@ -3352,6 +3507,7 @@ export function App() {
             changingModelSessionId={changingModelSessionId}
             loadingRuntimeDetailsSessionId={loadingRuntimeDetailsSessionId}
             draftMessage={selectedSessionDraftMessage}
+            piSetupState={piSetupState}
             sessionActionError={sessionActionError}
             transcriptRef={transcriptRef}
             scrollState={sessionScrollState}
@@ -3375,6 +3531,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
+            onOpenPiSettings={navigateToPiSettings}
             onCompactSession={handleSelectedSessionCompact}
             onReloadSession={handleSelectedSessionReload}
             onLoadRuntimeDetails={loadSelectedSessionRuntimeDetails}

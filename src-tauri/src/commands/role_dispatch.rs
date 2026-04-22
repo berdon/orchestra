@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::{
     models::RoleOperationsDetail,
-    services::{app_events, database, live_sessions, pi_sessions, role_dispatch},
+    services::{app_events, database, live_sessions, pi_sessions, pi_setup, role_dispatch},
     state::AppState,
 };
 
@@ -13,6 +13,9 @@ pub fn dispatch_role_queue(
 ) -> Result<RoleOperationsDetail, String> {
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to dispatch role queue because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to dispatch role queue because Pi setup is incomplete: {error}")
     })?;
     let context = pi_sessions::detect_session_context(None)?;
     let mut connection = database::open_connection()?;

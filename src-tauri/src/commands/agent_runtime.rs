@@ -11,6 +11,7 @@ use crate::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{find_session_context_for_session, get_session, get_session_path},
+        pi_setup,
     },
     state::AppState,
 };
@@ -124,6 +125,9 @@ pub async fn ensure_agent_session(
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to open agent session because PI is unavailable: {error}")
     })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to open agent session because Pi setup is incomplete: {error}")
+    })?;
     let resolved_project_id = if let Some(project_id) = project_id {
         project_id
     } else {
@@ -179,6 +183,9 @@ pub async fn open_agent_session_terminal(
 ) -> Result<SessionRecord, String> {
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to open agent terminal because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to open agent terminal because Pi setup is incomplete: {error}")
     })?;
     let resolved_project_id = if let Some(project_id) = project_id {
         project_id

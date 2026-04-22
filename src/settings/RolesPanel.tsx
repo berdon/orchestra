@@ -8,6 +8,7 @@ import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole }
 import { getPiExecutableDiagnostic, listPiModels, reportClientError } from "../lib/tauri";
 import type {
   PiExecutableDiagnostic,
+  PiSetupState,
   PolicyDefinition,
   RoleDefinition,
   RoleSummary,
@@ -68,7 +69,7 @@ interface RolesPanelProps {
   selectionRequest?: { roleId: string; token: number } | null;
 }
 
-export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
+export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpenPiSettings }: RolesPanelProps & { piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void }) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [roleDraft, setRoleDraft] = useState<RoleUpsertInput>(createBlankRoleDraft);
@@ -453,7 +454,7 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
                   <select
                     className="select-input"
                     value={roleDraft.provider ?? ""}
-                    disabled={loadingModelOptions}
+                    disabled={loadingModelOptions || piSetupState?.status !== "ready"}
                     onChange={(event) =>
                       updateRoleDraft((draft) => ({
                         ...draft,
@@ -479,7 +480,7 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
                   <select
                     className="select-input"
                     value={roleDraft.model ?? ""}
-                    disabled={loadingModelOptions || !(roleDraft.provider ?? "")}
+                    disabled={loadingModelOptions || piSetupState?.status !== "ready" || !(roleDraft.provider ?? "")}
                     onChange={(event) => updateRoleDraft((draft) => ({ ...draft, model: event.target.value }))}
                   >
                     <option value="">
@@ -534,6 +535,19 @@ export function RolesPanel({ selectionRequest = null }: RolesPanelProps) {
                 <div className="workflow-form-grid__full muted-copy" data-role="role-pi-executable-diagnostic">
                   Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
                 </div>
+
+                {piSetupState?.status && piSetupState.status !== "ready" ? (
+                  <div className="workflow-form-grid__full session-readonly-banner">
+                    <div>
+                      <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Pi before assigning Pi-backed role models."}
+                    </div>
+                    {onOpenPiSettings ? (
+                      <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
+                        Open Settings → Pi
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <label className="field-group workflow-form-grid__full">
                   <span className="field-group__label">Description</span>

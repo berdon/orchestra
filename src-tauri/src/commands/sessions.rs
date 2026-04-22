@@ -26,6 +26,7 @@ use crate::{
             get_session_stats as load_session_stats_from_file, list_sessions as list_real_sessions,
             session_context_for_project_id, set_session_model as apply_session_model,
         },
+        pi_setup,
         role_dispatch, role_runtime, roles, task_runtime,
     },
     state::AppState,
@@ -776,6 +777,9 @@ pub async fn create_session(
     state
         .sync_pi_runtime_health()
         .map_err(|error| format!("Unable to create session because PI is unavailable: {error}"))?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to create session because Pi setup is incomplete: {error}")
+    })?;
     let title_for_task = title.clone();
     let project_slug_for_task = project_slug.clone();
     let (project_root, session_dir, created) = spawn_blocking(move || {
@@ -857,6 +861,9 @@ pub async fn create_contextual_session(
 ) -> Result<SessionRecord, String> {
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to create a new session because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to create a new session because Pi setup is incomplete: {error}")
     })?;
 
     if state.get_terminal_window_label(&session_id)?.is_some() {
@@ -1364,6 +1371,9 @@ pub async fn resume_session(
     state
         .sync_pi_runtime_health()
         .map_err(|error| format!("Unable to resume session because PI is unavailable: {error}"))?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to resume session because Pi setup is incomplete: {error}")
+    })?;
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) = spawn_blocking(move || {
         let connection = database::open_connection()?;
@@ -1420,6 +1430,9 @@ pub async fn subscribe_session(
 ) -> Result<SessionRecord, String> {
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to subscribe to session because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to subscribe to session because Pi setup is incomplete: {error}")
     })?;
     let result: Result<SessionRecord, String> = async {
         let session_id_for_task = session_id.clone();
@@ -1609,6 +1622,12 @@ pub async fn set_session_model(
     provider: String,
     model_id: String,
 ) -> Result<SessionModelState, String> {
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to change session models because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to change session models because Pi setup is incomplete: {error}")
+    })?;
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) =
         spawn_blocking(move || resolve_session_paths(&session_id_for_task))
@@ -1884,6 +1903,13 @@ pub async fn send_session_message(
     if trimmed_message.is_empty() {
         return Err("Message cannot be empty".into());
     }
+
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to send a session message because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to send a session message because Pi setup is incomplete: {error}")
+    })?;
 
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) =

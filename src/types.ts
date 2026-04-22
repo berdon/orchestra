@@ -1,5 +1,5 @@
 export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
-export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "remote" | "general";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "remote" | "pi" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -613,6 +613,75 @@ export interface PiRuntimeSettings {
   extraExtensions: string[];
   defaultCompactionWindow: string;
   updatedAt?: string | null;
+}
+
+export interface PiSetupIssue {
+  code: string;
+  message: string;
+  providerId?: string | null;
+  modelId?: string | null;
+}
+
+export interface PiProviderSetupSummary {
+  id: string;
+  name: string;
+  authModes: string[];
+  connected: boolean;
+  usingOAuth: boolean;
+  modelCount: number;
+  usesCallbackServer: boolean;
+}
+
+export interface PiLegacyImportState {
+  canImportLegacy: boolean;
+  importedAt?: string | null;
+  dismissedAt?: string | null;
+}
+
+export interface PiSetupState {
+  status: "ready" | "needs_setup" | "invalid" | "legacy_import_available" | string;
+  agentDir: string;
+  authPath: string;
+  modelsPath: string;
+  legacyAgentDir?: string | null;
+  availableProviders: PiProviderSetupSummary[];
+  availableModels: SessionModel[];
+  issues: PiSetupIssue[];
+  warnings: PiSetupIssue[];
+  importState: PiLegacyImportState;
+}
+
+export interface PiLegacyImportPreview {
+  legacyAgentDir: string;
+  authPath: string;
+  modelsPath: string;
+  authExists: boolean;
+  modelsExists: boolean;
+  canImport: boolean;
+  warning?: string | null;
+}
+
+export interface PiOAuthPromptState {
+  kind: "prompt" | "manual_code" | string;
+  message: string;
+  placeholder?: string | null;
+  allowEmpty: boolean;
+}
+
+export interface PiOAuthFlowState {
+  providerId: string;
+  providerName: string;
+  usesCallbackServer: boolean;
+  status: "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | string;
+  authUrl?: string | null;
+  authInstructions?: string | null;
+  browserOpened: boolean;
+  browserOpenError?: string | null;
+  prompt?: PiOAuthPromptState | null;
+  latestProgressMessage?: string | null;
+  error?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
 }
 
 export type TelegramNotificationScope = "all_projects" | "active_project";

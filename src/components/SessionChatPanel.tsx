@@ -4,7 +4,7 @@ import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatControlOperationLabel(session: SessionRecord) {
   const operation = session.controlOperation;
@@ -153,6 +153,7 @@ interface SessionChatPanelProps {
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   draftMessage: string;
+  piSetupState?: PiSetupState | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
   onScrollLockChange: (lockedToBottom: boolean) => void;
@@ -170,6 +171,7 @@ interface SessionChatPanelProps {
   onOpenRole: (roleId: string) => void;
   onCreateNewSession?: () => void;
   onCompactSession?: () => void;
+  onOpenPiSettings?: () => void;
   onReloadSession?: () => void;
   emptyStateEyebrow?: string;
   emptyStateTitle?: string;
@@ -187,6 +189,7 @@ interface SessionComposerProps {
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   draftMessage: string;
+  piSetupState?: PiSetupState | null;
   formatDateTime: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
   onModelChange: (value: string) => void;
@@ -194,6 +197,7 @@ interface SessionComposerProps {
   onSendMessage: () => void;
   onStopSession: () => void;
   onCreateNewSession?: () => void;
+  onOpenPiSettings?: () => void;
   onCompactSession?: () => void;
   onReloadSession?: () => void;
 }
@@ -261,6 +265,7 @@ const SessionComposer = memo(function SessionComposer({
   loadingModelSessionId,
   changingModelSessionId,
   draftMessage,
+  piSetupState,
   formatDateTime,
   formatModelOptionLabel,
   onModelChange,
@@ -268,6 +273,7 @@ const SessionComposer = memo(function SessionComposer({
   onSendMessage,
   onStopSession,
   onCreateNewSession,
+  onOpenPiSettings,
   onCompactSession,
   onReloadSession,
 }: SessionComposerProps) {
@@ -299,6 +305,19 @@ const SessionComposer = memo(function SessionComposer({
       {sessionReadOnly ? (
         <div className="session-readonly-banner" data-role="session-terminal-readonly">
           This session is currently attached to an embedded terminal window. Close that window to resume chat here.
+        </div>
+      ) : null}
+
+      {piSetupState?.status && piSetupState.status !== "ready" ? (
+        <div className="session-readonly-banner" data-role="session-pi-setup-required">
+          <div>
+            <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Pi before using Pi-backed sessions."}
+          </div>
+          {onOpenPiSettings ? (
+            <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
+              Open Settings → Pi
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -425,7 +444,8 @@ const SessionComposer = memo(function SessionComposer({
                   sessionReadOnly ||
                   loadingModelSessionId === session.id ||
                   changingModelSessionId === session.id ||
-                  sessionPending
+                  sessionPending ||
+                  piSetupState?.status !== "ready"
                 }
                 onChange={(event) => onModelChange(event.target.value)}
               >
@@ -452,7 +472,7 @@ const SessionComposer = memo(function SessionComposer({
               className="primary-button"
               data-role="send-message"
               type="submit"
-              disabled={sessionReadOnly || draftMessage.trim().length === 0}
+              disabled={sessionReadOnly || piSetupState?.status !== "ready" || draftMessage.trim().length === 0}
             >
               Send
             </button>
@@ -626,6 +646,7 @@ export function SessionChatPanel({
   loadingModelSessionId,
   changingModelSessionId,
   draftMessage,
+  piSetupState,
   transcriptRef,
   scrollState,
   onScrollLockChange,
@@ -643,6 +664,7 @@ export function SessionChatPanel({
   onOpenRole,
   onCreateNewSession,
   onCompactSession,
+  onOpenPiSettings,
   onReloadSession,
   emptyStateEyebrow = "No session selected",
   emptyStateTitle = "Create or select a session",
@@ -731,6 +753,7 @@ export function SessionChatPanel({
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             draftMessage={draftMessage}
+            piSetupState={piSetupState}
             formatDateTime={formatDateTime}
             formatModelOptionLabel={formatModelOptionLabel}
             onModelChange={onModelChange}
@@ -738,6 +761,7 @@ export function SessionChatPanel({
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
             onCreateNewSession={onCreateNewSession}
+            onOpenPiSettings={onOpenPiSettings}
             onCompactSession={onCompactSession}
             onReloadSession={onReloadSession}
           />

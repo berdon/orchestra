@@ -4,6 +4,7 @@ import { SessionChatPanel } from "../components/SessionChatPanel";
 import type {
   AgentDefinition,
   AgentSummary,
+  PiSetupState,
   RoleSummary,
   SessionEvent,
   SessionModelState,
@@ -32,6 +33,7 @@ interface AgentChatPageProps {
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   draftMessage: string;
+  piSetupState?: PiSetupState | null;
   error: string | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
@@ -49,6 +51,7 @@ interface AgentChatPageProps {
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
+  onOpenPiSettings?: () => void;
   onCompactSession: () => void;
   onReloadSession: () => void;
 }
@@ -71,6 +74,7 @@ export function AgentChatPage({
   loadingModelSessionId,
   changingModelSessionId,
   draftMessage,
+  piSetupState,
   error,
   transcriptRef,
   scrollState,
@@ -88,6 +92,7 @@ export function AgentChatPage({
   onOpenAgent,
   onOpenRole,
   onCreateNewSession,
+  onOpenPiSettings,
   onCompactSession,
   onReloadSession,
 }: AgentChatPageProps) {
@@ -129,6 +134,7 @@ export function AgentChatPage({
           loadingModelSessionId={loadingModelSessionId}
           changingModelSessionId={changingModelSessionId}
           draftMessage={draftMessage}
+          piSetupState={piSetupState}
           transcriptRef={transcriptRef}
           scrollState={scrollState}
           onScrollLockChange={onScrollLockChange}
@@ -145,6 +151,7 @@ export function AgentChatPage({
           onOpenAgent={onOpenAgent}
           onOpenRole={onOpenRole}
           onCreateNewSession={onCreateNewSession}
+          onOpenPiSettings={onOpenPiSettings}
           onCompactSession={onCompactSession}
           onReloadSession={onReloadSession}
           emptyStateEyebrow="Agent chat"

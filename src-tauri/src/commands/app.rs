@@ -14,20 +14,21 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::{
     models::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
-        PiImportLegacyResult, PiRuntimeDiagnostics, PiRuntimeSettings, ProjectUpsertInput,
-        RoleUpsertInput, SessionModel, SessionStorageInfo, SystemNotificationEnvironmentStatus,
+        PiImportLegacyResult, PiLegacyImportPreview, PiOAuthFlowState, PiRuntimeDiagnostics,
+        PiRuntimeSettings, PiSetupState, ProjectUpsertInput, RoleUpsertInput, SessionModel,
+        SessionStorageInfo, SystemNotificationEnvironmentStatus,
         SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
         WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
-        database, harness_settings,
+        app_events, database, harness_settings,
         orchestra_paths::default_orchestra_root,
-        pi_runtime,
+        pi_oauth, pi_runtime,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
         },
-        projects, roles, system_notifications, tasks, workflows,
+        pi_setup, projects, roles, system_notifications, tasks, workflows,
     },
     state::AppState,
 };
@@ -72,8 +73,14 @@ pub fn build_app_info(state: &AppState) -> AppInfo {
                 message: error,
             },
         });
-    let dispatch_blocked_reason = pi_runtime_diagnostics.runtime.error.clone();
-    let _ = state.sync_pi_runtime_health();
+    let dispatch_blocked_reason = pi_runtime_diagnostics
+        .runtime
+        .error
+        .clone()
+        .or_else(|| match state.sync_pi_runtime_health() {
+            Ok(_) => pi_setup::require_pi_setup_ready().err(),
+            Err(error) => Some(error),
+        });
     AppInfo {
         app_name: "Orchestra".into(),
         environment: "tauri".into(),
@@ -292,6 +299,143 @@ pub fn update_pi_runtime_settings(
     default_compaction_window: Option<String>,
 ) -> Result<PiRuntimeSettings, String> {
     harness_settings::update_pi_runtime_settings(extra_extensions, default_compaction_window)
+}
+
+#[tauri::command]
+pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
+    pi_setup::get_pi_setup_state()
+}
+
+#[tauri::command]
+pub fn preview_pi_legacy_import() -> Result<PiLegacyImportPreview, String> {
+    pi_setup::preview_legacy_import()
+}
+
+#[tauri::command]
+pub fn get_pi_models_json() -> Result<String, String> {
+    pi_setup::get_models_json()
+}
+
+#[tauri::command]
+pub fn set_pi_provider_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider_id: String,
+    api_key: String,
+) -> Result<PiSetupState, String> {
+    let result = pi_setup::set_provider_api_key(&provider_id, &api_key)?;
+    state.log(
+        "info",
+        "pi.setup.api_key.saved",
+        &format!("Saved Orchestra-managed API key for provider {}", provider_id),
+    );
+    let _ = app_events::emit_window_event(
+        &app,
+        "orchestra:pi-setup-change",
+        &json!({ "reason": "pi.setup.api_key.saved" }),
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn remove_pi_provider_credential(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<PiSetupState, String> {
+    let result = pi_setup::remove_provider_credential(&provider_id)?;
+    state.log(
+        "info",
+        "pi.setup.credential.removed",
+        &format!("Removed Orchestra-managed Pi credential for provider {}", provider_id),
+    );
+    let _ = app_events::emit_window_event(
+        &app,
+        "orchestra:pi-setup-change",
+        &json!({ "reason": "pi.setup.credential.removed" }),
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn save_pi_models_json(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    content: String,
+) -> Result<PiSetupState, String> {
+    let result = pi_setup::save_models_json(&content)?;
+    state.log("info", "pi.setup.models.saved", "Saved Orchestra-managed Pi models.json");
+    let _ = app_events::emit_window_event(
+        &app,
+        "orchestra:pi-setup-change",
+        &json!({ "reason": "pi.setup.models.saved" }),
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn import_pi_legacy_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    replace_existing: Option<bool>,
+) -> Result<PiSetupState, String> {
+    let result = pi_setup::import_legacy_config(replace_existing.unwrap_or(false))?;
+    state.log(
+        "info",
+        "pi.setup.legacy.imported",
+        "Imported legacy ~/.pi/agent config into Orchestra-managed Pi storage",
+    );
+    let _ = app_events::emit_window_event(
+        &app,
+        "orchestra:pi-setup-change",
+        &json!({ "reason": "pi.setup.legacy.imported" }),
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn dismiss_pi_legacy_import(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PiSetupState, String> {
+    let result = pi_setup::dismiss_legacy_import()?;
+    state.log(
+        "info",
+        "pi.setup.legacy.dismissed",
+        "Dismissed the legacy Pi import prompt for Orchestra-managed Pi setup",
+    );
+    let _ = app_events::emit_window_event(
+        &app,
+        "orchestra:pi-setup-change",
+        &json!({ "reason": "pi.setup.legacy.dismissed" }),
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_pi_oauth_flow_state() -> Result<Option<PiOAuthFlowState>, String> {
+    pi_oauth::get_flow_state()
+}
+
+#[tauri::command]
+pub fn start_pi_oauth_flow(
+    app: AppHandle,
+    provider_id: String,
+) -> Result<PiOAuthFlowState, String> {
+    pi_oauth::start_flow(app, &provider_id)
+}
+
+#[tauri::command]
+pub fn submit_pi_oauth_flow_input(
+    app: AppHandle,
+    value: String,
+) -> Result<PiOAuthFlowState, String> {
+    pi_oauth::submit_flow_input(app, &value)
+}
+
+#[tauri::command]
+pub fn cancel_pi_oauth_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>, String> {
+    pi_oauth::cancel_flow(app)
 }
 
 #[tauri::command]

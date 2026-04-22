@@ -24,6 +24,7 @@ import type {
   AgentUpsertInput,
   AgentValidationError,
   PiExecutableDiagnostic,
+  PiSetupState,
   PolicyDefinition,
   ProjectWorkerOverlay,
   RoleSummary,
@@ -82,7 +83,7 @@ function formatPiRuntimeDiagnostic(diagnostic: PiExecutableDiagnostic | null) {
   return `${diagnostic.source} runtime${version}: ${diagnostic.resolvedPath ?? "Unknown path"}`;
 }
 
-export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: string | null }) {
+export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpenPiSettings }: { activeProjectId?: string | null; piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void }) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -589,7 +590,7 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
                     className="select-input"
                     data-role="agent-provider"
                     value={agentDraft.provider ?? ""}
-                    disabled={loadingModelOptions}
+                    disabled={loadingModelOptions || piSetupState?.status !== "ready"}
                     onChange={(event) =>
                       updateAgentDraft((draft) => ({
                         ...draft,
@@ -616,7 +617,7 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
                     className="select-input"
                     data-role="agent-model"
                     value={agentDraft.model ?? ""}
-                    disabled={loadingModelOptions || !(agentDraft.provider ?? "")}
+                    disabled={loadingModelOptions || piSetupState?.status !== "ready" || !(agentDraft.provider ?? "")}
                     onChange={(event) => updateAgentDraft((draft) => ({ ...draft, model: event.target.value }))}
                   >
                     <option value="">
@@ -672,6 +673,19 @@ export function AgentsPanel({ activeProjectId = null }: { activeProjectId?: stri
                 <div className="workflow-form-grid__full muted-copy" data-role="agent-pi-executable-diagnostic">
                   Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
                 </div>
+
+                {piSetupState?.status && piSetupState.status !== "ready" ? (
+                  <div className="workflow-form-grid__full session-readonly-banner">
+                    <div>
+                      <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Pi before assigning Pi-backed agent models."}
+                    </div>
+                    {onOpenPiSettings ? (
+                      <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
+                        Open Settings → Pi
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <label className="field-group workflow-form-grid__full">
                   <span className="field-group__label">Description</span>

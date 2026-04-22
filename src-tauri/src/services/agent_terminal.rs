@@ -46,8 +46,7 @@ impl AgentTerminalSession {
 
         let runtime = crate::services::pi_runtime::resolve_pi_runtime(None)?;
         let pi_executable = runtime.executable_path.clone();
-        let (temp_home_dir, temp_agent_dir) =
-            prepare_terminal_home_dir(session_id, &runtime.agent_dir, &pi_executable)?;
+        let temp_home_dir = prepare_terminal_home_dir(session_id, &pi_executable)?;
         let orchestra_extension_path = crate::services::live_sessions::resolve_orchestra_extension_path(&app)?;
         let extra_extensions = crate::services::harness_settings::resolve_spawn_extra_extensions(
             crate::services::harness_settings::get_pi_runtime_settings()?.extra_extensions,
@@ -68,21 +67,26 @@ impl AgentTerminalSession {
         }
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        command.env(
+            "PI_CODING_AGENT_DIR",
+            crate::services::pi_sessions::orchestra_pi_agent_dir_display()?,
+        );
         if let Some(environment) = crate::services::pi_sessions::resolve_user_shell_environment() {
             for (key, value) in environment {
                 command.env(key, value);
             }
         }
-        command.env("HOME", &temp_home_dir);
-        command.env("PI_CODING_AGENT_DIR", &temp_agent_dir);
+        if let Some(temp_home_dir) = temp_home_dir.as_ref() {
+            command.env("HOME", temp_home_dir);
+            if let Some(prefix) = infer_npm_prefix(&pi_executable, temp_home_dir) {
+                command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
+                command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
+            }
+        }
         if runtime.source == "bundled" {
             if let Some(package_dir) = runtime.package_dir.as_ref() {
                 command.env("PI_PACKAGE_DIR", package_dir);
             }
-        }
-        if let Some(prefix) = infer_npm_prefix(&pi_executable, &temp_home_dir) {
-            command.env("NPM_CONFIG_PREFIX", prefix.to_string_lossy().to_string());
-            command.env("npm_config_prefix", prefix.to_string_lossy().to_string());
         }
 
         let child = pair
@@ -105,7 +109,7 @@ impl AgentTerminalSession {
             master: Mutex::new(pair.master),
             child: Mutex::new(child),
             buffer: Mutex::new(TERMINAL_BOOTSTRAP_TEXT.to_string()),
-            temp_home_dir: Some(temp_home_dir),
+            temp_home_dir,
             app: app.clone(),
         });
 
@@ -223,47 +227,10 @@ impl AgentTerminalSession {
 }
 
 fn prepare_terminal_home_dir(
-    session_id: &str,
-    source_agent_dir: &Path,
-    pi_executable: &Path,
-) -> Result<(PathBuf, PathBuf), String> {
-    let temp_home_dir = std::env::temp_dir().join(format!(
-        "orchestra-agent-terminal-home-{}-{}",
-        sanitize_for_path(session_id),
-        std::process::id()
-    ));
-    let temp_agent_dir = temp_home_dir.join("pi-agent");
-    fs::create_dir_all(&temp_agent_dir).map_err(|error| {
-        format!(
-            "Unable to create temporary terminal agent directory {}: {error}",
-            temp_agent_dir.display()
-        )
-    })?;
-
-    copy_if_exists(
-        &source_agent_dir.join("auth.json"),
-        &temp_agent_dir.join("auth.json"),
-    )?;
-    copy_if_exists(
-        &source_agent_dir.join("models.json"),
-        &temp_agent_dir.join("models.json"),
-    )?;
-    copy_filtered_settings(
-        &source_agent_dir.join("settings.json"),
-        &temp_agent_dir.join("settings.json"),
-    )?;
-
-    if let Some(prefix) = infer_npm_prefix(pi_executable, &temp_home_dir) {
-        let npmrc_path = temp_home_dir.join(".npmrc");
-        fs::write(&npmrc_path, format!("prefix={}\n", prefix.display())).map_err(|error| {
-            format!(
-                "Unable to write temporary terminal npmrc {}: {error}",
-                npmrc_path.display()
-            )
-        })?;
-    }
-
-    Ok((temp_home_dir, temp_agent_dir))
+    _session_id: &str,
+    _pi_executable: &Path,
+) -> Result<Option<PathBuf>, String> {
+    Ok(None)
 }
 
 fn sanitize_for_path(value: &str) -> String {

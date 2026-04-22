@@ -117,6 +117,14 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       action: { type: "navigate-settings", tab: "workflows" },
     }),
     commandItem({
+      id: "settings-pi",
+      title: "Open Settings → Pi",
+      subtitle: "Pi auth, model, and legacy import setup",
+      group: "Pages",
+      keywords: ["settings", "pi", "models", "auth", "providers"],
+      action: { type: "navigate-settings", tab: "pi" },
+    }),
+    commandItem({
       id: "settings-general",
       title: "Open Settings → General",
       subtitle: "Bridge diagnostics and runtime logs",

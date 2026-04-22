@@ -21,7 +21,7 @@ use crate::{
         database,
         orchestra_paths::{
             configured_checkout_root, current_orchestra_checkout_root, default_orchestra_root,
-            project_session_dir, sanitize_slug,
+            pi_agent_dir, project_session_dir, sanitize_slug,
         },
         projects,
     },
@@ -345,6 +345,31 @@ pub fn resolve_user_shell_path() -> Option<String> {
 
 pub fn apply_user_shell_environment(command: &mut Command) {
     crate::services::pi_runtime::apply_user_shell_environment(command)
+}
+
+pub fn orchestra_pi_agent_dir() -> Result<PathBuf, String> {
+    Ok(pi_agent_dir(&default_orchestra_root()?))
+}
+
+pub fn orchestra_pi_agent_dir_display() -> Result<String, String> {
+    Ok(orchestra_pi_agent_dir()?.display().to_string())
+}
+
+pub fn apply_orchestra_pi_environment(command: &mut Command) -> Result<(), String> {
+    let agent_dir = orchestra_pi_agent_dir()?;
+    fs::create_dir_all(&agent_dir).map_err(|error| {
+        format!(
+            "Unable to create Orchestra Pi agent directory {}: {error}",
+            agent_dir.display()
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&agent_dir, fs::Permissions::from_mode(0o700));
+    }
+    command.env("PI_CODING_AGENT_DIR", agent_dir.display().to_string());
+    Ok(())
 }
 
 fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
@@ -1425,6 +1450,7 @@ fn spawn_rpc_process(
     let mut command = Command::new(&runtime.executable_path);
     apply_user_shell_environment(&mut command);
     crate::services::pi_runtime::apply_runtime_environment(&mut command, &runtime, None);
+    apply_orchestra_pi_environment(&mut command)?;
     let mut child = command
         .args(&args)
         .current_dir(project_root)
