@@ -3126,11 +3126,11 @@ export function App() {
                 type="button"
                 aria-label="Expand navigation"
                 aria-expanded={false}
-                title="Expand navigation"
                 {...getExplanatoryTooltipProps(
                   "Expand the sidebar so labels and navigation details are visible again.",
                   explanatoryTooltipsEnabled,
                 )}
+                title={explanatoryTooltipsEnabled ? "Expand navigation" : undefined}
                 onClick={() => setIsSidebarCollapsed((current) => !current)}
               >
                 »
@@ -3149,11 +3149,11 @@ export function App() {
                 type="button"
                 aria-label="Collapse navigation"
                 aria-expanded={true}
-                title="Collapse navigation"
                 {...getExplanatoryTooltipProps(
                   "Collapse the sidebar to make more room for your work.",
                   explanatoryTooltipsEnabled,
                 )}
+                title={explanatoryTooltipsEnabled ? "Collapse navigation" : undefined}
                 onClick={() => setIsSidebarCollapsed((current) => !current)}
               >
                 «
