@@ -136,6 +136,7 @@ open src-tauri/target/release/bundle/macos/Orchestra.app
 - Uses the same adhoc signing configuration
 - Automatically signs the dev build
 - Notifications work during development
+- `src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so `cargo tauri dev` still works when helper binaries are present
 
 ### Production Build
 - Use the same build command with release mode:

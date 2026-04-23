@@ -1,5 +1,6 @@
 [package]
 name = "orchestra"
+default-run = "orchestra"
 version = "0.1.0"
 description = "Orchestra desktop app"
 authors = ["Orchestra contributors"]

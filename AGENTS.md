@@ -31,6 +31,8 @@ source "$HOME/.cargo/env"
 cargo tauri dev
 ```
 
+`src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so the command works even though the crate also contains helper binaries.
+
 ## Running the dev app in the background
 
 `nohup` was unreliable in this environment. Use a plain background job instead:

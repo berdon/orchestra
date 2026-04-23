@@ -47,6 +47,8 @@ source "$HOME/.cargo/env"
 cargo tauri dev
 ```
 
+`src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so `cargo tauri dev` still works when helper binaries are present.
+
 The dev build also uses adhoc signing automatically.
 
 ## Troubleshooting
