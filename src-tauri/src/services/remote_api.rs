@@ -2260,7 +2260,7 @@ fn build_frontend_bootstrap_from_auth(
         urls: resolve_frontend_transport_urls(state, headers)?,
         feature_flags: build_frontend_feature_flags(authenticated),
         capabilities: build_frontend_capabilities(authenticated),
-        app_info: Some(build_app_info(state)),
+        app_info: Some(build_app_info()),
     })
 }
 
@@ -2361,8 +2361,8 @@ async fn get_health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn get_remote_app_info(AxumState(context): AxumState<RemoteApiContext>) -> Json<AppInfo> {
-    Json(build_app_info(context.app.state::<AppState>().inner()))
+async fn get_remote_app_info(AxumState(_context): AxumState<RemoteApiContext>) -> Json<AppInfo> {
+    Json(build_app_info())
 }
 
 fn frontend_bootstrap_response<R: Runtime>(
