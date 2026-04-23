@@ -16,6 +16,9 @@ function detectHarness(specPath) {
   if (specPath.startsWith("tests/e2e/")) {
     return "browser";
   }
+  if (specPath.startsWith("tests/hosted-web-e2e/")) {
+    return "hosted-web";
+  }
   if (specPath.startsWith("tests/web-driver-e2e/")) {
     return "web-driver";
   }
@@ -31,6 +34,9 @@ function discoverSuiteInventory() {
   const browser = fs.readdirSync(path.join(ROOT_DIR, "tests", "e2e"), { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".spec.ts"))
     .map((entry) => path.posix.join("tests/e2e", entry.name));
+  const hostedWeb = fs.readdirSync(path.join(ROOT_DIR, "tests", "hosted-web-e2e"), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".spec.ts"))
+    .map((entry) => path.posix.join("tests/hosted-web-e2e", entry.name));
   const webDriver = fs.readdirSync(path.join(ROOT_DIR, "tests", "web-driver-e2e"), { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".spec.ts"))
     .map((entry) => path.posix.join("tests/web-driver-e2e", entry.name));
@@ -38,6 +44,7 @@ function discoverSuiteInventory() {
   return {
     browser: new Set(browser),
     desktop: new Set(desktopManifest.included),
+    "hosted-web": new Set(hostedWeb),
     "web-driver": new Set(webDriver),
   };
 }

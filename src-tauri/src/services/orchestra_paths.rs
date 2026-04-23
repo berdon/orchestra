@@ -141,6 +141,13 @@ pub fn discover_dev_checkout_root() -> Option<PathBuf> {
 }
 
 pub fn default_orchestra_root() -> Result<PathBuf, String> {
+    if let Some(explicit_root) = env::var_os("ORCHESTRA_STORAGE_ROOT") {
+        let root = PathBuf::from(explicit_root);
+        if !root.as_os_str().is_empty() {
+            return Ok(root);
+        }
+    }
+
     env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| orchestra_root_from_home(&home))
@@ -391,5 +398,22 @@ mod tests {
         assert_eq!(discover_dev_checkout_root_from(&nested), Some(root.clone()));
 
         std::fs::remove_dir_all(root).expect("temp checkout should remove");
+    }
+
+    #[test]
+    fn prefers_explicit_storage_root_override() {
+        let explicit_root = std::env::temp_dir().join(format!(
+            "orchestra-storage-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ));
+        std::env::set_var("ORCHESTRA_STORAGE_ROOT", &explicit_root);
+
+        assert_eq!(default_orchestra_root().expect("storage root should resolve"), explicit_root);
+
+        std::env::remove_var("ORCHESTRA_STORAGE_ROOT");
     }
 }

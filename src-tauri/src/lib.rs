@@ -99,6 +99,10 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
     services::remote_api::run_remote_api_route_probe(case)
 }
 
+pub fn run_hosted_web_e2e_server() -> Result<(), String> {
+    services::remote_api::run_hosted_web_e2e_server()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let bootstrap = services::backend_bootstrap::initialize_backend()

@@ -1,6 +1,8 @@
 use std::{
     env,
     ffi::OsStr,
+    fs::{self, OpenOptions},
+    io::Write,
     net::TcpListener,
     path::PathBuf,
     process::{Command, Stdio},
@@ -730,9 +732,77 @@ fn request_base_url_from_headers(headers: &HeaderMap) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{body::{to_bytes, Body}, http::Request};
     use std::{path::PathBuf, process::Command, sync::Mutex};
+    use tower::ServiceExt;
+
+    struct RemoteApiParityFixture {
+        app: tauri::App,
+        auth_header: String,
+    }
 
     static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn build_remote_api_parity_fixture(case: &str) -> Result<RemoteApiParityFixture, String> {
+        database::initialize_database()
+            .map_err(|error| format!("failed to initialize remote API parity database: {error}"))?;
+        let mut connection = database::open_connection()
+            .map_err(|error| format!("failed to open remote API parity database: {error}"))?;
+        crate::services::auth_bootstrap::ensure_system_authorization_state(&mut connection, None)?;
+        crate::services::install_seed::ensure_install_baseline_seeded(&mut connection)?;
+
+        let app = tauri::Builder::default()
+            .manage(AppState::new(
+                crate::services::tool_bridge::dummy_tool_bridge_config(&format!(
+                    "remote-api-parity-{case}"
+                )),
+            ))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .map_err(|error| format!("failed to build remote API parity app: {error}"))?;
+        let auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?);
+
+        Ok(RemoteApiParityFixture { app, auth_header })
+    }
+
+    fn perform_authenticated_json_request(
+        app: &tauri::App,
+        auth_header: &str,
+        uri: &str,
+    ) -> Result<Value, String> {
+        let router = build_remote_api_context(app.handle().clone());
+        let request = Request::builder()
+            .uri(uri)
+            .header(header::AUTHORIZATION, auth_header)
+            .body(Body::empty())
+            .map_err(|error| format!("failed to build remote API parity request {uri}: {error}"))?;
+        let response = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("failed to build remote API parity runtime: {error}"))?
+            .block_on(async move {
+                router
+                    .oneshot(request)
+                    .await
+                    .map_err(|error| format!("remote API parity request {uri} failed: {error}"))
+            })?;
+        if response.status() != StatusCode::OK {
+            return Err(format!(
+                "remote API parity request {uri} returned status {}",
+                response.status()
+            ));
+        }
+        let body = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("failed to build remote API parity body runtime: {error}"))?
+            .block_on(async move {
+                to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .map_err(|error| format!("failed to read remote API parity response body {uri}: {error}"))
+            })?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("failed to decode remote API parity JSON {uri}: {error}"))
+    }
 
     fn run_production_route_probe(case: &str, extra_env: &[(&str, &str)]) -> Result<(), String> {
         let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
@@ -947,6 +1017,33 @@ mod tests {
             )],
         )
         .expect("session message production route probe should pass");
+    }
+
+    #[test]
+    fn tasks_route_matches_tauri_task_command_payloads() {
+        let _probe_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("task_list_parity", &[])
+            .expect("task list production parity probe should pass");
+    }
+
+    #[test]
+    fn inbox_route_matches_tauri_inbox_command_payloads() {
+        let _probe_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("inbox_parity", &[])
+            .expect("inbox production parity probe should pass");
+    }
+
+    #[test]
+    fn session_routes_match_remote_session_helpers() {
+        let _probe_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("sessions_parity", &[])
+            .expect("sessions production parity probe should pass");
     }
 }
 
@@ -1587,6 +1684,177 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                     }
                     Ok(())
                 }
+                "task_list_parity" => {
+                    let parity_suffix = uuid::Uuid::new_v4().simple().to_string();
+                    let parity_tag = format!("orc65-{}", &parity_suffix[..12]);
+                    let mut connection = database::open_connection().map_err(|error| {
+                        format!("task list parity probe could not open database: {error}")
+                    })?;
+                    let project_id = crate::services::projects::require_requested_or_default_project_id(
+                        &connection,
+                        None,
+                        "Task list parity probe requires a default project.",
+                    )
+                    .map_err(|error| {
+                        format!("task list parity probe could not resolve project: {error}")
+                    })?;
+                    crate::services::tasks::create_task(
+                        &mut connection,
+                        Some(&project_id),
+                        crate::models::TaskUpsertInput {
+                            title: format!("Task list parity {}", parity_tag),
+                            description: Some("Compare remote task list responses to the Tauri command contract.".into()),
+                            task_type: "task".into(),
+                            tags: vec![parity_tag.clone(), "orc65".into()],
+                            status: "ready".into(),
+                            priority: "P2".into(),
+                            workflow_id: None,
+                            current_lane_id: None,
+                            assignee_type: "unassigned".into(),
+                            assignee_id: None,
+                            repository_id: None,
+                            repository_ids: Vec::new(),
+                            parent_task_id: None,
+                            whip_max_attempts: None,
+                            archived: Some(false),
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("task list parity probe could not seed task: {error}")
+                    })?;
+                    drop(connection);
+
+                    let expected = crate::commands::tasks::list_tasks(
+                        Some(project_id.clone()),
+                        Some(false),
+                        Some(vec![parity_tag.clone()]),
+                        Some("all".into()),
+                        Some("updatedAt".into()),
+                        Some("desc".into()),
+                    )
+                    .map_err(|error| {
+                        format!("task list parity probe could not list tasks via command: {error}")
+                    })?;
+                    let response = client
+                        .get(format!(
+                            "{base_url}/api/v1/tasks?projectId={project_id}&includeArchived=false&tags={parity_tag}&tagMatch=all&sortBy=updatedAt&sortDirection=desc"
+                        ))
+                        .header("authorization", &auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!("task list parity probe request failed: {error}")
+                        })?;
+                    if response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "task list parity probe returned {}",
+                            response.status()
+                        ));
+                    }
+                    let body: Value = response.json().await.map_err(|error| {
+                        format!("task list parity probe body failed to deserialize: {error}")
+                    })?;
+                    let expected_body = serde_json::to_value(expected).map_err(|error| {
+                        format!("task list parity probe could not serialize command response: {error}")
+                    })?;
+                    if body != expected_body {
+                        return Err(format!(
+                            "task list parity probe returned a different payload than the Tauri command\nroute: {body}\ncommand: {expected_body}"
+                        ));
+                    }
+                    Ok(())
+                }
+                "inbox_parity" => {
+                    let seeded_auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?);
+                    let expected = crate::commands::messages::list_inbox_messages(None, Some(true))
+                        .map_err(|error| {
+                            format!("inbox parity probe could not list inbox via command: {error}")
+                        })?;
+                    let response = client
+                        .get(format!("{base_url}/api/v1/inbox?includeArchived=true"))
+                        .header("authorization", &seeded_auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| format!("inbox parity probe request failed: {error}"))?;
+                    if response.status() != StatusCode::OK {
+                        return Err(format!("inbox parity probe returned {}", response.status()));
+                    }
+                    let body: Value = response.json().await.map_err(|error| {
+                        format!("inbox parity probe body failed to deserialize: {error}")
+                    })?;
+                    let expected_body = serde_json::to_value(expected).map_err(|error| {
+                        format!("inbox parity probe could not serialize command response: {error}")
+                    })?;
+                    if body != expected_body {
+                        return Err(format!(
+                            "inbox parity probe returned a different payload than the Tauri command\nroute: {body}\ncommand: {expected_body}"
+                        ));
+                    }
+                    Ok(())
+                }
+                "sessions_parity" => {
+                    let seeded_auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?);
+                    let state = app.state::<AppState>();
+                    let listed_sessions = list_remote_sessions(state.inner(), None).map_err(|error| {
+                        format!("sessions parity probe could not list sessions directly: {error}")
+                    })?;
+                    let route_sessions = client
+                        .get(format!("{base_url}/api/v1/sessions"))
+                        .header("authorization", &seeded_auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| format!("sessions parity probe list request failed: {error}"))?;
+                    if route_sessions.status() != StatusCode::OK {
+                        return Err(format!(
+                            "sessions parity probe list returned {}",
+                            route_sessions.status()
+                        ));
+                    }
+                    let route_sessions_body: Value = route_sessions.json().await.map_err(|error| {
+                        format!("sessions parity probe list body failed to deserialize: {error}")
+                    })?;
+                    let expected_sessions_body = serde_json::to_value(&listed_sessions).map_err(|error| {
+                        format!("sessions parity probe could not serialize direct list response: {error}")
+                    })?;
+                    if route_sessions_body != expected_sessions_body {
+                        return Err(format!(
+                            "sessions parity probe list returned a different payload than the direct helper\nroute: {route_sessions_body}\nhelper: {expected_sessions_body}"
+                        ));
+                    }
+
+                    let first_session_id = listed_sessions
+                        .first()
+                        .map(|record| record.id.clone())
+                        .ok_or_else(|| "sessions parity probe expected at least one seeded session".to_string())?;
+                    let direct_record = load_remote_session_record(state.inner(), &first_session_id)
+                        .map_err(|error| {
+                            format!("sessions parity probe could not load direct session record: {error}")
+                        })?;
+                    let route_record = client
+                        .get(format!("{base_url}/api/v1/sessions/{first_session_id}"))
+                        .header("authorization", &seeded_auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| format!("sessions parity probe detail request failed: {error}"))?;
+                    if route_record.status() != StatusCode::OK {
+                        return Err(format!(
+                            "sessions parity probe detail returned {}",
+                            route_record.status()
+                        ));
+                    }
+                    let route_record_body: Value = route_record.json().await.map_err(|error| {
+                        format!("sessions parity probe detail body failed to deserialize: {error}")
+                    })?;
+                    let expected_record_body = serde_json::to_value(direct_record).map_err(|error| {
+                        format!("sessions parity probe could not serialize direct record: {error}")
+                    })?;
+                    if route_record_body != expected_record_body {
+                        return Err(format!(
+                            "sessions parity probe detail returned a different payload than the direct helper\nroute: {route_record_body}\nhelper: {expected_record_body}"
+                        ));
+                    }
+                    Ok(())
+                }
                 other => Err(format!("unknown remote API route probe case `{other}`")),
             };
 
@@ -1597,6 +1865,255 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
             probe_result?;
             server_result?;
             Ok(())
+        })
+}
+
+const HOSTED_WEB_E2E_PORT: u16 = 4175;
+
+fn resolve_hosted_web_e2e_root() -> Result<PathBuf, String> {
+    if let Some(explicit_root) = env::var_os("ORCHESTRA_HOSTED_WEB_E2E_ROOT") {
+        let root = PathBuf::from(explicit_root);
+        if root.exists() {
+            return Ok(root);
+        }
+        return Err(format!(
+            "Hosted-web E2E asset root {} does not exist.",
+            root.display()
+        ));
+    }
+
+    let root = discover_dev_checkout_root()
+        .ok_or_else(|| "Unable to locate the Orchestra repository root for hosted-web E2E assets.".to_string())?
+        .join("dist");
+    if root.exists() {
+        return Ok(root);
+    }
+
+    Err(format!(
+        "Hosted-web E2E frontend assets were missing at {}. Run `VITE_ORCHESTRA_HOST_MODE=hosted_web npm run build` first.",
+        root.display()
+    ))
+}
+
+fn seed_hosted_web_e2e_fixture() -> Result<String, String> {
+    let mut connection = database::open_connection()
+        .map_err(|error| format!("failed to open hosted-web E2E database: {error}"))?;
+    let project_id = projects::require_requested_or_default_project_id(
+        &connection,
+        None,
+        "Hosted-web E2E requires a seeded default project.",
+    )?;
+    let project_slug = projects::resolve_default_project_slug(&connection)?
+        .ok_or_else(|| "Hosted-web E2E could not resolve the default project slug.".to_string())?;
+
+    let _browse_task = tasks::create_task(
+        &mut connection,
+        Some(&project_id),
+        TaskUpsertInput {
+            title: "Hosted web seeded task".into(),
+            description: Some("Browser-hosted task coverage through the Remote API path.".into()),
+            task_type: "task".into(),
+            tags: vec!["shared".into(), "browser".into()],
+            status: "ready".into(),
+            priority: "P1".into(),
+            workflow_id: None,
+            current_lane_id: None,
+            assignee_type: "unassigned".into(),
+            assignee_id: None,
+            repository_id: None,
+            repository_ids: vec![],
+            parent_task_id: None,
+            whip_max_attempts: Some(10),
+            archived: Some(false),
+        },
+    )?;
+
+    let _attention_task = tasks::create_task(
+        &mut connection,
+        Some(&project_id),
+        TaskUpsertInput {
+            title: "Hosted web review task".into(),
+            description: Some("Seeded attention task for the hosted-web inbox smoke test.".into()),
+            task_type: "task".into(),
+            tags: vec!["shared".into(), "review".into()],
+            status: "in_review".into(),
+            priority: "P2".into(),
+            workflow_id: None,
+            current_lane_id: None,
+            assignee_type: "unassigned".into(),
+            assignee_id: None,
+            repository_id: None,
+            repository_ids: vec![],
+            parent_task_id: None,
+            whip_max_attempts: Some(10),
+            archived: Some(false),
+        },
+    )?;
+
+    let _message = messages::send_mailbox_message_from_user_without_app(
+        &connection,
+        SendMailboxMessageInput {
+            project_id: Some(project_id.clone()),
+            task_id: None,
+            recipient_type: "user".into(),
+            recipient_id: None,
+            sender_label: Some("Hosted Web Seeder".into()),
+            body: "Hosted-web inbox message from the seeded Remote API fixture.".into(),
+            priority: Some("interrupt".into()),
+        },
+    )?;
+
+    let context = pi_sessions::detect_session_context(Some(&project_slug))?;
+    let stored_session = pi_sessions::create_session_file(
+        &context.project_root,
+        &context.session_dir,
+        Some("Hosted web seeded session"),
+        true,
+    )?;
+    let session_path = pi_sessions::get_session_path(&context.session_dir, &stored_session.record.id)?;
+    let mut session_file = OpenOptions::new()
+        .append(true)
+        .open(&session_path)
+        .map_err(|error| format!("Unable to append hosted-web E2E session {}: {error}", session_path.display()))?;
+    writeln!(
+        session_file,
+        "{}",
+        json!({
+            "type": "message",
+            "id": "hosted-web-user-message",
+            "parentId": Value::Null,
+            "timestamp": now_iso(),
+            "message": {
+                "role": "user",
+                "content": "Hello from hosted-web E2E",
+                "timestamp": 1773835260000i64,
+                "attachments": [],
+            }
+        })
+    )
+    .map_err(|error| format!("Unable to write hosted-web E2E user message: {error}"))?;
+    writeln!(
+        session_file,
+        "{}",
+        json!({
+            "type": "message",
+            "id": "hosted-web-assistant-message",
+            "parentId": "hosted-web-user-message",
+            "timestamp": now_iso(),
+            "message": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "Hosted web reply from the seeded Remote API session." }],
+                "api": "test",
+                "provider": "test",
+                "model": "stub",
+                "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}},
+                "stopReason": "stop",
+                "timestamp": 1773835261000i64,
+            }
+        })
+    )
+    .map_err(|error| format!("Unable to write hosted-web E2E assistant message: {error}"))?;
+    session_file
+        .flush()
+        .map_err(|error| format!("Unable to flush hosted-web E2E session fixture: {error}"))?;
+
+    let pairing = remote_access::create_pairing_code(
+        &connection,
+        crate::models::RemotePairingCodeInput {
+            label: Some("Hosted Web Browser".into()),
+            platform: Some("browser".into()),
+        },
+    )?;
+    let auth = remote_access::consume_pairing_code(
+        &connection,
+        RemotePairingCompleteInput {
+            code: pairing
+                .code
+                .clone()
+                .ok_or_else(|| "Hosted-web E2E pairing code was missing.".to_string())?,
+            label: Some("Hosted Web Browser".into()),
+            platform: Some("browser".into()),
+            push_token: None,
+        },
+    )?;
+
+    Ok(auth.token)
+}
+
+pub fn run_hosted_web_e2e_server() -> Result<(), String> {
+    let backend = crate::services::backend_bootstrap::initialize_backend()?;
+    let app = tauri::Builder::default()
+        .manage(AppState::new(backend.tool_bridge.clone()))
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .map_err(|error| format!("failed to build hosted-web E2E app: {error}"))?;
+    let auth_token = seed_hosted_web_e2e_fixture()?;
+    let auth_cookie = build_remote_auth_cookie(&auth_token, false)
+        .map_err(|error| format!("failed to build hosted-web E2E auth cookie: {error}"))?;
+    let root = resolve_hosted_web_e2e_root()?;
+    let index_file = root.join("index.html");
+    if !index_file.exists() {
+        return Err(format!(
+            "Hosted-web E2E index file was missing at {}.",
+            index_file.display()
+        ));
+    }
+
+    let app_handle = app.handle().clone();
+    let router = build_remote_api_context(app_handle)
+        .route(
+            "/",
+            get({
+                let auth_cookie = auth_cookie.clone();
+                let index_file = index_file.clone();
+                move || {
+                    let auth_cookie = auth_cookie.clone();
+                    let index_file = index_file.clone();
+                    async move {
+                        let html = fs::read_to_string(&index_file).map_err(|error| {
+                            api_error(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!(
+                                    "Unable to read hosted-web E2E frontend {}: {error}",
+                                    index_file.display()
+                                ),
+                            )
+                        })?;
+                        let mut response = axum::response::Html(html).into_response();
+                        response
+                            .headers_mut()
+                            .insert(header::SET_COOKIE, auth_cookie.clone());
+                        Ok::<_, (StatusCode, Json<ApiError>)>(response)
+                    }
+                }
+            }),
+        )
+        .fallback_service(get_service(
+            ServeDir::new(root).not_found_service(ServeFile::new(index_file)),
+        ));
+
+    let port = env::var("ORCHESTRA_HOSTED_WEB_E2E_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(HOSTED_WEB_E2E_PORT);
+    let bind_address = format!("127.0.0.1:{port}");
+    let listener = TcpListener::bind(&bind_address)
+        .map_err(|error| format!("Unable to bind hosted-web E2E server on {bind_address}: {error}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("Unable to configure hosted-web E2E listener: {error}"))?;
+
+    println!("Hosted-web E2E server ready at http://{bind_address}");
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Unable to build hosted-web E2E runtime: {error}"))?
+        .block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(listener)
+                .map_err(|error| format!("Unable to adopt hosted-web E2E listener: {error}"))?;
+            axum::serve(listener, router)
+                .await
+                .map_err(|error| format!("Hosted-web E2E server failed: {error}"))
         })
 }
 

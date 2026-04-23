@@ -6,12 +6,13 @@
       "id": "tasks-overview-browse",
       "surface": "Tasks",
       "journey": "Browse, filter, and sort the main task surfaces",
-      "requiredHarnesses": ["browser", "desktop"],
+      "requiredHarnesses": ["browser", "desktop", "hosted-web"],
       "status": "covered",
       "specs": [
         "tests/e2e/tasks.spec.ts",
         "tests/desktop-e2e/task-board-scroll.test.ts",
-        "tests/desktop-e2e/task-table-row.test.ts"
+        "tests/desktop-e2e/task-table-row.test.ts",
+        "tests/hosted-web-e2e/tasks.spec.ts"
       ]
     },
     {
@@ -113,11 +114,12 @@
       "id": "inbox-delivery",
       "surface": "Inbox",
       "journey": "Read inbox mail and direct task-linked messaging flows",
-      "requiredHarnesses": ["browser", "desktop"],
+      "requiredHarnesses": ["browser", "desktop", "hosted-web"],
       "status": "covered",
       "specs": [
         "tests/e2e/inbox.spec.ts",
-        "tests/desktop-e2e/inbox-messaging.test.ts"
+        "tests/desktop-e2e/inbox-messaging.test.ts",
+        "tests/hosted-web-e2e/inbox.spec.ts"
       ]
     },
     {
@@ -226,11 +228,12 @@
       "id": "session-list-and-transcript",
       "surface": "Sessions",
       "journey": "Browse sessions and read the live transcript surface",
-      "requiredHarnesses": ["browser", "desktop"],
+      "requiredHarnesses": ["browser", "desktop", "hosted-web"],
       "status": "covered",
       "specs": [
         "tests/e2e/sessions.spec.ts",
-        "tests/desktop-e2e/session-transcript.test.ts"
+        "tests/desktop-e2e/session-transcript.test.ts",
+        "tests/hosted-web-e2e/sessions.spec.ts"
       ]
     },
     {

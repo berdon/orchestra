@@ -24,6 +24,7 @@
     "verify": "npm run test:coverage && npm run test:ui:matrix",
     "ci": "npm run verify",
     "test:e2e": "playwright test",
+    "test:hosted-web:e2e": "playwright test --config playwright.hosted-web.config.ts",
     "test:web-driver:e2e": "./scripts/run-web-driver-e2e.sh",
     "test:desktop-e2e:host": "./scripts/run-desktop-e2e-suite.sh",
     "test:desktop-e2e": "./scripts/run-desktop-e2e-suite-podman.sh"
