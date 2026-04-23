@@ -16,8 +16,9 @@ use crate::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
         PiImportLegacyResult, PiLegacyImportPreview, PiOAuthFlowState, PiRuntimeDiagnostics,
         PiRuntimeSettings, PiSetupState, ProjectUpsertInput, RoleUpsertInput, SessionModel,
-        SessionStorageInfo, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState,
-        SystemNotificationRequest, TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput,
+        SessionStorageInfo, SourceControlSettings, SystemNotificationEnvironmentStatus,
+        SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
+        WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
         app_events, database, harness_settings,
@@ -27,7 +28,7 @@ use crate::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
         },
-        pi_setup, projects, roles, system_notifications, tasks, workflows,
+        pi_setup, project_settings, projects, roles, system_notifications, tasks, workflows,
     },
     state::AppState,
 };
@@ -92,6 +93,19 @@ pub fn build_app_info(state: &AppState) -> AppInfo {
 #[tauri::command]
 pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
     build_app_info(state.inner())
+}
+
+#[tauri::command]
+pub fn get_source_control_settings() -> Result<SourceControlSettings, String> {
+    project_settings::get_source_control_settings()
+}
+
+#[tauri::command]
+pub fn update_source_control_settings(
+    git_user_name_template: Option<String>,
+    git_email_template: Option<String>,
+) -> Result<SourceControlSettings, String> {
+    project_settings::update_source_control_settings(git_user_name_template, git_email_template)
 }
 
 #[tauri::command]

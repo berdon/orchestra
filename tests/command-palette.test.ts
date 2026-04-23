@@ -121,6 +121,8 @@ describe("command palette items", () => {
           slug: "orchestra",
           name: "Orchestra",
           description: "Default project",
+          taskPrefix: "ORC",
+          defaultRepositoryId: null,
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         },
@@ -134,6 +136,8 @@ describe("command palette items", () => {
     expect(items.some((item) => item.action.type === "open-role" && item.action.roleId === "role-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-workflow" && item.action.workflowId === "workflow-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-session" && item.action.sessionId === "session-1")).toBe(true);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "prompting")).toBe(true);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "source_control")).toBe(true);
   });
 
   it("adds fuzzy project-switch commands for non-active projects", () => {
@@ -149,6 +153,8 @@ describe("command palette items", () => {
           slug: "orchestra",
           name: "Orchestra",
           description: "Default project",
+          taskPrefix: "ORC",
+          defaultRepositoryId: null,
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         },
@@ -157,6 +163,8 @@ describe("command palette items", () => {
           slug: "second-project",
           name: "Second Project",
           description: "Customer delivery work",
+          taskPrefix: "SPD",
+          defaultRepositoryId: null,
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         },

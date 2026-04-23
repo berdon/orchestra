@@ -1,5 +1,5 @@
 export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
-export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "remote" | "pi" | "general";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "remote" | "pi" | "source_control" | "prompting" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -606,6 +606,19 @@ export interface ProjectSessionPromptSettings {
 export interface ProjectTaskAutomationSettings {
   projectSlug: string;
   autoDispatchOnBlockerCompletion: boolean;
+  updatedAt?: string | null;
+}
+
+export interface SourceControlSettings {
+  gitUserNameTemplate?: string | null;
+  gitEmailTemplate?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface ProjectSourceControlSettings {
+  projectSlug: string;
+  gitUserNameTemplate?: string | null;
+  gitEmailTemplate?: string | null;
   updatedAt?: string | null;
 }
 

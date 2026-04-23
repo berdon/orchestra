@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildSeededMockProjects, buildSeededMockWorkflows, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
+import { getStoredMockProjectRuntimeSettings } from "./mockProjectRuntimeSettings";
 import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
 import { sortSessionRecords } from "./sessionList";
 import { getTaskTags } from "./taskListQuery";
@@ -105,7 +106,7 @@ function getInjectedWindowKind() {
 
 function getStoredMockProjectSettings() {
   const value = window.localStorage.getItem(PROJECT_SETTINGS_STORAGE_KEY);
-  return value ? (JSON.parse(value) as { general?: { autoDispatchOnBlockerCompletion?: boolean } }) : {};
+  return value ? (JSON.parse(value) as { general?: { autoDispatchOnBlockerCompletion?: boolean }; projects?: Record<string, { runtime?: { autoDispatchOnBlockerCompletion?: boolean } }> }) : {};
 }
 
 function getStoredMockHarnessSettings() {
@@ -4156,8 +4157,8 @@ function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
 function isMockAutoDispatchOnBlockerCompletionEnabled(projectId: string) {
   const projects = getStoredMockProjectsForSettings();
   const projectSlug = projects.find((project) => project.id === projectId)?.slug ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID;
-  const settings = getStoredMockProjectSettings();
-  return Boolean((settings.general?.autoDispatchOnBlockerCompletion ?? true) && projectSlug);
+  const runtimeSettings = getStoredMockProjectRuntimeSettings(projectSlug);
+  return Boolean((runtimeSettings.autoDispatchOnBlockerCompletion ?? true) && projectSlug);
 }
 
 async function autoDispatchMockDependentTasks(blockerTaskId: string) {

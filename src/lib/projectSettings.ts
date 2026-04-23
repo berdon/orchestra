@@ -2,24 +2,19 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { getActiveProjectSlug } from "./projects";
 import { isTauriAvailable } from "./tauri";
+import {
+  getStoredMockProjectSettingsStorage,
+  getStoredMockProjectRuntimeSettings,
+  saveStoredMockProjectSettingsStorage,
+  updateStoredMockProjectRuntimeSettings,
+} from "./mockProjectRuntimeSettings";
 import type {
   ProjectSessionPromptSettings,
   ProjectTaskAutomationSettings,
   ProjectWorkerOverlay,
 } from "../types";
 
-const PROJECT_SETTINGS_STORAGE_KEY = "orchestra.mock.project-settings";
 const DEFAULT_PROJECT_SLUG = "orchestra";
-
-type MockProjectSettings = {
-  agentOverlays?: Record<string, { prompt?: string | null; updatedAt?: string | null }>;
-  roleOverlays?: Record<string, { prompt?: string | null; updatedAt?: string | null }>;
-  general?: {
-    taskSessionContextTemplate?: string | null;
-    autoDispatchOnBlockerCompletion?: boolean;
-    updatedAt?: string | null;
-  };
-};
 
 function nowIso() {
   return new Date().toISOString();
@@ -33,15 +28,6 @@ function slugify(value: string, fallback: string) {
     .replace(/^-+|-+$/g, "");
 
   return normalized || fallback;
-}
-
-function getStoredProjectSettings(): MockProjectSettings {
-  const value = window.localStorage.getItem(PROJECT_SETTINGS_STORAGE_KEY);
-  return value ? (JSON.parse(value) as MockProjectSettings) : {};
-}
-
-function saveStoredProjectSettings(settings: MockProjectSettings) {
-  window.localStorage.setItem(PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
 }
 
 function overlayKey(workerSlug: string) {
@@ -68,6 +54,7 @@ const DEFAULT_SESSION_PROMPT_TEMPLATE = [
   "As you do work - periodically comment on tasks to give an update on what you’re doing.",
   "",
   "{WORKER.CONTEXT}",
+  "{SOURCE_CONTROL.CONTEXT}",
   "{TASK.DESCRIPTION}",
   "{TASK.BLOCKED_BY}",
   "{TASK.REPOSITORIES}",
@@ -100,6 +87,9 @@ const SESSION_PROMPT_TOKENS = [
   { token: "{LANE.OWNER}", description: "Current lane owner type." },
   { token: "{LANE.INSTRUCTION}", description: "Lane entry instruction block." },
   { token: "{WORKER.CONTEXT}", description: "Worker-specific prompt context block including base and overlay prompts." },
+  { token: "{SOURCE_CONTROL.CONTEXT}", description: "Rendered block summarizing the effective git identity for the current project and worker context." },
+  { token: "{SOURCE_CONTROL.GIT.USER_NAME}", description: "Resolved git user.name value after project/global precedence and {role}/{agent} substitution." },
+  { token: "{SOURCE_CONTROL.GIT.EMAIL}", description: "Resolved git user.email value after project/global precedence and {role}/{agent} substitution." },
   { token: "{RUNTIME.CWD}", description: "Resolved task workspace cwd for the current lane." },
   { token: "{ORCHESTRA.WORKING_RULES}", description: "Standard Orchestra working rules block." },
   { token: "{ORCHESTRA.TOOL_HELP}", description: "Standard Orchestra task tool help block." },
@@ -113,13 +103,13 @@ function resolveProjectSlug(projectSlug?: string | null) {
 export async function getSessionPromptSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSessionPromptSettings> {
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
-    const settings = getStoredProjectSettings();
+    const runtimeSettings = getStoredMockProjectRuntimeSettings(resolvedProjectSlug);
     return {
       projectSlug: resolvedProjectSlug,
-      template: settings.general?.taskSessionContextTemplate ?? DEFAULT_SESSION_PROMPT_TEMPLATE,
+      template: runtimeSettings.taskSessionContextTemplate ?? DEFAULT_SESSION_PROMPT_TEMPLATE,
       defaultTemplate: DEFAULT_SESSION_PROMPT_TEMPLATE,
       availableTokens: [...SESSION_PROMPT_TOKENS],
-      updatedAt: settings.general?.updatedAt ?? null,
+      updatedAt: runtimeSettings.updatedAt ?? null,
     };
   }
 
@@ -129,13 +119,11 @@ export async function getSessionPromptSettings(projectSlug = DEFAULT_PROJECT_SLU
 export async function updateSessionPromptSettings(template: string | null, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSessionPromptSettings> {
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
-    const settings = getStoredProjectSettings();
-    settings.general = {
-      ...(settings.general ?? {}),
+    updateStoredMockProjectRuntimeSettings(resolvedProjectSlug, (current) => ({
+      ...current,
       taskSessionContextTemplate: template?.trim() || null,
       updatedAt: nowIso(),
-    };
-    saveStoredProjectSettings(settings);
+    }));
     return getSessionPromptSettings(resolvedProjectSlug);
   }
 
@@ -145,11 +133,11 @@ export async function updateSessionPromptSettings(template: string | null, proje
 export async function getTaskAutomationSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectTaskAutomationSettings> {
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
-    const settings = getStoredProjectSettings();
+    const runtimeSettings = getStoredMockProjectRuntimeSettings(resolvedProjectSlug);
     return {
       projectSlug: resolvedProjectSlug,
-      autoDispatchOnBlockerCompletion: settings.general?.autoDispatchOnBlockerCompletion ?? true,
-      updatedAt: settings.general?.updatedAt ?? null,
+      autoDispatchOnBlockerCompletion: runtimeSettings.autoDispatchOnBlockerCompletion ?? true,
+      updatedAt: runtimeSettings.updatedAt ?? null,
     };
   }
 
@@ -162,13 +150,11 @@ export async function updateTaskAutomationSettings(
 ): Promise<ProjectTaskAutomationSettings> {
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
-    const settings = getStoredProjectSettings();
-    settings.general = {
-      ...(settings.general ?? {}),
+    updateStoredMockProjectRuntimeSettings(resolvedProjectSlug, (current) => ({
+      ...current,
       autoDispatchOnBlockerCompletion,
       updatedAt: nowIso(),
-    };
-    saveStoredProjectSettings(settings);
+    }));
     return getTaskAutomationSettings(resolvedProjectSlug);
   }
 
@@ -181,7 +167,7 @@ export async function updateTaskAutomationSettings(
 export async function getWorkerOverlay(workerType: string, workerSlug: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
-    const settings = getStoredProjectSettings();
+    const settings = getStoredMockProjectSettingsStorage();
     const normalizedWorkerType = workerType === "role" ? "role" : "agent";
     const normalizedWorkerSlug = overlayKey(workerSlug);
     const overlay = normalizedWorkerType === "role"
@@ -203,7 +189,7 @@ export async function getWorkerOverlay(workerType: string, workerSlug: string, p
 export async function updateWorkerOverlay(workerType: string, workerSlug: string, prompt: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
-    const settings = getStoredProjectSettings();
+    const settings = getStoredMockProjectSettingsStorage();
     const normalizedWorkerType = workerType === "role" ? "role" : "agent";
     const normalizedWorkerSlug = overlayKey(workerSlug);
     const nextOverlay = {
@@ -223,7 +209,7 @@ export async function updateWorkerOverlay(workerType: string, workerSlug: string
       };
     }
 
-    saveStoredProjectSettings(settings);
+    saveStoredMockProjectSettingsStorage(settings);
 
     return {
       projectSlug: resolvedProjectSlug,

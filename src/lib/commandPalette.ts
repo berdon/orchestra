@@ -117,6 +117,22 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       action: { type: "navigate-settings", tab: "workflows" },
     }),
     commandItem({
+      id: "settings-source-control",
+      title: "Open Settings → Source Control",
+      subtitle: "Global git identity defaults and previews",
+      group: "Pages",
+      keywords: ["settings", "source control", "git", "identity", "commits"],
+      action: { type: "navigate-settings", tab: "source_control" },
+    }),
+    commandItem({
+      id: "settings-prompting",
+      title: "Open Settings → Prompting",
+      subtitle: "Project prompt templates and prompt tokens",
+      group: "Pages",
+      keywords: ["settings", "prompting", "prompt", "template", "worker context"],
+      action: { type: "navigate-settings", tab: "prompting" },
+    }),
+    commandItem({
       id: "settings-pi",
       title: "Open Settings → Pi",
       subtitle: "Pi auth, model, and legacy import setup",
@@ -127,9 +143,9 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
     commandItem({
       id: "settings-general",
       title: "Open Settings → General",
-      subtitle: "Bridge diagnostics and runtime logs",
+      subtitle: "Appearance, diagnostics, notifications, and runtime logs",
       group: "Pages",
-      keywords: ["settings", "general", "bridge", "diagnostics", "logs"],
+      keywords: ["settings", "general", "appearance", "bridge", "diagnostics", "logs"],
       action: { type: "navigate-settings", tab: "general" },
     }),
   ];

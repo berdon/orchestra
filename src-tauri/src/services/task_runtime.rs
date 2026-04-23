@@ -1852,6 +1852,7 @@ fn repository_runtime_root(repository: &RepositoryRecord) -> Option<PathBuf> {
 }
 
 struct WorkerPromptContext {
+    worker_type: &'static str,
     worker_type_label: &'static str,
     worker_name: String,
     worker_slug: String,
@@ -2520,6 +2521,7 @@ fn dispatch_role_lane(
         .ok_or_else(|| format!("Lane {} is missing a role reference", lane.name))?;
     let role = get_role_by_slug(connection, role_slug)?;
     let worker_prompt = WorkerPromptContext {
+        worker_type: "role",
         worker_type_label: "role",
         worker_name: role.name.clone(),
         worker_slug: role.slug.clone(),
@@ -2640,6 +2642,7 @@ fn dispatch_agent_lane(
         .ok_or_else(|| format!("Lane {} is missing an agent reference", lane.name))?;
     let agent = get_agent_by_slug(connection, &task.project_id, agent_slug)?;
     let worker_prompt = WorkerPromptContext {
+        worker_type: "agent",
         worker_type_label: "agent",
         worker_name: agent.name.clone(),
         worker_slug: agent.slug.clone(),
@@ -4551,14 +4554,44 @@ fn build_lane_prompt(
     let project_slug = projects::get_project(connection, &task.project_id)
         .map(|project| project.slug)
         .unwrap_or_else(|_| "orchestra".into());
-    let prompt_settings = project_settings::get_session_prompt_settings(&project_slug)
-        .unwrap_or_else(|_| crate::models::ProjectSessionPromptSettings {
-            project_slug: project_slug.clone(),
-            template: project_settings::default_task_session_context_template(),
-            default_template: project_settings::default_task_session_context_template(),
-            available_tokens: project_settings::available_session_prompt_tokens(),
-            updated_at: None,
-        });
+    let orchestra_root = crate::services::orchestra_paths::default_orchestra_root().ok();
+    let prompt_settings = project_settings::get_session_prompt_settings_with_connection(
+        connection,
+        orchestra_root.as_deref(),
+        &project_slug,
+    )
+    .unwrap_or_else(|_| crate::models::ProjectSessionPromptSettings {
+        project_slug: project_slug.clone(),
+        template: project_settings::default_task_session_context_template(),
+        default_template: project_settings::default_task_session_context_template(),
+        available_tokens: project_settings::available_session_prompt_tokens(),
+        updated_at: None,
+    });
+    let source_control_context = worker_prompt
+        .map(|worker_prompt| {
+            if worker_prompt.worker_type == "role" {
+                project_settings::SourceControlTemplateContext {
+                    role_slug: Some(worker_prompt.worker_slug.clone()),
+                    agent_slug: None,
+                }
+            } else {
+                project_settings::SourceControlTemplateContext {
+                    role_slug: None,
+                    agent_slug: Some(worker_prompt.worker_slug.clone()),
+                }
+            }
+        })
+        .unwrap_or_default();
+    let resolved_source_control =
+        project_settings::resolve_effective_source_control_settings_with_connection(
+            connection,
+            orchestra_root.as_deref(),
+            Some(&project_slug),
+            &source_control_context,
+        )
+        .unwrap_or_default();
+    let source_control_context_block =
+        project_settings::render_source_control_context_block(&resolved_source_control);
 
     let blocked_by_block = if task.blocked_by.is_empty() {
         String::new()
@@ -4664,6 +4697,21 @@ fn build_lane_prompt(
     };
 
     let mut rendered = prompt_settings.template;
+    let template_has_explicit_source_control_tokens = rendered.contains("{SOURCE_CONTROL.");
+    let worker_context_block = build_worker_context_block(worker_prompt);
+    let worker_context_with_source_control_fallback = if template_has_explicit_source_control_tokens
+    {
+        worker_context_block.clone()
+    } else {
+        [
+            worker_context_block.as_str(),
+            source_control_context_block.as_str(),
+        ]
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+    };
     let replacements = vec![
         ("{TASK.ID}", task.id.clone()),
         ("{TASK.NUMBER}", task.number.clone()),
@@ -4722,7 +4770,22 @@ fn build_lane_prompt(
         ),
         (
             "{WORKER.CONTEXT}",
-            build_worker_context_block(worker_prompt),
+            worker_context_with_source_control_fallback,
+        ),
+        ("{SOURCE_CONTROL.CONTEXT}", source_control_context_block),
+        (
+            "{SOURCE_CONTROL.GIT.USER_NAME}",
+            resolved_source_control
+                .git_user_name
+                .clone()
+                .unwrap_or_default(),
+        ),
+        (
+            "{SOURCE_CONTROL.GIT.EMAIL}",
+            resolved_source_control
+                .git_email
+                .clone()
+                .unwrap_or_default(),
         ),
         (
             "{RUNTIME.CWD}",
@@ -5230,6 +5293,7 @@ mod tests {
             failure_target_lane_id: None,
         };
         let worker_prompt = WorkerPromptContext {
+            worker_type: "role",
             worker_type_label: "role",
             worker_name: "Developer".into(),
             worker_slug: "developer".into(),
@@ -5270,19 +5334,13 @@ mod tests {
             )
             .expect("project should insert");
 
-        let previous_home = std::env::var_os("HOME");
-        let temp_home = unique_temp_dir("session-prompt-template-home");
-        std::fs::create_dir_all(&temp_home).expect("temp home should create");
-        unsafe {
-            std::env::set_var("HOME", &temp_home);
-        }
-        let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()
-            .expect("orchestra root should resolve");
-        project_settings::update_session_prompt_settings_in(
-            &orchestra_root,
+        project_settings::update_session_prompt_settings_with_connection(
+            &connection,
+            None,
             "prompt-project",
             Some("Task {TASK.ID} {TASK.SLUG} {TASK.NAME} {WORKFLOW.NAME} {LANE.NAME} {LANE.OWNER} {TASK.STATUS} {TASK.ASSIGNEE}\n{TASK.DESCRIPTION}\n{TASK.COMMENTS}".into()),
-        ).expect("session prompt template should save");
+        )
+        .expect("session prompt template should save");
 
         let task = TaskDetail {
             id: "task-123".into(),
@@ -5391,15 +5449,260 @@ mod tests {
         assert!(
             prompt.contains("Recent task comments:\n- Reviewer: Check the prompt template output.")
         );
+    }
 
-        match previous_home {
-            Some(value) => unsafe {
-                std::env::set_var("HOME", value);
-            },
-            None => unsafe {
-                std::env::remove_var("HOME");
-            },
-        }
+    #[test]
+    fn lane_prompt_includes_explicit_source_control_tokens() {
+        let mut connection = in_memory_connection();
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-source-control', 'source-control-project', 'Source Control Project', NULL, 'SCP', NULL, ?1, ?1)",
+                params![now],
+            )
+            .expect("project should insert");
+        project_settings::update_source_control_settings_with_connection(
+            &connection,
+            Some("Global {role}{agent}".into()),
+            Some("global+{role}{agent}@example.com".into()),
+        )
+        .expect("global source control settings should save");
+        project_settings::update_project_source_control_settings_with_connection(
+            &connection,
+            None,
+            "source-control-project",
+            None,
+            Some("project+{role}{agent}@example.com".into()),
+        )
+        .expect("project source control settings should save");
+        project_settings::update_session_prompt_settings_with_connection(
+            &connection,
+            None,
+            "source-control-project",
+            Some("{WORKER.CONTEXT}\n{SOURCE_CONTROL.CONTEXT}\nname={SOURCE_CONTROL.GIT.USER_NAME}\nemail={SOURCE_CONTROL.GIT.EMAIL}".into()),
+        )
+        .expect("prompt template should save");
+
+        let task = TaskDetail {
+            id: "task-source-control".into(),
+            project_id: "project-source-control".into(),
+            number: "SCP-1".into(),
+            title: "Check source control prompt tokens".into(),
+            description: None,
+            task_type: "task".into(),
+            tags: Vec::new(),
+            status: "in_progress".into(),
+            priority: "P1".into(),
+            workflow_id: Some("workflow-source-control".into()),
+            current_lane_id: Some("lane-source-control".into()),
+            assignee_type: "role".into(),
+            assignee_id: Some("developer".into()),
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            whip_max_attempts: 10,
+            archived: false,
+            comment_count: 0,
+            unread_comment_count: 0,
+            lane_run_count: 0,
+            child_count: 0,
+            completed_child_count: 0,
+            in_progress_child_count: 0,
+            blocked_child_count: 0,
+            blocked_by_count: 0,
+            blocking_count: 0,
+            attachment_count: 0,
+            dependency_blocked: false,
+            active_lane_assignment_status: None,
+            ready_for_dispatch: false,
+            parent: None,
+            lineage: Vec::new(),
+            children: Vec::new(),
+            blocked_by: Vec::new(),
+            blocking: Vec::new(),
+            attachments: Vec::new(),
+            task_repositories: Vec::new(),
+            file_references: Vec::new(),
+            active_lane_assignment: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            comments: Vec::new(),
+            todos: Vec::new(),
+            lane_runs: Vec::new(),
+        };
+        let workflow = WorkflowDefinition {
+            id: "workflow-source-control".into(),
+            slug: "workflow-source-control".into(),
+            name: "Source Control Flow".into(),
+            description: None,
+            archived: false,
+            lanes: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let lane = WorkflowLane {
+            id: "lane-source-control".into(),
+            key: "implement".into(),
+            name: "Implement".into(),
+            description: None,
+            order: 0,
+            assigned_entity_type: "role".into(),
+            assigned_entity_id: Some("developer".into()),
+            entry_prompt_template: None,
+            use_separate_worktree: false,
+            require_user_approval_on_success: false,
+            success_transition_type: "end".into(),
+            success_target_lane_id: None,
+            failure_transition_type: "end".into(),
+            failure_target_lane_id: None,
+        };
+        let worker_prompt = WorkerPromptContext {
+            worker_type: "role",
+            worker_type_label: "role",
+            worker_name: "Developer".into(),
+            worker_slug: "developer".into(),
+            system_prompt: None,
+            project_overlay_prompt: None,
+        };
+
+        let prompt = build_lane_prompt(
+            &connection,
+            &task,
+            &workflow,
+            &lane,
+            Some("/tmp/runtime-source-control"),
+            Some(&worker_prompt),
+        );
+
+        assert!(prompt.contains("Source control identity:"));
+        assert!(prompt.contains("- git user.name: Global developer (global default)"));
+        assert!(
+            prompt.contains("- git user.email: project+developer@example.com (project override)")
+        );
+        assert!(prompt.contains("name=Global developer"));
+        assert!(prompt.contains("email=project+developer@example.com"));
+    }
+
+    #[test]
+    fn lane_prompt_appends_source_control_context_to_worker_context_for_legacy_templates() {
+        let mut connection = in_memory_connection();
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-legacy-source-control', 'legacy-source-control', 'Legacy Source Control', NULL, 'LSC', NULL, ?1, ?1)",
+                params![now],
+            )
+            .expect("project should insert");
+        project_settings::update_source_control_settings_with_connection(
+            &connection,
+            Some("Global {role}".into()),
+            Some("global+{role}@example.com".into()),
+        )
+        .expect("global source control settings should save");
+        project_settings::update_session_prompt_settings_with_connection(
+            &connection,
+            None,
+            "legacy-source-control",
+            Some("{WORKER.CONTEXT}".into()),
+        )
+        .expect("legacy prompt template should save");
+
+        let task = TaskDetail {
+            id: "task-legacy-source-control".into(),
+            project_id: "project-legacy-source-control".into(),
+            number: "LSC-1".into(),
+            title: "Legacy source control prompt fallback".into(),
+            description: None,
+            task_type: "task".into(),
+            tags: Vec::new(),
+            status: "in_progress".into(),
+            priority: "P1".into(),
+            workflow_id: Some("workflow-legacy-source-control".into()),
+            current_lane_id: Some("lane-legacy-source-control".into()),
+            assignee_type: "role".into(),
+            assignee_id: Some("developer".into()),
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            whip_max_attempts: 10,
+            archived: false,
+            comment_count: 0,
+            unread_comment_count: 0,
+            lane_run_count: 0,
+            child_count: 0,
+            completed_child_count: 0,
+            in_progress_child_count: 0,
+            blocked_child_count: 0,
+            blocked_by_count: 0,
+            blocking_count: 0,
+            attachment_count: 0,
+            dependency_blocked: false,
+            active_lane_assignment_status: None,
+            ready_for_dispatch: false,
+            parent: None,
+            lineage: Vec::new(),
+            children: Vec::new(),
+            blocked_by: Vec::new(),
+            blocking: Vec::new(),
+            attachments: Vec::new(),
+            task_repositories: Vec::new(),
+            file_references: Vec::new(),
+            active_lane_assignment: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            comments: Vec::new(),
+            todos: Vec::new(),
+            lane_runs: Vec::new(),
+        };
+        let workflow = WorkflowDefinition {
+            id: "workflow-legacy-source-control".into(),
+            slug: "workflow-legacy-source-control".into(),
+            name: "Legacy Flow".into(),
+            description: None,
+            archived: false,
+            lanes: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        let lane = WorkflowLane {
+            id: "lane-legacy-source-control".into(),
+            key: "implement".into(),
+            name: "Implement".into(),
+            description: None,
+            order: 0,
+            assigned_entity_type: "role".into(),
+            assigned_entity_id: Some("developer".into()),
+            entry_prompt_template: None,
+            use_separate_worktree: false,
+            require_user_approval_on_success: false,
+            success_transition_type: "end".into(),
+            success_target_lane_id: None,
+            failure_transition_type: "end".into(),
+            failure_target_lane_id: None,
+        };
+        let worker_prompt = WorkerPromptContext {
+            worker_type: "role",
+            worker_type_label: "role",
+            worker_name: "Developer".into(),
+            worker_slug: "developer".into(),
+            system_prompt: Some("Base prompt".into()),
+            project_overlay_prompt: None,
+        };
+
+        let prompt = build_lane_prompt(
+            &connection,
+            &task,
+            &workflow,
+            &lane,
+            Some("/tmp/runtime-legacy-source-control"),
+            Some(&worker_prompt),
+        );
+
+        assert!(prompt.contains("Assigned worker: role Developer (developer)"));
+        assert!(prompt.contains("Base role prompt:\nBase prompt"));
+        assert!(prompt.contains("Source control identity:"));
+        assert!(prompt.contains("- git user.name: Global developer (global default)"));
+        assert!(prompt.contains("- git user.email: global+developer@example.com (global default)"));
     }
 
     #[test]

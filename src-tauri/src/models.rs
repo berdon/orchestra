@@ -788,6 +788,23 @@ pub struct ProjectTaskAutomationSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SourceControlSettings {
+    pub git_user_name_template: Option<String>,
+    pub git_email_template: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSourceControlSettings {
+    pub project_slug: String,
+    pub git_user_name_template: Option<String>,
+    pub git_email_template: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PiRuntimeSettings {
     pub extra_extensions: Vec<String>,
     pub default_compaction_window: String,

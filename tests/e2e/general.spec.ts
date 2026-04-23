@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("settings general renders bridge diagnostics and session prompt controls", async ({ page }) => {
+test("settings general, prompting, and source control panels render and persist", async ({ page }) => {
   await page.addInitScript(() => {
     if (window.localStorage.getItem("orchestra.test.general.seeded") === "true") {
       return;
@@ -62,6 +62,14 @@ test("settings general renders bridge diagnostics and session prompt controls", 
       }),
     );
     window.localStorage.setItem(
+      "orchestra.mock.source-control-settings",
+      JSON.stringify({
+        gitUserNameTemplate: "Orchestra {role}{agent}",
+        gitEmailTemplate: "orchestra+{role}{agent}@example.com",
+        updatedAt: timestamp,
+      }),
+    );
+    window.localStorage.setItem(
       "orchestra.mock.harness-settings",
       JSON.stringify({
         extraExtensions: ["npm:pi-example", "./extensions/local-extra.ts"],
@@ -89,9 +97,21 @@ test("settings general renders bridge diagnostics and session prompt controls", 
     );
   });
 
+  async function openSettingsTab(name: string) {
+    await page.evaluate((tabName) => {
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-subnav__item'));
+      const target = buttons.find((button) => button.textContent?.trim() === tabName);
+      if (!target) {
+        throw new Error(`Missing settings tab: ${tabName}`);
+      }
+      target.scrollIntoView({ block: "center", inline: "center" });
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    }, name);
+  }
+
   await page.goto("/");
-  await page.locator('[data-role="nav-item-settings"]').click();
-  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
+  await page.getByRole("button", { name: "Settings" }).click();
+  await openSettingsTab("General");
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-dark");
@@ -110,8 +130,8 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "disabled");
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.explanatory-tooltips"))).toBe("disabled");
   await page.reload();
-  await page.locator('[data-role="nav-item-settings"]').click();
-  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
+  await page.getByRole("button", { name: "Settings" }).click();
+  await openSettingsTab("General");
   await expect(page.locator('[data-role="explanatory-tooltips-toggle"]')).not.toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "disabled");
 
@@ -119,8 +139,8 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await page.locator('[data-role="new-task"]').click();
   await expect.poll(() => page.locator('[data-role="task-workflow"]').evaluate((element) => element.closest('label')?.getAttribute('data-tooltip') ?? null)).toBeNull();
 
-  await page.locator('[data-role="nav-item-settings"]').click();
-  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
+  await page.getByRole("button", { name: "Settings" }).click();
+  await openSettingsTab("General");
   await page.locator('[data-role="explanatory-tooltips-toggle"]').check();
   await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "enabled");
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.explanatory-tooltips"))).toBe("enabled");
@@ -128,17 +148,9 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await page.locator('[data-role="new-task"]').click();
   await expect.poll(() => page.locator('[data-role="task-workflow"]').evaluate((element) => element.closest('label')?.getAttribute('data-tooltip') ?? null)).toBe("Choose which workflow owns this task's lane transitions.");
 
-  await page.locator('[data-role="nav-item-settings"]').click();
-  await page.getByRole("tab", { name: "General" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
-  await expect(page.getByRole("heading", { name: "Session prompt" })).toBeVisible();
-  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
-  await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{TASK.ID}");
-  await page.locator('[data-role="session-prompt-template"]').fill("Task {TASK.ID} {TASK.STATUS}");
-  await page.locator('[data-role="save-session-prompt-template"]').click();
-  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
-  await page.locator('[data-role="reset-session-prompt-template"]').click();
-  await expect(page.locator('[data-role="session-prompt-template"]')).toContainText("As you do work - periodically comment on tasks to give an update on what you’re doing.");
-
+  await page.getByRole("button", { name: "Settings" }).click();
+  await openSettingsTab("General");
+  await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "PI settings" })).toBeVisible();
   await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/local-extra.ts");
   await page.locator('[data-role="pi-runtime-extensions"]').fill("npm:pi-example\n./extensions/second-extra.ts\n./extensions/second-extra.ts");
@@ -167,4 +179,35 @@ test("settings general renders bridge diagnostics and session prompt controls", 
   await page.locator('[data-role="runtime-log-level-filter"]').selectOption("debug");
   await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(sessions.rpc.event): Session session-1 received turn_start");
   await expect(page.locator('[data-role="runtime-log-line"]', { hasText: "(sessions.rpc.event): Session session-1 received turn_start" })).toHaveText(/^\[D\]\s.+\s\(sessions\.rpc\.event\):\sSession session-1 received turn_start$/);
+
+  await page.locator('[data-role="open-prompting-settings"]').click();
+  await expect(page.getByRole("heading", { name: "Task session context prompt" })).toBeVisible();
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
+  await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{TASK.ID}");
+  await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{SOURCE_CONTROL.CONTEXT}");
+  await page.locator('[data-role="session-prompt-template"]').fill("Task {TASK.ID} {TASK.STATUS}");
+  await page.locator('[data-role="save-session-prompt-template"]').click();
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
+  await page.locator('[data-role="reset-session-prompt-template"]').click();
+  await expect(page.locator('[data-role="session-prompt-template"]')).toContainText("{SOURCE_CONTROL.CONTEXT}");
+
+  await openSettingsTab("Source Control");
+  await expect(page.getByRole("heading", { name: "Global git identity defaults" })).toBeVisible();
+  await expect(page.locator('[data-role="source-control-git-user-name-template"]')).toHaveValue("Orchestra {role}{agent}");
+  await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("Orchestra architect");
+  await page.locator('[data-role="source-control-git-email-template"]').fill("team+{role}{agent}@example.com");
+  await page.locator('[data-role="save-source-control-settings"]').click();
+  await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("team+architect@example.com");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.source-control-settings"))).toContain("team+{role}{agent}@example.com");
+
+  await openSettingsTab("Projects");
+  await expect(page.locator('[data-role="project-source-control-settings"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("Global default");
+  await page.locator('[data-role="project-git-email-template"]').fill("project+{role}{agent}@example.com");
+  await page.locator('[data-role="save-project-source-control-settings"]').click();
+  await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("Project override");
+  await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("project+architect@example.com");
+
+  await openSettingsTab("General");
+  await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
 });

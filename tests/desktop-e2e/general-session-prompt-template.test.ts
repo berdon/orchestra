@@ -15,15 +15,14 @@ import {
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
-describe("desktop general settings", () => {
-  it.skipIf(!isDesktopE2E)("saves extra PI runtime extensions and resets the session prompt draft to the updated default copy", async () => {
+describe("desktop prompting settings", () => {
+  it.skipIf(!isDesktopE2E)("saves extra PI runtime extensions, exposes source control tokens, and resets the session prompt draft to the updated default copy", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, '[role="tab"]', 'General');
-      await waitForSelector(sessionId, '[data-role="session-prompt-template"]');
       await waitForSelector(sessionId, '[data-role="pi-runtime-extensions"]');
 
       await setInputValue(sessionId, '[data-role="pi-runtime-extensions"]', 'npm:pi-example\n./extensions/local-extra.ts\n./extensions/local-extra.ts');
@@ -40,6 +39,17 @@ describe("desktop general settings", () => {
       const logs = await invokeCommand<Array<{ target: string; message: string }>>(sessionId, 'get_logs');
       const spawnLog = logs.find((entry) => entry.target === 'sessions.runtime.spawn.request' && entry.message.includes(createdSession.id));
       expect(spawnLog?.message).toContain('extra_extensions=npm:pi-example, ./extensions/local-extra.ts');
+
+      await clickByText(sessionId, '[role="tab"]', 'Prompting');
+      await waitForSelector(sessionId, '[data-role="session-prompt-template"]');
+      await waitForSelector(sessionId, '[data-role="session-prompt-token-table"]');
+
+      const promptTokenTableText = await executeScript<string>(sessionId, `
+        const table = document.querySelector('[data-role="session-prompt-token-table"]');
+        return table instanceof HTMLElement ? table.innerText : '';
+      `);
+      expect(promptTokenTableText).toContain('{SOURCE_CONTROL.CONTEXT}');
+      expect(promptTokenTableText).toContain('{SOURCE_CONTROL.GIT.EMAIL}');
 
       await setInputValue(sessionId, '[data-role="session-prompt-template"]', 'Task {TASK.ID}');
       await clickSelector(sessionId, '[data-role="save-session-prompt-template"]');
@@ -58,6 +68,7 @@ describe("desktop general settings", () => {
       }
 
       expect(templateValue).toContain('You are an agent working inside Orchestra on task {TASK.NUMBER} — {TASK.NAME}.');
+      expect(templateValue).toContain('{SOURCE_CONTROL.CONTEXT}');
       expect(templateValue).toContain('As you do work - periodically comment on tasks to give an update on what you’re doing.');
     } finally {
       await deleteWebdriverSession(sessionId);

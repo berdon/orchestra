@@ -33,9 +33,8 @@ describe("desktop bridge diagnostics", () => {
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
-      await waitForText(sessionId, "Session prompt");
-      await waitForSelector(sessionId, '[data-role="session-prompt-template"]');
-      await waitForSelector(sessionId, '[data-role="save-session-prompt-template"]');
+      await waitForText(sessionId, "Prompt settings moved");
+      await waitForSelector(sessionId, '[data-role="open-prompting-settings"]');
       await waitForText(sessionId, "Bridge diagnostics");
       await waitForSelector(sessionId, '[data-role="bridge-instance-id"]');
       await waitForSelector(sessionId, '[data-role="refresh-bridge-diagnostics"]');

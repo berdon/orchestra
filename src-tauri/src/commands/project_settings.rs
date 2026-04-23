@@ -1,5 +1,8 @@
 use crate::{
-    models::{ProjectSessionPromptSettings, ProjectTaskAutomationSettings, ProjectWorkerOverlay},
+    models::{
+        ProjectSessionPromptSettings, ProjectSourceControlSettings, ProjectTaskAutomationSettings,
+        ProjectWorkerOverlay,
+    },
     services::{database, project_settings, projects},
 };
 
@@ -55,6 +58,26 @@ pub fn update_task_automation_settings(
     project_settings::update_task_automation_settings(
         &resolve_project_slug(project_slug)?,
         auto_dispatch_on_blocker_completion,
+    )
+}
+
+#[tauri::command]
+pub fn get_project_source_control_settings(
+    project_slug: Option<String>,
+) -> Result<ProjectSourceControlSettings, String> {
+    project_settings::get_project_source_control_settings(&resolve_project_slug(project_slug)?)
+}
+
+#[tauri::command]
+pub fn update_project_source_control_settings(
+    project_slug: Option<String>,
+    git_user_name_template: Option<String>,
+    git_email_template: Option<String>,
+) -> Result<ProjectSourceControlSettings, String> {
+    project_settings::update_project_source_control_settings(
+        &resolve_project_slug(project_slug)?,
+        git_user_name_template,
+        git_email_template,
     )
 }
 

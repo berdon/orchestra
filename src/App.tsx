@@ -92,7 +92,9 @@ import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
 import { PiPanel } from "./settings/PiPanel";
+import { PromptingPanel } from "./settings/PromptingPanel";
 import { RemotePanel } from "./settings/RemotePanel";
+import { SourceControlPanel } from "./settings/SourceControlPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AgentOperationsSnapshot,
@@ -204,6 +206,8 @@ const SETTINGS_TABS = [
   { id: "workflows", label: "Workflows" },
   { id: "channels", label: "Channels" },
   { id: "remote", label: "Remote" },
+  { id: "source_control", label: "Source Control" },
+  { id: "prompting", label: "Prompting" },
   { id: "pi", label: "Pi" },
   { id: "general", label: "General" },
 ] as const;
@@ -2421,7 +2425,6 @@ export function App() {
 
     void loadLogs();
     void loadBridgeDiagnostics();
-    void loadSessionPromptSettings();
     void loadSystemNotificationPermission();
 
     const intervalId = window.setInterval(() => {
@@ -2430,6 +2433,14 @@ export function App() {
     }, 5000);
 
     return () => window.clearInterval(intervalId);
+  }, [activePage, settingsTab, isDetachedWindow, activeProject?.slug]);
+
+  useEffect(() => {
+    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "prompting") {
+      return;
+    }
+
+    void loadSessionPromptSettings();
   }, [activePage, settingsTab, isDetachedWindow, activeProject?.slug]);
 
   useEffect(() => {
@@ -3387,6 +3398,14 @@ export function App() {
             <ChannelsPanel />
           ) : settingsTab === "remote" ? (
             <RemotePanel />
+          ) : settingsTab === "source_control" ? (
+            <SourceControlPanel />
+          ) : settingsTab === "prompting" ? (
+            <PromptingPanel
+              activeProjectName={activeProject?.name ?? null}
+              sessionPromptSettings={sessionPromptSettings}
+              onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
+            />
           ) : settingsTab === "pi" ? (
             <PiPanel
               piSetupState={piSetupState}
@@ -3410,7 +3429,6 @@ export function App() {
               availableThemes={BUILT_IN_ORCHESTRA_THEMES}
               selectedThemeId={themeId}
               bridgeDiagnostics={bridgeDiagnostics}
-              sessionPromptSettings={sessionPromptSettings}
               piRuntimeSettings={piRuntimeSettings}
               piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
               systemNotificationEnvironment={systemNotificationEnvironment}
@@ -3433,7 +3451,7 @@ export function App() {
               onRefreshBridgeDiagnostics={() => void loadBridgeDiagnostics({ background: true })}
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
-              onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
+              onOpenPromptingSettings={() => setSettingsTab("prompting")}
               onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
               onImportLegacyPiConfiguration={(input) => void handleImportLegacyPiConfiguration(input)}
               onRefreshSystemNotificationPermission={() => void handleRefreshSystemNotificationPermission()}

@@ -33,6 +33,18 @@ pub fn open_connection() -> Result<Connection, String> {
     open_configured_connection(&path)
 }
 
+pub fn open_connection_at(path: &Path) -> Result<Connection, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Database path {} has no parent directory", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Unable to create directory {}: {error}", parent.display()))?;
+    let connection = open_configured_connection(path)?;
+    enable_wal_mode(&connection)?;
+    apply_migrations(&connection)?;
+    Ok(connection)
+}
+
 fn ensure_database_initialized() -> Result<PathBuf, String> {
     if let Some(path) = DATABASE_INIT_PATH.get() {
         return Ok(path.clone());
@@ -326,6 +338,23 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 port INTEGER NOT NULL DEFAULT 49500,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS source_control_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                git_user_name_template TEXT,
+                git_email_template TEXT,
+                updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS project_runtime_settings (
+                project_id TEXT PRIMARY KEY,
+                task_session_context_template TEXT,
+                auto_dispatch_on_blocker_completion INTEGER NOT NULL DEFAULT 1,
+                git_user_name_template TEXT,
+                git_email_template TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS remote_pairing_codes (

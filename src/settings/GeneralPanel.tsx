@@ -3,13 +3,19 @@ import { useEffect, useState } from "react";
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
-import type { BridgeDiagnostics, LogEntry, PiRuntimeDiagnostics, PiRuntimeSettings, ProjectSessionPromptSettings, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
+import type {
+  BridgeDiagnostics,
+  LogEntry,
+  PiRuntimeDiagnostics,
+  PiRuntimeSettings,
+  SystemNotificationEnvironmentStatus,
+  SystemNotificationPermissionState,
+} from "../types";
 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
   selectedThemeId: OrchestraThemeId;
   bridgeDiagnostics: BridgeDiagnostics | null;
-  sessionPromptSettings: ProjectSessionPromptSettings | null;
   piRuntimeSettings: PiRuntimeSettings | null;
   piRuntimeDiagnostics: PiRuntimeDiagnostics | null;
   systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
@@ -32,7 +38,7 @@ interface GeneralPanelProps {
   onRefreshBridgeDiagnostics: () => void;
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
-  onSaveSessionPromptTemplate: (template: string | null) => void;
+  onOpenPromptingSettings: () => void;
   onSavePiRuntimeSettings: (input: { extraExtensions: string[]; defaultCompactionWindow: string }) => void;
   onImportLegacyPiConfiguration: (input: { importAuth: boolean; importModels: boolean }) => void;
   onRefreshSystemNotificationPermission: () => void;
@@ -72,7 +78,6 @@ export function GeneralPanel({
   availableThemes,
   selectedThemeId,
   bridgeDiagnostics,
-  sessionPromptSettings,
   piRuntimeSettings,
   piRuntimeDiagnostics,
   systemNotificationEnvironment,
@@ -95,7 +100,7 @@ export function GeneralPanel({
   onRefreshBridgeDiagnostics,
   onCleanupStaleBridges,
   onOpenLogsWindow,
-  onSaveSessionPromptTemplate,
+  onOpenPromptingSettings,
   onSavePiRuntimeSettings,
   onImportLegacyPiConfiguration,
   onRefreshSystemNotificationPermission,
@@ -106,15 +111,10 @@ export function GeneralPanel({
   onExportLogs,
   onClearLogs,
 }: GeneralPanelProps) {
-  const [templateDraft, setTemplateDraft] = useState("");
   const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
   const [defaultCompactionWindowDraft, setDefaultCompactionWindowDraft] = useState("10%");
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
   const getTooltipProps = useExplanatoryTooltipProps();
-
-  useEffect(() => {
-    setTemplateDraft(sessionPromptSettings?.template ?? "");
-  }, [sessionPromptSettings?.template]);
 
   useEffect(() => {
     setPiExtensionsDraft(piRuntimeSettings?.extraExtensions.join("\n") ?? "");
@@ -159,61 +159,18 @@ export function GeneralPanel({
           <p className="muted-copy">Hover supported controls and fields to see brief help text.</p>
         </section>
 
-        <div className="panel__header panel__header--stacked">
-          <div>
-            <p className="eyebrow">General</p>
-            <h3>Session prompt</h3>
-            <p className="muted-copy">Configure the task dynamic-session context prompt template with token replacement so you can iterate on worker instructions without code changes.</p>
+        <section className="task-section task-section--compact" data-role="general-prompting-moved-notice">
+          <div className="task-section__header">
+            <div>
+              <p className="eyebrow">Prompting</p>
+              <h4>Prompt settings moved</h4>
+              <p className="muted-copy">Task session prompt editing now lives in Settings → Prompting so General can stay focused on appearance, diagnostics, notifications, and runtime configuration.</p>
+            </div>
+            <button className="secondary-button" data-role="open-prompting-settings" type="button" onClick={onOpenPromptingSettings}>
+              Open Prompting
+            </button>
           </div>
-        </div>
-
-        {sessionPromptSettings ? (
-          <section className="task-section task-section--compact">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Template</p>
-                <h4>Task session context prompt</h4>
-              </div>
-              <div className="action-cluster action-cluster--wrap">
-                <button className="secondary-button" data-role="reset-session-prompt-template" type="button" onClick={() => setTemplateDraft(sessionPromptSettings.defaultTemplate)}>
-                  Reset draft to default
-                </button>
-                <button className="secondary-button" data-role="save-session-prompt-template" type="button" onClick={() => onSaveSessionPromptTemplate(templateDraft)}>
-                  Save template
-                </button>
-              </div>
-            </div>
-            <label className="field-group">
-              <span className="field-group__label">Prompt template</span>
-              <textarea
-                className="text-area general-panel__prompt-template"
-                data-role="session-prompt-template"
-                rows={14}
-                value={templateDraft}
-                onChange={(event) => setTemplateDraft(event.target.value)}
-              />
-            </label>
-            <p className="muted-copy">Last updated: {formatDateTime(sessionPromptSettings.updatedAt)}</p>
-            <div className="bridge-diagnostics-table-wrap">
-              <table className="task-table" data-role="session-prompt-token-table">
-                <thead>
-                  <tr>
-                    <th>Token</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessionPromptSettings.availableTokens.map((token) => (
-                    <tr key={token.token} data-role="session-prompt-token-row">
-                      <td><code>{token.token}</code></td>
-                      <td>{token.description}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ) : null}
+        </section>
 
         {piRuntimeSettings ? (
           <section className="task-section task-section--compact" data-role="pi-runtime-settings-panel">
