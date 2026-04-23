@@ -368,6 +368,16 @@ function countUnreadTaskComments(tasks: TaskSummary[]) {
   return countVisibleUnreadTaskComments(tasks);
 }
 
+function formatNavigationBadgeCount(count: number) {
+  if (count <= 0) {
+    return "";
+  }
+  if (count > 99) {
+    return "99+";
+  }
+  return String(count);
+}
+
 function truncateNotificationText(value: string, maxLength = 140) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -2605,9 +2615,9 @@ export function App() {
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const navBadgeByPage: Partial<Record<PrimaryPage, string>> = useMemo(() => ({
-    tasks: activeProjectTaskCommentUnreadCount > 0 ? String(activeProjectTaskCommentUnreadCount) : "",
-    inbox: activeProjectUnreadCount > 0 ? String(activeProjectUnreadCount) : "",
-    sessions: activeSessionCount > 0 ? String(activeSessionCount) : "",
+    tasks: formatNavigationBadgeCount(activeProjectTaskCommentUnreadCount),
+    inbox: formatNavigationBadgeCount(activeProjectUnreadCount),
+    sessions: formatNavigationBadgeCount(activeSessionCount),
   }), [activeProjectTaskCommentUnreadCount, activeProjectUnreadCount, activeSessionCount]);
 
   const handleThemeChange = useCallback((nextThemeId: OrchestraThemeId) => {
@@ -3108,29 +3118,48 @@ export function App() {
       <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind} data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}>
       <aside className="sidebar">
         <div className="sidebar__top">
-          <div className="sidebar__brand" data-role="app-brand">
-            <div className="sidebar__brand-mark" aria-hidden="true">O</div>
-            <div className="sidebar__brand-copy">
-              <strong>Orchestra</strong>
-              <span>Operator workbench</span>
+          {isSidebarCollapsed ? (
+            <div className="sidebar__collapsed-header" data-role="sidebar-collapsed-header">
+              <button
+                className="sidebar__collapse-toggle"
+                data-role="toggle-sidebar-collapse"
+                type="button"
+                aria-label="Expand navigation"
+                aria-expanded={false}
+                title="Expand navigation"
+                {...getExplanatoryTooltipProps(
+                  "Expand the sidebar so labels and navigation details are visible again.",
+                  explanatoryTooltipsEnabled,
+                )}
+                onClick={() => setIsSidebarCollapsed((current) => !current)}
+              >
+                »
+              </button>
             </div>
-            <button
-              className="sidebar__collapse-toggle"
-              data-role="toggle-sidebar-collapse"
-              type="button"
-              aria-label={isSidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-              aria-expanded={!isSidebarCollapsed}
-              {...getExplanatoryTooltipProps(
-                isSidebarCollapsed
-                  ? "Expand the sidebar so labels and navigation details are visible again."
-                  : "Collapse the sidebar to make more room for your work.",
-                explanatoryTooltipsEnabled,
-              )}
-              onClick={() => setIsSidebarCollapsed((current) => !current)}
-            >
-              {isSidebarCollapsed ? "»" : "«"}
-            </button>
-          </div>
+          ) : (
+            <div className="sidebar__brand" data-role="app-brand">
+              <div className="sidebar__brand-mark" aria-hidden="true">O</div>
+              <div className="sidebar__brand-copy">
+                <strong>Orchestra</strong>
+                <span>Operator workbench</span>
+              </div>
+              <button
+                className="sidebar__collapse-toggle"
+                data-role="toggle-sidebar-collapse"
+                type="button"
+                aria-label="Collapse navigation"
+                aria-expanded={true}
+                title="Collapse navigation"
+                {...getExplanatoryTooltipProps(
+                  "Collapse the sidebar to make more room for your work.",
+                  explanatoryTooltipsEnabled,
+                )}
+                onClick={() => setIsSidebarCollapsed((current) => !current)}
+              >
+                «
+              </button>
+            </div>
+          )}
 
           <ProjectSwitcher
             projects={projects}
@@ -3159,7 +3188,7 @@ export function App() {
                       <NavIcon pageId={item.id} className="nav-item__icon-svg" />
                     </span>
                     <span className="nav-item__label">{item.label}</span>
-                    {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
+                    {badgeText ? <span className={isSidebarCollapsed ? "status-badge status-badge--warning status-badge--compact status-badge--rail nav-item__badge" : "status-badge status-badge--warning status-badge--compact nav-item__badge"} data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                   </button>
 
                   {activePage === "chat" && !isSidebarCollapsed ? (
@@ -3203,7 +3232,7 @@ export function App() {
                     <NavIcon pageId={item.id} className="nav-item__icon-svg" />
                   </span>
                   <span className="nav-item__label">{item.label}</span>
-                  {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
+                  {badgeText ? <span className={isSidebarCollapsed ? "status-badge status-badge--warning status-badge--compact status-badge--rail nav-item__badge" : "status-badge status-badge--warning status-badge--compact nav-item__badge"} data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
                 </button>
               );
             })}

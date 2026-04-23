@@ -151,9 +151,52 @@ test("navigation badges reflect unread inbox work and active sessions per projec
   });
 
   await page.goto("/");
-  await expect(page.locator('[data-role="project-switcher-trigger-badge"]')).toHaveText("*");
+  await page.locator('[data-role="toggle-sidebar-collapse"]').click();
+  await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar-collapsed', 'true');
+
+  await expect(page.locator('[data-role="project-switcher-trigger-badge"]')).toHaveAttribute('aria-label', 'Unread activity in other projects');
+  await expect(page.locator('[data-role="project-switcher-trigger-badge"]')).toHaveClass(/status-badge--dot/);
+
+  const collapsedBadgeGeometry = await page.evaluate(() => {
+    const trigger = document.querySelector('[data-role="project-switcher-trigger"]');
+    const triggerBadge = document.querySelector('[data-role="project-switcher-trigger-badge"]');
+    if (!(trigger instanceof HTMLElement) || !(triggerBadge instanceof HTMLElement)) {
+      return null;
+    }
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const triggerBadgeRect = triggerBadge.getBoundingClientRect();
+    return {
+      triggerBadgeWithinRail: triggerBadgeRect.right <= triggerRect.right + 1 && triggerBadgeRect.top >= triggerRect.top - 1,
+      triggerBadgeWidth: Math.round(triggerBadgeRect.width),
+    };
+  });
+
+  expect(collapsedBadgeGeometry).not.toBeNull();
+  expect(collapsedBadgeGeometry?.triggerBadgeWithinRail).toBe(true);
+  expect(collapsedBadgeGeometry?.triggerBadgeWidth ?? 999).toBeLessThanOrEqual(18);
 
   await page.locator('[data-role="project-switcher-trigger"]').click();
+  const menu = page.locator('[data-role="project-switcher-menu"]');
+  await expect(menu).toBeVisible();
+  const collapsedMenuGeometry = await page.evaluate(() => {
+    const trigger = document.querySelector('[data-role="project-switcher-trigger"]');
+    const panel = document.querySelector('[data-role="project-switcher-menu"]');
+    if (!(trigger instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
+      return null;
+    }
+    const triggerRect = trigger.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    return {
+      width: Math.round(panelRect.width),
+      left: Math.round(panelRect.left),
+      triggerRight: Math.round(triggerRect.right),
+    };
+  });
+  expect(collapsedMenuGeometry).not.toBeNull();
+  expect(collapsedMenuGeometry?.width ?? 0).toBeGreaterThanOrEqual(220);
+  expect(collapsedMenuGeometry?.left ?? 0).toBeGreaterThanOrEqual((collapsedMenuGeometry?.triggerRight ?? 0) - 1);
+
   await expect(page.locator('[data-role="project-switcher-option-alpha"]')).toContainText("Alpha");
   await expect(page.locator('[data-role="project-switcher-option-alpha"]')).toContainText("1");
   await expect(page.locator('[data-role="project-switcher-option-beta"]')).toContainText("Beta");
@@ -163,6 +206,34 @@ test("navigation badges reflect unread inbox work and active sessions per projec
   await expect(page.locator('[data-role="project-switcher-trigger-badge"]')).toHaveText("1");
   await expect(page.locator('[data-role="nav-badge-inbox"]')).toHaveText("1");
   await expect(page.locator('[data-role="nav-badge-sessions"]')).toHaveText("1");
+  await expect(page.locator('[data-role="nav-badge-inbox"]')).toHaveClass(/status-badge--rail/);
+  await expect(page.locator('[data-role="nav-badge-sessions"]')).toHaveClass(/status-badge--rail/);
+
+  const activeRailBadgeGeometry = await page.evaluate(() => {
+    const inboxButton = document.querySelector('[data-role="nav-item-inbox"]');
+    const inboxBadge = document.querySelector('[data-role="nav-badge-inbox"]');
+    const sessionsButton = document.querySelector('[data-role="nav-item-sessions"]');
+    const sessionsBadge = document.querySelector('[data-role="nav-badge-sessions"]');
+    if (!(inboxButton instanceof HTMLElement) || !(inboxBadge instanceof HTMLElement) || !(sessionsButton instanceof HTMLElement) || !(sessionsBadge instanceof HTMLElement)) {
+      return null;
+    }
+
+    const inboxRect = inboxButton.getBoundingClientRect();
+    const inboxBadgeRect = inboxBadge.getBoundingClientRect();
+    const sessionsRect = sessionsButton.getBoundingClientRect();
+    const sessionsBadgeRect = sessionsBadge.getBoundingClientRect();
+    return {
+      inboxBadgeWithinRail: inboxBadgeRect.right <= inboxRect.right + 1 && inboxBadgeRect.top >= inboxRect.top - 1,
+      sessionsBadgeWithinRail: sessionsBadgeRect.right <= sessionsRect.right + 1 && sessionsBadgeRect.top >= sessionsRect.top - 1,
+      inboxBadgeWidth: Math.round(inboxBadgeRect.width),
+      sessionsBadgeWidth: Math.round(sessionsBadgeRect.width),
+    };
+  });
+  expect(activeRailBadgeGeometry).not.toBeNull();
+  expect(activeRailBadgeGeometry?.inboxBadgeWithinRail).toBe(true);
+  expect(activeRailBadgeGeometry?.sessionsBadgeWithinRail).toBe(true);
+  expect(activeRailBadgeGeometry?.inboxBadgeWidth ?? 999).toBeLessThanOrEqual(24);
+  expect(activeRailBadgeGeometry?.sessionsBadgeWidth ?? 999).toBeLessThanOrEqual(24);
 
   await page.locator('[data-role="nav-item-sessions"]').click();
   await expect(page.locator('.session-list')).toContainText('Alpha session');

@@ -23,6 +23,13 @@ function getProjectMonogram(name: string | null | undefined) {
   return initials || trimmed.slice(0, 2).toUpperCase();
 }
 
+function formatProjectBadgeCount(count: number) {
+  if (count > 99) {
+    return "99+";
+  }
+  return String(count);
+}
+
 export function ProjectSwitcher({
   projects,
   activeProjectId,
@@ -40,7 +47,13 @@ export function ProjectSwitcher({
   );
 
   const activeUnreadCount = activeProject?.id ? unreadCountsByProject[activeProject.id] ?? 0 : 0;
-  const triggerBadge = activeUnreadCount > 0 ? String(activeUnreadCount) : hasUnreadOutsideActiveProject ? "•" : null;
+  const hasUnreadElsewhereIndicator = activeUnreadCount === 0 && hasUnreadOutsideActiveProject;
+  const triggerBadge = activeUnreadCount > 0 ? formatProjectBadgeCount(activeUnreadCount) : hasUnreadElsewhereIndicator ? "•" : null;
+  const triggerBadgeLabel = activeUnreadCount > 0
+    ? `${activeUnreadCount} unread item${activeUnreadCount === 1 ? "" : "s"} in ${activeProject?.name ?? "the active project"}`
+    : hasUnreadElsewhereIndicator
+      ? "Unread activity in other projects"
+      : null;
   const getTooltipProps = useExplanatoryTooltipProps();
   const triggerName = activeProject?.name ?? "Select project";
   const triggerLabel = activeProject ? `Switch project: ${activeProject.name}` : "Select project";
@@ -76,7 +89,7 @@ export function ProjectSwitcher({
 
   return (
     <div className="project-switcher" ref={rootRef} data-collapsed={collapsed ? "true" : "false"}>
-      <span className="project-switcher__label">Project</span>
+      {!collapsed ? <span className="project-switcher__label">Project</span> : null}
       <select
         className="project-switcher__native-select"
         data-role="project-switcher"
@@ -105,7 +118,14 @@ export function ProjectSwitcher({
           <span className="project-switcher__trigger-label">{triggerName}</span>
         </span>
         {triggerBadge ? (
-          <span className="status-badge status-badge--warning status-badge--compact project-switcher__badge" data-role="project-switcher-trigger-badge">
+          <span
+            className={collapsed
+              ? `status-badge status-badge--warning status-badge--compact status-badge--rail${hasUnreadElsewhereIndicator ? " status-badge--dot" : ""} project-switcher__badge`
+              : `status-badge status-badge--warning status-badge--compact${hasUnreadElsewhereIndicator ? " status-badge--dot" : ""} project-switcher__badge`}
+            data-role="project-switcher-trigger-badge"
+            aria-label={triggerBadgeLabel ?? undefined}
+            title={triggerBadgeLabel ?? undefined}
+          >
             {triggerBadge}
           </span>
         ) : null}
@@ -133,7 +153,7 @@ export function ProjectSwitcher({
                 <span className="project-switcher__item-label">{project.name}</span>
                 {unreadCount > 0 ? (
                   <span className="status-badge status-badge--warning status-badge--compact project-switcher__badge">
-                    {unreadCount}
+                    {formatProjectBadgeCount(unreadCount)}
                   </span>
                 ) : null}
               </button>

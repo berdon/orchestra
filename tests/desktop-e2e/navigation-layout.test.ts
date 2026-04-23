@@ -41,9 +41,15 @@ describe("desktop navigation layout", () => {
         triggerTooltip: string;
         toggleTooltip: string;
         shortLabelCount: number;
+        brandCount: number;
+        collapsedHeaderButtonCount: number;
+        projectLabelCount: number;
+        toggleToProjectGap: number | null;
       }>(
         sessionId,
         `
+          const toggle = document.querySelector('[data-role="toggle-sidebar-collapse"]');
+          const trigger = document.querySelector('[data-role="project-switcher-trigger"]');
           return {
             navTitles: Array.from(document.querySelectorAll('[data-role^="nav-item-"]')).map((node) => node.getAttribute('title') ?? ''),
             navAriaLabels: Array.from(document.querySelectorAll('[data-role^="nav-item-"]')).map((node) => node.getAttribute('aria-label') ?? ''),
@@ -51,6 +57,12 @@ describe("desktop navigation layout", () => {
             triggerTooltip: document.querySelector('[data-role="project-switcher-trigger"]')?.getAttribute('data-tooltip') ?? '',
             toggleTooltip: document.querySelector('[data-role="toggle-sidebar-collapse"]')?.getAttribute('data-tooltip') ?? '',
             shortLabelCount: document.querySelectorAll('.nav-item__label--short').length,
+            brandCount: document.querySelectorAll('[data-role="app-brand"]').length,
+            collapsedHeaderButtonCount: document.querySelectorAll('[data-role="sidebar-collapsed-header"] [data-role="toggle-sidebar-collapse"]').length,
+            projectLabelCount: document.querySelectorAll('.project-switcher__label').length,
+            toggleToProjectGap: toggle instanceof HTMLElement && trigger instanceof HTMLElement
+              ? Math.round(trigger.getBoundingClientRect().top - toggle.getBoundingClientRect().bottom)
+              : null,
           };
         `,
       );
@@ -60,6 +72,40 @@ describe("desktop navigation layout", () => {
       expect(collapsedRailState.triggerTooltip).toBe("Switch the active project and refresh the app to that project's data.");
       expect(collapsedRailState.toggleTooltip).toBe('Expand the sidebar so labels and navigation details are visible again.');
       expect(collapsedRailState.shortLabelCount).toBe(0);
+      expect(collapsedRailState.brandCount).toBe(0);
+      expect(collapsedRailState.collapsedHeaderButtonCount).toBe(1);
+      expect(collapsedRailState.projectLabelCount).toBe(0);
+      expect(collapsedRailState.toggleToProjectGap).not.toBeNull();
+      expect(collapsedRailState.toggleToProjectGap ?? 999).toBeLessThanOrEqual(24);
+
+      await clickSelector(sessionId, '[data-role="project-switcher-trigger"]');
+      await waitForSelector(sessionId, '[data-role="project-switcher-menu"]');
+      const collapsedMenuState = await executeScript<{
+        menuWidth: number | null;
+        menuLeft: number | null;
+        triggerRight: number | null;
+      }>(
+        sessionId,
+        `
+          const trigger = document.querySelector('[data-role="project-switcher-trigger"]');
+          const menu = document.querySelector('[data-role="project-switcher-menu"]');
+          if (!(trigger instanceof HTMLElement) || !(menu instanceof HTMLElement)) {
+            return { menuWidth: null, menuLeft: null, triggerRight: null };
+          }
+          const triggerRect = trigger.getBoundingClientRect();
+          const menuRect = menu.getBoundingClientRect();
+          return {
+            menuWidth: Math.round(menuRect.width),
+            menuLeft: Math.round(menuRect.left),
+            triggerRight: Math.round(triggerRect.right),
+          };
+        `,
+      );
+      expect(collapsedMenuState.menuWidth).not.toBeNull();
+      expect(collapsedMenuState.menuWidth ?? 0).toBeGreaterThanOrEqual(220);
+      expect(collapsedMenuState.menuLeft).not.toBeNull();
+      expect(collapsedMenuState.triggerRight).not.toBeNull();
+      expect(collapsedMenuState.menuLeft ?? 0).toBeGreaterThanOrEqual((collapsedMenuState.triggerRight ?? 0) - 1);
 
       await clickSelector(sessionId, '[data-role="toggle-sidebar-collapse"]');
       const expanded = await executeScript<string | null>(

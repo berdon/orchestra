@@ -42,16 +42,42 @@ test("left navigation can collapse into an icon rail and persists across reloads
     await expect(page.getByRole('button', { name })).toBeVisible();
   }
 
+  await expect(page.locator('[data-role="app-brand"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="sidebar-collapsed-header"]')).toBeVisible();
+  await expect(page.locator('[data-role="sidebar-collapsed-header"] >> [data-role="toggle-sidebar-collapse"]')).toHaveAttribute('title', 'Expand navigation');
+  await expect(page.locator('.project-switcher__label')).toHaveCount(0);
   await expect(page.locator('.nav-item__icon').first()).toBeVisible();
   await expect(page.locator('.nav-item__label--short')).toHaveCount(0);
   await expect(page.locator('[data-role="project-switcher-trigger"]')).toHaveAccessibleName(/Switch project:/);
   await expect(page.locator('[data-role="project-switcher-trigger"]')).toHaveAttribute('data-tooltip', "Switch the active project and refresh the app to that project's data.");
+
+  const collapsedSpacing = await page.evaluate(() => {
+    const toggle = document.querySelector('[data-role="toggle-sidebar-collapse"]');
+    const projectTrigger = document.querySelector('[data-role="project-switcher-trigger"]');
+    const firstNavItem = document.querySelector('[data-role="nav-item-tasks"]');
+    if (!(toggle instanceof HTMLElement) || !(projectTrigger instanceof HTMLElement) || !(firstNavItem instanceof HTMLElement)) {
+      return null;
+    }
+
+    const toggleRect = toggle.getBoundingClientRect();
+    const projectRect = projectTrigger.getBoundingClientRect();
+    const firstNavRect = firstNavItem.getBoundingClientRect();
+    return {
+      toggleToProjectGap: Math.round(projectRect.top - toggleRect.bottom),
+      projectToFirstNavGap: Math.round(firstNavRect.top - projectRect.bottom),
+    };
+  });
+
+  expect(collapsedSpacing).not.toBeNull();
+  expect(collapsedSpacing?.toggleToProjectGap ?? 999).toBeLessThanOrEqual(24);
+  expect(collapsedSpacing?.projectToFirstNavGap ?? 999).toBeLessThanOrEqual(16);
 
   const storedCollapsed = await page.evaluate(() => window.localStorage.getItem('orchestra.preferences.sidebar-collapsed'));
   expect(storedCollapsed).toBe('true');
 
   await page.reload();
   await expect(shell).toHaveAttribute('data-sidebar-collapsed', 'true');
+  await expect(page.locator('[data-role="sidebar-collapsed-header"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Tasks' })).toBeVisible();
 });
 
