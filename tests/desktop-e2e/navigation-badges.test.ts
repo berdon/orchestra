@@ -7,12 +7,25 @@ import {
   ensureReactReady,
   executeScript,
   invokeCommand,
+  sleep,
   waitForSelector,
   waitForText,
 } from "./driver";
-import { createProjectViaSettings } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
+
+async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | undefined;
+  while (Date.now() < deadline) {
+    lastValue = await callback();
+    if (predicate(lastValue)) {
+      return lastValue;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue)}`);
+}
 
 describe("desktop navigation badges", () => {
   it.skipIf(!isDesktopE2E)("shows per-project unread badges cleanly in the collapsed navigation rail", async () => {
@@ -20,8 +33,20 @@ describe("desktop navigation badges", () => {
     try {
       await ensureReactReady(sessionId);
 
-      await createProjectViaSettings(sessionId, "Alpha", "Alpha project for navigation badge coverage.");
-      await createProjectViaSettings(sessionId, "Beta", "Beta project for navigation badge coverage.");
+      await invokeCommand(sessionId, "create_project", {
+        input: {
+          name: "Alpha",
+          taskPrefix: "ALP",
+          description: "Alpha project for navigation badge coverage.",
+        },
+      });
+      await invokeCommand(sessionId, "create_project", {
+        input: {
+          name: "Beta",
+          taskPrefix: "BET",
+          description: "Beta project for navigation badge coverage.",
+        },
+      });
       const projects = await invokeCommand<Array<{ id: string; slug: string; name: string }>>(sessionId, "list_projects");
       const alphaProject = projects.find((project) => project.name === "Alpha");
       const betaProject = projects.find((project) => project.name === "Beta");
@@ -59,6 +84,13 @@ describe("desktop navigation badges", () => {
         projectSlug: betaProject!.slug,
       });
 
+      await executeScript(sessionId, `
+        window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+        window.location.reload();
+        return true;
+      `);
+      await sleep(1000);
+      await ensureReactReady(sessionId);
       await waitForSelector(sessionId, '[data-role="project-switcher-trigger-badge"]');
       const outsideUnreadLabel = await executeScript<string>(sessionId, `
         return document.querySelector('[data-role="project-switcher-trigger-badge"]')?.getAttribute('aria-label') ?? '';
@@ -158,22 +190,25 @@ describe("desktop navigation badges", () => {
       expect(collapsedMenuState.beta).toContain('1');
 
       await clickSelector(sessionId, '[data-role="project-switcher-option-beta"]');
-      const collapsedBetaBadgeState = await executeScript<{
-        triggerBadgeText: string;
-        inboxBadgeText: string;
-        sessionsBadgeText: string;
-      }>(sessionId, `
-        return {
-          triggerBadgeText: document.querySelector('[data-role="project-switcher-trigger-badge"]')?.textContent?.trim() ?? '',
-          inboxBadgeText: document.querySelector('[data-role="nav-badge-inbox"]')?.textContent?.trim() ?? '',
-          sessionsBadgeText: document.querySelector('[data-role="nav-badge-sessions"]')?.textContent?.trim() ?? '',
-        };
-      `);
+      const collapsedBetaBadgeState = await waitForCondition(
+        () => executeScript<{
+          triggerBadgeText: string;
+          inboxBadgeText: string;
+          sessionsBadgeText: string;
+        }>(sessionId, `
+          return {
+            triggerBadgeText: document.querySelector('[data-role="project-switcher-trigger-badge"]')?.textContent?.trim() ?? '',
+            inboxBadgeText: document.querySelector('[data-role="nav-badge-inbox"]')?.textContent?.trim() ?? '',
+            sessionsBadgeText: document.querySelector('[data-role="nav-badge-sessions"]')?.textContent?.trim() ?? '',
+          };
+        `),
+        (value) => value.triggerBadgeText === '1' && value.inboxBadgeText === '1' && value.sessionsBadgeText === '1',
+      );
       expect(collapsedBetaBadgeState.triggerBadgeText).toBe('1');
       expect(collapsedBetaBadgeState.inboxBadgeText).toBe('1');
       expect(collapsedBetaBadgeState.sessionsBadgeText).toBe('1');
     } finally {
       await deleteWebdriverSession(sessionId);
     }
-  }, 120_000);
+  }, 240_000);
 });

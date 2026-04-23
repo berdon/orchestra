@@ -4,8 +4,10 @@ import {
   createOptimisticOrchestraClientBootstrap,
 } from "./bootstrapFactory";
 import type { OrchestraClient, OrchestraClientBinding } from "./client";
-import type { OrchestraClientServiceBindings } from "./serviceBindings";
+import { createMockHostAdminExtension } from "./mockHostAdminExtension";
 import { mockOrchestraClientServiceBindings } from "./mockBindings";
+import { createMockShellExtension } from "./mockShellExtension";
+import type { OrchestraClientServiceBindings } from "./serviceBindings";
 
 export function createOptimisticMockOrchestraClientBootstrap() {
   return createOptimisticOrchestraClientBootstrap("mock");
@@ -20,7 +22,14 @@ export async function buildMockOrchestraClientBootstrap(
 export function createMockOrchestraClient(
   services: OrchestraClientServiceBindings = mockOrchestraClientServiceBindings,
 ): OrchestraClient {
-  return createOrchestraClient(() => buildMockOrchestraClientBootstrap(services), services);
+  return createOrchestraClient(
+    () => buildMockOrchestraClientBootstrap(services),
+    services,
+    {
+      shell: createMockShellExtension(),
+      hostAdmin: createMockHostAdminExtension(),
+    },
+  );
 }
 
 export function createMockOrchestraClientBinding(

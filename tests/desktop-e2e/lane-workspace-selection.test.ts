@@ -34,6 +34,29 @@ async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value
   throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue, null, 2)}`);
 }
 
+async function dispatchTaskLaneWhenReady(sessionId: string, taskId: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    try {
+      await invokeCommand(sessionId, 'dispatch_task_lane', { taskId });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!lastError.includes('already processing a message')) {
+        throw error;
+      }
+    }
+    await waitForCondition(
+      () => invokeCommand<Array<{ title?: string; status?: string }>>(sessionId, 'list_sessions'),
+      (sessions) => sessions.every((entry) => !String(entry.title ?? '').includes('Supervisor main session') || String(entry.status ?? '') === 'idle'),
+      15_000,
+    ).catch(() => undefined);
+    await sleep(500);
+  }
+  throw new Error(`Timed out dispatching task lane ${taskId}: ${lastError}`);
+}
+
 describe("desktop lane workspace selection", () => {
   it.skipIf(!isDesktopE2E)("uses shared task workspaces by default and role runtime workspaces when requested", async () => {
     expect(testHome).toBeTruthy();
@@ -58,6 +81,10 @@ describe("desktop lane workspace selection", () => {
         capacity: "2",
         description: "Runs workflow lane workspace tests.",
       });
+
+      const developerRole = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false })
+        .then((roles) => roles.find((entry) => entry.name === 'Developer'));
+      expect(developerRole).toBeTruthy();
 
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, "list_projects")
         .then((projects) => projects.find((entry) => entry.name === "Lane Workspace Project"));
@@ -145,9 +172,12 @@ describe("desktop lane workspace selection", () => {
         },
       });
 
-      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: sharedTask.id });
       const sharedTaskDetail = await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: sharedTask.id }),
+        async () => {
+          await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+          await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
+          return invokeCommand<any>(sessionId, "get_task", { taskId: sharedTask.id });
+        },
         (task) => Boolean(task.activeLaneAssignment?.runtimeCwd),
       );
       const sharedRepositories = await waitForCondition(
@@ -159,9 +189,12 @@ describe("desktop lane workspace selection", () => {
       expect(sharedTaskDetail.activeLaneAssignment?.runtimeCwd).toBe(expectedSharedWorkspace);
       expect(sharedRepositories[0]?.taskWorktreePath).toContain(join(expectedSharedWorkspace, "repos"));
 
-      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: separateTask.id });
       const separateTaskDetail = await waitForCondition(
-        () => invokeCommand<any>(sessionId, "get_task", { taskId: separateTask.id }),
+        async () => {
+          await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+          await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
+          return invokeCommand<any>(sessionId, "get_task", { taskId: separateTask.id });
+        },
         (task) => Boolean(task.activeLaneAssignment?.runtimeCwd),
       );
       const separateRepositories = await waitForCondition(

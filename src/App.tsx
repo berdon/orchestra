@@ -1,32 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import {
-  cleanupStaleBridgeInstances,
-  clearLogs,
-  getBridgeDiagnostics,
-  getInitialAgentTerminalSessionId,
-  getInitialAgentTerminalWindowFlag,
-  getInitialLogsWindowFlag,
-  getLogs,
-  exportLogsBundle,
-  dismissPiLegacyImport,
-  getPiModelsJson,
-  getPiOAuthFlowState,
-  getPiSetupState,
-  getCurrentAgentTerminalSessionId,
-  isCurrentAgentTerminalWindow,
-  isCurrentLogsWindow,
-  importLegacyPiConfiguration,
-  importPiLegacyConfig,
-  cancelPiOAuthFlow,
-  dismissPiOAuthFlow,
-  openLogsWindow,
-  removePiProviderCredential,
-  startPiOAuthFlow,
-  savePiModelsJson,
-  submitPiOAuthFlowInput,
-  setPiProviderApiKey,
-} from "./lib/tauri";
-import { ensureAgentSession, listAgentOperations, listAgents, openAgentSessionInTerminal } from "./lib/agents";
+import { ensureAgentSession, listAgentOperations, listAgents } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { applyPendingRunToSession, createPendingUserRun, type PendingSessionRun, reduceSessionTranscriptEvent } from "./lib/sessionTranscriptReducer";
 import { sortSessionRecords } from "./lib/sessionList";
@@ -34,9 +7,7 @@ import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
-import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSettings";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
-import { getSystemNotificationEnvironmentStatus, getSystemNotificationPermissionState, requestSystemNotificationPermission, sendSystemNotification, sendTestSystemNotification } from "./lib/systemNotifications";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import {
   ExplanatoryTooltipsProvider,
@@ -48,7 +19,18 @@ import {
 import { useProjectReferenceData, useProjectUnreadCounts } from "./lib/orchestraData/appShell";
 import { useOrchestraEventSubscription } from "./lib/orchestraData/events";
 import { useSessionEventRefresh, useSessionPollingRefresh } from "./lib/orchestraData/sessions";
-import { useOrchestraBootstrap, useOrchestraClient } from "./lib/orchestraClient";
+import {
+  defaultOrchestraShellWindowState,
+  supportsAgentTerminal,
+  supportsBridgeDiagnostics,
+  supportsHarnessSettings,
+  supportsLogsWindow,
+  supportsRemoteAccess,
+  supportsRuntimeLogs,
+  supportsSystemNotifications,
+  useOrchestraBootstrap,
+  useOrchestraClient,
+} from "./lib/orchestraClient";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { ProjectSwitcher } from "./components/ProjectSwitcher";
@@ -755,6 +737,16 @@ export function App() {
 
   const orchestraClient = useOrchestraClient();
   const orchestraBootstrap = useOrchestraBootstrap();
+  const shellExtension = orchestraClient.shell;
+  const hostAdminExtension = orchestraClient.hostAdmin;
+  const initialShellWindowState = shellExtension?.getInitialWindowState() ?? defaultOrchestraShellWindowState();
+  const canOpenLogsWindow = supportsLogsWindow(orchestraClient, orchestraBootstrap);
+  const canUseAgentTerminal = supportsAgentTerminal(orchestraClient, orchestraBootstrap);
+  const canManageRuntimeLogs = supportsRuntimeLogs(orchestraClient, orchestraBootstrap);
+  const canManageBridgeDiagnostics = supportsBridgeDiagnostics(orchestraClient, orchestraBootstrap);
+  const canManageHarnessSettings = supportsHarnessSettings(orchestraClient, orchestraBootstrap);
+  const canManageRemoteAccess = supportsRemoteAccess(orchestraClient, orchestraBootstrap);
+  const canManageSystemNotifications = supportsSystemNotifications(orchestraClient, orchestraBootstrap);
 
   const [activePage, setActivePage] = useState<PrimaryPage>(initialRouteState.page);
   const [sessionFilter, setSessionFilter] = useState<"active" | "closed">("active");
@@ -784,9 +776,9 @@ export function App() {
   const [refreshingSystemNotificationPermission, setRefreshingSystemNotificationPermission] = useState(false);
   const [requestingSystemNotificationPermission, setRequestingSystemNotificationPermission] = useState(false);
   const [sendingTestSystemNotification, setSendingTestSystemNotification] = useState(false);
-  const [isLogsWindow, setIsLogsWindow] = useState(() => getInitialLogsWindowFlag());
-  const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(() => getInitialAgentTerminalWindowFlag());
-  const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(() => getInitialAgentTerminalSessionId());
+  const [isLogsWindow, setIsLogsWindow] = useState(() => initialShellWindowState.isLogsWindow);
+  const [isAgentTerminalWindow, setIsAgentTerminalWindow] = useState(() => initialShellWindowState.isAgentTerminalWindow);
+  const [agentTerminalSessionId, setAgentTerminalSessionId] = useState<string | null>(() => initialShellWindowState.agentTerminalSessionId);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialRouteState.selectedSessionId);
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
@@ -884,6 +876,27 @@ export function App() {
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
     [activeProjectId, projects],
   );
+  const visibleSettingsTabs = useMemo(
+    () => SETTINGS_TABS.filter((tab) => {
+      if (tab.id === "harness") {
+        return canManageHarnessSettings;
+      }
+      if (tab.id === "remote") {
+        return canManageRemoteAccess;
+      }
+      return true;
+    }),
+    [canManageHarnessSettings, canManageRemoteAccess],
+  );
+  const activeSettingsTab = visibleSettingsTabs.some((tab) => tab.id === settingsTab)
+    ? settingsTab
+    : (visibleSettingsTabs[0]?.id ?? "projects");
+
+  useEffect(() => {
+    if (settingsTab !== activeSettingsTab) {
+      setSettingsTab(activeSettingsTab);
+    }
+  }, [activeSettingsTab, settingsTab]);
 
   const activeProjectUnreadCount = useMemo(
     () => (activeProjectId ? projectUnreadCounts[activeProjectId] ?? 0 : 0),
@@ -1012,7 +1025,7 @@ export function App() {
     const url = new URL(window.location.href);
     setSearchParam(url.searchParams, "page", activePage);
     setSearchParam(url.searchParams, "projectId", activeProjectId);
-    setSearchParam(url.searchParams, "settingsTab", activePage === "settings" ? settingsTab : null);
+    setSearchParam(url.searchParams, "settingsTab", activePage === "settings" ? activeSettingsTab : null);
     setSearchParam(url.searchParams, "selectedTaskId", activePage === "tasks" ? selectedTaskId : null);
     setSearchParam(
       url.searchParams,
@@ -1028,7 +1041,7 @@ export function App() {
     if (nextUrl !== currentUrl) {
       window.history.replaceState(window.history.state, "", nextUrl);
     }
-  }, [activePage, activeProjectId, isDetachedWindow, pendingSelectedSessionId, selectedSessionId, selectedTaskId, settingsTab]);
+  }, [activePage, activeProjectId, activeSettingsTab, isDetachedWindow, pendingSelectedSessionId, selectedSessionId, selectedTaskId]);
 
   useEffect(() => {
     if (!pendingSessionOpenRequest || pendingSessionOpenRequest.projectId !== activeProjectId) {
@@ -1313,18 +1326,25 @@ export function App() {
   }, [patchSessionRecord]);
 
   async function loadLogs() {
+    if (!hostAdminExtension || !canManageRuntimeLogs) {
+      setLogs([]);
+      return;
+    }
     setLoadingLogs(true);
     try {
-      setLogs(await getLogs());
+      setLogs(await hostAdminExtension.logs.list());
     } finally {
       setLoadingLogs(false);
     }
   }
 
   async function handleClearLogs() {
+    if (!hostAdminExtension || !canManageRuntimeLogs) {
+      return;
+    }
     setClearingLogs(true);
     try {
-      await clearLogs();
+      await hostAdminExtension.logs.clear();
       setLogs([]);
     } finally {
       setClearingLogs(false);
@@ -1332,21 +1352,27 @@ export function App() {
   }
 
   async function handleOpenLogsWindow() {
-    await openLogsWindow();
+    if (!shellExtension || !canOpenLogsWindow) {
+      return;
+    }
+    await shellExtension.openLogsWindow();
   }
 
   async function handleExportLogsBundle() {
+    if (!hostAdminExtension || !canManageRuntimeLogs) {
+      return;
+    }
     setExportingLogs(true);
     setLogExportMessage(null);
     setLogExportError(null);
     try {
-      const bundlePath = await exportLogsBundle(includeRelatedSessionSnapshot);
+      const bundlePath = await hostAdminExtension.logs.exportBundle(includeRelatedSessionSnapshot);
       setLogExportMessage(
         includeRelatedSessionSnapshot
           ? `Saved log bundle with related sessions and database snapshot to ${bundlePath}`
           : `Saved log bundle to ${bundlePath}`,
       );
-      setLogs(await getLogs());
+      setLogs(await hostAdminExtension.logs.list());
     } catch (error) {
       setLogExportError(error instanceof Error ? error.message : "Unable to export log bundle.");
     } finally {
@@ -1355,13 +1381,17 @@ export function App() {
   }
 
   async function loadBridgeDiagnostics(options?: { background?: boolean }) {
+    if (!hostAdminExtension || !canManageBridgeDiagnostics) {
+      setBridgeDiagnostics(null);
+      return;
+    }
     if (options?.background) {
       setRefreshingBridgeDiagnostics(true);
     } else {
       setLoadingBridgeDiagnostics(true);
     }
     try {
-      setBridgeDiagnostics(await getBridgeDiagnostics());
+      setBridgeDiagnostics(await hostAdminExtension.bridge.getDiagnostics());
     } finally {
       if (options?.background) {
         setRefreshingBridgeDiagnostics(false);
@@ -1372,11 +1402,16 @@ export function App() {
   }
 
   async function handleCleanupStaleBridges() {
+    if (!hostAdminExtension || !canManageBridgeDiagnostics) {
+      return;
+    }
     setRefreshingBridgeDiagnostics(true);
     try {
-      await cleanupStaleBridgeInstances();
-      setLogs(await getLogs());
-      setBridgeDiagnostics(await getBridgeDiagnostics());
+      await hostAdminExtension.bridge.cleanupStaleInstances();
+      if (canManageRuntimeLogs) {
+        setLogs(await hostAdminExtension.logs.list());
+      }
+      setBridgeDiagnostics(await hostAdminExtension.bridge.getDiagnostics());
     } finally {
       setRefreshingBridgeDiagnostics(false);
     }
@@ -1405,17 +1440,26 @@ export function App() {
   }
 
   async function loadPiRuntimeSettings() {
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      setPiRuntimeSettings(null);
+      return;
+    }
     try {
-      setPiRuntimeSettings(await getPiRuntimeSettings());
+      setPiRuntimeSettings(await hostAdminExtension.harness.getRuntimeSettings());
     } catch (error) {
       setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load PI runtime settings."));
     }
   }
 
   async function loadPiSetup() {
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      setPiSetupState(null);
+      setLoadingPiSetup(false);
+      return;
+    }
     setLoadingPiSetup(true);
     try {
-      setPiSetupState(await getPiSetupState());
+      setPiSetupState(await hostAdminExtension.harness.getSetupState());
     } catch (error) {
       setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load Pi setup state."));
     } finally {
@@ -1424,17 +1468,25 @@ export function App() {
   }
 
   async function loadPiOAuthFlow() {
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      setPiOAuthFlowState(null);
+      return;
+    }
     try {
-      setPiOAuthFlowState(await getPiOAuthFlowState());
+      setPiOAuthFlowState(await hostAdminExtension.harness.getOAuthFlowState());
     } catch (error) {
       setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load Pi OAuth flow state."));
     }
   }
 
   async function loadPiModelsJsonState() {
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      setPiModelsJson('{\n  "providers": {}\n}\n');
+      return;
+    }
     setLoadingPiModelsJson(true);
     try {
-      setPiModelsJson(await getPiModelsJson());
+      setPiModelsJson(await hostAdminExtension.harness.getModelsJson());
     } catch (error) {
       setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load models.json."));
     } finally {
@@ -1452,10 +1504,15 @@ export function App() {
   }
 
   async function loadSystemNotificationPermission() {
+    if (!hostAdminExtension || !canManageSystemNotifications) {
+      setSystemNotificationEnvironment(null);
+      setSystemNotificationPermission("unsupported");
+      return;
+    }
     try {
       const [environment, permission] = await Promise.all([
-        getSystemNotificationEnvironmentStatus(),
-        getSystemNotificationPermissionState(),
+        hostAdminExtension.notifications.getEnvironmentStatus(),
+        hostAdminExtension.notifications.getPermissionState(),
       ]);
       setSystemNotificationEnvironment(environment);
       setSystemNotificationPermission(permission);
@@ -1465,6 +1522,9 @@ export function App() {
   }
 
   async function handleRefreshSystemNotificationPermission() {
+    if (!hostAdminExtension || !canManageSystemNotifications) {
+      return;
+    }
     setRefreshingSystemNotificationPermission(true);
     try {
       await loadSystemNotificationPermission();
@@ -1474,9 +1534,12 @@ export function App() {
   }
 
   async function handleRequestSystemNotificationPermission() {
+    if (!hostAdminExtension || !canManageSystemNotifications) {
+      return;
+    }
     setRequestingSystemNotificationPermission(true);
     try {
-      setSystemNotificationPermission(await requestSystemNotificationPermission());
+      setSystemNotificationPermission(await hostAdminExtension.notifications.requestPermission());
       await loadSystemNotificationPermission();
     } catch (error) {
       setSessionActionError(await orchestraClient.app.reportError("ui.notifications.permission.request", error, "Unable to request system notification permission."));
@@ -1486,9 +1549,12 @@ export function App() {
   }
 
   async function handleSendTestSystemNotification() {
+    if (!hostAdminExtension || !canManageSystemNotifications) {
+      return;
+    }
     setSendingTestSystemNotification(true);
     try {
-      await sendTestSystemNotification();
+      await hostAdminExtension.notifications.sendTest();
       await loadSystemNotificationPermission();
     } catch (error) {
       setSessionActionError(await orchestraClient.app.reportError("ui.notifications.test", error, "Unable to send the test system notification."));
@@ -1505,8 +1571,11 @@ export function App() {
   }
 
   async function handleSavePiRuntimeSettings(input: { extraExtensions: string[]; defaultCompactionWindow: string }) {
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
     try {
-      setPiRuntimeSettings(await updatePiRuntimeSettings(input));
+      setPiRuntimeSettings(await hostAdminExtension.harness.updateRuntimeSettings(input));
       await loadAppInfo();
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to save PI runtime settings.");
@@ -1514,8 +1583,11 @@ export function App() {
   }
 
   async function handleImportLegacyPiConfiguration(input: { importAuth: boolean; importModels: boolean }) {
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
     try {
-      await importLegacyPiConfiguration(input.importAuth, input.importModels);
+      await hostAdminExtension.harness.importLegacyConfiguration(input);
       await Promise.all([loadAppInfo(), loadPiRuntimeSettings(), refreshPiSetupState({ includeModelsJson: true })]);
     } catch (error) {
       setSessionActionError(error instanceof Error ? error.message : "Unable to import legacy PI configuration.");
@@ -1523,44 +1595,71 @@ export function App() {
   }
 
   async function handleSavePiProviderApiKey(providerId: string, apiKey: string) {
-    setPiSetupState(await setPiProviderApiKey(providerId, apiKey));
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiSetupState(await hostAdminExtension.harness.setProviderApiKey(providerId, apiKey));
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
   async function handleRemovePiProviderCredential(providerId: string) {
-    setPiSetupState(await removePiProviderCredential(providerId));
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiSetupState(await hostAdminExtension.harness.removeProviderCredential(providerId));
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
   async function handleImportPiLegacyConfig(replaceExisting = false) {
-    setPiSetupState(await importPiLegacyConfig(replaceExisting));
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiSetupState(await hostAdminExtension.harness.importLegacyConfig(replaceExisting));
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
   async function handleDismissPiLegacyImport() {
-    setPiSetupState(await dismissPiLegacyImport());
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiSetupState(await hostAdminExtension.harness.dismissLegacyImport());
     await refreshPiSetupState({ includeModelsJson: false });
   }
 
   async function handleSavePiModelsJson(content: string) {
-    setPiSetupState(await savePiModelsJson(content));
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiSetupState(await hostAdminExtension.harness.saveModelsJson(content));
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
   async function handleStartPiOAuthFlow(providerId: string, methodId?: string | null) {
-    setPiOAuthFlowState(await startPiOAuthFlow(providerId, methodId));
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiOAuthFlowState(await hostAdminExtension.harness.startOAuthFlow(providerId, methodId));
   }
 
   async function handleSubmitPiOAuthFlowInput(value: string) {
-    setPiOAuthFlowState(await submitPiOAuthFlowInput(value));
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiOAuthFlowState(await hostAdminExtension.harness.submitOAuthFlowInput(value));
   }
 
   async function handleCancelPiOAuthFlow() {
-    setPiOAuthFlowState(await cancelPiOAuthFlow());
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    setPiOAuthFlowState(await hostAdminExtension.harness.cancelOAuthFlow());
   }
 
   async function handleDismissPiOAuthFlow() {
-    await dismissPiOAuthFlow();
+    if (!hostAdminExtension || !canManageHarnessSettings) {
+      return;
+    }
+    await hostAdminExtension.harness.dismissOAuthFlow();
     setPiOAuthFlowState(null);
   }
 
@@ -1836,9 +1935,13 @@ export function App() {
     void loadPiSetup();
     void loadPiOAuthFlow();
     void loadSystemNotificationPermission();
-    void isCurrentLogsWindow().then(setIsLogsWindow);
-    void isCurrentAgentTerminalWindow().then(setIsAgentTerminalWindow);
-    void getCurrentAgentTerminalSessionId().then(setAgentTerminalSessionId);
+    if (shellExtension) {
+      void shellExtension.getWindowState().then((state) => {
+        setIsLogsWindow(state.isLogsWindow);
+        setIsAgentTerminalWindow(state.isAgentTerminalWindow);
+        setAgentTerminalSessionId(state.agentTerminalSessionId);
+      });
+    }
     loadProjectCatalog();
     const onProjectsChanged = () => loadProjectCatalog();
     const onPiSetupChanged = () => {
@@ -1860,7 +1963,7 @@ export function App() {
       window.removeEventListener("orchestra:pi-setup-change", onPiSetupChanged);
       window.removeEventListener("orchestra:pi-oauth-flow-change", onPiOAuthFlowChanged);
     };
-  }, []);
+  }, [hostAdminExtension, shellExtension]);
 
   useEffect(() => {
     if (activeProjectId) {
@@ -1886,10 +1989,15 @@ export function App() {
     void refreshProjectReferenceData().catch((error) => {
       setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load project references."));
     });
-  }, [activePage, isDetachedWindow, refreshProjectReferenceData, settingsTab]);
+  }, [activePage, activeSettingsTab, isDetachedWindow, refreshProjectReferenceData]);
 
   useOrchestraEventSubscription((event) => {
-    if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
+    if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow || !canManageSystemNotifications) {
+      return;
+    }
+
+    const notifications = hostAdminExtension?.notifications;
+    if (!notifications) {
       return;
     }
 
@@ -1906,7 +2014,7 @@ export function App() {
           continue;
         }
         notifiedInboxDeliveryIdsRef.current.add(message.deliveryId);
-        await sendSystemNotification({
+        await notifications.send({
           title: "Orchestra — New message",
           body: buildInboxNotificationBody(
             message,
@@ -1943,7 +2051,7 @@ export function App() {
           continue;
         }
         notifiedTaskAttentionKeysRef.current.add(dedupeKey);
-        await sendSystemNotification({
+        await notifications.send({
           title: reason === "task.transition.awaiting_user_approval"
             ? "Orchestra — Approval needed"
             : "Orchestra — User intervention needed",
@@ -1964,7 +2072,7 @@ export function App() {
     if (event.kind === "task.change" && ["task.transition.awaiting_user_approval", "task.transition.needs_user"].includes(event.reason)) {
       void notifyTaskAttention(event.taskIds, event.reason).catch(() => undefined);
     }
-  }, { disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow });
+  }, { disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow || !canManageSystemNotifications });
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -2280,13 +2388,13 @@ export function App() {
   }, [activeProject?.id, draftMessages, isDetachedWindow, liveSupervisorSession?.id, mergeSessionRecord, supervisorQuickChatOpen, supervisorSessionId]);
 
   useEffect(() => {
-    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "harness") {
+    if (isDetachedWindow || activePage !== "settings" || activeSettingsTab !== "harness" || !canManageHarnessSettings) {
       return;
     }
 
     void loadPiSetup();
     void loadPiModelsJsonState();
-  }, [activePage, settingsTab, isDetachedWindow]);
+  }, [activePage, activeSettingsTab, canManageHarnessSettings, isDetachedWindow]);
 
   useLayoutEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || isSidebarCollapsed) {
@@ -2296,32 +2404,45 @@ export function App() {
     settingsSubnavRef.current
       ?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activePage, isDetachedWindow, isSidebarCollapsed, settingsTab]);
+  }, [activePage, activeSettingsTab, isDetachedWindow, isSidebarCollapsed]);
 
   useEffect(() => {
-    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
+    if (isDetachedWindow || activePage !== "settings" || activeSettingsTab !== "general") {
       return;
     }
 
-    void loadLogs();
-    void loadBridgeDiagnostics();
-    void loadSystemNotificationPermission();
+    if (canManageRuntimeLogs) {
+      void loadLogs();
+    }
+    if (canManageBridgeDiagnostics) {
+      void loadBridgeDiagnostics();
+    }
+    if (canManageSystemNotifications) {
+      void loadSystemNotificationPermission();
+    }
+    if (!canManageRuntimeLogs && !canManageBridgeDiagnostics) {
+      return;
+    }
 
     const intervalId = window.setInterval(() => {
-      void loadLogs();
-      void loadBridgeDiagnostics({ background: true });
+      if (canManageRuntimeLogs) {
+        void loadLogs();
+      }
+      if (canManageBridgeDiagnostics) {
+        void loadBridgeDiagnostics({ background: true });
+      }
     }, 5000);
 
     return () => window.clearInterval(intervalId);
-  }, [activePage, settingsTab, isDetachedWindow, activeProject?.slug]);
+  }, [activePage, activeSettingsTab, canManageBridgeDiagnostics, canManageRuntimeLogs, canManageSystemNotifications, isDetachedWindow, activeProject?.slug]);
 
   useEffect(() => {
-    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "prompting") {
+    if (isDetachedWindow || activePage !== "settings" || activeSettingsTab !== "prompting") {
       return;
     }
 
     void loadSessionPromptSettings();
-  }, [activePage, settingsTab, isDetachedWindow, activeProject?.slug]);
+  }, [activePage, activeSettingsTab, isDetachedWindow, activeProject?.slug]);
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -2601,7 +2722,7 @@ export function App() {
 
   function navigateToHarnessSettings() {
     setActivePage("settings");
-    setSettingsTab("harness");
+    setSettingsTab(canManageHarnessSettings ? "harness" : "general");
   }
 
   function navigateToAgent(agentId: string) {
@@ -2645,9 +2766,12 @@ export function App() {
   }
 
   async function handleOpenAgentSessionTerminal(agentId: string) {
+    if (!shellExtension || !canUseAgentTerminal) {
+      return;
+    }
     setSessionActionError(null);
     try {
-      const session = await openAgentSessionInTerminal(agentId, activeProject?.id ?? getActiveProjectId() ?? null);
+      const session = await shellExtension.agentTerminal.openSession(agentId, activeProject?.id ?? getActiveProjectId() ?? null);
       mergeSessionRecord(session);
       setActivePage("sessions");
       setPendingSessionOpenRequest(null);
@@ -2679,6 +2803,10 @@ export function App() {
           workflows: nextWorkflows,
           projects: nextProjects,
           activeProjectId,
+          supportsLogsWindow: canOpenLogsWindow,
+          supportsHarnessSettings: canManageHarnessSettings,
+          supportsAgentTerminal: canUseAgentTerminal,
+          supportsRemoteAccess: canManageRemoteAccess,
         }),
       );
     } catch (error) {
@@ -3168,14 +3296,14 @@ export function App() {
                 role="tablist"
                 aria-label="Settings sections"
               >
-                {SETTINGS_TABS.map((tab) => (
+                {visibleSettingsTabs.map((tab) => (
                   <button
                     key={tab.id}
-                    className={settingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                    className={activeSettingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
                     data-role={`settings-tab-${tab.id}`}
                     type="button"
                     role="tab"
-                    aria-selected={settingsTab === tab.id}
+                    aria-selected={activeSettingsTab === tab.id}
                     onClick={() => setSettingsTab(tab.id)}
                   >
                     {tab.label}
@@ -3240,9 +3368,11 @@ export function App() {
             >
               Supervisor · Ctrl+T
             </button>
-            <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
-              Open logs
-            </button>
+            {canOpenLogsWindow ? (
+              <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
+                Open logs
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -3253,9 +3383,11 @@ export function App() {
               <strong>Dispatching disabled.</strong> {appInfo.dispatchBlockedReason}
             </div>
             <div className="action-cluster action-cluster--wrap">
-              <button className="secondary-button" type="button" onClick={navigateToHarnessSettings}>
-                Open Settings → Harness
-              </button>
+              {canManageHarnessSettings ? (
+                <button className="secondary-button" type="button" onClick={navigateToHarnessSettings}>
+                  Open Settings → Harness
+                </button>
+              ) : null}
               <button className="secondary-button" type="button" data-role="retry-pi-health-check" onClick={() => void loadAppInfo()}>
                 Retry check
               </button>
@@ -3268,9 +3400,11 @@ export function App() {
             <div>
               <strong>PI auth setup required.</strong> {appInfo.piRuntimeDiagnostics.auth.message}
             </div>
-            <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
-              Open Harness settings
-            </button>
+            {canManageHarnessSettings ? (
+              <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
+                Open Harness settings
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -3279,34 +3413,36 @@ export function App() {
             <div>
               <strong>Unsupported packaged-mode PI add-ons.</strong> {appInfo.piRuntimeDiagnostics.addOns.message}
             </div>
-            <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
-              Review Harness settings
-            </button>
+            {canManageHarnessSettings ? (
+              <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
+                Review Harness settings
+              </button>
+            ) : null}
           </div>
         ) : null}
 
         {activePage === "settings" ? (
-          settingsTab === "projects" ? (
+          activeSettingsTab === "projects" ? (
             <ProjectsPanel />
-          ) : settingsTab === "agents" ? (
-            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={navigateToHarnessSettings} />
-          ) : settingsTab === "roles" ? (
-            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={navigateToHarnessSettings} />
-          ) : settingsTab === "workflows" ? (
+          ) : activeSettingsTab === "agents" ? (
+            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} />
+          ) : activeSettingsTab === "roles" ? (
+            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} />
+          ) : activeSettingsTab === "workflows" ? (
             <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
-          ) : settingsTab === "channels" ? (
+          ) : activeSettingsTab === "channels" ? (
             <ChannelsPanel />
-          ) : settingsTab === "remote" ? (
+          ) : activeSettingsTab === "remote" ? (
             <RemotePanel />
-          ) : settingsTab === "source_control" ? (
+          ) : activeSettingsTab === "source_control" ? (
             <SourceControlPanel />
-          ) : settingsTab === "prompting" ? (
+          ) : activeSettingsTab === "prompting" ? (
             <PromptingPanel
               activeProjectName={activeProject?.name ?? null}
               sessionPromptSettings={sessionPromptSettings}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
             />
-          ) : settingsTab === "harness" ? (
+          ) : activeSettingsTab === "harness" ? (
             <HarnessPanel
               piRuntimeSettings={piRuntimeSettings}
               piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
@@ -3332,6 +3468,10 @@ export function App() {
             <GeneralPanel
               availableThemes={BUILT_IN_ORCHESTRA_THEMES}
               selectedThemeId={themeId}
+              canManageBridgeDiagnostics={canManageBridgeDiagnostics}
+              canManageRuntimeLogs={canManageRuntimeLogs}
+              canManageSystemNotifications={canManageSystemNotifications}
+              canOpenLogsWindow={canOpenLogsWindow}
               bridgeDiagnostics={bridgeDiagnostics}
               systemNotificationEnvironment={systemNotificationEnvironment}
               systemNotificationPermission={systemNotificationPermission}
@@ -3376,6 +3516,7 @@ export function App() {
             onOpenAgentSession={(agentId) => void handleOpenAgentSession(agentId)}
             onOpenAgentSessionTerminal={(agentId) => void handleOpenAgentSessionTerminal(agentId)}
             selectedWorkerRequest={agentsSelectionRequest}
+            supportsAgentTerminal={canUseAgentTerminal}
           />
         ) : activePage === "chat" ? (
           <AgentChatPage
@@ -3433,7 +3574,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
-            onOpenPiSettings={navigateToHarnessSettings}
+            onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
             onReloadSession={() => handleReloadExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
@@ -3482,7 +3623,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
-            onOpenPiSettings={navigateToHarnessSettings}
+            onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined}
             onCompactSession={handleSelectedSessionCompact}
             onReloadSession={handleSelectedSessionReload}
             onLoadRuntimeDetails={loadSelectedSessionRuntimeDetails}

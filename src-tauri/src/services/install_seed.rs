@@ -104,8 +104,14 @@ pub fn ensure_install_baseline_seeded(connection: &mut Connection) -> Result<(),
         seed_project(&tx, &catalog.project, &now)?;
         seed_roles(&tx, &catalog.roles, &now)?;
         seed_workflows(&tx, &catalog.workflows, &now)?;
+        let orchestra_root = default_orchestra_root()?;
         ensure_project_root_exists(&catalog.project.slug)?;
-        let _ = project_settings::update_task_automation_settings(&catalog.project.slug, true)?;
+        let _ = project_settings::update_task_automation_settings_with_connection(
+            &tx,
+            Some(&orchestra_root),
+            &catalog.project.slug,
+            true,
+        )?;
     }
 
     tx.execute(

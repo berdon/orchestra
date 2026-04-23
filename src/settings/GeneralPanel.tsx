@@ -6,6 +6,10 @@ import type { BridgeDiagnostics, LogEntry, SystemNotificationEnvironmentStatus, 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
   selectedThemeId: OrchestraThemeId;
+  canManageBridgeDiagnostics: boolean;
+  canManageRuntimeLogs: boolean;
+  canManageSystemNotifications: boolean;
+  canOpenLogsWindow: boolean;
   bridgeDiagnostics: BridgeDiagnostics | null;
   systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
   systemNotificationPermission: SystemNotificationPermissionState;
@@ -64,6 +68,10 @@ function formatNotificationPermissionLabel(value: SystemNotificationPermissionSt
 export function GeneralPanel({
   availableThemes,
   selectedThemeId,
+  canManageBridgeDiagnostics,
+  canManageRuntimeLogs,
+  canManageSystemNotifications,
+  canOpenLogsWindow,
   bridgeDiagnostics,
   systemNotificationEnvironment,
   systemNotificationPermission,
@@ -148,6 +156,7 @@ export function GeneralPanel({
           </div>
         </section>
 
+        {canManageSystemNotifications ? (
         <section className="task-section task-section--compact" data-role="system-notifications-panel">
           <div className="task-section__header">
             <div>
@@ -199,7 +208,10 @@ export function GeneralPanel({
             <p className="muted-copy">If Orchestra does not appear in macOS Notification Center yet, request permission here and then send a test notification from this panel.</p>
           )}
         </section>
+        ) : null}
 
+        {canManageBridgeDiagnostics ? (
+        <>
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">General</p>
@@ -208,9 +220,11 @@ export function GeneralPanel({
           </div>
 
           <div className="action-cluster action-cluster--wrap">
-            <button className="secondary-button" type="button" onClick={onOpenLogsWindow}>
-              Open logs window
-            </button>
+            {canOpenLogsWindow ? (
+              <button className="secondary-button" type="button" onClick={onOpenLogsWindow}>
+                Open logs window
+              </button>
+            ) : null}
             <button className="secondary-button" data-role="refresh-bridge-diagnostics" type="button" onClick={onRefreshBridgeDiagnostics} disabled={refreshingBridgeDiagnostics}>
               {refreshingBridgeDiagnostics ? "Refreshing…" : "Refresh diagnostics"}
             </button>
@@ -368,8 +382,11 @@ export function GeneralPanel({
             </div>
           </>
         ) : null}
+        </>
+        ) : null}
       </section>
 
+      {canManageRuntimeLogs ? (
       <RuntimeLogPanel
         logs={logs}
         loadingLogs={loadingLogs}
@@ -383,6 +400,7 @@ export function GeneralPanel({
         onExport={onExportLogs}
         onClear={onClearLogs}
       />
+      ) : null}
     </section>
   );
 }

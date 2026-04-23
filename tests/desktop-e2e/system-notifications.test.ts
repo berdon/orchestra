@@ -73,7 +73,7 @@ describe("desktop system notifications", () => {
       `);
 
       const project = await invokeCommand<{ id: string }>(sessionId, "create_project", {
-        input: { name: "Notification Project" },
+        input: { name: "Notification Project", taskPrefix: "NTP" },
       });
       await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
 

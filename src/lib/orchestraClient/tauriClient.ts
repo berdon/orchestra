@@ -5,7 +5,9 @@ import {
 } from "./bootstrapFactory";
 import type { OrchestraClient, OrchestraClientBinding } from "./client";
 import type { OrchestraClientServiceBindings } from "./serviceBindings";
+import { createTauriHostAdminExtension } from "./tauriHostAdminExtension";
 import { tauriOrchestraClientServiceBindings } from "./tauriBindings";
+import { createTauriShellExtension } from "./tauriShellExtension";
 
 export function createOptimisticTauriOrchestraClientBootstrap() {
   return createOptimisticOrchestraClientBootstrap("tauri");
@@ -20,7 +22,14 @@ export async function buildTauriOrchestraClientBootstrap(
 export function createTauriOrchestraClient(
   services: OrchestraClientServiceBindings = tauriOrchestraClientServiceBindings,
 ): OrchestraClient {
-  return createOrchestraClient(() => buildTauriOrchestraClientBootstrap(services), services);
+  return createOrchestraClient(
+    () => buildTauriOrchestraClientBootstrap(services),
+    services,
+    {
+      shell: createTauriShellExtension(),
+      hostAdmin: createTauriHostAdminExtension(),
+    },
+  );
 }
 
 export function createTauriOrchestraClientBinding(

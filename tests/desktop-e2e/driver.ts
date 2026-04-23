@@ -18,7 +18,7 @@ async function webdriverRequest(path: string, init?: RequestInit) {
 
   let lastError = "";
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const args = ["-sS", "--connect-timeout", "5", "--max-time", "15", "-X", init?.method ?? "GET", `${webdriverUrl}${path}`];
+    const args = ["-sS", "--connect-timeout", "10", "--max-time", "60", "-X", init?.method ?? "GET", `${webdriverUrl}${path}`];
     for (const [key, value] of Object.entries(headers)) {
       args.push("-H", `${key}: ${value}`);
     }
@@ -56,7 +56,7 @@ async function cleanupWebdriverSessions() {
   }
 }
 
-export async function createWebdriverSession(timeoutMs = 45_000) {
+export async function createWebdriverSession(timeoutMs = 120_000) {
   if (!tauriBinary) {
     throw new Error("ORCHESTRA_TAURI_BINARY is required for desktop E2E runs.");
   }
@@ -84,6 +84,14 @@ export async function createWebdriverSession(timeoutMs = 45_000) {
 
       const sessionId = response?.value?.sessionId ?? response?.sessionId ?? null;
       if (sessionId) {
+        await webdriverRequest(`/session/${sessionId}/timeouts`, {
+          method: "POST",
+          body: JSON.stringify({
+            script: 180_000,
+            pageLoad: 120_000,
+            implicit: 0,
+          }),
+        }).catch(() => undefined);
         await sleep(5_000);
         return sessionId as string;
       }
@@ -99,15 +107,15 @@ export async function createWebdriverSession(timeoutMs = 45_000) {
   throw new Error(lastError);
 }
 
-export async function createReadyWebdriverSession(timeoutMs = 90_000) {
+export async function createReadyWebdriverSession(timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "Unable to create a ready WebDriver session before timeout.";
 
   while (Date.now() < deadline) {
     let sessionId: string | null = null;
     try {
-      sessionId = await createWebdriverSession(30_000);
-      await ensureReactReady(sessionId, 30_000);
+      sessionId = await createWebdriverSession(120_000);
+      await ensureReactReady(sessionId, 60_000);
       await executeScript(sessionId, `
         try {
           window.localStorage?.clear?.();
@@ -117,7 +125,7 @@ export async function createReadyWebdriverSession(timeoutMs = 90_000) {
         return true;
       `);
       await sleep(1_000);
-      await ensureReactReady(sessionId, 30_000);
+      await ensureReactReady(sessionId, 60_000);
       return sessionId;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
@@ -452,7 +460,9 @@ export async function selectValue(sessionId: string, selector: string, value: st
   }
 }
 
-export async function selectByLabel(sessionId: string, selector: string, label: string) {
+export async function selectByLabel(sessionId: string, selector: string, label: string, timeoutMs = 30_000) {
+  await waitForSelectOption(sessionId, selector, { label }, timeoutMs);
+
   const updated = await executeScript<boolean>(
     sessionId,
     `

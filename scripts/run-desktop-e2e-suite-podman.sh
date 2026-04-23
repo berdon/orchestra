@@ -9,7 +9,12 @@ SUITE_RUN_DIR="$(mktemp -d "${LOG_ROOT}/suite-podman-XXXXXX")"
 SCRIPT_LOG="${SUITE_RUN_DIR}/suite.log"
 
 if [[ "$#" -eq 0 ]]; then
-  mapfile -t AUTO_TEST_FILES < <(node "${ROOT_DIR}/scripts/desktop-e2e-suite.mjs")
+  AUTO_TEST_FILES=()
+  while IFS= read -r test_file; do
+    if [[ -n "${test_file}" ]]; then
+      AUTO_TEST_FILES+=("${test_file}")
+    fi
+  done < <(node "${ROOT_DIR}/scripts/desktop-e2e-suite.mjs")
   if (( ${#AUTO_TEST_FILES[@]} == 0 )); then
     echo "No desktop E2E specs were discovered by tests/desktop-e2e-suite.json" >&2
     exit 1

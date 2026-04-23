@@ -615,15 +615,26 @@ function setMockSessionModels(models: Record<string, SessionModel>) {
 }
 
 function getMockActiveSessionRuns() {
-  return getStoredValue<Record<string, string>>(ACTIVE_RUN_STORAGE_KEY) ?? {};
+  const stored = getStoredValue<Record<string, string | string[]>>(ACTIVE_RUN_STORAGE_KEY) ?? {};
+  const normalized = Object.fromEntries(
+    Object.entries(stored)
+      .map(([sessionId, value]) => [sessionId, Array.isArray(value) ? value : (typeof value === "string" && value ? [value] : [])])
+      .filter(([, value]) => value.length > 0),
+  ) as Record<string, string[]>;
+
+  if (JSON.stringify(stored) !== JSON.stringify(normalized)) {
+    setStoredValue(ACTIVE_RUN_STORAGE_KEY, normalized);
+  }
+
+  return normalized;
 }
 
-function setMockActiveSessionRuns(runs: Record<string, string>) {
+function setMockActiveSessionRuns(runs: Record<string, string[]>) {
   setStoredValue(ACTIVE_RUN_STORAGE_KEY, runs);
 }
 
 function isMockRunStillActive(sessionId: string, runId: string) {
-  return getMockActiveSessionRuns()[sessionId] === runId;
+  return getMockActiveSessionRuns()[sessionId]?.includes(runId) ?? false;
 }
 
 function ensureMockSessionModel(sessionId: string) {
@@ -3283,7 +3294,7 @@ export async function sendSessionMessage(sessionId: string, message: string, run
     } satisfies BridgeDiagnostics);
 
     const activeRuns = getMockActiveSessionRuns();
-    activeRuns[sessionId] = runId;
+    activeRuns[sessionId] = Array.from(new Set([...(activeRuns[sessionId] ?? []), runId]));
     setMockActiveSessionRuns(activeRuns);
 
     const assistantReply = generateAssistantReply(trimmedMessage);
@@ -3389,7 +3400,12 @@ export async function sendSessionMessage(sessionId: string, message: string, run
         }
 
         const nextRuns = getMockActiveSessionRuns();
-        delete nextRuns[sessionId];
+        const remainingRuns = (nextRuns[sessionId] ?? []).filter((activeRunId) => activeRunId !== runId);
+        if (remainingRuns.length > 0) {
+          nextRuns[sessionId] = remainingRuns;
+        } else {
+          delete nextRuns[sessionId];
+        }
         setMockActiveSessionRuns(nextRuns);
 
         appendMockLog("info", "sessions.message", `Sent message to session ${session.id}`);

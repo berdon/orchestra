@@ -40,6 +40,7 @@ import type {
   OrchestraClientEventHandler,
   OrchestraUnsubscribe,
 } from "./events";
+import type { OrchestraHostAdminExtension, OrchestraShellExtension } from "./extensions";
 
 export type {
   AgentSummary,
@@ -179,6 +180,8 @@ export interface OrchestraClient {
   readonly inbox: OrchestraInboxService;
   readonly sessions: OrchestraSessionService;
   readonly events: OrchestraEventService;
+  readonly shell?: OrchestraShellExtension;
+  readonly hostAdmin?: OrchestraHostAdminExtension;
 }
 
 export interface OrchestraClientBinding {

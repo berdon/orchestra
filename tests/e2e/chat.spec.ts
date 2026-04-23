@@ -92,8 +92,8 @@ test("chat composer autocompletes project tasks, agents, and roles and renders t
   await expect(page.locator('[data-role="composer-input"]')).toHaveValue(/Please follow up on @ORC-\d+\s/);
 
   await page.locator('[data-role="send-message"]').click();
-  await expect(page.locator('[data-role="transcript-entry-rendered-markdown"]').last()).toContainText("Autocomplete navigation task");
-  await expect(page.locator('[data-role="transcript-mention-link"]').filter({ hasText: "Autocomplete navigation task" }).last()).toBeVisible();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Autocomplete navigation task", { timeout: 10_000 });
+  await expect(page.locator('[data-role="session-transcript"]').getByRole("button", { name: /Autocomplete navigation task/ }).last()).toBeVisible({ timeout: 10_000 });
 });
 
 test("chat page opens an agent main session with focused chat controls while Sessions stays available", async ({ page }) => {

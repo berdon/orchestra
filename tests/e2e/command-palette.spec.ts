@@ -52,11 +52,11 @@ test("command palette can jump directly to a role definition", async ({ page }) 
 
   await page.goto("/");
   await triggerShortcut(page, "o");
-  await page.locator('[data-role="command-palette-input"]').fill("Reviewer");
-  await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Reviewer" }).first().click();
+  await page.locator('[data-role="command-palette-input"]').fill("Architect");
+  await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Architect" }).first().click();
 
   await expect(page.getByRole("tab", { name: "Roles" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("heading", { name: "Reviewer" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Architect" })).toBeVisible();
 });
 
 test("command palette can open Harness settings", async ({ page }) => {
@@ -119,14 +119,29 @@ test("ctrl+o can fuzzy-match a project and switch the active project", async ({ 
   await page.locator('[data-role="project-name"]').fill("Second Project");
   await page.getByRole("button", { name: /Create project/i }).click();
 
-  await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Orchestra");
+  await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Second Project");
 
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Project two task");
+  await page.locator('[data-role="save-task"]').click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project two task");
+
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("orch");
+  await expect(page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Orchestra" })).toBeVisible();
+  await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Orchestra" }).first().click();
+
+  await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Orchestra");
+  await expect(page.locator('[data-role="draft-task-section"]')).toHaveCount(0);
+
   await page.locator('[data-role="new-task"]').click();
   await page.locator('[data-role="task-title"]').fill("Project one task");
   await page.locator('[data-role="save-task"]').click();
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project one task");
+  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project two task");
 
   await triggerShortcut(page, "o");
   await page.locator('[data-role="command-palette-input"]').fill("snd prj");
@@ -134,12 +149,6 @@ test("ctrl+o can fuzzy-match a project and switch the active project", async ({ 
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Second Project" }).first().click();
 
   await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Second Project");
-  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
-
-  await page.locator('[data-role="new-task"]').click();
-  await page.locator('[data-role="task-title"]').fill("Project two task");
-  await page.locator('[data-role="save-task"]').click();
-  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project two task");
   await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
 

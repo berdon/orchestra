@@ -136,17 +136,14 @@ pub fn run() {
     );
 
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
-    #[cfg(target_os = "macos")]
-    {
-        let enable_webdriver_automation = env::var("ORCHESTRA_DESKTOP_E2E")
+    let enable_webdriver_automation = env::var("ORCHESTRA_DESKTOP_E2E")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || env::var("ORCHESTRA_ENABLE_WEBDRIVER_AUTOMATION")
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-            || env::var("ORCHESTRA_ENABLE_WEBDRIVER_AUTOMATION")
-                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
-        if enable_webdriver_automation {
-            builder = builder.plugin(tauri_plugin_webdriver_automation::init());
-        }
+            .unwrap_or(false);
+    if enable_webdriver_automation {
+        builder = builder.plugin(tauri_plugin_webdriver_automation::init());
     }
 
     let app = builder

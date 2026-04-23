@@ -134,12 +134,26 @@ run_inner() {
   export CARGO_HOME="${REAL_HOME}/.cargo"
   export NPM_CONFIG_CACHE="${TEST_HOME}/.npm"
   export ORCHESTRA_PROJECT_ROOT="${ROOT_DIR}"
+  export ORCHESTRA_DESKTOP_E2E=1
+  export ORCHESTRA_ENABLE_WEBDRIVER_AUTOMATION=1
   export PATH="${REAL_HOME}/.cargo/bin:/workspace/orchestra/node_modules/.bin:${PATH}"
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
   ensure_preview_assets
   rm -rf "${TEST_HOME}/.pi"
   if [[ -d "${REAL_HOME}/.pi" ]]; then
     ln -s "${REAL_HOME}/.pi" "${TEST_HOME}/.pi"
+  fi
+
+  local managed_pi_dir="${TEST_HOME}/.orchestra/runtime/pi/agent"
+  local legacy_pi_dir="${TEST_HOME}/.pi/agent"
+  if [[ -d "${legacy_pi_dir}" ]]; then
+    mkdir -p "${managed_pi_dir}"
+    chmod 700 "${TEST_HOME}/.orchestra" "${TEST_HOME}/.orchestra/runtime" "${TEST_HOME}/.orchestra/runtime/pi" "${managed_pi_dir}" 2>/dev/null || true
+    for file_name in auth.json models.json settings.json; do
+      if [[ -f "${legacy_pi_dir}/${file_name}" && ! -f "${managed_pi_dir}/${file_name}" ]]; then
+        install -m 600 "${legacy_pi_dir}/${file_name}" "${managed_pi_dir}/${file_name}"
+      fi
+    done
   fi
 
   ensure_binary_matches_preview_url

@@ -4,7 +4,7 @@ import { buildCommandPaletteItems } from "../src/lib/commandPalette";
 import { fuzzySearch } from "../src/lib/fuzzy";
 
 describe("command palette items", () => {
-  it("builds navigation, entity, and action commands", () => {
+  it("builds navigation, entity, and action commands when desktop extensions are available", () => {
     const items = buildCommandPaletteItems({
       sessions: [
         {
@@ -128,6 +128,9 @@ describe("command palette items", () => {
         },
       ],
       activeProjectId: "orchestra",
+      supportsLogsWindow: true,
+      supportsHarnessSettings: true,
+      supportsAgentTerminal: true,
     });
 
     expect(items.some((item) => item.action.type === "create-task")).toBe(true);
@@ -139,6 +142,59 @@ describe("command palette items", () => {
     expect(items.some((item) => item.action.type === "open-session" && item.action.sessionId === "session-1")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "prompting")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "source_control")).toBe(true);
+    expect(items.some((item) => item.action.type === "open-logs")).toBe(true);
+  });
+
+  it("omits desktop-only actions when shell and host-admin extensions are unavailable", () => {
+    const items = buildCommandPaletteItems({
+      sessions: [],
+      tasks: [],
+      agents: [
+        {
+          agent: {
+            id: "agent-1",
+            slug: "data",
+            name: "Data",
+            description: null,
+            systemPrompt: null,
+            provider: null,
+            model: null,
+            roleId: null,
+            thinkingLevel: "off",
+            policyIds: [],
+            directPermissions: [],
+            system: false,
+            immutable: false,
+            archived: false,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+          runtimeState: {
+            projectId: "orchestra",
+            agentId: "agent-1",
+            status: "idle",
+            mainSessionId: null,
+            runtimeCwd: null,
+            currentQueueEntryId: null,
+            lastDispatchAt: null,
+            lastError: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+          queuedCount: 0,
+          dispatchedCount: 0,
+        },
+      ],
+      roles: [],
+      workflows: [],
+      projects: [],
+      activeProjectId: "orchestra",
+    });
+
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "harness")).toBe(false);
+    expect(items.some((item) => item.action.type === "open-logs")).toBe(false);
+    expect(items.some((item) => item.action.type === "launch-agent-session-terminal")).toBe(false);
+    expect(items.some((item) => item.action.type === "launch-agent-session")).toBe(true);
   });
 
   it("adds fuzzy project-switch commands for non-active projects", () => {

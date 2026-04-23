@@ -10,6 +10,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   selectByLabel,
   setFieldByLabel,
@@ -63,18 +64,31 @@ describe("desktop task repo files tab", () => {
       const selectedProject = projectsAfterDefault.find((entry) => entry.name === 'Repo Files Project');
       expect(selectedProject).toBeTruthy();
 
-      await selectByLabel(sessionId, '[data-role="project-switcher"]', 'Repo Files Project');
-      await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', 'Repo Files Project');
-      await sleep(500);
-
-      await clickByText(sessionId, 'button', 'Tasks');
-      await clickSelector(sessionId, '[data-role="new-task"]');
-      await waitForText(sessionId, 'New task');
-      await setInputValue(sessionId, '[data-role="task-title"]', 'Track repo file');
-      await setInputValue(sessionId, '[data-role="task-description"]', 'Track docs/design.md as a repo file on the task.');
-      await selectByLabel(sessionId, '[data-role="task-repositories"]', 'Repo Files Repo');
-      await clickSelector(sessionId, '[data-role="save-task"]');
-      await waitForText(sessionId, 'Track repo file');
+      await switchProject(sessionId, 'Repo Files Project');
+      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: selectedProject!.id })
+        .then((repositories) => repositories.find((entry) => entry.name === 'Repo Files Repo'));
+      expect(repository).toBeTruthy();
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: selectedProject!.id,
+        input: {
+          title: 'Track repo file',
+          description: 'Track docs/design.md as a repo file on the task.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: null,
+          currentLaneId: null,
+          repositoryId: repository!.id,
+          repositoryIds: [repository!.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
+      });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Repo Files Project');
+      await openTaskCard(sessionId, 'Track repo file');
 
       const tasks = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', { projectId: selectedProject!.id, includeArchived: false });
       const task = tasks.find((entry) => entry.title === 'Track repo file');
@@ -135,16 +149,38 @@ describe("desktop task repo files tab", () => {
           },
         ],
       });
-      await createTaskViaTasks(sessionId, {
-        title: "Track worktree-only repo file",
-        description: "Verify repo file references resolve against the task worktree.",
-        repositoryName: "Repo Files Worktree Repo",
-        workflowName: "Repo Files Worktree Flow",
-        publish: true,
-      });
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
         .then((projects) => projects.find((entry) => entry.name === 'Repo Files Worktree Project'));
       expect(project).toBeTruthy();
+      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id })
+        .then((repositories) => repositories.find((entry) => entry.name === 'Repo Files Worktree Repo'));
+      expect(repository).toBeTruthy();
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Repo Files Worktree Flow'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: project!.id,
+        input: {
+          title: 'Track worktree-only repo file',
+          description: 'Verify repo file references resolve against the task worktree.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0]?.id ?? null,
+          repositoryId: repository!.id,
+          repositoryIds: [repository!.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
+      });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Repo Files Worktree Project');
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
         projectId: project!.id,
         includeArchived: false,

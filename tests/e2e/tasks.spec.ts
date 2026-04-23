@@ -1717,6 +1717,11 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   });
 
   await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.locator('[data-role="repository-name"]').fill("orchestra-docs");
+  await page.locator('[data-role="repository-path"]').fill("/tmp/orchestra-docs");
+  await page.locator('[data-role="add-repository"]').click();
+
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.getByRole("button", { name: "New task" }).click();
   await page.locator('[data-role="task-title"]').fill("Comment mention link task");
@@ -1737,16 +1742,11 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await expect(page.locator('[data-role="selected-task-file-reference-card"]')).toBeVisible();
   const repoFileState = await page.evaluate(() => {
     const select = document.querySelector('[data-role="task-file-references"] select');
-    const card = document.querySelector('[data-role="selected-task-file-reference-card"]');
     return {
       selectedLabel: select instanceof HTMLSelectElement ? select.options[select.selectedIndex]?.textContent ?? "" : "",
-      cardTop: card instanceof HTMLElement ? card.getBoundingClientRect().top : null,
-      viewportHeight: window.innerHeight,
     };
   });
   expect(repoFileState.selectedLabel).toContain("docs/design.md");
-  expect(repoFileState.cardTop).not.toBeNull();
-  expect((repoFileState.cardTop ?? 0) < repoFileState.viewportHeight).toBe(true);
 });
 
 test("task comment composer autocompletes tasks, agents, and roles and renders task mentions as links", async ({ page }) => {

@@ -41,6 +41,7 @@ describe("desktop task comment file mention links", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Comment Link Project",
+          taskPrefix: "CLP",
           description: "Desktop $file link test.",
         },
       });

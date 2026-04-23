@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { reportClientError } from "../lib/tauri";
+import { useOrchestraClient } from "../lib/orchestraClient";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import { createRemotePairingCode, getRemoteAccessStatus, revokeRemoteDevice, updateRemoteAccessSettings } from "../lib/remote";
 import type { RemoteAccessStatus } from "../types";
 
 function formatDateTime(value?: string | null) {
@@ -34,6 +33,8 @@ async function copyTextToClipboard(text: string) {
 }
 
 export function RemotePanel() {
+  const orchestraClient = useOrchestraClient();
+  const remoteAccess = orchestraClient.hostAdmin?.remoteAccess;
   const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
   const getTooltipProps = useExplanatoryTooltipProps();
   const [loading, setLoading] = useState(false);
@@ -95,14 +96,18 @@ export function RemotePanel() {
     setLoading(true);
     setError(null);
     try {
-      const nextStatus = await getRemoteAccessStatus();
+      if (!remoteAccess) {
+        setStatus(null);
+        return;
+      }
+      const nextStatus = await remoteAccess.getStatus();
       setStatus(nextStatus);
       setBindHostDraft(nextStatus.settings.bindHost);
       setPortDraft(String(nextStatus.settings.port));
       setEnabledDraft(nextStatus.settings.enabled);
       setUseTailscaleDraft(nextStatus.settings.useTailscale);
     } catch (nextError) {
-      setError(await reportClientError("ui.remote.status", nextError, "Unable to load remote access status."));
+      setError(await orchestraClient.app.reportError("ui.remote.status", nextError, "Unable to load remote access status."));
     } finally {
       setLoading(false);
     }
@@ -110,14 +115,17 @@ export function RemotePanel() {
 
   useEffect(() => {
     void loadStatus();
-  }, []);
+  }, [remoteAccess]);
 
   async function handleSave() {
     setSaving(true);
     setError(null);
     try {
+      if (!remoteAccess) {
+        return;
+      }
       const parsedPort = Number.parseInt(portDraft, 10);
-      const nextStatus = await updateRemoteAccessSettings({
+      const nextStatus = await remoteAccess.updateSettings({
         enabled: enabledDraft,
         useTailscale: useTailscaleDraft,
         bindHost: bindHostDraft,
@@ -125,7 +133,7 @@ export function RemotePanel() {
       });
       setStatus(nextStatus);
     } catch (nextError) {
-      setError(await reportClientError("ui.remote.settings.save", nextError, "Unable to save remote access settings."));
+      setError(await orchestraClient.app.reportError("ui.remote.settings.save", nextError, "Unable to save remote access settings."));
     } finally {
       setSaving(false);
     }
@@ -135,11 +143,14 @@ export function RemotePanel() {
     setCreatingPairingCode(true);
     setError(null);
     try {
-      const pairingCode = await createRemotePairingCode();
+      if (!remoteAccess) {
+        return;
+      }
+      const pairingCode = await remoteAccess.createPairingCode();
       setLastCreatedCode(pairingCode.code ?? pairingCode.displayCode);
       await loadStatus();
     } catch (nextError) {
-      setError(await reportClientError("ui.remote.pairing.create", nextError, "Unable to create pairing code."));
+      setError(await orchestraClient.app.reportError("ui.remote.pairing.create", nextError, "Unable to create pairing code."));
     } finally {
       setCreatingPairingCode(false);
     }
@@ -149,10 +160,13 @@ export function RemotePanel() {
     setSaving(true);
     setError(null);
     try {
-      await revokeRemoteDevice(deviceId);
+      if (!remoteAccess) {
+        return;
+      }
+      await remoteAccess.revokeDevice(deviceId);
       await loadStatus();
     } catch (nextError) {
-      setError(await reportClientError("ui.remote.device.revoke", nextError, "Unable to revoke remote device."));
+      setError(await orchestraClient.app.reportError("ui.remote.device.revoke", nextError, "Unable to revoke remote device."));
     } finally {
       setSaving(false);
     }
@@ -166,8 +180,20 @@ export function RemotePanel() {
       await copyTextToClipboard(value);
       setCopyStatus(`${label} copied.`);
     } catch (nextError) {
-      setError(await reportClientError("ui.remote.endpoint.copy", nextError, `Unable to copy ${label}.`));
+      setError(await orchestraClient.app.reportError("ui.remote.endpoint.copy", nextError, `Unable to copy ${label}.`));
     }
+  }
+
+  if (!remoteAccess) {
+    return (
+      <section className="panel">
+        <div className="empty-state">
+          <p className="eyebrow">Remote access unavailable</p>
+          <h3>Host administration is not available in this client</h3>
+          <p>This shared frontend host does not expose local remote-access controls.</p>
+        </div>
+      </section>
+    );
   }
 
   return (

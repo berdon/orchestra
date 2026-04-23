@@ -27,9 +27,10 @@ interface AgentsPageProps {
   selectedWorkerRequest?: { type: "role" | "agent"; id: string; token: number } | null;
   onOpenAgentSession: (agentId: string) => void;
   onOpenAgentSessionTerminal: (agentId: string) => void;
+  supportsAgentTerminal?: boolean;
 }
 
-export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession, onOpenAgentSessionTerminal }: AgentsPageProps) {
+export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession, onOpenAgentSessionTerminal, supportsAgentTerminal = false }: AgentsPageProps) {
   const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
@@ -367,6 +368,7 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
             }
             onOpenSession={onOpenAgentSession}
             onOpenSessionTerminal={onOpenAgentSessionTerminal}
+            supportsTerminal={supportsAgentTerminal}
           />
         ) : (
           <div className="empty-state">

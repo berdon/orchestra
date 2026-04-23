@@ -21,6 +21,8 @@ const expectedPreviewUrl = process.env.ORCHESTRA_DESKTOP_E2E_PREVIEW_URL ?? "htt
 const normalizeUrl = (value: string) => (value.endsWith("/") ? value : `${value}/`);
 const matchesExpectedLaunchUrl = (value: string) => (
   value.startsWith("tauri://localhost")
+  || value.startsWith("http://tauri.localhost")
+  || value.startsWith("https://tauri.localhost")
   || value === expectedPreviewUrl
   || value.startsWith(normalizeUrl(expectedPreviewUrl))
 );

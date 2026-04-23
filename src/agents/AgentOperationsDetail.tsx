@@ -10,6 +10,7 @@ interface AgentOperationsDetailProps {
   onOpenSessionTerminal: (agentId: string) => void;
   onDeleteQueuedEntry: (entry: AgentOperationsDetail["queueEntries"][number]) => void;
   onCancelActiveWorkflowEntry: (entry: AgentOperationsDetail["queueEntries"][number], requeue: boolean) => void;
+  supportsTerminal?: boolean;
   busy?: boolean;
 }
 
@@ -26,7 +27,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, onCancelActiveWorkflowEntry, busy = false }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, onCancelActiveWorkflowEntry, supportsTerminal = false, busy = false }: AgentOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -39,7 +40,7 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
     }
   }, [detail.queueEntries, workFilter]);
 
-  const canOpenTerminal = !busy && detail.runtimeState.status !== "running" && !detail.runtimeState.terminalAttached;
+  const canOpenTerminal = supportsTerminal && !busy && detail.runtimeState.status !== "running" && !detail.runtimeState.terminalAttached;
 
   return (
     <div className="workforce-detail-stack">
@@ -60,15 +61,17 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
             >
               {detail.runtimeState.mainSessionId ? "Open session" : "Launch session"}
             </button>
-            <button
-              className="secondary-button"
-              data-role="open-agent-session-terminal"
-              type="button"
-              disabled={!canOpenTerminal}
-              onClick={() => onOpenSessionTerminal(detail.agent.id)}
-            >
-              Open in terminal
-            </button>
+            {supportsTerminal ? (
+              <button
+                className="secondary-button"
+                data-role="open-agent-session-terminal"
+                type="button"
+                disabled={!canOpenTerminal}
+                onClick={() => onOpenSessionTerminal(detail.agent.id)}
+              >
+                Open in terminal
+              </button>
+            ) : null}
             <span className={`status-badge status-badge--${detail.runtimeState.status === "running" ? "success" : detail.runtimeState.status === "needs_attention" ? "error" : "neutral"}`}>
               {detail.runtimeState.status}
             </span>

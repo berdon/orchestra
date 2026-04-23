@@ -11,10 +11,10 @@ import {
   dispatchWindowEvent,
   ensureReactReady,
   invokeCommand,
-  selectByLabel,
-  waitForSelectedLabel,
   waitForText,
 } from "./driver";
+
+import { switchProject } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -56,6 +56,7 @@ describe("desktop auto dispatch on blocker completion", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Dependency Blocks Active Task",
+          taskPrefix: "DBA",
           description: "Ensure blocked tasks cannot keep running after a dependency is added.",
         },
       });
@@ -185,7 +186,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       await expect(
         invokeCommand(sessionId, "dispatch_task_lane", { taskId: activeTask.id }),
-      ).rejects.toThrow(/blocked by unresolved dependencies|unfinished subtasks/);
+      ).rejects.toThrow(/blocked by unresolved dependencies|unfinished subtasks|cannot be dispatched until it becomes runnable/);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
@@ -210,6 +211,7 @@ describe("desktop auto dispatch on blocker completion", () => {
       const project = await invokeCommand<{ id: string; name: string; slug: string }>(sessionId, "create_project", {
         input: {
           name: "Auto Dispatch Project",
+          taskPrefix: "ADP",
           description: "Auto dispatch on blocker completion desktop test.",
         },
       });
@@ -342,8 +344,7 @@ describe("desktop auto dispatch on blocker completion", () => {
       );
 
       await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await selectByLabel(sessionId, '[data-role="project-switcher"]', project.name);
-      await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
+      await switchProject(sessionId, project.name);
       await clickByText(sessionId, "button", "Tasks");
       await waitForText(sessionId, "Blocker task");
 
@@ -390,6 +391,7 @@ describe("desktop auto dispatch on blocker completion", () => {
       const project = await invokeCommand<{ id: string; name: string; slug: string }>(sessionId, "create_project", {
         input: {
           name: "Parent Auto Dispatch Project",
+          taskPrefix: "PAD",
           description: "Parent/subtask blocking desktop test.",
         },
       });
@@ -472,8 +474,7 @@ describe("desktop auto dispatch on blocker completion", () => {
       expect(automation.autoDispatchOnBlockerCompletion).toBe(true);
 
       await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
-      await selectByLabel(sessionId, '[data-role="project-switcher"]', project.name);
-      await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
+      await switchProject(sessionId, project.name);
       await clickByText(sessionId, "button", "Tasks");
       await waitForText(sessionId, "Parent task");
 
@@ -485,7 +486,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       await expect(
         invokeCommand(sessionId, "dispatch_task_lane", { taskId: parentTask.id }),
-      ).rejects.toThrow(/unfinished subtasks/);
+      ).rejects.toThrow(/unfinished subtasks|cannot be dispatched until it becomes runnable/);
 
       await invokeCommand(sessionId, "update_task", {
         taskId: childTask.id,

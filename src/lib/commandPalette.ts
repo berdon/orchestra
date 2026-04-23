@@ -41,6 +41,10 @@ interface BuildCommandPaletteItemsOptions {
   workflows: WorkflowSummary[];
   projects: ProjectSummary[];
   activeProjectId?: string | null;
+  supportsLogsWindow?: boolean;
+  supportsHarnessSettings?: boolean;
+  supportsAgentTerminal?: boolean;
+  supportsRemoteAccess?: boolean;
 }
 
 function commandItem(input: Omit<CommandPaletteItem, "label">): CommandPaletteItem {
@@ -50,7 +54,19 @@ function commandItem(input: Omit<CommandPaletteItem, "label">): CommandPaletteIt
   };
 }
 
-export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workflows, projects, activeProjectId }: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
+export function buildCommandPaletteItems({
+  sessions,
+  tasks,
+  agents,
+  roles,
+  workflows,
+  projects,
+  activeProjectId,
+  supportsLogsWindow = false,
+  supportsHarnessSettings = false,
+  supportsAgentTerminal = false,
+  supportsRemoteAccess = false,
+}: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
   const pageItems: CommandPaletteItem[] = [
     commandItem({
       id: "page-tasks",
@@ -132,14 +148,14 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       keywords: ["settings", "prompting", "prompt", "template", "worker context"],
       action: { type: "navigate-settings", tab: "prompting" },
     }),
-    commandItem({
+    ...(supportsHarnessSettings ? [commandItem({
       id: "settings-harness",
       title: "Open Settings → Harness",
       subtitle: "Harness auth, model, runtime, and legacy import setup",
       group: "Pages",
       keywords: ["settings", "harness", "pi", "models", "auth", "providers", "runtime", "extensions", "compaction"],
       action: { type: "navigate-settings", tab: "harness" },
-    }),
+    })] : []),
     commandItem({
       id: "settings-general",
       title: "Open Settings → General",
@@ -167,14 +183,14 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       keywords: ["new session", "chat"],
       action: { type: "create-session" },
     }),
-    commandItem({
+    ...(supportsLogsWindow ? [commandItem({
       id: "action-open-logs",
       title: "Open logs window",
       subtitle: "Show runtime diagnostics",
       group: "Actions",
       keywords: ["logs", "diagnostics", "debug"],
       action: { type: "open-logs" },
-    }),
+    })] : []),
     commandItem({
       id: "action-supervisor-chat",
       title: "Open supervisor quick chat",
@@ -224,7 +240,7 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       keywords: [snapshot.agent.name, snapshot.agent.slug, "launch", "agent", "session"],
       action: { type: "launch-agent-session", agentId: snapshot.agent.id },
     }),
-    commandItem({
+    ...(supportsAgentTerminal ? [commandItem({
       id: `agent-terminal-${snapshot.agent.id}`,
       title: `Open ${snapshot.agent.name} in terminal`,
       subtitle: snapshot.runtimeState.terminalAttached
@@ -233,7 +249,7 @@ export function buildCommandPaletteItems({ sessions, tasks, agents, roles, workf
       group: "Actions",
       keywords: [snapshot.agent.name, snapshot.agent.slug, "terminal", "ghostty", "embedded", "session"],
       action: { type: "launch-agent-session-terminal", agentId: snapshot.agent.id },
-    }),
+    })] : []),
   ]);
 
   const roleItems = roles.map((snapshot) =>

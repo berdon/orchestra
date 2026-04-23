@@ -67,17 +67,39 @@ describe("desktop task dispatch", () => {
           },
         ],
       });
-      await createTaskViaTasks(sessionId, {
-        title: "Dispatch session task",
-        description: "Drive a real role dispatch and session creation.",
-        repositoryName: "Dispatch Repo",
-        workflowName: "Dispatch Flow",
-        publish: true,
-      });
-
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Dispatch Flow'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
         .then((projects) => projects.find((entry) => entry.name === 'Dispatch Project'));
       expect(project).toBeTruthy();
+      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id })
+        .then((repositories) => repositories.find((entry) => entry.name === 'Dispatch Repo'));
+      expect(repository).toBeTruthy();
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: project!.id,
+        input: {
+          title: 'Dispatch session task',
+          description: 'Drive a real role dispatch and session creation.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0]?.id ?? null,
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
+      });
+
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Dispatch Project');
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
         projectId: project!.id,
         includeArchived: false,

@@ -36,7 +36,7 @@ function resolveAuthMode(hostKind: OrchestraClientHostKind): OrchestraClientAuth
 }
 
 function resolveFeatureFlags(hostKind: OrchestraClientHostKind): OrchestraClientFeatureFlags {
-  const desktopWindows = hostKind === "tauri";
+  const desktopWindows = hostKind !== "remote_api";
   return {
     sharedCatalog: true,
     sharedTasks: true,
@@ -55,6 +55,7 @@ function resolveFeatureFlags(hostKind: OrchestraClientHostKind): OrchestraClient
 function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClientCapabilities {
   const desktopOnlyReason = "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.";
   const available = availableCapability();
+  const hostExtensionAvailable = hostKind !== "remote_api";
 
   return {
     app: {
@@ -92,9 +93,13 @@ function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClient
       modelSelection: available,
     },
     host: {
-      logsWindow: hostKind === "tauri" ? available : unavailableCapability(desktopOnlyReason),
-      agentTerminal: hostKind === "tauri" ? available : unavailableCapability(desktopOnlyReason),
-      systemNotifications: hostKind === "tauri" ? available : unavailableCapability(desktopOnlyReason),
+      logsWindow: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+      agentTerminal: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+      systemNotifications: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+      bridgeDiagnostics: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+      runtimeLogs: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+      harnessSettings: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+      remoteAccess: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
     },
   };
 }

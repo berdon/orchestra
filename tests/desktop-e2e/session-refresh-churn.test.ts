@@ -73,6 +73,7 @@ describe("desktop session refresh churn", () => {
         title: taskTitle,
         description: "Regression task for session refresh churn.",
         workflowName,
+        publish: true,
       });
 
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, "list_projects")

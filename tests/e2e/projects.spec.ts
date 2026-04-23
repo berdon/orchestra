@@ -201,7 +201,7 @@ test("project switcher isolates browser-mode task state by project", async ({ pa
 
   await page.locator('[data-role="project-switcher"]').selectOption({ label: "Second Project" });
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
+  await expect(page.locator('[data-role="draft-task-section"]')).toHaveCount(0);
 
   await page.locator('[data-role="new-task"]').click();
   await page.locator('[data-role="task-title"]').fill("Project two task");

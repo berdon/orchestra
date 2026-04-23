@@ -24,6 +24,7 @@ describe("desktop task comment ordering", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Comment Ordering Project",
+          taskPrefix: "COP",
           description: "Desktop task comment ordering test.",
         },
       });

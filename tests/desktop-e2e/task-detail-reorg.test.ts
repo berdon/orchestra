@@ -22,9 +22,9 @@ import {
   addTaskFileReferenceViaUi,
   createProjectViaSettings,
   createRoleViaSettings,
-  createTaskViaTasks,
   createWorkflowViaSettings,
   dispatchTaskViaUi,
+  openTaskCard,
   switchProject,
 } from "./ui-flows";
 
@@ -83,12 +83,39 @@ describe("desktop task detail reorganization", () => {
           },
         ],
       });
-      await createTaskViaTasks(sessionId, {
-        title: "Task detail redesign",
-        description: "Move the default repo file preview and recent history above the tabs.",
-        repositoryName: "Task Detail Repo",
-        workflowName: "Detail Reorg Flow",
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Task Detail Reorg Project'));
+      expect(project).toBeTruthy();
+      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id })
+        .then((repositories) => repositories.find((entry) => entry.name === 'Task Detail Repo'));
+      expect(repository).toBeTruthy();
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Detail Reorg Flow'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: project!.id,
+        input: {
+          title: 'Task detail redesign',
+          description: 'Move the default repo file preview and recent history above the tabs.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0]?.id ?? null,
+          repositoryId: repository!.id,
+          repositoryIds: [repository!.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
       });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Task Detail Reorg Project');
+      await openTaskCard(sessionId, 'Task detail redesign');
       await addTaskFileReferenceViaUi(sessionId, "Task Detail Repo", "docs/design.md", true);
       await addTaskCommentViaUi(sessionId, "Reviewer", "First history item");
       await addTaskCommentViaUi(sessionId, "Reviewer", "Second history item");
@@ -193,15 +220,38 @@ describe("desktop task detail reorganization", () => {
           },
         ],
       });
-      await createTaskViaTasks(sessionId, {
-        title: "Task detail action coverage",
-        description: "Verify top-level action buttons.",
-        repositoryName: "Task Detail Actions Repo",
-        workflowName: "Task Detail Action Flow",
-      });
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
         .then((projects) => projects.find((entry) => entry.name === 'Task Detail Actions Project'));
       expect(project).toBeTruthy();
+      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id })
+        .then((repositories) => repositories.find((entry) => entry.name === 'Task Detail Actions Repo'));
+      expect(repository).toBeTruthy();
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Task Detail Action Flow'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: project!.id,
+        input: {
+          title: 'Task detail action coverage',
+          description: 'Verify top-level action buttons.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0]?.id ?? null,
+          repositoryId: repository!.id,
+          repositoryIds: [repository!.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
+      });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Task Detail Actions Project');
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
         projectId: project!.id,
         includeArchived: false,

@@ -6,6 +6,7 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  sleep,
   waitForText,
 } from "./driver";
 import { createProjectViaSettings, createTaskViaTasks, createWorkflowViaSettings, switchProject } from "./ui-flows";
@@ -52,14 +53,22 @@ describe("desktop task table rows", () => {
       await waitForText(sessionId, 'Clickable workflow row');
       await waitForText(sessionId, 'Supervisor');
 
-      await executeScript(sessionId, `
-        const row = document.querySelector('[data-role="task-table-row"]');
-        if (!(row instanceof HTMLElement)) {
-          throw new Error('Task table row was not available');
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const clicked = await executeScript<boolean>(sessionId, `
+          const row = Array.from(document.querySelectorAll('[data-role="task-table-row"]')).find((entry) =>
+            (entry.textContent || '').includes(arguments[0]),
+          );
+          if (!(row instanceof HTMLElement)) {
+            return false;
+          }
+          row.click();
+          return true;
+        `, ['Clickable workflow row']);
+        if (clicked) {
+          break;
         }
-        row.click();
-        return true;
-      `);
+        await sleep(250);
+      }
       await waitForText(sessionId, "Task detail");
       await waitForText(sessionId, 'Clickable workflow row');
     } finally {

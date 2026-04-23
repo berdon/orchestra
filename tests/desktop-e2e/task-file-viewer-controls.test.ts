@@ -50,6 +50,7 @@ describe("desktop task file viewer controls", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "File Viewer Controls Project",
+          taskPrefix: "FVC",
           description: "Desktop file viewer controls test.",
         },
       });

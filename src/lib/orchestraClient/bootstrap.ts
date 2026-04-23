@@ -65,6 +65,10 @@ export interface OrchestraClientCapabilities {
     logsWindow: OrchestraCapabilityDescriptor;
     agentTerminal: OrchestraCapabilityDescriptor;
     systemNotifications: OrchestraCapabilityDescriptor;
+    bridgeDiagnostics: OrchestraCapabilityDescriptor;
+    runtimeLogs: OrchestraCapabilityDescriptor;
+    harnessSettings: OrchestraCapabilityDescriptor;
+    remoteAccess: OrchestraCapabilityDescriptor;
   };
 }
 

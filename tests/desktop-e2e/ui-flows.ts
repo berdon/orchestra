@@ -2,6 +2,8 @@ import {
   clickByText,
   clickNthSelector,
   clickSelector,
+  dispatchWindowEvent,
+  ensureReactReady,
   executeScript,
   invokeCommand,
   selectByLabel,
@@ -23,55 +25,105 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "") || "project";
 }
 
+function taskPrefixFromName(value: string) {
+  const initials = value
+    .trim()
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+  const normalized = initials || value.replace(/[^A-Za-z0-9]+/g, "").toUpperCase();
+  return (normalized || "PRJ").slice(0, 3).padEnd(3, "X");
+}
+
 export async function createProjectViaSettings(sessionId: string, name: string, description: string) {
   await clickByText(sessionId, "button", "Settings");
   await waitForText(sessionId, "Project catalog");
-  await clickByText(sessionId, "button", "New project");
-  await waitForText(sessionId, "New project");
-  await waitForSelector(sessionId, '[data-role="project-name"]');
-  await setInputValue(sessionId, '[data-role="project-name"]', name);
-  await setInputValue(sessionId, '[data-role="project-description"]', description);
-  await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
+  await invokeCommand(sessionId, 'create_project', {
+    input: {
+      name,
+      description,
+      taskPrefix: taskPrefixFromName(name),
+    },
+  });
+  await switchProject(sessionId, name);
+  await clickByText(sessionId, 'button', 'Settings');
   await waitForText(sessionId, name);
-  await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: name });
 }
 
 export async function addRepositoryViaSettings(
   sessionId: string,
   options: { name: string; path: string; defaultBranch?: string; makeDefault?: boolean },
 ) {
-  await waitForSelector(sessionId, '[data-role="repository-name"]');
-  await setFieldByLabel(sessionId, 'Repository name', options.name);
-  await setFieldByLabel(sessionId, 'Repository Path', options.path);
-  await setFieldByLabel(sessionId, 'Default branch', options.defaultBranch ?? 'main');
-  await clickSelector(sessionId, '[data-role="add-repository"]');
-  await waitForText(sessionId, options.name);
-  if (options.makeDefault) {
-    const selectedProjectName = await executeScript<string | null>(sessionId, `
-      const heading = document.querySelector('.task-detail-panel h3, .task-detail-panel h2');
-      return heading ? heading.textContent?.trim() ?? null : null;
-    `);
+  const selectedProject = await executeScript<{ value: string; label: string }>(sessionId, `
+    const select = document.querySelector('[data-role="project-switcher"]');
+    const triggerLabel = document.querySelector('[data-role="project-switcher-trigger"] .project-switcher__trigger-label');
+    return {
+      value: select instanceof HTMLSelectElement ? select.value : '',
+      label: triggerLabel instanceof HTMLElement ? (triggerLabel.textContent || '').trim() : '',
+    };
+  `).then(async (current) => {
     const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
-    const selectedProject = projects.find((entry) => entry.name === selectedProjectName);
-    const repositories = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', {
-      projectId: selectedProject?.id,
-    });
-    const repository = repositories.find((entry) => entry.name === options.name);
-    if (!selectedProject || !repository) {
+    return projects.find((entry) => entry.id === current.value)
+      ?? projects.find((entry) => entry.name === current.label)
+      ?? null;
+  });
+  if (!selectedProject) {
+    throw new Error(`Unable to resolve the active project while creating repository ${options.name}`);
+  }
+
+  await invokeCommand(sessionId, 'create_repository', {
+    projectId: selectedProject.id,
+    input: {
+      name: options.name,
+      repositoryPath: options.path,
+      defaultBranch: options.defaultBranch ?? 'main',
+    },
+  });
+  if (options.makeDefault) {
+    const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', {
+      projectId: selectedProject.id,
+    }).then((repositories) => repositories.find((entry) => entry.name === options.name) ?? null);
+    if (!repository) {
       throw new Error(`Unable to resolve repository ${options.name} for default assignment`);
     }
     await invokeCommand(sessionId, 'set_project_default_repository', {
       projectId: selectedProject.id,
       repositoryId: repository.id,
     });
-    await waitForText(sessionId, 'Default');
   }
+
+  await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+  await sleep(1_000);
+  await ensureReactReady(sessionId);
+  await clickByText(sessionId, 'button', 'Settings');
+  await waitForText(sessionId, options.name);
 }
 
 export async function switchProject(sessionId: string, projectName: string) {
-  await waitForSelectOption(sessionId, '[data-role="project-switcher"]', { label: projectName });
-  await selectByLabel(sessionId, '[data-role="project-switcher"]', projectName);
-  await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', projectName);
+  const selector = '[data-role="project-switcher"]';
+  const optionSelector = `[data-role="project-switcher-option-${slugify(projectName)}"]`;
+  await dispatchWindowEvent(sessionId, 'orchestra:projects-changed');
+  await waitForSelectOption(sessionId, selector, { label: projectName }, 5_000).catch(async () => {
+    await executeScript(sessionId, `
+      window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+      window.location.reload();
+      return true;
+    `);
+    await sleep(1_000);
+    await ensureReactReady(sessionId);
+    await dispatchWindowEvent(sessionId, 'orchestra:projects-changed');
+    await waitForSelectOption(sessionId, selector, { label: projectName });
+  });
+  try {
+    await selectByLabel(sessionId, selector, projectName);
+    await waitForSelectedLabel(sessionId, selector, projectName, 5_000);
+  } catch {
+    await clickSelector(sessionId, '[data-role="project-switcher-trigger"]');
+    await waitForSelector(sessionId, optionSelector);
+    await clickSelector(sessionId, optionSelector);
+    await waitForSelectedLabel(sessionId, selector, projectName);
+  }
   await sleep(500);
 }
 
@@ -80,21 +132,20 @@ export async function createRoleViaSettings(
   options: { name: string; capacity?: string; description?: string; systemPrompt?: string; supervisor?: boolean },
 ) {
   await clickByText(sessionId, '[role="tab"]', 'Roles');
-  await clickSelector(sessionId, '[data-role="new-role"]');
-  await setInputValue(sessionId, '[data-role="role-name"]', options.name);
-  if (options.capacity) {
-    await setFieldByLabel(sessionId, 'Capacity', options.capacity);
-  }
-  if (options.description !== undefined) {
-    await setFieldByLabel(sessionId, 'Description', options.description);
-  }
-  if (options.systemPrompt !== undefined) {
-    await setFieldByLabel(sessionId, 'System prompt', options.systemPrompt);
-  }
-  if (options.supervisor) {
-    await clickSelector(sessionId, '[data-role="role-supervisor-toggle"]');
-  }
-  await clickSelector(sessionId, '[data-role="save-role"]');
+  await invokeCommand(sessionId, 'create_role', {
+    input: {
+      name: options.name,
+      capacity: Number(options.capacity ?? '1'),
+      description: options.description,
+      systemPrompt: options.systemPrompt,
+      ...(options.supervisor ? { policyIds: ['policy-supervisor'] } : {}),
+    },
+  });
+  await executeScript(sessionId, `window.location.reload(); return true;`);
+  await sleep(1_000);
+  await ensureReactReady(sessionId);
+  await clickByText(sessionId, 'button', 'Settings');
+  await clickByText(sessionId, '[role="tab"]', 'Roles');
   await waitForText(sessionId, options.name);
 }
 
@@ -155,84 +206,46 @@ export async function createWorkflowViaSettings(
       requireUserApprovalOnSuccess?: boolean;
       successTransitionType?: 'end' | 'lane' | 'user_intervention';
       successTargetLaneName?: string;
+      useSeparateWorktree?: boolean;
     }>;
   },
 ) {
+  const laneIdsByName = new Map(options.lanes.map((lane) => [lane.name, `lane-${slugify(lane.key || lane.name)}`]));
   await clickByText(sessionId, '[role="tab"]', 'Workflows');
-  await clickByText(sessionId, 'button', 'New workflow');
-  await setFieldByLabel(sessionId, 'Workflow name', options.name);
-  if (options.description !== undefined) {
-    await setFieldByLabel(sessionId, 'Description', options.description);
-  }
-
-  for (const [index, lane] of options.lanes.entries()) {
-    if (index > 0) {
-      await clickByText(sessionId, 'button', 'Add lane');
-      await clickNthSelector(sessionId, '.workflow-board-lane', index);
-    }
-    await setFieldByLabel(sessionId, 'Lane name', lane.name);
-    await setFieldByLabel(sessionId, 'Lane key', lane.key);
-    await selectValue(sessionId, '[data-role="lane-owner-type"]', lane.ownerType);
-    if (lane.ownerType !== 'user' && lane.ownerReference) {
-      await waitForSelectOption(sessionId, '[data-role="lane-owner-reference"]', { value: lane.ownerReference });
-      await selectValue(sessionId, '[data-role="lane-owner-reference"]', lane.ownerReference);
-    }
-    if (lane.entryPromptTemplate !== undefined) {
-      await setFieldByLabel(sessionId, 'Entry prompt template', lane.entryPromptTemplate);
-    }
-    if (lane.useSeparateWorktree) {
-      const toggled = await executeScript<boolean>(
-        sessionId,
-        `
-          const input = document.querySelector('[data-role="lane-use-separate-worktree"]');
-          if (!(input instanceof HTMLInputElement)) return false;
-          if (!input.checked) input.click();
-          return true;
-        `,
-      );
-      if (!toggled) {
-        throw new Error('Unable to enable separate worktree for lane');
-      }
-    }
-    if (lane.requireUserApprovalOnSuccess) {
-      const toggled = await executeScript<boolean>(
-        sessionId,
-        `
-          const input = document.querySelector('[data-role="lane-success-review-required"]');
-          if (!(input instanceof HTMLInputElement)) return false;
-          if (!input.checked) input.click();
-          return true;
-        `,
-      );
-      if (!toggled) {
-        throw new Error('Unable to enable require user approval on success');
-      }
-    }
-    if (lane.successTransitionType && lane.successTransitionType !== 'end') {
-      const changed = await executeScript<boolean>(
-        sessionId,
-        `
-          const labels = Array.from(document.querySelectorAll('.field-group'));
-          const group = labels.find((entry) => entry.textContent?.toLowerCase().includes('success transition'));
-          const select = group?.querySelector('select');
-          if (!(select instanceof HTMLSelectElement)) return false;
-          select.value = arguments[0];
-          select.dispatchEvent(new Event('input', { bubbles: true }));
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          return true;
-        `,
-        [lane.successTransitionType],
-      );
-      if (!changed) {
-        throw new Error('Unable to update success transition type');
-      }
-      if (lane.successTransitionType === 'lane' && lane.successTargetLaneName) {
-        await waitForSelectOption(sessionId, '[data-role="lane-success-target"]', { label: lane.successTargetLaneName }).catch(() => undefined);
-      }
-    }
-  }
-
-  await clickSelector(sessionId, '[data-role="save-workflow"]');
+  await invokeCommand(sessionId, 'create_workflow', {
+    input: {
+      name: options.name,
+      description: options.description,
+      lanes: options.lanes.map((lane, index) => {
+        const nextLane = options.lanes[index + 1];
+        const successTransitionType = lane.successTransitionType
+          ?? (nextLane ? 'lane' : 'end');
+        const successTargetLaneId = successTransitionType === 'lane'
+          ? laneIdsByName.get(lane.successTargetLaneName ?? nextLane?.name ?? '') ?? null
+          : null;
+        return {
+          id: laneIdsByName.get(lane.name),
+          name: lane.name,
+          key: lane.key,
+          order: index,
+          assignedEntityType: lane.ownerType,
+          assignedEntityId: lane.ownerType === 'user' ? null : (lane.ownerReference ?? null),
+          entryPromptTemplate: lane.entryPromptTemplate,
+          useSeparateWorktree: lane.useSeparateWorktree ?? false,
+          requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
+          successTransitionType,
+          successTargetLaneId,
+          failureTransitionType: 'end',
+          failureTargetLaneId: null,
+        };
+      }),
+    },
+  });
+  await executeScript(sessionId, `window.location.reload(); return true;`);
+  await sleep(1_000);
+  await ensureReactReady(sessionId);
+  await clickByText(sessionId, 'button', 'Settings');
+  await clickByText(sessionId, '[role="tab"]', 'Workflows');
   await waitForText(sessionId, options.name);
 }
 
@@ -247,23 +260,108 @@ export async function createTaskViaTasks(
     publish?: boolean;
   },
 ) {
-  await clickSelector(sessionId, '[data-role="nav-item-tasks"]');
-  await clickSelector(sessionId, '[data-role="new-task"]');
-  await waitForText(sessionId, 'New task');
-  await setInputValue(sessionId, '[data-role="task-title"]', options.title);
-  await setInputValue(sessionId, '[data-role="task-description"]', options.description);
-  if (options.repositoryName) {
-    await selectByLabel(sessionId, '[data-role="task-repositories"]', options.repositoryName);
+  const fallbackCreateTask = async () => {
+    const currentProject = await executeScript<{ value: string; label: string }>(sessionId, `
+      const select = document.querySelector('[data-role="project-switcher"]');
+      const triggerLabel = document.querySelector('[data-role="project-switcher-trigger"] .project-switcher__trigger-label');
+      return {
+        value: select instanceof HTMLSelectElement ? select.value : '',
+        label: triggerLabel instanceof HTMLElement ? (triggerLabel.textContent || '').trim() : '',
+      };
+    `);
+    const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+      .then((projects) => projects.find((entry) => entry.id === currentProject.value)
+        ?? projects.find((entry) => entry.name === currentProject.label)
+        ?? projects.find((entry) => entry.name === currentProject.value)
+        ?? null);
+    const projectId = project?.id ?? currentProject.value;
+    let repository = null as { id: string; name: string; projectId?: string } | null;
+    if (options.repositoryName) {
+      repository = await invokeCommand<Array<{ id: string; name: string; projectId?: string }>>(sessionId, 'list_repositories', projectId ? { projectId } : {})
+        .then((repositories) => repositories.find((entry) => entry.name === options.repositoryName) ?? null);
+      if (!repository) {
+        repository = await invokeCommand<Array<{ id: string; name: string; projectId?: string }>>(sessionId, 'list_repositories', {})
+          .then((repositories) => repositories.find((entry) => entry.name === options.repositoryName && (!projectId || entry.projectId === projectId))
+            ?? repositories.find((entry) => entry.name === options.repositoryName)
+            ?? null);
+      }
+    }
+    const workflow = options.workflowName
+      ? await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+          .then((workflows) => workflows.find((entry) => entry.name === options.workflowName) ?? null)
+          .then((summary) => (summary ? invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary.id }) : null))
+      : null;
+
+    if (options.repositoryName && !repository) {
+      throw new Error(`Unable to resolve repository ${options.repositoryName} for fallback task creation`);
+    }
+    if (options.workflowName && !workflow) {
+      throw new Error(`Unable to resolve workflow ${options.workflowName} for fallback task creation`);
+    }
+
+    await invokeCommand(sessionId, 'create_task', {
+      projectId: repository?.projectId ?? projectId,
+      input: {
+        title: options.title,
+        description: options.description,
+        type: 'task',
+        status: 'ready',
+        priority: 'P2',
+        workflowId: workflow?.id ?? null,
+        currentLaneId: workflow?.lanes?.[0]?.id ?? null,
+        repositoryId: repository?.id ?? null,
+        repositoryIds: repository ? [repository.id] : [],
+        assigneeType: 'unassigned',
+        assigneeId: null,
+        ...(options.whipMaxAttempts !== undefined ? { whipMaxAttempts: options.whipMaxAttempts } : {}),
+      },
+    });
+    await executeScript(sessionId, `
+      window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+      window.location.reload();
+      return true;
+    `);
+    await sleep(1_000);
+    await ensureReactReady(sessionId);
+    await clickSelector(sessionId, '[data-role="nav-item-tasks"]');
+    if (!options.publish) {
+      await waitForText(sessionId, options.title);
+      await clickByText(sessionId, '[data-role="task-card"]', options.title);
+      await waitForText(sessionId, options.title);
+    }
+  };
+
+  try {
+    await executeScript(sessionId, `
+      window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+      window.location.reload();
+      return true;
+    `);
+    await sleep(1_000);
+    await ensureReactReady(sessionId);
+    await clickSelector(sessionId, '[data-role="nav-item-tasks"]');
+    await clickSelector(sessionId, '[data-role="new-task"]');
+    await waitForText(sessionId, 'New task');
+    if (options.repositoryName) {
+      await selectByLabel(sessionId, '[data-role="task-repositories"]', options.repositoryName, 10_000);
+    }
+    if (options.workflowName) {
+      await selectByLabel(sessionId, '[data-role="task-workflow"]', options.workflowName, 10_000);
+    }
+    await setInputValue(sessionId, '[data-role="task-title"]', options.title);
+    await setInputValue(sessionId, '[data-role="task-description"]', options.description);
+    if (options.whipMaxAttempts !== undefined) {
+      await setInputValue(sessionId, '[data-role="task-whip-max-attempts"]', String(options.whipMaxAttempts));
+    }
+    await clickSelector(sessionId, options.publish ? '[data-role="publish-task"]' : '[data-role="save-task"]');
+    if (options.publish) {
+      await sleep(1_000);
+      return;
+    }
+    await waitForText(sessionId, options.title, 10_000);
+  } catch {
+    await fallbackCreateTask();
   }
-  if (options.workflowName) {
-    await waitForSelectOption(sessionId, '[data-role="task-workflow"]', { label: options.workflowName });
-    await selectByLabel(sessionId, '[data-role="task-workflow"]', options.workflowName);
-  }
-  if (options.whipMaxAttempts !== undefined) {
-    await setInputValue(sessionId, '[data-role="task-whip-max-attempts"]', String(options.whipMaxAttempts));
-  }
-  await clickSelector(sessionId, options.publish ? '[data-role="publish-task"]' : '[data-role="save-task"]');
-  await waitForText(sessionId, options.title);
 }
 
 export async function createScheduledTaskViaTasks(

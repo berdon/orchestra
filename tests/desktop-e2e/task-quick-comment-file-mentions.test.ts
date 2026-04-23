@@ -41,6 +41,7 @@ describe("desktop task quick comment file mentions", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Quick Comment Mention Project",
+          taskPrefix: "QCM",
           description: "Desktop quick comment file mention test.",
         },
       });

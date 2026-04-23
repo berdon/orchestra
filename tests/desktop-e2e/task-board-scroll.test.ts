@@ -32,6 +32,7 @@ describe("desktop task board lane scrolling", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Scrollable Task Board",
+          taskPrefix: "STB",
           description: "Desktop scroll test project.",
         },
       });

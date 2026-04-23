@@ -49,6 +49,7 @@ describe("desktop default-file anchored task comments", () => {
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Default File Comment Project",
+          taskPrefix: "DFC",
           description: "Desktop anchored task comment test.",
         },
       });

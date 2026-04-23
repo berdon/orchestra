@@ -18,6 +18,7 @@ TARGET_DIR="${ORCHESTRA_DESKTOP_E2E_TARGET_DIR:-/workspace-target}"
 BUILD_LOCK_DIR="${TARGET_DIR}/.orchestra-build-lock"
 TARGET_BINARY_PATH="${TARGET_DIR}/debug/orchestra"
 TARGET_SOURCE_HASH_FILE="${TARGET_DIR}/orchestra-source.sha256"
+DESKTOP_PREVIEW_URL="${ORCHESTRA_DESKTOP_E2E_PREVIEW_URL:-http://127.0.0.1:1420}"
 
 echo "[desktop-e2e] preparing workspace copy"
 rm -rf "${WORKSPACE_ROOT}"
@@ -40,6 +41,7 @@ else
 fi
 cp -a /src/src-tauri/Cargo.toml /src/src-tauri/Cargo.lock /src/src-tauri/build.rs /src/src-tauri/tauri.conf.json "${WORKSPACE_DIR}/src-tauri/"
 cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
+cp -a /src/src-tauri/scripts "${WORKSPACE_DIR}/src-tauri/scripts"
 cp -a /src/src-tauri/icons "${WORKSPACE_DIR}/src-tauri/icons"
 cp -a /src/src-tauri/gen "${WORKSPACE_DIR}/src-tauri/gen"
 
@@ -90,11 +92,13 @@ mkdir -p "${TARGET_DIR}"
 export CARGO_TARGET_DIR="${TARGET_DIR}"
 
 compute_source_hash() {
-  find "${WORKSPACE_DIR}/src-tauri" -type f -print0 \
+  local source_hash
+  source_hash="$(find "${WORKSPACE_DIR}/src-tauri" -type f -print0 \
     | sort -z \
     | xargs -0 sha256sum \
     | sha256sum \
-    | awk '{print $1}'
+    | awk '{print $1}')"
+  printf '%s|%s\n' "${source_hash}" "${DESKTOP_PREVIEW_URL}"
 }
 
 CURRENT_SOURCE_HASH="$(compute_source_hash)"
@@ -116,7 +120,14 @@ if [[ ! -x "${TARGET_BINARY_PATH}" || "${CURRENT_SOURCE_HASH}" != "${EXISTING_SO
   CURRENT_SOURCE_HASH="$(compute_source_hash)"
   EXISTING_SOURCE_HASH="$(cat "${TARGET_SOURCE_HASH_FILE}" 2>/dev/null || true)"
   if [[ ! -x "${TARGET_BINARY_PATH}" || "${CURRENT_SOURCE_HASH}" != "${EXISTING_SOURCE_HASH}" ]]; then
-    cargo build -j "${ORCHESTRA_DESKTOP_E2E_CARGO_JOBS:-2}" --manifest-path "${WORKSPACE_DIR}/src-tauri/Cargo.toml"
+    DESKTOP_TAURI_CONFIG="$(python3 - "${DESKTOP_PREVIEW_URL}" <<'PY'
+import json
+import sys
+
+print(json.dumps({"build": {"devUrl": sys.argv[1]}}))
+PY
+)"
+    TAURI_CONFIG="${DESKTOP_TAURI_CONFIG}" cargo build -j "${ORCHESTRA_DESKTOP_E2E_CARGO_JOBS:-2}" --manifest-path "${WORKSPACE_DIR}/src-tauri/Cargo.toml"
     printf '%s\n' "${CURRENT_SOURCE_HASH}" > "${TARGET_SOURCE_HASH_FILE}"
   fi
 

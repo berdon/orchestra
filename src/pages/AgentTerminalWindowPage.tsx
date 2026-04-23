@@ -1,18 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { FitAddon, Terminal, init as initGhostty } from "../vendor/ghostty-web/ghostty-web";
 
-import { getAgentTerminalBuffer, resizeAgentTerminal, shutdownAgentTerminalSession, writeAgentTerminalInput } from "../lib/agents";
+import { useOrchestraClient } from "../lib/orchestraClient";
 
 interface AgentTerminalWindowPageProps {
   sessionId: string;
 }
 
 export function AgentTerminalWindowPage({ sessionId }: AgentTerminalWindowPageProps) {
+  const orchestraClient = useOrchestraClient();
+  const agentTerminal = orchestraClient.shell?.agentTerminal;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    if (!agentTerminal) {
+      setReady(false);
+      setError("Embedded terminal controls are unavailable in this client.");
+      return;
+    }
+
+    const terminalExtension = agentTerminal;
     let disposed = false;
     let term: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
@@ -56,17 +65,17 @@ export function AgentTerminalWindowPage({ sessionId }: AgentTerminalWindowPagePr
 
       try {
         term.onData((data: string) => {
-          void writeAgentTerminalInput(sessionId, data);
+          void terminalExtension.writeInput(sessionId, data);
         });
         term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-          void resizeAgentTerminal(sessionId, cols, rows);
+          void terminalExtension.resize(sessionId, cols, rows);
         });
       } catch (error) {
         throw new Error(`ghostty event hookup failed: ${error instanceof Error ? error.message : String(error)}`);
       }
 
       try {
-        const initialBuffer = await getAgentTerminalBuffer(sessionId);
+        const initialBuffer = await terminalExtension.getBuffer(sessionId);
         if (!disposed && initialBuffer) {
           term.write(initialBuffer);
           lastBufferLength = initialBuffer.length;
@@ -76,7 +85,7 @@ export function AgentTerminalWindowPage({ sessionId }: AgentTerminalWindowPagePr
       }
 
       pollIntervalId = window.setInterval(() => {
-        void getAgentTerminalBuffer(sessionId)
+        void terminalExtension.getBuffer(sessionId)
           .then((buffer) => {
             if (disposed || !term) {
               return;
@@ -107,7 +116,7 @@ export function AgentTerminalWindowPage({ sessionId }: AgentTerminalWindowPagePr
     });
 
     const handleBeforeUnload = () => {
-      void shutdownAgentTerminalSession(sessionId);
+      void terminalExtension.shutdown(sessionId);
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
 
@@ -118,9 +127,9 @@ export function AgentTerminalWindowPage({ sessionId }: AgentTerminalWindowPagePr
         window.clearInterval(pollIntervalId);
       }
       term?.dispose();
-      void shutdownAgentTerminalSession(sessionId);
+      void terminalExtension.shutdown(sessionId);
     };
-  }, [sessionId]);
+  }, [agentTerminal, sessionId]);
 
   return (
     <main

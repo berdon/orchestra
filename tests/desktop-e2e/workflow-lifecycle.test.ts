@@ -6,6 +6,7 @@ import {
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
+  executeScript,
   invokeCommand,
   sleep,
   waitForText,
@@ -36,6 +37,25 @@ async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value
   }
 
   throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue, null, 2)}`);
+}
+
+async function completeTaskLaneWithRetries(sessionId: string, taskId: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    try {
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId, notes: null });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!lastError.includes('already processing a message')) {
+        throw error;
+      }
+    }
+    await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+    await sleep(500);
+  }
+  throw new Error(`Timed out completing task lane ${taskId}: ${lastError}`);
 }
 
 describe("desktop workflow lifecycle", () => {
@@ -75,16 +95,38 @@ describe("desktop workflow lifecycle", () => {
           { name: "Validate", key: "validate", ownerType: "role", ownerReference: "qa", entryPromptTemplate: "Validate the implementation." },
         ],
       });
-      await createTaskViaTasks(sessionId, {
-        title: "Desktop workflow lifecycle task",
-        description: "Exercise task dispatch, session creation, transitions, and completion.",
-        repositoryName: "Workflow Lifecycle Repo",
-        workflowName: "Workflow Lifecycle",
-      });
-
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Workflow Lifecycle'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
       const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
         .then((projects) => projects.find((entry) => entry.name === 'Workflow Lifecycle Project'));
       expect(project).toBeTruthy();
+      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id })
+        .then((repositories) => repositories.find((entry) => entry.name === 'Workflow Lifecycle Repo'));
+      expect(repository).toBeTruthy();
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: project!.id,
+        input: {
+          title: 'Desktop workflow lifecycle task',
+          description: 'Exercise task dispatch, session creation, transitions, and completion.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0]?.id ?? null,
+          repositoryId: repository!.id,
+          repositoryIds: [repository!.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
+      });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Workflow Lifecycle Project');
       const createdTask = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
         projectId: project!.id,
         includeArchived: false,
@@ -122,7 +164,7 @@ describe("desktop workflow lifecycle", () => {
       );
 
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
-      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: createdTask!.id, notes: null });
+      await completeTaskLaneWithRetries(sessionId, createdTask!.id);
 
       const implementedTask = await waitForCondition(
         async () => {
@@ -138,7 +180,7 @@ describe("desktop workflow lifecycle", () => {
       const implementSessionId = implementedTask.activeLaneAssignment?.sessionId;
       expect(implementSessionId).toBeTruthy();
 
-      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: createdTask!.id, notes: null });
+      await completeTaskLaneWithRetries(sessionId, createdTask!.id);
 
       const validatedTask = await waitForCondition(
         async () => {
@@ -154,7 +196,7 @@ describe("desktop workflow lifecycle", () => {
       const validateSessionId = validatedTask.activeLaneAssignment?.sessionId;
       expect(validateSessionId).toBeTruthy();
 
-      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId: createdTask!.id, notes: null });
+      await completeTaskLaneWithRetries(sessionId, createdTask!.id);
 
       const completedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: createdTask!.id }),

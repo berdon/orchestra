@@ -95,6 +95,17 @@ describe("orchestra client adapters", () => {
         desktopWindows: true,
         agentTerminal: true,
       },
+      capabilities: {
+        host: {
+          logsWindow: { availability: "available" },
+          agentTerminal: { availability: "available" },
+          systemNotifications: { availability: "available" },
+          bridgeDiagnostics: { availability: "available" },
+          runtimeLogs: { availability: "available" },
+          harnessSettings: { availability: "available" },
+          remoteAccess: { availability: "available" },
+        },
+      },
     });
 
     await expect(mockClient.getBootstrap()).resolves.toMatchObject({
@@ -102,10 +113,38 @@ describe("orchestra client adapters", () => {
       hostKind: "mock",
       authMode: "none",
       featureFlags: {
-        desktopWindows: false,
-        agentTerminal: false,
+        desktopWindows: true,
+        agentTerminal: true,
+      },
+      capabilities: {
+        host: {
+          logsWindow: { availability: "available" },
+          agentTerminal: { availability: "available" },
+          systemNotifications: { availability: "available" },
+          bridgeDiagnostics: { availability: "available" },
+          runtimeLogs: { availability: "available" },
+          harnessSettings: { availability: "available" },
+          remoteAccess: { availability: "available" },
+        },
       },
     });
+  });
+
+  test("Tauri and mock can both opt into shell and host-admin extensions while hosted-web remains extension-free", () => {
+    const tauriClient = createTauriOrchestraClient(createStubServices("tauri"));
+    const mockClient = createMockOrchestraClient(createStubServices("browser"));
+
+    expect(tauriClient.shell).toBeDefined();
+    expect(tauriClient.hostAdmin).toBeDefined();
+    expect(tauriClient.shell?.agentTerminal).toBeDefined();
+    expect(tauriClient.hostAdmin?.remoteAccess).toBeDefined();
+    expect(tauriClient.hostAdmin?.harness.getSetupState).toBeDefined();
+
+    expect(mockClient.shell).toBeDefined();
+    expect(mockClient.hostAdmin).toBeDefined();
+    expect(mockClient.shell?.agentTerminal).toBeDefined();
+    expect(mockClient.hostAdmin?.remoteAccess).toBeDefined();
+    expect(mockClient.hostAdmin?.harness.getSetupState).toBeDefined();
   });
 
   test("browser event subscriptions deliver the shared discriminated event union", async () => {

@@ -91,6 +91,7 @@ describe("desktop task detail navigation", () => {
       const project = await invokeCommand<{ id: string; slug: string }>(sessionId, "create_project", {
         input: {
           name: "Cross Link Dispatch Project",
+          taskPrefix: "CLD",
           description: "Project used to verify task -> session links.",
         },
       });
@@ -250,6 +251,7 @@ describe("desktop task detail navigation", () => {
       const targetProject = await invokeCommand<{ id: string }>(sessionId, "create_project", {
         input: {
           name: "Cross Link Target Project",
+          taskPrefix: "CLT",
           description: "Project used to verify session -> task links.",
         },
       });
