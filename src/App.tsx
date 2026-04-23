@@ -7,7 +7,6 @@ import {
   createContextualSession,
   createSession,
   deleteSession,
-  getAppInfo,
   getBridgeDiagnostics,
   getInitialAgentTerminalSessionId,
   getInitialAgentTerminalWindowFlag,
@@ -71,6 +70,7 @@ import {
   storeExplanatoryTooltips,
 } from "./lib/tooltips";
 import { countVisibleUnreadTaskComments } from "./lib/taskUnreadCommentVisibility";
+import { useOrchestraBootstrap, useOrchestraClient } from "./lib/orchestraClient";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { ProjectSwitcher } from "./components/ProjectSwitcher";
@@ -785,6 +785,9 @@ export function App() {
   }
   const initialRouteState = initialRouteStateRef.current as AppSelectionRouteState;
 
+  const orchestraClient = useOrchestraClient();
+  const orchestraBootstrap = useOrchestraBootstrap();
+
   const [activePage, setActivePage] = useState<PrimaryPage>(initialRouteState.page);
   const [sessionFilter, setSessionFilter] = useState<"active" | "closed">("active");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialRouteState.settingsTab ?? "projects");
@@ -792,7 +795,7 @@ export function App() {
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(initialRouteState.projectId);
   const [projectUnreadCounts, setProjectUnreadCounts] = useState<Record<string, number>>({});
   const [projectTaskCommentUnreadCounts, setProjectTaskCommentUnreadCounts] = useState<Record<string, number>>({});
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(orchestraBootstrap.appInfo ?? null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
@@ -1405,9 +1408,15 @@ export function App() {
     }
   }
 
+  useEffect(() => {
+    if (orchestraBootstrap.appInfo) {
+      setAppInfo((current) => current ?? orchestraBootstrap.appInfo);
+    }
+  }, [orchestraBootstrap.appInfo]);
+
   async function loadAppInfo() {
     try {
-      setAppInfo(await getAppInfo());
+      setAppInfo(await orchestraClient.app.getInfo());
     } catch (error) {
       setSessionActionError(await reportClientError("ui.app.info", error, "Unable to load app info."));
     }
