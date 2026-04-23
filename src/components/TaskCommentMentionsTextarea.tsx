@@ -1,6 +1,6 @@
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { searchProjectReferenceAutocompleteCandidates } from "../lib/referenceMentions";
-import { searchTaskCommentFileMentions } from "../lib/tauri";
+import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
 import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
 
 interface TaskCommentMentionsTextareaProps {
@@ -30,6 +30,8 @@ export function TaskCommentMentionsTextarea({
   onChange,
   onSubmitShortcut,
 }: TaskCommentMentionsTextareaProps) {
+  const searchFileMentions = useTaskCommentFileMentions(taskId);
+
   return (
     <AutocompleteTextarea
       dataRole={dataRole}
@@ -46,7 +48,7 @@ export function TaskCommentMentionsTextarea({
         {
           trigger: "$",
           search: async (query) => {
-            const results = await searchTaskCommentFileMentions(taskId, query, 12);
+            const results = await searchFileMentions(query, 12);
             return results.map((candidate) => ({
               id: `${candidate.repositoryId}:${candidate.relativePath}`,
               insertText: candidate.insertText,

@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
-import { resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 function startJsonServer(handler: (body: unknown, req: IncomingMessage, res: ServerResponse) => void) {
   const server = createServer(async (req, res) => {
@@ -34,12 +35,40 @@ function startJsonServer(handler: (body: unknown, req: IncomingMessage, res: Ser
   });
 }
 
+function resolvePiPackageDir() {
+  const whichPi = spawnSync("which", ["pi"], { encoding: "utf8" });
+  if (whichPi.status !== 0) {
+    throw new Error(`Unable to locate pi on PATH: ${whichPi.stderr || whichPi.stdout}`);
+  }
+
+  const executablePath = whichPi.stdout.trim();
+  if (!executablePath) {
+    throw new Error("which pi returned an empty path");
+  }
+
+  let current = dirname(realpathSync(executablePath));
+  while (true) {
+    if (existsSync(join(current, "package.json")) && existsSync(join(current, "dist", "core", "auth-storage.js"))) {
+      return current;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      throw new Error(`Unable to derive PI_PACKAGE_DIR from ${executablePath}`);
+    }
+    current = parent;
+  }
+}
+
+const PI_PACKAGE_DIR = resolvePiPackageDir();
+
 function waitForLine(proc: ChildProcessWithoutNullStreams, predicate: (line: string) => boolean, timeoutMs = 30000) {
   return new Promise<string>((resolvePromise, reject) => {
     let buffer = "";
+    let stderr = "";
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error(`Timed out waiting for matching rpc output. Buffer: ${buffer}`));
+      reject(new Error(`Timed out waiting for matching rpc output. Stdout: ${buffer} Stderr: ${stderr}`));
     }, timeoutMs);
 
     function onData(chunk: Buffer | string) {
@@ -56,18 +85,27 @@ function waitForLine(proc: ChildProcessWithoutNullStreams, predicate: (line: str
       }
     }
 
+    function onStderr(chunk: Buffer | string) {
+      stderr += chunk.toString();
+      if (stderr.length > 4000) {
+        stderr = stderr.slice(-4000);
+      }
+    }
+
     function onExit(code: number | null) {
       cleanup();
-      reject(new Error(`pi rpc process exited before predicate matched (code ${code})`));
+      reject(new Error(`pi rpc process exited before predicate matched (code ${code}). Stderr: ${stderr || "<empty>"}`));
     }
 
     function cleanup() {
       clearTimeout(timeout);
       proc.stdout.off("data", onData);
+      proc.stderr.off("data", onStderr);
       proc.off("exit", onExit);
     }
 
     proc.stdout.on("data", onData);
+    proc.stderr.on("data", onStderr);
     proc.on("exit", onExit);
   });
 }
@@ -79,8 +117,10 @@ describe("orchestra tools extension", () => {
   afterEach(
     async () => {
       if (proc) {
-        proc.kill("SIGTERM");
-        await once(proc, "exit").catch(() => undefined);
+        if (proc.exitCode === null && proc.signalCode === null) {
+          proc.kill("SIGTERM");
+          await once(proc, "exit").catch(() => undefined);
+        }
         proc = null;
       }
       if (server) {
@@ -114,6 +154,7 @@ describe("orchestra tools extension", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          PI_PACKAGE_DIR,
           ORCHESTRA_BRIDGE_URL: started.url,
           ORCHESTRA_BRIDGE_TOKEN: "test-token",
           ORCHESTRA_BRIDGE_INSTANCE_ID: "bridge-instance-test",
@@ -173,6 +214,7 @@ describe("orchestra tools extension", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          PI_PACKAGE_DIR,
           ORCHESTRA_BRIDGE_URL: started.url,
           ORCHESTRA_BRIDGE_TOKEN: "test-token",
           ORCHESTRA_ALLOWED_COMMANDS_JSON: JSON.stringify([
@@ -226,6 +268,7 @@ describe("orchestra tools extension", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          PI_PACKAGE_DIR,
           ORCHESTRA_BRIDGE_URL: started.url,
           ORCHESTRA_BRIDGE_TOKEN: "test-token",
           ORCHESTRA_ALLOWED_COMMANDS_JSON: JSON.stringify([]),
@@ -274,6 +317,7 @@ describe("orchestra tools extension", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          PI_PACKAGE_DIR,
           ORCHESTRA_BRIDGE_URL: started.url,
           ORCHESTRA_BRIDGE_TOKEN: "test-token",
           ORCHESTRA_ALLOWED_COMMANDS_JSON: JSON.stringify([

@@ -1,61 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { listAgents } from "../lib/agents";
-import { getProject } from "../lib/projects";
-import { listRoles } from "../lib/roles";
+import { useOrchestraClient } from "../lib/orchestraClient";
+import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
 import { applyTaskListQuery, getTaskTags } from "../lib/taskListQuery";
-import {
-  addTaskAttachment,
-  addTaskDependency,
-  addTaskFileReference,
-  addTaskTodo,
-  approveTaskReview,
-  commentOnTask,
-  deleteTaskComment,
-  updateTaskComment,
-  completeLaneAsFailure,
-  completeLaneAsSuccess,
-  createTask,
-  createTaskSchedule,
-  deleteTask,
-  deleteTaskSchedule,
-  dispatchTaskLane,
-  getTask,
-  getTaskSchedule,
-  getWorkflow,
-  listTaskSchedules,
-  listTasks,
-  listWorkflows,
-  listenToSessionStream,
-  listenToTaskChanges,
-  markTaskNeedsWork,
-  manualTaskWhip,
-  pauseTaskLane,
-  removeTaskAttachment,
-  removeTaskDependency,
-  removeTaskFileReference,
-  requestUserIntervention,
-  reportClientError,
-  resumeTaskLane,
-  sendSessionMessage,
-  setDefaultTaskFileReference,
-  stopTaskActivity,
-  listTaskMessages,
-  markTaskCommentsReadForUser,
-  reassignTaskToLane,
-  markTaskTodoFinished,
-  markTaskTodoUnfinished,
-  deleteTaskTodo,
-  sendMailboxMessage,
-  updateTask,
-  updateTaskSchedule,
-} from "../lib/tauri";
 import type {
   AgentSummary,
   MailboxMessage,
   RepositoryRecord,
   RoleSummary,
-  SessionStreamEnvelope,
   TaskCommentInput,
   TaskDetail,
   TaskFileReferenceInput,
@@ -201,47 +153,6 @@ function sameData<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next);
 }
 
-const TASK_EVENT_TOOL_NAMES = new Set([
-  "create_task",
-  "create_subtask",
-  "add_task_todo",
-  "mark_task_todo_finished",
-  "mark_task_todo_unfinished",
-  "delete_task_todo",
-  "update_task",
-  "comment_on_task",
-  "dispatch_task_lane",
-  "complete_lane_as_success",
-  "complete_lane_as_failure",
-  "request_user_intervention",
-  "reassign_task_to_lane",
-  "add_task_dependency",
-  "remove_task_dependency",
-  "add_task_attachment",
-  "remove_task_attachment",
-]);
-
-function getSessionEventType(payload: SessionStreamEnvelope) {
-  if (payload.event && typeof payload.event === "object" && !Array.isArray(payload.event) && "type" in payload.event) {
-    const value = payload.event.type;
-    return typeof value === "string" ? value : "";
-  }
-
-  return "";
-}
-
-function shouldRefreshTasksFromSessionEvent(payload: SessionStreamEnvelope) {
-  const eventType = getSessionEventType(payload);
-  if (eventType === "tool_execution_end") {
-    const toolName = payload.event && typeof payload.event === "object" && !Array.isArray(payload.event) && "toolName" in payload.event
-      ? payload.event.toolName
-      : null;
-    return typeof toolName === "string" && TASK_EVENT_TOOL_NAMES.has(toolName);
-  }
-
-  return false;
-}
-
 export function TasksPage({
   projectId = null,
   createTaskToken = 0,
@@ -255,6 +166,7 @@ export function TasksPage({
   onOpenRole,
   onOpenSession,
 }: TasksPageProps) {
+  const orchestraClient = useOrchestraClient();
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [taskSchedules, setTaskSchedules] = useState<TaskScheduleSummary[]>([]);
@@ -328,17 +240,17 @@ export function TasksPage({
     [tagScopedTasks],
   );
 
-  async function runDetailAction(actionId: string, operation: () => Promise<void>, fallbackMessage: string) {
+  const runDetailAction = useCallback(async (actionId: string, operation: () => Promise<void>, fallbackMessage: string) => {
     setTaskActionError(null);
     setDetailActionPending(actionId);
     try {
       await operation();
     } catch (error) {
-      setTaskActionError(await reportClientError(`ui.tasks.detail_action.${actionId}`, error, fallbackMessage));
+      setTaskActionError(await orchestraClient.app.reportError(`ui.tasks.detail_action.${actionId}`, error, fallbackMessage));
     } finally {
       setDetailActionPending(null);
     }
-  }
+  }, [orchestraClient]);
 
   const timelineItems = useMemo<TaskTimelineItem[]>(() => {
     if (!taskDetail) {
@@ -419,19 +331,19 @@ export function TasksPage({
     [taskDetail?.workflowId, workflowDefinitions],
   );
 
-  async function loadTasksData(options?: { silent?: boolean }) {
+  const loadTasksData = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setLoadingTasks(true);
       setTaskActionError(null);
     }
     try {
       const [nextTasks, nextSchedules, nextWorkflows, nextAgents, nextRoles, nextProject] = await Promise.all([
-        listTasks(false, projectId),
-        listTaskSchedules(projectId),
-        listWorkflows(false),
-        listAgents(false),
-        listRoles(false),
-        projectId ? getProject(projectId) : Promise.resolve(null),
+        orchestraClient.tasks.list({ includeArchived: false, projectId }),
+        orchestraClient.tasks.listSchedules(projectId),
+        orchestraClient.catalog.listWorkflows(false),
+        orchestraClient.catalog.listAgents(false, projectId),
+        orchestraClient.catalog.listRoles(false),
+        projectId ? orchestraClient.catalog.getProject(projectId) : Promise.resolve(null),
       ]);
       setTasks((current) => (sameData(current, nextTasks) ? current : nextTasks));
       setTaskSchedules((current) => (sameData(current, nextSchedules) ? current : nextSchedules));
@@ -448,7 +360,7 @@ export function TasksPage({
             .map((task: TaskSummary) => task.workflowId as string),
         ),
       );
-      const definitions = await Promise.all(workflowIds.map((workflowId) => getWorkflow(workflowId)));
+      const definitions = await Promise.all(workflowIds.map((workflowId) => orchestraClient.catalog.getWorkflow(workflowId)));
       const nextDefinitions = Object.fromEntries(definitions.map((definition) => [definition.id, definition]));
       setWorkflowDefinitions((current) => (sameData(current, nextDefinitions) ? current : nextDefinitions));
     } catch (error) {
@@ -458,16 +370,16 @@ export function TasksPage({
         setLoadingTasks(false);
       }
     }
-  }
+  }, [orchestraClient, projectId]);
 
-  async function loadTaskDetail(taskId: string, options?: { preserveDraft?: boolean; silent?: boolean }) {
+  const loadTaskDetail = useCallback(async (taskId: string, options?: { preserveDraft?: boolean; silent?: boolean }) => {
     const requestId = ++taskDetailLoadRequestRef.current;
     if (!options?.silent) {
       setLoadingTaskDetail(true);
       setTaskActionError(null);
     }
     try {
-      const [task, messages] = await Promise.all([getTask(taskId), listTaskMessages(taskId)]);
+      const [task, messages] = await Promise.all([orchestraClient.tasks.get(taskId), orchestraClient.tasks.listMessages(taskId)]);
       if (!shouldApplyTaskDetailLoad(routeRef.current, taskId, requestId, taskDetailLoadRequestRef.current)) {
         return;
       }
@@ -494,16 +406,16 @@ export function TasksPage({
         setLoadingTaskDetail(false);
       }
     }
-  }
+  }, [orchestraClient, repositories]);
 
-  async function loadTaskScheduleDetail(scheduleId: string, options?: { preserveDraft?: boolean; silent?: boolean }) {
+  const loadTaskScheduleDetail = useCallback(async (scheduleId: string, options?: { preserveDraft?: boolean; silent?: boolean }) => {
     const requestId = ++taskScheduleLoadRequestRef.current;
     if (!options?.silent) {
       setLoadingTaskDetail(true);
       setTaskActionError(null);
     }
     try {
-      const schedule = await getTaskSchedule(scheduleId);
+      const schedule = await orchestraClient.tasks.getSchedule(scheduleId);
       if (!shouldApplyTaskScheduleLoad(routeRef.current, scheduleId, requestId, taskScheduleLoadRequestRef.current)) {
         return;
       }
@@ -522,7 +434,7 @@ export function TasksPage({
         setLoadingTaskDetail(false);
       }
     }
-  }
+  }, [orchestraClient]);
 
   useEffect(() => {
     void loadTasksData();
@@ -545,74 +457,22 @@ export function TasksPage({
     onSelectedTaskIdChange?.(route.kind === "detail" ? route.taskId : null);
   }, [onSelectedTaskIdChange, route]);
 
-  useEffect(() => {
-    if (route.kind === "create") {
-      return;
-    }
-
-    let cancelled = false;
-
-    const refresh = () => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
+  useTaskAutoRefresh({
+    disabled: route.kind === "create",
+    selectedTaskId: route.kind === "detail" ? route.taskId : null,
+    selectedScheduleId: route.kind === "schedule" ? route.scheduleId : null,
+    canRefreshSelectedTask: route.kind === "detail" && !taskDraftDirty,
+    canRefreshSelectedSchedule: route.kind === "schedule" && !taskScheduleDraftDirty,
+    refreshTasks: () => {
       void loadTasksData({ silent: true });
-      if (route.kind === "detail" && !taskDraftDirty) {
-        void loadTaskDetail(route.taskId, { silent: true });
-      }
-      if (route.kind === "schedule" && !taskScheduleDraftDirty) {
-        void loadTaskScheduleDetail(route.scheduleId, { silent: true });
-      }
-    };
-
-    let disposeTaskChanges: (() => void) | undefined;
-    let disposeSessionStream: (() => void) | undefined;
-
-    void listenToTaskChanges((event) => {
-      if (cancelled) {
-        return;
-      }
-      if (event.taskIds.length === 0) {
-        refresh();
-        return;
-      }
-      if (route.kind === "detail" && event.taskIds.includes(route.taskId)) {
-        refresh();
-        return;
-      }
-      refresh();
-    }).then((dispose) => {
-      if (cancelled) {
-        dispose();
-        return;
-      }
-      disposeTaskChanges = dispose;
-    });
-
-    void listenToSessionStream((payload) => {
-      if (!cancelled && shouldRefreshTasksFromSessionEvent(payload)) {
-        refresh();
-      }
-    }).then((dispose) => {
-      if (cancelled) {
-        dispose();
-        return;
-      }
-      disposeSessionStream = dispose;
-    });
-
-    const intervalId = window.setInterval(refresh, 60000);
-    window.addEventListener("focus", refresh);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", refresh);
-      disposeTaskChanges?.();
-      disposeSessionStream?.();
-    };
-  }, [route, taskDraftDirty, taskScheduleDraftDirty, projectId]);
+    },
+    refreshTaskDetail: (taskId) => {
+      void loadTaskDetail(taskId, { silent: true });
+    },
+    refreshTaskSchedule: (scheduleId) => {
+      void loadTaskScheduleDetail(scheduleId, { silent: true });
+    },
+  });
 
   useEffect(() => {
     if (createTaskProjectId !== projectId || createTaskToken === createTaskTokenRef.current) {
@@ -742,9 +602,9 @@ export function TasksPage({
   }
 
   async function maybeDispatchPublishedTask(taskId: string) {
-    const latest = await getTask(taskId);
+    const latest = await orchestraClient.tasks.get(taskId);
     if (latest.readyForDispatch) {
-      await dispatchTaskLane(taskId);
+      await orchestraClient.tasks.dispatch(taskId);
     }
   }
 
@@ -753,13 +613,13 @@ export function TasksPage({
     setTaskActionError(null);
     try {
       if (creatingScheduledTask) {
-        const saved = await createTaskSchedule({ ...taskScheduleDraft, enabled: false }, projectId);
+        const saved = await orchestraClient.tasks.createSchedule({ ...taskScheduleDraft, enabled: false }, projectId);
         await loadTasksData();
         setRoute({ kind: "schedule", scheduleId: saved.id });
         await loadTaskScheduleDetail(saved.id);
         setTaskScheduleDraftDirty(false);
       } else {
-        const saved = await createTask({ ...taskDraft, status: "draft" }, projectId);
+        const saved = await orchestraClient.tasks.create({ ...taskDraft, status: "draft" }, projectId);
         await loadTasksData();
         setRoute({ kind: "detail", taskId: saved.id });
         await loadTaskDetail(saved.id);
@@ -768,7 +628,7 @@ export function TasksPage({
       }
     } catch (error) {
       setTaskActionError(
-        await reportClientError(
+        await orchestraClient.app.reportError(
           creatingScheduledTask ? "ui.task_schedule.create.save.failed" : "ui.task.create.save.failed",
           error,
           creatingScheduledTask ? "Unable to save task schedule." : "Unable to create task.",
@@ -784,13 +644,13 @@ export function TasksPage({
     setTaskActionError(null);
     try {
       if (creatingScheduledTask) {
-        const saved = await createTaskSchedule({ ...taskScheduleDraft, enabled: true }, projectId);
+        const saved = await orchestraClient.tasks.createSchedule({ ...taskScheduleDraft, enabled: true }, projectId);
         await loadTasksData();
         setRoute({ kind: "schedule", scheduleId: saved.id });
         await loadTaskScheduleDetail(saved.id);
         setTaskScheduleDraftDirty(false);
       } else {
-        const saved = await createTask({ ...taskDraft, status: "ready" }, projectId);
+        const saved = await orchestraClient.tasks.create({ ...taskDraft, status: "ready" }, projectId);
         await maybeDispatchPublishedTask(saved.id);
         await loadTasksData();
         setRoute({ kind: "detail", taskId: saved.id });
@@ -800,7 +660,7 @@ export function TasksPage({
       }
     } catch (error) {
       setTaskActionError(
-        await reportClientError(
+        await orchestraClient.app.reportError(
           creatingScheduledTask ? "ui.task_schedule.create.publish.failed" : "ui.task.create.publish.failed",
           error,
           creatingScheduledTask ? "Unable to create task schedule." : "Unable to publish task.",
@@ -817,7 +677,7 @@ export function TasksPage({
     }
     setSavingTask(true);
     await runDetailAction("save", async () => {
-      const saved = await updateTask(route.taskId, taskDraft);
+      const saved = await orchestraClient.tasks.update(route.taskId, taskDraft);
       await loadTasksData();
       await loadTaskDetail(saved.id);
       setTaskDraftDirty(false);
@@ -831,7 +691,7 @@ export function TasksPage({
     }
     setSavingTask(true);
     await runDetailAction("save_schedule", async () => {
-      const saved = await updateTaskSchedule(route.scheduleId, taskScheduleDraft);
+      const saved = await orchestraClient.tasks.updateSchedule(route.scheduleId, taskScheduleDraft);
       await loadTasksData();
       await loadTaskScheduleDetail(saved.id);
       setTaskScheduleDraftDirty(false);
@@ -845,7 +705,7 @@ export function TasksPage({
     }
     setPublishingTask(true);
     await runDetailAction("publish", async () => {
-      const saved = await updateTask(route.taskId, { ...taskDraft, status: "ready" });
+      const saved = await orchestraClient.tasks.update(route.taskId, { ...taskDraft, status: "ready" });
       await maybeDispatchPublishedTask(saved.id);
       await loadTasksData();
       await loadTaskDetail(saved.id);
@@ -860,7 +720,7 @@ export function TasksPage({
     }
     setDeletingTask(true);
     await runDetailAction("delete", async () => {
-      await deleteTask(route.taskId);
+      await orchestraClient.tasks.remove(route.taskId);
       await loadTasksData();
       setRoute({ kind: "overview" });
       setTaskDetail(null);
@@ -879,20 +739,20 @@ export function TasksPage({
     }
     setClosingTask(true);
     await runDetailAction("close", async () => {
-      let currentTask = taskDetail ?? await getTask(route.taskId);
+      let currentTask = taskDetail ?? await orchestraClient.tasks.get(route.taskId);
       const trimmedReason = reason?.trim();
       if (trimmedReason) {
-        await commentOnTask(route.taskId, {
+        await orchestraClient.tasks.comment(route.taskId, {
           author: commentDraft.author || "User",
           message: `Task canceled: ${trimmedReason}`,
           interruptAgent: false,
         });
-        currentTask = await getTask(route.taskId);
+        currentTask = await orchestraClient.tasks.get(route.taskId);
       }
       if (currentTask.activeLaneAssignment) {
-        await stopTaskActivity(route.taskId);
+        await orchestraClient.tasks.stopActivity(route.taskId);
       }
-      const saved = await updateTask(route.taskId, {
+      const saved = await orchestraClient.tasks.update(route.taskId, {
         ...taskToDraft(currentTask),
         ...taskDraft,
         status: "canceled",
@@ -910,7 +770,7 @@ export function TasksPage({
     }
     setDeletingTask(true);
     await runDetailAction("delete_schedule", async () => {
-      await deleteTaskSchedule(route.scheduleId);
+      await orchestraClient.tasks.deleteSchedule(route.scheduleId);
       await loadTasksData();
       setRoute({ kind: "overview" });
       setTaskScheduleDetail(null);
@@ -926,7 +786,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await addTaskDependency(selectedBlockerTaskId, route.taskId);
+      await orchestraClient.tasks.addDependency(selectedBlockerTaskId, route.taskId);
       setSelectedBlockerTaskId("");
       await loadTasksData();
       await loadTaskDetail(route.taskId);
@@ -941,7 +801,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await removeTaskDependency(dependencyId);
+      await orchestraClient.tasks.removeDependency(dependencyId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
@@ -967,7 +827,7 @@ export function TasksPage({
           reader.readAsDataURL(file);
         });
 
-        await addTaskAttachment(route.taskId, {
+        await orchestraClient.tasks.addAttachment(route.taskId, {
           fileName: file.name,
           mediaType: file.type || "application/octet-stream",
           base64Data,
@@ -987,7 +847,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await removeTaskAttachment(attachmentId);
+      await orchestraClient.tasks.removeAttachment(attachmentId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
@@ -1001,7 +861,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await addTaskFileReference(route.taskId, fileReferenceDraft);
+      await orchestraClient.tasks.addFileReference(route.taskId, fileReferenceDraft);
       setFileReferenceDraft({ repositoryId: fileReferenceDraft.repositoryId || (repositories[0]?.id ?? ""), relativePath: "" });
       await loadTasksData();
       await loadTaskDetail(route.taskId);
@@ -1016,7 +876,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await removeTaskFileReference(referenceId);
+      await orchestraClient.tasks.removeFileReference(referenceId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
@@ -1030,7 +890,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await setDefaultTaskFileReference(referenceId);
+      await orchestraClient.tasks.setDefaultFileReference(referenceId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
@@ -1044,7 +904,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await addTaskTodo(route.taskId, { description, laneId });
+      await orchestraClient.tasks.addTodo(route.taskId, { description, laneId });
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
@@ -1057,7 +917,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction(`task-todo-finished-${todoId}`, async () => {
-      await markTaskTodoFinished(todoId);
+      await orchestraClient.tasks.markTodoFinished(todoId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to mark task todo finished.");
@@ -1068,7 +928,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction(`task-todo-unfinished-${todoId}`, async () => {
-      await markTaskTodoUnfinished(todoId);
+      await orchestraClient.tasks.markTodoUnfinished(todoId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to mark task todo unfinished.");
@@ -1079,7 +939,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction(`task-todo-delete-${todoId}`, async () => {
-      await deleteTaskTodo(todoId);
+      await orchestraClient.tasks.deleteTodo(todoId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to delete task todo.");
@@ -1091,7 +951,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await markTaskCommentsReadForUser(route.taskId);
+      await orchestraClient.tasks.markCommentsRead(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
     } catch (error) {
@@ -1105,7 +965,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await commentOnTask(route.taskId, draft);
+      await orchestraClient.tasks.comment(route.taskId, draft);
       if (!draft.parentCommentId) {
         setCommentDraft(createBlankCommentDraft());
       }
@@ -1124,7 +984,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await updateTaskComment(commentId, { message });
+      await orchestraClient.tasks.updateComment(commentId, { message });
       await loadTasksData();
       await loadTaskDetail(route.taskId);
       return true;
@@ -1140,7 +1000,7 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
-      await deleteTaskComment(commentId);
+      await orchestraClient.tasks.deleteComment(commentId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
       return true;
@@ -1157,7 +1017,7 @@ export function TasksPage({
     setSendingTaskMail(true);
     setTaskActionError(null);
     try {
-      await sendMailboxMessage({
+      await orchestraClient.inbox.send({
         projectId: taskDetail?.projectId ?? projectId ?? null,
         taskId: route.taskId,
         recipientType: "active_assignment",
@@ -1178,7 +1038,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction("dispatch-ready", async () => {
-      await dispatchTaskLane(route.taskId);
+      await orchestraClient.tasks.dispatch(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to dispatch task lane.");
@@ -1191,11 +1051,11 @@ export function TasksPage({
     const actionId = outcome === "success" ? "approve-user" : outcome === "failure" ? "needs-work-user" : "needs-user";
     await runDetailAction(actionId, async () => {
       if (outcome === "success") {
-        await completeLaneAsSuccess(route.taskId);
+        await orchestraClient.tasks.complete(route.taskId, "success");
       } else if (outcome === "failure") {
-        await completeLaneAsFailure(route.taskId);
+        await orchestraClient.tasks.complete(route.taskId, "failure");
       } else {
-        await requestUserIntervention(route.taskId);
+        await orchestraClient.tasks.complete(route.taskId, "needs_user");
       }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
@@ -1207,7 +1067,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction("approve-pending", async () => {
-      await approveTaskReview(route.taskId);
+      await orchestraClient.tasks.approveReview(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to approve task lane.");
@@ -1218,7 +1078,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction("relane", async () => {
-      await reassignTaskToLane(route.taskId, targetLaneId, notes);
+      await orchestraClient.tasks.reassign(route.taskId, targetLaneId, notes);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to re-lane task.");
@@ -1232,9 +1092,9 @@ export function TasksPage({
     const actionId = shouldResume ? "resume-pending" : "needs-work-pending";
     await runDetailAction(actionId, async () => {
       if (shouldResume) {
-        await resumeTaskLane(route.taskId);
+        await orchestraClient.tasks.resume(route.taskId);
       } else {
-        await markTaskNeedsWork(route.taskId);
+        await orchestraClient.tasks.markNeedsWork(route.taskId);
       }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
@@ -1248,7 +1108,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction("pause", async () => {
-      await pauseTaskLane(route.taskId);
+      await orchestraClient.tasks.pause(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to pause task lane.");
@@ -1261,13 +1121,13 @@ export function TasksPage({
     await runDetailAction("whip", async () => {
       const activeSessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
       if (activeSessionId) {
-        await sendSessionMessage(
+        await orchestraClient.sessions.sendMessage(
           activeSessionId,
           `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool \`complete_lane_as_failure\` (with task ID and optional notes). If you believe you need to escalate to the user - use tool \`request_user_intervention\` (with task ID and optional notes).\n\nCanonical task ID: ${route.taskId}`,
           `manual-whip-${Date.now()}`,
         );
       }
-      await manualTaskWhip(route.taskId);
+      await orchestraClient.tasks.manualWhip(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to send manual task whip.");
@@ -1278,7 +1138,7 @@ export function TasksPage({
       return;
     }
     await runDetailAction("reset", async () => {
-      await stopTaskActivity(route.taskId);
+      await orchestraClient.tasks.stopActivity(route.taskId);
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     }, "Unable to stop current task activity.");
@@ -1293,7 +1153,7 @@ export function TasksPage({
     try {
       const activeSessionId = taskDetail.activeLaneAssignment?.sessionId ?? null;
       if (activeSessionId) {
-        await sendSessionMessage(
+        await orchestraClient.sessions.sendMessage(
           activeSessionId,
           "Keep working this ticket and use the tools complete_lane_as_success, complete_lane_as_failure, and request_user_intervention to mark the work as completed.",
           `retry-task-${taskDetail.id}-${Date.now()}`,
@@ -1302,7 +1162,7 @@ export function TasksPage({
       }
 
       if (taskDetail.readyForDispatch) {
-        await dispatchTaskLane(taskDetail.id);
+        await orchestraClient.tasks.dispatch(taskDetail.id);
         await loadTasksData();
         await loadTaskDetail(taskDetail.id);
         return;

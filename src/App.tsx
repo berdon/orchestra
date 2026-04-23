@@ -2,11 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   cleanupStaleBridgeInstances,
   clearLogs,
-  compactSession,
-  reloadSession,
-  createContextualSession,
-  createSession,
-  deleteSession,
   getBridgeDiagnostics,
   getInitialAgentTerminalSessionId,
   getInitialAgentTerminalWindowFlag,
@@ -17,45 +12,26 @@ import {
   getPiModelsJson,
   getPiOAuthFlowState,
   getPiSetupState,
-  getSessionModelState,
-  getSessionRecord,
-  getSessionRuntimeDetails,
-  getSessionStats,
   getCurrentAgentTerminalSessionId,
-  getTask,
   isCurrentAgentTerminalWindow,
   isCurrentLogsWindow,
   importLegacyPiConfiguration,
-  listInboxMessages,
-  listSessions,
-  listTasks,
   importPiLegacyConfig,
   cancelPiOAuthFlow,
   dismissPiOAuthFlow,
-  listWorkflows,
-  listenToInboxChanges,
-  listenToSessionChanges,
-  listenToSessionStream,
-  listenToTaskChanges,
   openLogsWindow,
   removePiProviderCredential,
   startPiOAuthFlow,
-  reportClientError,
   savePiModelsJson,
   submitPiOAuthFlowInput,
-  sendSessionMessage,
   setPiProviderApiKey,
-  setSessionModel,
-  stopSessionRuntime,
-  subscribeSession,
-  unsubscribeSession,
 } from "./lib/tauri";
 import { ensureAgentSession, listAgentOperations, listAgents, openAgentSessionInTerminal } from "./lib/agents";
 import { buildCommandPaletteItems, type CommandPaletteItem } from "./lib/commandPalette";
 import { applyPendingRunToSession, createPendingUserRun, type PendingSessionRun, reduceSessionTranscriptEvent } from "./lib/sessionTranscriptReducer";
 import { sortSessionRecords } from "./lib/sessionList";
 import { reconcileListedSessions } from "./lib/sessionListMerge";
-import { getActiveProjectId, listProjects, setActiveProjectId } from "./lib/projects";
+import { getActiveProjectId, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
 import { getPiRuntimeSettings, updatePiRuntimeSettings } from "./lib/harnessSettings";
@@ -69,7 +45,9 @@ import {
   loadStoredExplanatoryTooltips,
   storeExplanatoryTooltips,
 } from "./lib/tooltips";
-import { countVisibleUnreadTaskComments } from "./lib/taskUnreadCommentVisibility";
+import { useProjectReferenceData, useProjectUnreadCounts } from "./lib/orchestraData/appShell";
+import { useOrchestraEventSubscription } from "./lib/orchestraData/events";
+import { useSessionEventRefresh, useSessionPollingRefresh } from "./lib/orchestraData/sessions";
 import { useOrchestraBootstrap, useOrchestraClient } from "./lib/orchestraClient";
 import { AgentsPage } from "./agents/AgentsPage";
 import { CommandPalette } from "./components/CommandPalette";
@@ -360,16 +338,6 @@ function formatModelOptionLabel(modelState: SessionModelState | undefined) {
   }
 
   return "Choose a model";
-}
-
-function countInboxUnreadThings(messages: MailboxMessage[], tasks: TaskSummary[]) {
-  const unreadMessages = messages.filter((message) => !message.readAt && !message.archivedAt).length;
-  const attentionTasks = tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked).length;
-  return unreadMessages + attentionTasks;
-}
-
-function countUnreadTaskComments(tasks: TaskSummary[]) {
-  return countVisibleUnreadTaskComments(tasks);
 }
 
 function formatNavigationBadgeCount(count: number) {
@@ -793,8 +761,6 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialRouteState.settingsTab ?? "projects");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(initialRouteState.projectId);
-  const [projectUnreadCounts, setProjectUnreadCounts] = useState<Record<string, number>>({});
-  const [projectTaskCommentUnreadCounts, setProjectTaskCommentUnreadCounts] = useState<Record<string, number>>({});
   const [appInfo, setAppInfo] = useState<AppInfo | null>(orchestraBootstrap.appInfo ?? null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
@@ -824,9 +790,6 @@ export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialRouteState.selectedSessionId);
   const [chatAgents, setChatAgents] = useState<AgentOperationsSnapshot[]>([]);
-  const [referenceTasks, setReferenceTasks] = useState<TaskSummary[]>([]);
-  const [referenceAgents, setReferenceAgents] = useState<AgentSummary[]>([]);
-  const [referenceRoles, setReferenceRoles] = useState<RoleSummary[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
   const [explanatoryTooltipsEnabled, setExplanatoryTooltipsEnabled] = useState(() => loadStoredExplanatoryTooltips());
@@ -904,6 +867,18 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
+  const { projectUnreadCounts, projectTaskCommentUnreadCounts } = useProjectUnreadCounts(
+    projects,
+    isLogsWindow || isAgentTerminalWindow || isDetachedWindow,
+  );
+  const {
+    referenceTasks,
+    referenceAgents,
+    referenceRoles,
+    refresh: refreshProjectReferenceData,
+  } = useProjectReferenceData(activeProjectId, isDetachedWindow);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -1012,7 +987,6 @@ export function App() {
     ? draftMessages[supervisorSessionId] ?? lastKnownSupervisorDraftRef.current
     : "";
   const supervisorPendingRun = supervisorSessionId ? pendingRuns[supervisorSessionId] : undefined;
-  const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
 
   useEffect(() => {
     sessionsRef.current = sessions;
@@ -1085,7 +1059,7 @@ export function App() {
     const sessionId = viewedSession.id;
     const timeoutId = window.setTimeout(() => {
       setLoadingStatsSessionId(sessionId);
-      void getSessionStats(sessionId)
+      void orchestraClient.sessions.getStats(sessionId)
         .then((stats) => {
           if (!cancelled) {
             setSessionStats((current) => ({
@@ -1185,7 +1159,7 @@ export function App() {
     pendingSessionRecordRequestKeyRef.current = requestKey;
 
     let cancelled = false;
-    void getSessionRecord(pendingSelectedSessionId)
+    void orchestraClient.sessions.get(pendingSelectedSessionId)
       .then((record) => {
         if (!cancelled) {
           mergeSessionRecord(record, { select: false });
@@ -1418,7 +1392,7 @@ export function App() {
     try {
       setAppInfo(await orchestraClient.app.getInfo());
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.app.info", error, "Unable to load app info."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.app.info", error, "Unable to load app info."));
     }
   }
 
@@ -1505,7 +1479,7 @@ export function App() {
       setSystemNotificationPermission(await requestSystemNotificationPermission());
       await loadSystemNotificationPermission();
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.notifications.permission.request", error, "Unable to request system notification permission."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.notifications.permission.request", error, "Unable to request system notification permission."));
     } finally {
       setRequestingSystemNotificationPermission(false);
     }
@@ -1517,53 +1491,9 @@ export function App() {
       await sendTestSystemNotification();
       await loadSystemNotificationPermission();
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.notifications.test", error, "Unable to send the test system notification."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.notifications.test", error, "Unable to send the test system notification."));
     } finally {
       setSendingTestSystemNotification(false);
-    }
-  }
-
-  async function loadProjectUnreadCounts() {
-    if (isLogsWindow || isAgentTerminalWindow || projects.length === 0) {
-      setProjectUnreadCounts({});
-      setProjectTaskCommentUnreadCounts({});
-      return;
-    }
-
-    const projectUnreadData = await Promise.all(projects.map(async (project) => {
-      const [messages, tasks] = await Promise.all([
-        listInboxMessages(project.id, true),
-        listTasks(false, project.id),
-      ]);
-      return {
-        projectId: project.id,
-        inboxUnreadCount: countInboxUnreadThings(messages, tasks),
-        taskCommentUnreadCount: countUnreadTaskComments(tasks),
-      };
-    }));
-    setProjectUnreadCounts(Object.fromEntries(projectUnreadData.map((entry) => [entry.projectId, entry.inboxUnreadCount])));
-    setProjectTaskCommentUnreadCounts(Object.fromEntries(projectUnreadData.map((entry) => [entry.projectId, entry.taskCommentUnreadCount])));
-  }
-
-  async function loadProjectReferenceData() {
-    if (isDetachedWindow || !activeProjectId) {
-      setReferenceTasks([]);
-      setReferenceAgents([]);
-      setReferenceRoles([]);
-      return;
-    }
-
-    try {
-      const [tasks, agents, roles] = await Promise.all([
-        listTasks(false, activeProjectId),
-        listAgents(false, activeProjectId),
-        listRoles(false),
-      ]);
-      setReferenceTasks(tasks);
-      setReferenceAgents(agents);
-      setReferenceRoles(roles);
-    } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load project references."));
     }
   }
 
@@ -1634,7 +1564,7 @@ export function App() {
     setPiOAuthFlowState(null);
   }
 
-  async function loadSessions(options?: { background?: boolean }) {
+  const loadSessions = useCallback(async (options?: { background?: boolean }) => {
     sessionListRefreshCountRef.current += 1;
     if (!options?.background) {
       setLoadingSessions(true);
@@ -1644,7 +1574,7 @@ export function App() {
     setSessionActionError(null);
 
     try {
-      const listedSessions = sortSessionRecords((await listSessions(activeProjectId)).map(normalizeSessionRecord));
+      const listedSessions = sortSessionRecords((await orchestraClient.sessions.list(activeProjectId)).map(normalizeSessionRecord));
       const nextSessions = sortSessionRecords(
         reconcileListedSessions(sessionsRef.current, listedSessions, {
           preserveDetailedSessionIds: [
@@ -1679,7 +1609,7 @@ export function App() {
         chatSessionAgentIdRef.current = null;
       }
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.sessions.load", error, "Unable to load sessions."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.load", error, "Unable to load sessions."));
     } finally {
       if (!options?.background) {
         setLoadingSessions(false);
@@ -1687,7 +1617,7 @@ export function App() {
         backgroundSessionRefreshInFlightRef.current = false;
       }
     }
-  }
+  }, [activeProjectId, chatSessionId, orchestraClient, pendingRuns, pendingSessionOpenRequest, selectedSessionId, supervisorSessionId]);
 
   async function loadChatAgents(options?: { background?: boolean }) {
     if (!options?.background) {
@@ -1715,7 +1645,7 @@ export function App() {
   async function loadSelectedSessionRuntimeDetails(sessionId: string): Promise<SessionRuntimeDetails> {
     setLoadingRuntimeDetailsSessionId(sessionId);
     try {
-      return await getSessionRuntimeDetails(sessionId);
+      return await orchestraClient.sessions.getRuntimeDetails(sessionId);
     } finally {
       setLoadingRuntimeDetailsSessionId((current) => (current === sessionId ? null : current));
     }
@@ -1729,7 +1659,7 @@ export function App() {
       const updatedSession = await action();
       applySessionUpdate(updatedSession);
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.sessions.action", error, "Session action failed."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.action", error, "Session action failed."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1740,7 +1670,7 @@ export function App() {
     setIsSubmitting(true);
 
     try {
-      await deleteSession(sessionId);
+      await orchestraClient.sessions.remove(sessionId);
       setSessions((current) => current.filter((session) => session.id !== sessionId));
       setSelectedSessionId((current) => (current === sessionId ? null : current));
       setChatSessionId((current) => (current === sessionId ? null : current));
@@ -1764,7 +1694,7 @@ export function App() {
       });
       await loadSessions({ background: true });
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.sessions.dismiss", error, "Unable to dismiss session."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.dismiss", error, "Unable to dismiss session."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1776,7 +1706,7 @@ export function App() {
     try {
       const closedSessions = sessions.filter((session) => session.status === "closed");
       for (const session of closedSessions) {
-        await deleteSession(session.id);
+        await orchestraClient.sessions.remove(session.id);
       }
       const closedSessionIds = new Set(closedSessions.map((session) => session.id));
       setSessions((current) => current.filter((session) => !closedSessionIds.has(session.id)));
@@ -1808,7 +1738,7 @@ export function App() {
       });
       await loadSessions({ background: true });
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.sessions.dismiss_closed", error, "Unable to dismiss closed sessions."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.dismiss_closed", error, "Unable to dismiss closed sessions."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1847,7 +1777,7 @@ export function App() {
       if (reduction.refreshFromBackend) {
         const runId = payload.runId ?? undefined;
         sessionRecordLoadCountsRef.current[payload.sessionId] = (sessionRecordLoadCountsRef.current[payload.sessionId] ?? 0) + 1;
-        void getSessionRecord(payload.sessionId)
+        void orchestraClient.sessions.get(payload.sessionId)
           .then((record) => {
             applySessionUpdate(record);
             removePendingRun(payload.sessionId, runId);
@@ -1882,7 +1812,7 @@ export function App() {
 
   useEffect(() => {
     const loadProjectCatalog = () => {
-      void listProjects().then((nextProjects) => {
+      void orchestraClient.catalog.listProjects().then((nextProjects) => {
         const storedActiveProjectId = getActiveProjectId();
         setProjects(nextProjects);
         setActiveProjectIdState((current) => {
@@ -1949,56 +1879,30 @@ export function App() {
   }, [activeProjectId, pendingSessionOpenRequest]);
 
   useEffect(() => {
-    if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
-      return;
-    }
-
-    void loadProjectUnreadCounts().catch(() => {
-      setProjectUnreadCounts({});
-    });
-  }, [activeProjectId, isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
-
-  useEffect(() => {
     if (isDetachedWindow) {
       return;
     }
 
-    void loadProjectReferenceData();
-  }, [activePage, activeProjectId, isDetachedWindow, settingsTab]);
+    void refreshProjectReferenceData().catch((error) => {
+      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load project references."));
+    });
+  }, [activePage, isDetachedWindow, refreshProjectReferenceData, settingsTab]);
 
-  useEffect(() => {
+  useOrchestraEventSubscription((event) => {
     if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow) {
       return;
     }
-
-    let disposed = false;
-    let stopInbox = () => {};
-    let stopTasks = () => {};
-
-    const refreshUnreadCounts = () => {
-      if (!disposed) {
-        void loadProjectUnreadCounts().catch(() => {
-          setProjectUnreadCounts({});
-        });
-      }
-    };
-
-    const refreshProjectReferences = () => {
-      if (!disposed) {
-        void loadProjectReferenceData();
-      }
-    };
 
     const notifyInboxDeliveries = async (deliveryIds: string[]) => {
       if (!deliveryIds.length) {
         return;
       }
-      const messages = await listInboxMessages(null, true);
+      const messages = await orchestraClient.inbox.list(null, true);
       const deliveries = messages.filter(
         (message) => deliveryIds.includes(message.deliveryId) && !message.readAt && !message.archivedAt,
       );
       for (const message of deliveries) {
-        if (disposed || notifiedInboxDeliveryIdsRef.current.has(message.deliveryId)) {
+        if (notifiedInboxDeliveryIdsRef.current.has(message.deliveryId)) {
           continue;
         }
         notifiedInboxDeliveryIdsRef.current.add(message.deliveryId);
@@ -2019,13 +1923,13 @@ export function App() {
       }
       const tasks = await Promise.all(taskIds.map(async (taskId) => {
         try {
-          return await getTask(taskId);
+          return await orchestraClient.tasks.get(taskId);
         } catch {
           return null;
         }
       }));
       for (const task of tasks) {
-        if (!task || disposed) {
+        if (!task) {
           continue;
         }
         if (
@@ -2053,31 +1957,14 @@ export function App() {
       }
     };
 
-    void listenToInboxChanges((event) => {
-      refreshUnreadCounts();
-      if (event.reason === "mailbox.sent") {
-        void notifyInboxDeliveries(event.deliveryIds).catch(() => undefined);
-      }
-    }).then((dispose) => {
-      stopInbox = dispose;
-    });
+    if (event.kind === "inbox.change" && event.reason === "mailbox.sent") {
+      void notifyInboxDeliveries(event.deliveryIds).catch(() => undefined);
+    }
 
-    void listenToTaskChanges((event) => {
-      refreshUnreadCounts();
-      refreshProjectReferences();
-      if (["task.transition.awaiting_user_approval", "task.transition.needs_user"].includes(event.reason)) {
-        void notifyTaskAttention(event.taskIds, event.reason).catch(() => undefined);
-      }
-    }).then((dispose) => {
-      stopTasks = dispose;
-    });
-
-    return () => {
-      disposed = true;
-      stopInbox();
-      stopTasks();
-    };
-  }, [activeProjectId, isAgentTerminalWindow, isDetachedWindow, isLogsWindow, projects]);
+    if (event.kind === "task.change" && ["task.transition.awaiting_user_approval", "task.transition.needs_user"].includes(event.reason)) {
+      void notifyTaskAttention(event.taskIds, event.reason).catch(() => undefined);
+    }
+  }, { disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow });
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -2158,63 +2045,38 @@ export function App() {
     );
   }, [activeProjectId, draftMessages, supervisorQuickChatStorageReadyProjectKey, supervisorSessionId]);
 
+  const requestBackgroundSessionRefresh = useCallback(() => {
+    if (scheduledSessionRefreshRef.current !== null || backgroundSessionRefreshInFlightRef.current) {
+      return;
+    }
+    scheduledSessionRefreshRef.current = window.setTimeout(() => {
+      scheduledSessionRefreshRef.current = null;
+      backgroundSessionRefreshInFlightRef.current = true;
+      void loadSessions({ background: true });
+    }, 200);
+  }, [loadSessions]);
+
+  useSessionEventRefresh({
+    disabled: isDetachedWindow,
+    hasSession: (sessionId) => sessionsRef.current.some((session) => session.id === sessionId),
+    onSessionStream: (_sessionId, payload) => {
+      handleSessionStreamEvent(payload as SessionStreamEnvelope);
+    },
+    requestRefresh: requestBackgroundSessionRefresh,
+  });
+
   useEffect(() => {
-    if (isDetachedWindow) {
+    if (scheduledSessionRefreshRef.current === null) {
       return;
     }
 
-    const requestBackgroundSessionRefresh = () => {
-      if (scheduledSessionRefreshRef.current !== null || backgroundSessionRefreshInFlightRef.current) {
-        return;
-      }
-      scheduledSessionRefreshRef.current = window.setTimeout(() => {
-        scheduledSessionRefreshRef.current = null;
-        backgroundSessionRefreshInFlightRef.current = true;
-        void loadSessions({ background: true });
-      }, 200);
-    };
-
-    let unlistenStream: (() => void) | undefined;
-    let unlistenChanges: (() => void) | undefined;
-    let cancelled = false;
-
-    void listenToSessionStream((payload) => {
-      handleSessionStreamEvent(payload);
-      setSessions((current) => {
-        if (current.some((session) => session.id === payload.sessionId)) {
-          return current;
-        }
-        requestBackgroundSessionRefresh();
-        return current;
-      });
-    }).then((dispose) => {
-      if (cancelled) {
-        void dispose();
-        return;
-      }
-      unlistenStream = dispose;
-    });
-
-    void listenToSessionChanges(() => {
-      requestBackgroundSessionRefresh();
-    }).then((dispose) => {
-      if (cancelled) {
-        void dispose();
-        return;
-      }
-      unlistenChanges = dispose;
-    });
-
     return () => {
-      cancelled = true;
       if (scheduledSessionRefreshRef.current !== null) {
         window.clearTimeout(scheduledSessionRefreshRef.current);
         scheduledSessionRefreshRef.current = null;
       }
-      unlistenStream?.();
-      unlistenChanges?.();
     };
-  }, [handleSessionStreamEvent, isDetachedWindow]);
+  }, [requestBackgroundSessionRefresh]);
 
   useEffect(() => {
     if (isLogsWindow) {
@@ -2232,27 +2094,15 @@ export function App() {
     }
   }, [activeProjectId, isLogsWindow, isAgentTerminalWindow]);
 
-  useEffect(() => {
-    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat" && !supervisorQuickChatOpen)) {
-      return;
-    }
-
+  const refreshSessionsInBackground = useCallback(() => {
     void loadSessions({ background: true });
+  }, [loadSessions]);
 
-    const intervalId = window.setInterval(() => {
-      void loadSessions({ background: true });
-    }, 15000);
-
-    const refreshOnFocus = () => {
-      void loadSessions({ background: true });
-    };
-
-    window.addEventListener("focus", refreshOnFocus);
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", refreshOnFocus);
-    };
-  }, [activePage, isDetachedWindow, supervisorQuickChatOpen]);
+  useSessionPollingRefresh({
+    disabled: isDetachedWindow,
+    active: activePage === "sessions" || activePage === "chat" || supervisorQuickChatOpen,
+    refresh: refreshSessionsInBackground,
+  });
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "chat") {
@@ -2303,7 +2153,7 @@ export function App() {
     const recoverChatSession = async () => {
       if (missingChatSessionId && missingChatSessionAgentId === selectedChatAgentId) {
         try {
-          return await getSessionRecord(missingChatSessionId);
+          return await orchestraClient.sessions.get(missingChatSessionId);
         } catch {
           if (lastKnownChatSessionRef.current?.id === missingChatSessionId) {
             const now = Date.now();
@@ -2382,7 +2232,7 @@ export function App() {
     const recoverSupervisorSession = async () => {
       if (missingSupervisorSessionId) {
         try {
-          return await getSessionRecord(missingSupervisorSessionId);
+          return await orchestraClient.sessions.get(missingSupervisorSessionId);
         } catch {
           if (lastKnownSupervisorSessionRef.current?.id === missingSupervisorSessionId) {
             const now = Date.now();
@@ -2489,7 +2339,7 @@ export function App() {
       && previousViewedSessionId !== nextViewedSessionId
       && (!sessionSurfaceActive || Boolean(viewedSession?.id))
     ) {
-      void unsubscribeSession(previousViewedSessionId)
+      void orchestraClient.sessions.unsubscribe(previousViewedSessionId)
         .then((record) => {
           mergeSessionRecord(record, { select: false });
         })
@@ -2505,7 +2355,7 @@ export function App() {
     let cancelled = false;
 
     if (!viewedSession.subscribed && !viewedSession.terminalAttached) {
-      void subscribeSession(viewedSession.id)
+      void orchestraClient.sessions.subscribe(viewedSession.id)
         .then((record) => {
           if (!cancelled) {
             applySessionUpdate(record);
@@ -2513,7 +2363,7 @@ export function App() {
         })
         .catch(async (error) => {
           if (!cancelled) {
-            setSessionActionError(await reportClientError("ui.sessions.subscribe", error, "Unable to subscribe to session."));
+            setSessionActionError(await orchestraClient.app.reportError("ui.sessions.subscribe", error, "Unable to subscribe to session."));
           }
         });
 
@@ -2524,7 +2374,7 @@ export function App() {
 
     setLoadingModelSessionId(viewedSession.id);
 
-    void getSessionModelState(viewedSession.id)
+    void orchestraClient.sessions.getModelState(viewedSession.id)
       .then((state) => {
         if (cancelled) {
           return;
@@ -2537,7 +2387,7 @@ export function App() {
       })
       .catch(async (error) => {
         if (!cancelled) {
-          setSessionActionError(await reportClientError("ui.sessions.model_state.load", error, "Unable to load session model."));
+          setSessionActionError(await orchestraClient.app.reportError("ui.sessions.model_state.load", error, "Unable to load session model."));
         }
       })
       .finally(() => {
@@ -2559,7 +2409,7 @@ export function App() {
     let cancelled = false;
 
     sessionRecordLoadCountsRef.current[viewedSession.id] = (sessionRecordLoadCountsRef.current[viewedSession.id] ?? 0) + 1;
-    void getSessionRecord(viewedSession.id)
+    void orchestraClient.sessions.get(viewedSession.id)
       .then((record) => {
         if (!cancelled) {
           mergeSessionRecord(record, { select: false });
@@ -2567,7 +2417,7 @@ export function App() {
       })
       .catch(async (error) => {
         if (!cancelled) {
-          setSessionActionError(await reportClientError("ui.sessions.record.load", error, "Unable to load session."));
+          setSessionActionError(await orchestraClient.app.reportError("ui.sessions.record.load", error, "Unable to load session."));
         }
       });
 
@@ -2595,7 +2445,7 @@ export function App() {
       }
 
       sessionRecordLoadCountsRef.current[viewedSession.id] = (sessionRecordLoadCountsRef.current[viewedSession.id] ?? 0) + 1;
-      void getSessionRecord(viewedSession.id)
+      void orchestraClient.sessions.get(viewedSession.id)
         .then((record) => {
           if (!cancelled) {
             mergeSessionRecord(record, { select: false });
@@ -2707,7 +2557,7 @@ export function App() {
     setChangingModelSessionId(session.id);
 
     try {
-      const state = await setSessionModel(session.id, provider, modelId);
+      const state = await orchestraClient.sessions.setModel(session.id, provider, modelId);
       setModelStates((current) => ({
         ...current,
         [state.sessionId]: state,
@@ -2811,12 +2661,12 @@ export function App() {
     setCommandPaletteLoading(true);
     try {
       const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows, nextProjects] = await Promise.all([
-        listSessions(activeProjectId),
-        listTasks(false, activeProjectId),
+        orchestraClient.sessions.list(activeProjectId),
+        orchestraClient.tasks.list({ includeArchived: false, projectId: activeProjectId }),
         listAgentOperations(false, activeProjectId),
         listRoleOperations(false),
-        listWorkflows(false),
-        listProjects(),
+        orchestraClient.catalog.listWorkflows(false),
+        orchestraClient.catalog.listProjects(),
       ]);
       setSessions(nextSessions);
       setProjects(nextProjects);
@@ -2915,7 +2765,7 @@ export function App() {
         return;
       case "create-session":
         setActivePage("sessions");
-        await runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null));
+        await runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null));
         return;
       case "open-logs":
         await handleOpenLogsWindow();
@@ -2943,7 +2793,7 @@ export function App() {
     const timestamp = nowIso();
     setSessionActionError(null);
 
-    void stopSessionRuntime(sessionId)
+    void orchestraClient.sessions.stopRuntime(sessionId)
       .then((record: SessionRecord) => {
         removePendingRun(sessionId);
         mergeSessionRecord({
@@ -2962,7 +2812,7 @@ export function App() {
         });
       })
       .catch(async (error: unknown) => {
-        setSessionActionError(await reportClientError("ui.sessions.stop", error, "Unable to stop session runtime."));
+        setSessionActionError(await orchestraClient.app.reportError("ui.sessions.stop", error, "Unable to stop session runtime."));
       });
   }, [mergeSessionRecord, removePendingRun, sessions]);
 
@@ -2993,7 +2843,7 @@ export function App() {
     }));
     patchSessionRecord(sessionId, (record) => applyPendingRunToSession(record, pendingRun));
 
-    void sendSessionMessage(sessionId, trimmedMessage, runId).catch(async (error) => {
+    void orchestraClient.sessions.sendMessage(sessionId, trimmedMessage, runId).catch(async (error) => {
       patchSessionRecord(sessionId, (record) => ({
         ...record,
         status: "failed",
@@ -3003,7 +2853,7 @@ export function App() {
       if (clearDraft) {
         updateDraftMessage(sessionId, previousDraft);
       }
-      setSessionActionError(await reportClientError("ui.sessions.message.queue", error, "Unable to queue message."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.message.queue", error, "Unable to queue message."));
     });
   }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
 
@@ -3022,8 +2872,8 @@ export function App() {
 
     try {
       const nextSession = sessionId
-        ? await createContextualSession(sessionId, activeProject?.slug ?? null)
-        : await createSession(undefined, activeProject?.slug ?? null);
+        ? await orchestraClient.sessions.createContextual(sessionId, activeProject?.slug ?? null)
+        : await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null);
       mergeSessionRecord(nextSession, { select: false });
       setPendingSessionOpenRequest(null);
       setSelectedSessionId(nextSession.id);
@@ -3036,7 +2886,7 @@ export function App() {
         void loadChatAgents({ background: true });
       }
     } catch (error) {
-      setSessionActionError(await reportClientError("ui.sessions.create_contextual", error, "Unable to create a new session."));
+      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.create_contextual", error, "Unable to create a new session."));
     } finally {
       setIsSubmitting(false);
     }
@@ -3046,14 +2896,14 @@ export function App() {
     if (!sessionId) {
       return;
     }
-    void runSessionAction(async () => compactSession(sessionId));
+    void runSessionAction(async () => orchestraClient.sessions.compact(sessionId));
   }
 
   const handleReloadExistingSession = useCallback((sessionId?: string | null) => {
     if (!sessionId) {
       return;
     }
-    void runSessionAction(async () => reloadSession(sessionId));
+    void runSessionAction(async () => orchestraClient.sessions.reload(sessionId));
   }, [runSessionAction]);
 
   const handleSelectedSessionModelChange = useCallback((value: string) => {
@@ -3119,10 +2969,10 @@ export function App() {
 
   useEffect(() => {
     const handleUnhandledError = (event: ErrorEvent) => {
-      void reportClientError("ui.unhandled_error", event.error ?? event.message, "Unhandled UI error.");
+      void orchestraClient.app.reportError("ui.unhandled_error", event.error ?? event.message, "Unhandled UI error.");
     };
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      void reportClientError("ui.unhandled_rejection", event.reason, "Unhandled promise rejection.");
+      void orchestraClient.app.reportError("ui.unhandled_rejection", event.reason, "Unhandled promise rejection.");
     };
 
     window.addEventListener("error", handleUnhandledError);
@@ -3351,7 +3201,7 @@ export function App() {
                 disabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
                 {...getExplanatoryTooltipProps("Start a new session in the active project.", explanatoryTooltipsEnabled)}
                 onClick={() =>
-                  void runSessionAction(async () => createSession(undefined, activeProject?.slug ?? null))
+                  void runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null))
                 }
               >
                 Create session

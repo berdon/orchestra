@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 
 import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
-import { getTaskFileContent } from "../../lib/tauri";
+import { useTaskFileContent } from "../../lib/orchestraData/tasks";
 import { buildTaskCommentThreads, sortTaskCommentThreadsByLatestActivityDesc } from "../../lib/taskCommentThreads";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
@@ -337,6 +337,7 @@ export function TaskDetailPage({
   const [loadingFileContent, setLoadingFileContent] = useState(false);
   const [defaultFileContent, setDefaultFileContent] = useState<string | null>(null);
   const [loadingDefaultFileContent, setLoadingDefaultFileContent] = useState(false);
+  const getTaskFileContent = useTaskFileContent();
   const [todoDraftDescription, setTodoDraftDescription] = useState("");
   const [todoDraftLaneId, setTodoDraftLaneId] = useState<string>(task.currentLaneId ?? draft.currentLaneId ?? "");
   const [relaneConfirmTarget, setRelaneConfirmTarget] = useState<RelaneTargetOption | null>(null);

@@ -1,17 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { listAgents } from "../lib/agents";
-import {
-  archiveMailboxMessages,
-  listInboxMessages,
-  listenToInboxChanges,
-  listenToTaskChanges,
-  markMailboxMessagesRead,
-  sendMailboxMessage,
-} from "../lib/tauri";
-import { listTasks } from "../lib/tauri";
+import { useInboxData } from "../lib/orchestraData/inbox";
+import { useOrchestraClient } from "../lib/orchestraClient";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, MailboxMessage, TaskSummary } from "../types";
+import type { TaskSummary } from "../types";
 
 interface InboxPageProps {
   projectId?: string | null;
@@ -34,14 +26,20 @@ function summarizeAttentionReason(task: TaskSummary) {
 }
 
 export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
-  const [messages, setMessages] = useState<MailboxMessage[]>([]);
+  const orchestraClient = useOrchestraClient();
   const getTooltipProps = useExplanatoryTooltipProps();
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const {
+    agents,
+    error,
+    loading,
+    messages,
+    refresh,
+    setError,
+    tasks,
+  } = useInboxData(projectId);
   const [sending, setSending] = useState(false);
   const [markingRead, setMarkingRead] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [messageBody, setMessageBody] = useState("");
@@ -49,6 +47,10 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const [composeOpen, setComposeOpen] = useState(false);
   const [mailFilter, setMailFilter] = useState<InboxMailFilter>("all");
   const [showArchived, setShowArchived] = useState(false);
+
+  useEffect(() => {
+    setSelectedAgentId((current) => current || agents[0]?.id || "");
+  }, [agents]);
 
   const attentionTasks = useMemo(
     () => tasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
@@ -68,52 +70,6 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     return true;
   }), [mailFilter, messages, showArchived]);
 
-  async function loadData() {
-    const [nextMessages, nextTasks, nextAgents] = await Promise.all([
-      listInboxMessages(projectId, true),
-      listTasks(false, projectId),
-      listAgents(false),
-    ]);
-    setMessages(nextMessages);
-    setTasks(nextTasks);
-    setAgents(nextAgents);
-    setSelectedAgentId((current) => current || nextAgents[0]?.id || "");
-  }
-
-  useEffect(() => {
-    void loadData().catch((nextError) => {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load Inbox.");
-    });
-  }, [projectId]);
-
-  useEffect(() => {
-    let disposed = false;
-    let stopInbox = () => {};
-    let stopTasks = () => {};
-
-    void listenToInboxChanges(() => {
-      if (!disposed) {
-        void loadData();
-      }
-    }).then((dispose) => {
-      stopInbox = dispose;
-    });
-
-    void listenToTaskChanges(() => {
-      if (!disposed) {
-        void loadData();
-      }
-    }).then((dispose) => {
-      stopTasks = dispose;
-    });
-
-    return () => {
-      disposed = true;
-      stopInbox();
-      stopTasks();
-    };
-  }, [projectId]);
-
   async function handleSend() {
     if (!selectedAgentId || !messageBody.trim()) {
       return;
@@ -122,7 +78,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     setSending(true);
     setError(null);
     try {
-      await sendMailboxMessage({
+      await orchestraClient.inbox.send({
         projectId,
         taskId: selectedTaskId || null,
         recipientType: "agent",
@@ -133,7 +89,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
       setMessageBody("");
       setInterruptPriority(false);
       setComposeOpen(false);
-      await loadData();
+      await refresh({ silent: true });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to send message.");
     } finally {
@@ -145,8 +101,8 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     setMarkingRead(deliveryId ?? "all");
     setError(null);
     try {
-      await markMailboxMessagesRead({ deliveryIds: deliveryId ? [deliveryId] : undefined });
-      await loadData();
+      await orchestraClient.inbox.markRead({ deliveryIds: deliveryId ? [deliveryId] : undefined });
+      await refresh({ silent: true });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to mark messages read.");
     } finally {
@@ -158,8 +114,8 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     setArchiving(deliveryId);
     setError(null);
     try {
-      await archiveMailboxMessages({ deliveryIds: [deliveryId] });
-      await loadData();
+      await orchestraClient.inbox.archive({ deliveryIds: [deliveryId] });
+      await refresh({ silent: true });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to archive message.");
     } finally {
@@ -203,6 +159,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
           </div>
 
           {error ? <p className="error-copy">{error}</p> : null}
+          {loading ? <p className="muted-copy">Loading Inbox…</p> : null}
 
           <div className="filter-chip-row" role="tablist" aria-label="Inbox mail filters">
             {([
