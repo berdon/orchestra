@@ -1585,44 +1585,47 @@ fn invoke_bridge_command(
             }
             let mut writable = database::open_connection()?;
             let comment = tasks::add_task_comment(&mut writable, &task_id, input)?;
-            if let Some(active_assignment) =
-                crate::services::task_runtime::get_active_lane_assignment(&writable, &task_id)?
+            let task = tasks::get_task(&writable, &task_id)?;
+            if let Some(target) =
+                crate::services::task_runtime::resolve_task_comment_notification_target(
+                    &writable, &task, &comment,
+                )?
             {
-                if crate::services::task_runtime::assignment_owned_by_worker_authorization(
-                    &active_assignment,
-                    authorization,
-                ) {
-                    let comment_ids = vec![comment.id.clone()];
-                    let _ = tasks::mark_task_comments_read(
-                        &writable,
-                        &task_id,
-                        &active_assignment,
-                        Some(&comment_ids),
-                    )?;
+                let is_self_active_worker_comment = matches!(
+                    &target,
+                    crate::services::task_runtime::TaskCommentNotificationTarget::ActiveWorker(assignment)
+                        if crate::services::task_runtime::assignment_owned_by_worker_authorization(
+                            assignment,
+                            authorization,
+                        )
+                );
+                if is_self_active_worker_comment {
+                    if let crate::services::task_runtime::TaskCommentNotificationTarget::ActiveWorker(
+                        assignment,
+                    ) = &target
+                    {
+                        let comment_ids = vec![comment.id.clone()];
+                        let _ = tasks::mark_task_comments_read(
+                            &writable,
+                            &task_id,
+                            assignment,
+                            Some(&comment_ids),
+                        )?;
+                    }
                 } else {
                     let warning = if let Some(app) = config.clone_app_handle() {
-                        let context = session_context_for_task_id(&task_id)?;
                         let state = app.state::<crate::state::AppState>();
-                        crate::services::task_runtime::notify_or_queue_unread_comment_delivery(
+                        crate::services::task_runtime::dispatch_task_comment_notification_target(
+                            Some(&app),
+                            Some(&state),
                             &writable,
-                            &active_assignment,
+                            &task,
                             &comment,
-                            || {
-                                crate::services::task_runtime::notify_active_assignment_of_unread_comments(
-                                    app.clone(),
-                                    &state,
-                                    context.session_dir.clone(),
-                                    &active_assignment,
-                                    &comment,
-                                )
-                            },
+                            &target,
                         )
                     } else {
-                        crate::services::task_runtime::notify_or_queue_unread_comment_delivery(
-                            &writable,
-                            &active_assignment,
-                            &comment,
-                            || Err("No app handle available for live comment delivery".into()),
+                        crate::services::task_runtime::dispatch_task_comment_notification_target(
+                            None, None, &writable, &task, &comment, &target,
                         )
                     };
                     if let Some(warning) = warning {

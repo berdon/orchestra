@@ -2276,6 +2276,153 @@ fn build_unread_comment_delivery_message(task_id: &str, comment: &TaskComment) -
     )
 }
 
+pub(crate) enum TaskCommentNotificationTarget {
+    ActiveWorker(TaskLaneAssignment),
+    QueuedWorker(TaskLaneAssignment),
+    UserMailbox,
+}
+
+/// Route task comments to the current attention owner for the lane.
+///
+/// Active and queued worker-owned lanes notify the worker, while review/user-paused
+/// states and user-owned lanes notify the user mailbox instead. This avoids waking a
+/// paused worker when the task is explicitly waiting on the user.
+pub(crate) fn resolve_task_comment_notification_target(
+    connection: &Connection,
+    task: &TaskDetail,
+    comment: &TaskComment,
+) -> Result<Option<TaskCommentNotificationTarget>, String> {
+    let current_assignment = get_current_lane_assignment(connection, &task.id)?;
+    Ok(match current_assignment {
+        Some(assignment) => match assignment.status.as_str() {
+            ASSIGNMENT_STATUS_ACTIVE if assignment.worker_type != "user" => {
+                Some(TaskCommentNotificationTarget::ActiveWorker(assignment))
+            }
+            ASSIGNMENT_STATUS_QUEUED if assignment.worker_type != "user" => {
+                Some(TaskCommentNotificationTarget::QueuedWorker(assignment))
+            }
+            ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+            | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
+            | ASSIGNMENT_STATUS_PAUSED_BY_USER => {
+                if comment.origin_type == "user" {
+                    None
+                } else {
+                    Some(TaskCommentNotificationTarget::UserMailbox)
+                }
+            }
+            _ if assignment.worker_type == "user" => {
+                if comment.origin_type == "user" {
+                    None
+                } else {
+                    Some(TaskCommentNotificationTarget::UserMailbox)
+                }
+            }
+            _ => None,
+        },
+        None if task.assignee_type == "user" => {
+            if comment.origin_type == "user" {
+                None
+            } else {
+                Some(TaskCommentNotificationTarget::UserMailbox)
+            }
+        }
+        None => None,
+    })
+}
+
+pub(crate) fn dispatch_task_comment_notification_target(
+    app: Option<&AppHandle>,
+    state: Option<&AppState>,
+    connection: &Connection,
+    task: &TaskDetail,
+    comment: &TaskComment,
+    target: &TaskCommentNotificationTarget,
+) -> Option<String> {
+    match target {
+        TaskCommentNotificationTarget::ActiveWorker(assignment) => {
+            let warning = match (app, state) {
+                (Some(app), Some(state)) => {
+                    match pi_sessions::session_context_for_project_id(&task.project_id) {
+                        Ok(context) => notify_or_queue_unread_comment_delivery(
+                            connection,
+                            assignment,
+                            comment,
+                            || {
+                                notify_active_assignment_of_unread_comments(
+                                    app.clone(),
+                                    state,
+                                    context.session_dir.clone(),
+                                    assignment,
+                                    comment,
+                                )
+                            },
+                        ),
+                        Err(error) => match queue_comment_delivery(connection, assignment, comment) {
+                            Ok(()) => Some(format!(
+                                "Live comment delivery context was unavailable and Orchestra queued a fallback delivery instead: {error}"
+                            )),
+                            Err(queue_error) => Some(format!(
+                                "Live comment delivery context was unavailable after the comment was already saved: {error}. Fallback queueing also failed: {queue_error}"
+                            )),
+                        },
+                    }
+                }
+                _ => match queue_comment_delivery(connection, assignment, comment) {
+                    Ok(()) => Some(
+                        "No app handle was available for live comment delivery, so Orchestra queued a fallback delivery instead."
+                            .into(),
+                    ),
+                    Err(error) => Some(format!(
+                        "No app handle was available for live comment delivery, and fallback queueing also failed: {error}"
+                    )),
+                },
+            };
+            if let (Some(app), Some(session_id)) = (app, assignment.session_id.as_ref()) {
+                let _ = crate::services::app_events::emit_session_change(
+                    app,
+                    "task.comment.unread",
+                    [session_id.clone()],
+                );
+            }
+            warning
+        }
+        TaskCommentNotificationTarget::QueuedWorker(assignment) => {
+            queue_comment_delivery(connection, assignment, comment)
+                .err()
+                .map(|error| {
+                    format!(
+                        "Queued comment delivery failed after the comment was already saved: {error}"
+                    )
+                })
+        }
+        TaskCommentNotificationTarget::UserMailbox => {
+            match messages::create_user_mailbox_message_for_task_comment(connection, task, comment)
+            {
+                Ok(message) => {
+                    if let Some(app) = app {
+                        let _ = crate::services::app_events::emit_inbox_change(
+                            app,
+                            "mailbox.sent",
+                            [message.delivery_id.clone()],
+                        );
+                        if let Some(task_id) = message.task_id.clone() {
+                            let _ = crate::services::app_events::emit_task_change(
+                                app,
+                                "mailbox.sent",
+                                [task_id],
+                            );
+                        }
+                    }
+                    None
+                }
+                Err(error) => Some(format!(
+                    "User mailbox comment delivery failed after the comment was already saved: {error}"
+                )),
+            }
+        }
+    }
+}
+
 pub fn queue_comment_delivery(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
@@ -4869,7 +5016,7 @@ mod tests {
             AgentUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput,
             WorkflowUpsertInput,
         },
-        services::{agents, database, pi_sessions, roles, tasks, workflows},
+        services::{agents, database, pi_sessions, projects, roles, tasks, workflows},
     };
 
     fn in_memory_connection() -> Connection {
@@ -6717,6 +6864,191 @@ mod tests {
         );
     }
 
+    fn create_comment_notification_task(
+        connection: &mut Connection,
+        project_id: &str,
+        title: &str,
+        assignee_type: &str,
+        assignee_id: Option<&str>,
+        status: &str,
+        current_lane_id: Option<&str>,
+    ) -> crate::models::TaskDetail {
+        let task = tasks::create_task(
+            connection,
+            Some(project_id),
+            TaskUpsertInput {
+                title: title.into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "UPDATE tasks SET current_lane_id = ?2, assignee_type = ?3, assignee_id = ?4, status = ?5, updated_at = ?6 WHERE id = ?1",
+                params![
+                    task.id.as_str(),
+                    current_lane_id,
+                    assignee_type,
+                    assignee_id,
+                    status,
+                    now.as_str()
+                ],
+            )
+            .expect("task should update for notification test");
+        tasks::get_task(connection, &task.id).expect("task should reload")
+    }
+
+    fn seed_comment_notification_assignment(
+        connection: &Connection,
+        task_id: &str,
+        lane_id: &str,
+        worker_type: &str,
+        worker_id: Option<&str>,
+        status: &str,
+        session_id: Option<&str>,
+    ) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-comment-test', ?1, 'workflow-1', ?2, ?3, ?4, ?5, ?6, '/tmp/runtime', NULL, NULL, 'Prompt', NULL, NULL, 0, NULL, ?7, NULL, ?7, ?7)",
+                params![task_id, lane_id, worker_type, worker_id, status, session_id, now],
+            )
+            .expect("assignment should seed");
+    }
+
+    fn add_comment_for_notification_test(
+        connection: &mut Connection,
+        task_id: &str,
+        author: &str,
+        origin_type: &str,
+        message: &str,
+    ) -> crate::models::TaskComment {
+        tasks::add_task_comment(
+            connection,
+            task_id,
+            crate::models::TaskCommentInput {
+                author: author.into(),
+                origin_type: Some(origin_type.into()),
+                origin_id: None,
+                message: message.into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
+            },
+        )
+        .expect("comment should add")
+    }
+
+    fn assert_user_mailbox_delivery_for_assignment_status(status: &str) {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: format!("Mailbox {status}"),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let project = projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: format!("Comment mailbox {status}"),
+                description: None,
+                task_prefix: "MBX".into(),
+            },
+        )
+        .expect("project should create");
+        let task = create_comment_notification_task(
+            &mut connection,
+            &project.id,
+            &format!("Mailbox notification {status}"),
+            "user",
+            None,
+            "in_review",
+            Some("lane-review"),
+        );
+        seed_comment_notification_assignment(
+            &connection,
+            &task.id,
+            "lane-review",
+            "agent",
+            Some(&agent.id),
+            status,
+            Some("session-1"),
+        );
+        let comment = add_comment_for_notification_test(
+            &mut connection,
+            &task.id,
+            "Reviewer",
+            "role",
+            &format!("Please review the latest {status} update."),
+        );
+        let target = resolve_task_comment_notification_target(&connection, &task, &comment)
+            .expect("notification target should resolve")
+            .expect("notification target should exist");
+        assert!(matches!(
+            &target,
+            TaskCommentNotificationTarget::UserMailbox
+        ));
+        let warning = dispatch_task_comment_notification_target(
+            None,
+            None,
+            &connection,
+            &task,
+            &comment,
+            &target,
+        );
+        assert!(warning.is_none(), "unexpected warning: {warning:?}");
+
+        let inbox =
+            crate::services::messages::list_user_messages(&connection, Some(&project.id), false)
+                .expect("user inbox should load");
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].task_id.as_deref(), Some(task.id.as_str()));
+        assert_eq!(inbox[0].sender_label, "Reviewer");
+        assert!(inbox[0].body.contains(comment.message.as_str()));
+
+        let queue_entries = crate::services::agent_runtime::list_agent_queue_entries_for_project(
+            &connection,
+            &project.id,
+            Some(agent.id.as_str()),
+            true,
+        )
+        .expect("agent queue entries should load");
+        assert!(queue_entries.is_empty());
+    }
+
     #[test]
     fn queues_non_interrupting_agent_comments_in_agent_queue() {
         let mut connection = in_memory_connection();
@@ -6912,6 +7244,210 @@ mod tests {
         assert_eq!(queue_entries.len(), 1);
         assert_eq!(queue_entries[0].delivery_mode, "follow_up");
         assert_eq!(queue_entries[0].source_type, "task_comment");
+    }
+
+    #[test]
+    fn queued_worker_comment_notifications_create_queue_entries() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Queued Comment Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let project = projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: "Queued Comment Delivery".into(),
+                description: None,
+                task_prefix: "QCD".into(),
+            },
+        )
+        .expect("project should create");
+        let task = create_comment_notification_task(
+            &mut connection,
+            &project.id,
+            "Queued comment routing",
+            "agent",
+            Some(&agent.id),
+            "in_progress",
+            Some("lane-implementation"),
+        );
+        seed_comment_notification_assignment(
+            &connection,
+            &task.id,
+            "lane-implementation",
+            "agent",
+            Some(&agent.id),
+            ASSIGNMENT_STATUS_QUEUED,
+            None,
+        );
+        let comment = add_comment_for_notification_test(
+            &mut connection,
+            &task.id,
+            "Reviewer",
+            "user",
+            "Please pick this up when you start the lane.",
+        );
+
+        let target = resolve_task_comment_notification_target(&connection, &task, &comment)
+            .expect("notification target should resolve")
+            .expect("notification target should exist");
+        assert!(matches!(
+            &target,
+            TaskCommentNotificationTarget::QueuedWorker(_)
+        ));
+        let warning = dispatch_task_comment_notification_target(
+            None,
+            None,
+            &connection,
+            &task,
+            &comment,
+            &target,
+        );
+        assert!(warning.is_none(), "unexpected warning: {warning:?}");
+
+        let queue_entries = crate::services::agent_runtime::list_agent_queue_entries_for_project(
+            &connection,
+            &project.id,
+            Some(agent.id.as_str()),
+            true,
+        )
+        .expect("agent queue entries should load");
+        assert_eq!(queue_entries.len(), 1);
+        assert_eq!(queue_entries[0].source_type, "task_comment");
+        assert_eq!(
+            queue_entries[0].source_task_id.as_deref(),
+            Some(task.id.as_str())
+        );
+
+        let inbox =
+            crate::services::messages::list_user_messages(&connection, Some(&project.id), false)
+                .expect("user inbox should load");
+        assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn awaiting_user_approval_comment_notifications_go_to_user_mailbox() {
+        assert_user_mailbox_delivery_for_assignment_status(
+            ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL,
+        );
+    }
+
+    #[test]
+    fn awaiting_user_intervention_comment_notifications_go_to_user_mailbox() {
+        assert_user_mailbox_delivery_for_assignment_status(
+            ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION,
+        );
+    }
+
+    #[test]
+    fn paused_by_user_comment_notifications_go_to_user_mailbox() {
+        assert_user_mailbox_delivery_for_assignment_status(ASSIGNMENT_STATUS_PAUSED_BY_USER);
+    }
+
+    #[test]
+    fn user_owned_lanes_without_assignments_still_notify_user_mailbox() {
+        let mut connection = in_memory_connection();
+        let project = projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: "User-owned comment delivery".into(),
+                description: None,
+                task_prefix: "UCD".into(),
+            },
+        )
+        .expect("project should create");
+        let task = create_comment_notification_task(
+            &mut connection,
+            &project.id,
+            "User-owned comment routing",
+            "user",
+            None,
+            "in_review",
+            Some("lane-review"),
+        );
+        let comment = add_comment_for_notification_test(
+            &mut connection,
+            &task.id,
+            "Developer",
+            "role",
+            "Ready for your review.",
+        );
+
+        let target = resolve_task_comment_notification_target(&connection, &task, &comment)
+            .expect("notification target should resolve")
+            .expect("notification target should exist");
+        assert!(matches!(
+            &target,
+            TaskCommentNotificationTarget::UserMailbox
+        ));
+        let warning = dispatch_task_comment_notification_target(
+            None,
+            None,
+            &connection,
+            &task,
+            &comment,
+            &target,
+        );
+        assert!(warning.is_none(), "unexpected warning: {warning:?}");
+
+        let inbox =
+            crate::services::messages::list_user_messages(&connection, Some(&project.id), false)
+                .expect("user inbox should load");
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].task_id.as_deref(), Some(task.id.as_str()));
+    }
+
+    #[test]
+    fn user_authored_comments_on_user_facing_states_do_not_self_notify_mailbox() {
+        let mut connection = in_memory_connection();
+        let project = projects::create_project(
+            &mut connection,
+            crate::models::ProjectUpsertInput {
+                name: "User self comment delivery".into(),
+                description: None,
+                task_prefix: "USR".into(),
+            },
+        )
+        .expect("project should create");
+        let task = create_comment_notification_task(
+            &mut connection,
+            &project.id,
+            "User self comment routing",
+            "user",
+            None,
+            "in_review",
+            Some("lane-review"),
+        );
+        let comment = add_comment_for_notification_test(
+            &mut connection,
+            &task.id,
+            "User",
+            "user",
+            "I left myself a note.",
+        );
+
+        let target = resolve_task_comment_notification_target(&connection, &task, &comment)
+            .expect("notification target should resolve");
+        assert!(target.is_none());
+
+        let inbox =
+            crate::services::messages::list_user_messages(&connection, Some(&project.id), false)
+                .expect("user inbox should load");
+        assert!(inbox.is_empty());
     }
 
     #[test]

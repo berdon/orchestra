@@ -5,7 +5,10 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, ToSql};
 use tauri::AppHandle;
 
 use crate::{
-    models::{AuthorizationContext, MailboxMessage, SendMailboxMessageInput, TaskLaneAssignment},
+    models::{
+        AuthorizationContext, MailboxMessage, SendMailboxMessageInput, TaskComment, TaskDetail,
+        TaskLaneAssignment,
+    },
     services::{agent_runtime, agents, pi_sessions, projects, roles, task_runtime},
     state::{generate_id, now_iso, AppState},
 };
@@ -353,6 +356,86 @@ pub fn send_mailbox_message_from_authorization(
     send_mailbox_message_internal(Some(&app), Some(state), connection, sender, input)
 }
 
+pub fn create_user_mailbox_message_for_task_comment(
+    connection: &Connection,
+    task: &TaskDetail,
+    comment: &TaskComment,
+) -> Result<MailboxMessage, String> {
+    projects::ensure_project_exists(connection, &task.project_id)?;
+
+    let sender_label = comment.author.trim();
+    if sender_label.is_empty() {
+        return Err("Task comment author is required for mailbox delivery.".into());
+    }
+
+    let body = build_task_comment_mailbox_body(task, comment);
+    let now = now_iso();
+    let message_id = generate_id("mail-message");
+    let delivery_id = generate_id("mail-delivery");
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO mailbox_messages (
+                id,
+                project_id,
+                task_id,
+                sender_type,
+                sender_id,
+                sender_label,
+                body,
+                priority,
+                created_at,
+                updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+            "#,
+            params![
+                message_id,
+                task.project_id.as_str(),
+                task.id.as_str(),
+                comment.origin_type.as_str(),
+                comment.origin_id.as_deref(),
+                sender_label,
+                body,
+                PRIORITY_NORMAL,
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to store task comment mailbox message: {error}"))?;
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO mailbox_message_deliveries (
+                id,
+                message_id,
+                recipient_type,
+                recipient_id,
+                recipient_label,
+                assignment_id,
+                read_at,
+                read_session_id,
+                last_notified_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, NULL, ?6, ?6)
+            "#,
+            params![
+                delivery_id,
+                message_id,
+                RECIPIENT_USER,
+                DEFAULT_USER_ID,
+                "User",
+                now,
+            ],
+        )
+        .map_err(|error| format!("Unable to store task comment mailbox delivery: {error}"))?;
+
+    get_message_delivery(connection, &delivery_id)
+}
+
 fn send_mailbox_message_internal(
     app: Option<&AppHandle>,
     state: Option<&AppState>,
@@ -446,6 +529,16 @@ fn send_mailbox_message_internal(
         &recipient,
     )?;
     get_message_delivery(connection, &delivery_id)
+}
+
+fn build_task_comment_mailbox_body(task: &TaskDetail, comment: &TaskComment) -> String {
+    format!(
+        "Task comment from {} on {} — {}:\n\n{}",
+        comment.author,
+        task.number,
+        task.title,
+        comment.message.trim()
+    )
 }
 
 fn resolve_sender(

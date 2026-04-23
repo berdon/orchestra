@@ -313,7 +313,12 @@ pub fn create_project(
         .map_err(|error| format!("Unable to create project: {error}"))?;
 
     ensure_project_root_exists(&slug)?;
-    let _ = project_settings::update_task_automation_settings(&slug, true)?;
+    let _ = project_settings::update_task_automation_settings_with_connection(
+        connection,
+        None,
+        &slug,
+        true,
+    )?;
 
     get_project(connection, &project_id)
 }

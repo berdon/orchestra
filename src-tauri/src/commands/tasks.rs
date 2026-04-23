@@ -574,30 +574,19 @@ pub async fn comment_on_task(
     task_id: String,
     input: TaskCommentInput,
 ) -> Result<TaskComment, String> {
-    let task_id_for_context = task_id.clone();
-    let context = tauri::async_runtime::spawn_blocking(move || {
-        session_context_for_task_id(&task_id_for_context)
-    })
-    .await
-    .map_err(|error| format!("Unable to join task comment context task: {error}"))??;
     let mut connection = database::open_connection()?;
     let comment = tasks::add_task_comment(&mut connection, &task_id, input)?;
-    if let Some(active_assignment) =
-        task_runtime::get_active_lane_assignment(&connection, &task_id)?
+    let task = tasks::get_task(&connection, &task_id)?;
+    if let Some(target) =
+        task_runtime::resolve_task_comment_notification_target(&connection, &task, &comment)?
     {
-        if let Some(warning) = task_runtime::notify_or_queue_unread_comment_delivery(
+        if let Some(warning) = task_runtime::dispatch_task_comment_notification_target(
+            Some(&app),
+            Some(&state),
             &connection,
-            &active_assignment,
+            &task,
             &comment,
-            || {
-                task_runtime::notify_active_assignment_of_unread_comments(
-                    app.clone(),
-                    &state,
-                    context.session_dir.clone(),
-                    &active_assignment,
-                    &comment,
-                )
-            },
+            &target,
         ) {
             state.log(
                 "warn",
@@ -607,9 +596,6 @@ pub async fn comment_on_task(
                     comment.id, task_id, warning
                 ),
             );
-        }
-        if let Some(session_id) = active_assignment.session_id.clone() {
-            emit_session_change(&app, "task.comment.unread", [session_id]);
         }
     }
     state.log(
