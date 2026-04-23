@@ -172,6 +172,8 @@ source "$HOME/.cargo/env"
 cargo tauri dev
 ```
 
+`src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so this works even though the crate also includes helper binaries under `src-tauri/src/bin/`.
+
 #### Building with adhoc signing (notifications enabled)
 
 Orchestra is configured to build with adhoc signing, which enables system notifications without requiring a paid Apple Developer account.
