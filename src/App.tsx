@@ -91,7 +91,7 @@ import { ChannelsPanel } from "./settings/ChannelsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
 import { RolesPanel } from "./settings/RolesPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
-import { PiPanel } from "./settings/PiPanel";
+import { HarnessPanel } from "./settings/HarnessPanel";
 import { PromptingPanel } from "./settings/PromptingPanel";
 import { RemotePanel } from "./settings/RemotePanel";
 import { SourceControlPanel } from "./settings/SourceControlPanel";
@@ -208,7 +208,7 @@ const SETTINGS_TABS = [
   { id: "remote", label: "Remote" },
   { id: "source_control", label: "Source Control" },
   { id: "prompting", label: "Prompting" },
-  { id: "pi", label: "Pi" },
+  { id: "harness", label: "Harness" },
   { id: "general", label: "General" },
 ] as const;
 
@@ -869,6 +869,7 @@ export function App() {
   const [supervisorQuickChatStorageReadyProjectKey, setSupervisorQuickChatStorageReadyProjectKey] = useState<string | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const settingsSubnavRef = useRef<HTMLDivElement | null>(null);
   const viewedSessionIdRef = useRef<string | null>(null);
   const chatSessionAgentIdRef = useRef<string | null>(null);
   const chatSessionRecoveryMissRef = useRef<{ sessionId: string; startedAt: number } | null>(null);
@@ -2411,13 +2412,23 @@ export function App() {
   }, [activeProject?.id, draftMessages, isDetachedWindow, liveSupervisorSession?.id, mergeSessionRecord, supervisorQuickChatOpen, supervisorSessionId]);
 
   useEffect(() => {
-    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "pi") {
+    if (isDetachedWindow || activePage !== "settings" || settingsTab !== "harness") {
       return;
     }
 
     void loadPiSetup();
     void loadPiModelsJsonState();
   }, [activePage, settingsTab, isDetachedWindow]);
+
+  useLayoutEffect(() => {
+    if (isDetachedWindow || activePage !== "settings" || isSidebarCollapsed) {
+      return;
+    }
+
+    settingsSubnavRef.current
+      ?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activePage, isDetachedWindow, isSidebarCollapsed, settingsTab]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || settingsTab !== "general") {
@@ -2707,9 +2718,9 @@ export function App() {
     setTasksOverviewToken((current) => current + 1);
   }
 
-  function navigateToPiSettings() {
+  function navigateToHarnessSettings() {
     setActivePage("settings");
-    setSettingsTab("pi");
+    setSettingsTab("harness");
   }
 
   function navigateToAgent(agentId: string) {
@@ -3269,11 +3280,18 @@ export function App() {
             </button>
 
             {activePage === "settings" && !isSidebarCollapsed ? (
-              <div className="settings-subnav" role="tablist" aria-label="Settings sections">
+              <div
+                ref={settingsSubnavRef}
+                className="settings-subnav settings-subnav--settings"
+                data-role="settings-sections-subnav"
+                role="tablist"
+                aria-label="Settings sections"
+              >
                 {SETTINGS_TABS.map((tab) => (
                   <button
                     key={tab.id}
                     className={settingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                    data-role={`settings-tab-${tab.id}`}
                     type="button"
                     role="tab"
                     aria-selected={settingsTab === tab.id}
@@ -3354,8 +3372,8 @@ export function App() {
               <strong>Dispatching disabled.</strong> {appInfo.dispatchBlockedReason}
             </div>
             <div className="action-cluster action-cluster--wrap">
-              <button className="secondary-button" type="button" onClick={navigateToPiSettings}>
-                Open Settings → Pi
+              <button className="secondary-button" type="button" onClick={navigateToHarnessSettings}>
+                Open Settings → Harness
               </button>
               <button className="secondary-button" type="button" data-role="retry-pi-health-check" onClick={() => void loadAppInfo()}>
                 Retry check
@@ -3369,8 +3387,8 @@ export function App() {
             <div>
               <strong>PI auth setup required.</strong> {appInfo.piRuntimeDiagnostics.auth.message}
             </div>
-            <button className="secondary-button" type="button" onClick={() => setSettingsTab("general")}>
-              Open settings
+            <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
+              Open Harness settings
             </button>
           </div>
         ) : null}
@@ -3380,8 +3398,8 @@ export function App() {
             <div>
               <strong>Unsupported packaged-mode PI add-ons.</strong> {appInfo.piRuntimeDiagnostics.addOns.message}
             </div>
-            <button className="secondary-button" type="button" onClick={() => setSettingsTab("general")}>
-              Review settings
+            <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
+              Review Harness settings
             </button>
           </div>
         ) : null}
@@ -3390,9 +3408,9 @@ export function App() {
           settingsTab === "projects" ? (
             <ProjectsPanel />
           ) : settingsTab === "agents" ? (
-            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={navigateToPiSettings} />
+            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={navigateToHarnessSettings} />
           ) : settingsTab === "roles" ? (
-            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={navigateToPiSettings} />
+            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={navigateToHarnessSettings} />
           ) : settingsTab === "workflows" ? (
             <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
           ) : settingsTab === "channels" ? (
@@ -3407,8 +3425,10 @@ export function App() {
               sessionPromptSettings={sessionPromptSettings}
               onSaveSessionPromptTemplate={(template) => void handleSaveSessionPromptTemplate(template)}
             />
-          ) : settingsTab === "pi" ? (
-            <PiPanel
+          ) : settingsTab === "harness" ? (
+            <HarnessPanel
+              piRuntimeSettings={piRuntimeSettings}
+              piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
               piSetupState={piSetupState}
               piOAuthFlowState={piOAuthFlowState}
               piModelsJson={piModelsJson}
@@ -3424,14 +3444,14 @@ export function App() {
               onImportLegacyConfig={(replaceExisting) => handleImportPiLegacyConfig(replaceExisting)}
               onDismissLegacyImport={() => handleDismissPiLegacyImport()}
               onSaveModelsJson={(content) => handleSavePiModelsJson(content)}
+              onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
+              onImportLegacyPiConfiguration={(input) => void handleImportLegacyPiConfiguration(input)}
             />
           ) : (
             <GeneralPanel
               availableThemes={BUILT_IN_ORCHESTRA_THEMES}
               selectedThemeId={themeId}
               bridgeDiagnostics={bridgeDiagnostics}
-              piRuntimeSettings={piRuntimeSettings}
-              piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
               systemNotificationEnvironment={systemNotificationEnvironment}
               systemNotificationPermission={systemNotificationPermission}
               refreshingSystemNotificationPermission={refreshingSystemNotificationPermission}
@@ -3453,8 +3473,6 @@ export function App() {
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onOpenPromptingSettings={() => setSettingsTab("prompting")}
-              onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
-              onImportLegacyPiConfiguration={(input) => void handleImportLegacyPiConfiguration(input)}
               onRefreshSystemNotificationPermission={() => void handleRefreshSystemNotificationPermission()}
               onRequestSystemNotificationPermission={() => void handleRequestSystemNotificationPermission()}
               onSendTestSystemNotification={() => void handleSendTestSystemNotification()}
@@ -3534,7 +3552,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
-            onOpenPiSettings={navigateToPiSettings}
+            onOpenPiSettings={navigateToHarnessSettings}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
             onReloadSession={() => handleReloadExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
           />
@@ -3583,7 +3601,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
-            onOpenPiSettings={navigateToPiSettings}
+            onOpenPiSettings={navigateToHarnessSettings}
             onCompactSession={handleSelectedSessionCompact}
             onReloadSession={handleSelectedSessionReload}
             onLoadRuntimeDetails={loadSelectedSessionRuntimeDetails}

@@ -1,101 +1,105 @@
 import { expect, test } from "@playwright/test";
 
-test("settings general, prompting, and source control panels render and persist", async ({ page }) => {
-  await page.addInitScript(() => {
-    if (window.localStorage.getItem("orchestra.test.general.seeded") === "true") {
-      return;
-    }
-    window.localStorage.clear();
-    window.localStorage.setItem("orchestra.test.general.seeded", "true");
-    const timestamp = new Date().toISOString();
-    window.localStorage.setItem(
-      "orchestra.mock.bridge-diagnostics",
-      JSON.stringify({
-        instance: {
-          instanceId: "bridge-instance-browser",
-          url: "http://127.0.0.1:43123",
-          ownerPid: 4321,
-          startedAt: timestamp,
-          heartbeatAt: timestamp,
-          metadataPath: "/mock/.orchestra/bridge/bridge-instance-browser.json",
-          activeClientCount: 2,
+function seedGeneralAndHarnessSettings() {
+  if (window.localStorage.getItem("orchestra.test.general.seeded") === "true") {
+    return;
+  }
+
+  window.localStorage.clear();
+  window.localStorage.setItem("orchestra.test.general.seeded", "true");
+  const timestamp = new Date().toISOString();
+  window.localStorage.setItem(
+    "orchestra.mock.bridge-diagnostics",
+    JSON.stringify({
+      instance: {
+        instanceId: "bridge-instance-browser",
+        url: "http://127.0.0.1:43123",
+        ownerPid: 4321,
+        startedAt: timestamp,
+        heartbeatAt: timestamp,
+        metadataPath: "/mock/.orchestra/bridge/bridge-instance-browser.json",
+        activeClientCount: 2,
+        inFlightRequestCount: 1,
+      },
+      clients: [
+        {
+          clientId: "client-1",
+          sessionId: "session-1",
+          actorType: "role",
+          actorId: "developer",
+          requestCount: 3,
           inFlightRequestCount: 1,
+          lastSeenAt: timestamp,
+          lastCommand: "get_task_context",
+          lastError: null,
+          active: true,
+          bridgeInstanceId: "bridge-instance-browser",
         },
-        clients: [
-          {
-            clientId: "client-1",
-            sessionId: "session-1",
-            actorType: "role",
-            actorId: "developer",
-            requestCount: 3,
-            inFlightRequestCount: 1,
-            lastSeenAt: timestamp,
-            lastCommand: "get_task_context",
-            lastError: null,
-            active: true,
-            bridgeInstanceId: "bridge-instance-browser",
-          },
-        ],
-        recentRequests: [
-          {
-            requestId: "request-1",
-            clientId: "client-1",
-            sessionId: "session-1",
-            command: "get_task_context",
-            startedAt: timestamp,
-            finishedAt: timestamp,
-            durationMs: 12,
-            success: true,
-            error: null,
-          },
-        ],
-        recentCleanupEvents: [],
-      }),
-    );
-    window.localStorage.setItem(
-      "orchestra.mock.project-settings",
-      JSON.stringify({
-        general: {
-          taskSessionContextTemplate: "Task {TASK.ID} {TASK.NAME}",
-          updatedAt: timestamp,
-        },
-      }),
-    );
-    window.localStorage.setItem(
-      "orchestra.mock.source-control-settings",
-      JSON.stringify({
-        gitUserNameTemplate: "Orchestra {role}{agent}",
-        gitEmailTemplate: "orchestra+{role}{agent}@example.com",
-        updatedAt: timestamp,
-      }),
-    );
-    window.localStorage.setItem(
-      "orchestra.mock.harness-settings",
-      JSON.stringify({
-        extraExtensions: ["npm:pi-example", "./extensions/local-extra.ts"],
-        updatedAt: timestamp,
-      }),
-    );
-    window.localStorage.setItem(
-      "orchestra.mock.logs",
-      JSON.stringify([
+      ],
+      recentRequests: [
         {
-          id: "log-1",
-          level: "debug",
-          target: "sessions.rpc.event",
-          message: "Session session-1 received turn_start",
-          timestamp,
+          requestId: "request-1",
+          clientId: "client-1",
+          sessionId: "session-1",
+          command: "get_task_context",
+          startedAt: timestamp,
+          finishedAt: timestamp,
+          durationMs: 12,
+          success: true,
+          error: null,
         },
-        {
-          id: "log-2",
-          level: "info",
-          target: "tool.bridge",
-          message: "Bridge   status\n updated",
-          timestamp,
-        },
-      ]),
-    );
-  });
+      ],
+      recentCleanupEvents: [],
+    }),
+  );
+  window.localStorage.setItem(
+    "orchestra.mock.project-settings",
+    JSON.stringify({
+      general: {
+        taskSessionContextTemplate: "Task {TASK.ID} {TASK.NAME}",
+        updatedAt: timestamp,
+      },
+    }),
+  );
+  window.localStorage.setItem(
+    "orchestra.mock.source-control-settings",
+    JSON.stringify({
+      gitUserNameTemplate: "Orchestra {role}{agent}",
+      gitEmailTemplate: "orchestra+{role}{agent}@example.com",
+      updatedAt: timestamp,
+    }),
+  );
+  window.localStorage.setItem(
+    "orchestra.mock.harness-settings",
+    JSON.stringify({
+      extraExtensions: ["npm:pi-example", "./extensions/local-extra.ts"],
+      defaultCompactionWindow: "10%",
+      updatedAt: timestamp,
+    }),
+  );
+  window.localStorage.setItem(
+    "orchestra.mock.logs",
+    JSON.stringify([
+      {
+        id: "log-1",
+        level: "debug",
+        target: "sessions.rpc.event",
+        message: "Session session-1 received turn_start",
+        timestamp,
+      },
+      {
+        id: "log-2",
+        level: "info",
+        target: "tool.bridge",
+        message: "Bridge   status\n updated",
+        timestamp,
+      },
+    ]),
+  );
+}
+
+test("settings general, harness, prompting, and source control panels render and persist", async ({ page }) => {
+  await page.addInitScript(seedGeneralAndHarnessSettings);
 
   async function openSettingsTab(name: string) {
     await page.evaluate((tabName) => {
@@ -112,6 +116,10 @@ test("settings general, prompting, and source control panels render and persist"
   await page.goto("/");
   await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
+
+  await expect(page.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Harness" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Pi" })).toHaveCount(0);
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-dark");
@@ -151,15 +159,8 @@ test("settings general, prompting, and source control panels render and persist"
   await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
   await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "PI settings" })).toBeVisible();
-  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/local-extra.ts");
-  await page.locator('[data-role="pi-runtime-extensions"]').fill("npm:pi-example\n./extensions/second-extra.ts\n./extensions/second-extra.ts");
-  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
-  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/second-extra.ts");
-  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.harness-settings"))).toContain("./extensions/second-extra.ts");
-  await page.locator('[data-role="reset-pi-runtime-extensions"]').click();
-  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
-  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("");
+  await expect(page.locator('[data-role="pi-runtime-settings-panel"]')).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Harness settings" })).toHaveCount(0);
 
   await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toBeVisible();
   await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");
@@ -189,7 +190,7 @@ test("settings general, prompting, and source control panels render and persist"
   await page.locator('[data-role="save-session-prompt-template"]').click();
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
   await page.locator('[data-role="reset-session-prompt-template"]').click();
-  await expect(page.locator('[data-role="session-prompt-template"]')).toContainText("{SOURCE_CONTROL.CONTEXT}");
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue(/\{SOURCE_CONTROL\.CONTEXT\}/);
 
   await openSettingsTab("Source Control");
   await expect(page.getByRole("heading", { name: "Global git identity defaults" })).toBeVisible();
@@ -208,6 +209,57 @@ test("settings general, prompting, and source control panels render and persist"
   await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("Project override");
   await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("project+architect@example.com");
 
+  await openSettingsTab("Harness");
+  await expect(page.getByRole("tab", { name: "Harness" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toHaveCount(0);
+  await expect(page.locator('[data-role="pi-runtime-default-compaction-window"]')).toHaveValue("10%");
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/local-extra.ts");
+  await page.locator('[data-role="pi-runtime-default-compaction-window"]').fill("16000");
+  await page.locator('[data-role="pi-runtime-extensions"]').fill("npm:pi-example\n./extensions/second-extra.ts\n./extensions/second-extra.ts");
+  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/second-extra.ts");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.harness-settings"))).toContain("./extensions/second-extra.ts");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.harness-settings"))).toContain("16000");
+  await page.locator('[data-role="reset-pi-runtime-extensions"]').click();
+  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("");
+  await expect(page.locator('[data-role="pi-runtime-default-compaction-window"]')).toHaveValue("10%");
+
   await openSettingsTab("General");
   await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
+});
+
+test("settings sub-navigation scrolls and keeps a deep-linked Harness tab visible", async ({ page }) => {
+  await page.addInitScript(seedGeneralAndHarnessSettings);
+  await page.setViewportSize({ width: 1280, height: 420 });
+
+  await page.goto("/?page=settings&settingsTab=harness");
+
+  await expect(page.getByRole("tab", { name: "Harness" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
+
+  const scrollState = await page.evaluate(() => {
+    const subnav = document.querySelector('[data-role="settings-sections-subnav"]') as HTMLDivElement | null;
+    const active = document.querySelector('[data-role="settings-tab-harness"]') as HTMLButtonElement | null;
+    if (!subnav || !active) {
+      return null;
+    }
+
+    const subnavRect = subnav.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    return {
+      overflowY: window.getComputedStyle(subnav).overflowY,
+      scrollTop: subnav.scrollTop,
+      scrollHeight: subnav.scrollHeight,
+      clientHeight: subnav.clientHeight,
+      activeWithinViewport: activeRect.top >= subnavRect.top && activeRect.bottom <= subnavRect.bottom,
+    };
+  });
+
+  expect(scrollState).not.toBeNull();
+  expect(["auto", "scroll"]).toContain(scrollState?.overflowY ?? "");
+  expect((scrollState?.scrollHeight ?? 0) > (scrollState?.clientHeight ?? 0)).toBe(true);
+  expect(scrollState?.scrollTop ?? 0).toBeGreaterThan(0);
+  expect(scrollState?.activeWithinViewport).toBe(true);
 });

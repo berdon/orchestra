@@ -400,9 +400,9 @@ export function PiPanel({
     <section className="panel general-panel">
       <div className="panel__header panel__header--stacked">
         <div>
-          <p className="eyebrow">Pi setup</p>
-          <h3>Orchestra-managed Pi auth and models</h3>
-          <p className="muted-copy">Configure Orchestra-owned Pi credentials and model sources under the Orchestra runtime instead of relying on a separate personal <code>~/.pi/agent</code> setup.</p>
+          <p className="eyebrow">Harness setup</p>
+          <h3>Harness auth and models</h3>
+          <p className="muted-copy">Configure Orchestra-owned harness credentials and model sources under the Orchestra runtime instead of relying on a separate personal <code>~/.pi/agent</code> setup.</p>
         </div>
         <div className="action-cluster action-cluster--wrap">
           <span className={`status-badge status-badge--${statusTone(piSetupState?.status)}`} data-role="pi-setup-status">

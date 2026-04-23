@@ -311,11 +311,11 @@ const SessionComposer = memo(function SessionComposer({
       {piSetupState?.status && piSetupState.status !== "ready" ? (
         <div className="session-readonly-banner" data-role="session-pi-setup-required">
           <div>
-            <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Pi before using Pi-backed sessions."}
+            <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Harness before using Pi-backed sessions."}
           </div>
           {onOpenPiSettings ? (
             <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
-              Open Settings → Pi
+              Open Settings → Harness
             </button>
           ) : null}
         </div>

@@ -539,11 +539,11 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
                 {piSetupState?.status && piSetupState.status !== "ready" ? (
                   <div className="workflow-form-grid__full session-readonly-banner">
                     <div>
-                      <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Pi before assigning Pi-backed role models."}
+                      <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Harness before assigning Pi-backed role models."}
                     </div>
                     {onOpenPiSettings ? (
                       <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
-                        Open Settings → Pi
+                        Open Settings → Harness
                       </button>
                     ) : null}
                   </div>

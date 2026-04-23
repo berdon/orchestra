@@ -15,14 +15,14 @@ import {
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
-describe("desktop prompting settings", () => {
-  it.skipIf(!isDesktopE2E)("saves extra PI runtime extensions, exposes source control tokens, and resets the session prompt draft to the updated default copy", async () => {
+describe("desktop general, harness, and prompting settings", () => {
+  it.skipIf(!isDesktopE2E)("saves harness runtime extensions, exposes source control tokens, and resets the prompting template draft to the updated default copy", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 
       await clickByText(sessionId, "button", "Settings");
-      await clickByText(sessionId, '[role="tab"]', 'General');
+      await clickByText(sessionId, '[role="tab"]', "Harness");
       await waitForSelector(sessionId, '[data-role="pi-runtime-extensions"]');
 
       await setInputValue(sessionId, '[data-role="pi-runtime-extensions"]', 'npm:pi-example\n./extensions/local-extra.ts\n./extensions/local-extra.ts');

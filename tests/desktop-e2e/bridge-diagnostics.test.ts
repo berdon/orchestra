@@ -16,7 +16,7 @@ import {
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
 describe("desktop bridge diagnostics", () => {
-  it.skipIf(!isDesktopE2E)("shows bridge diagnostics in Settings → General", async () => {
+  it.skipIf(!isDesktopE2E)("shows bridge diagnostics in Settings → General while Harness owns runtime controls", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
@@ -32,9 +32,18 @@ describe("desktop bridge diagnostics", () => {
       });
 
       await clickByText(sessionId, "button", "Settings");
-      await clickByText(sessionId, "button", "General");
+      await clickByText(sessionId, '[role="tab"]', "Harness");
+      await waitForText(sessionId, "Harness settings");
+      await waitForSelector(sessionId, '[data-role="pi-runtime-extensions"]');
+
+      await clickByText(sessionId, '[role="tab"]', "General");
       await waitForText(sessionId, "Prompt settings moved");
       await waitForSelector(sessionId, '[data-role="open-prompting-settings"]');
+      const generalHarnessPanelCount = await executeScript<number>(sessionId, `
+        return document.querySelectorAll('[data-role="pi-runtime-settings-panel"]').length;
+      `);
+      expect(generalHarnessPanelCount).toBe(0);
+
       await waitForText(sessionId, "Bridge diagnostics");
       await waitForSelector(sessionId, '[data-role="bridge-instance-id"]');
       await waitForSelector(sessionId, '[data-role="refresh-bridge-diagnostics"]');
@@ -67,7 +76,7 @@ describe("desktop bridge diagnostics", () => {
       await waitForText(sessionId, 'Session');
 
       await clickByText(sessionId, "button", "Settings");
-      await clickByText(sessionId, "button", "General");
+      await clickByText(sessionId, '[role="tab"]', "General");
       await clickSelector(sessionId, '[data-role="cleanup-stale-bridges"]');
       await waitForText(sessionId, "Recent stale-bridge cleanup events");
 

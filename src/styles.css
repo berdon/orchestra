@@ -2474,6 +2474,16 @@ strong {
   border-left: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
 }
 
+.settings-subnav--settings {
+  min-height: 0;
+  max-height: clamp(140px, 28vh, 240px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+}
+
 .settings-subnav__hint {
   padding: 6px 10px;
   color: var(--text-muted);

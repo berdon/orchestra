@@ -11,7 +11,7 @@ Replace Orchestra’s prompt-hack session controls with real runtime controls, t
 - Manual **reload** in the UI still calls `queueSessionMessage(sessionId, "/reload")` from `src/App.tsx`.
 - Manual **compaction** already reaches the backend via `compact_session`, but the frontend still appends a synthetic `"Session compacted."` event in `src/lib/tauri.ts` instead of treating compaction as a first-class runtime action.
 - Session UI state only understands streaming/tool/error activity. It does not have a dedicated runtime-control lifecycle for reload/compact.
-- Global PI settings currently only expose extra runtime extensions in `GeneralPanel` via `PiRuntimeSettings`.
+- Global harness settings currently expose extra runtime extensions under `Settings → Harness` via `PiRuntimeSettings`.
 - Agent and role definitions currently carry provider/model/thinking defaults, but no compaction override.
 
 ### What Pi exposes today
@@ -46,7 +46,7 @@ Instead, Orchestra should treat reload/compact as runtime control operations wit
 
 ## 2) Orchestra-managed runtimes should disable Pi’s built-in auto-compaction
 
-Pi’s default auto-compaction is enabled and thresholded by Pi settings.
+Pi’s default auto-compaction is enabled and thresholded by the global harness settings surface.
 
 That conflicts with the requested Orchestra behavior because:
 
@@ -312,7 +312,7 @@ Extend `PiRuntimeSettings` and harness settings storage.
 
 ### UI surface
 
-General -> Settings -> PI settings:
+Settings -> Harness -> Harness settings:
 
 - new field/control: `default-compaction-window`
 - default value: `10%`
@@ -450,7 +450,7 @@ Extend runtime details with:
 - `src/lib/sessionTranscriptReducer.ts`
 - `src/components/SessionChatPanel.tsx`
 - `src/pages/SessionsPage.tsx`
-- `src/settings/GeneralPanel.tsx`
+- `src/settings/HarnessPanel.tsx`
 - `src/settings/AgentsPanel.tsx`
 - `src/settings/RolesPanel.tsx`
 - `src/types.ts`

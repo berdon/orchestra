@@ -131,6 +131,7 @@ describe("command palette items", () => {
     });
 
     expect(items.some((item) => item.action.type === "create-task")).toBe(true);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "harness" && item.title === "Open Settings → Harness")).toBe(true);
     expect(items.some((item) => item.action.type === "launch-agent-session" && item.action.agentId === "agent-1")).toBe(true);
     expect(items.some((item) => item.action.type === "launch-agent-session-terminal" && item.action.agentId === "agent-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-role" && item.action.roleId === "role-1")).toBe(true);

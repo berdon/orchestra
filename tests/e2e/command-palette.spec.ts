@@ -59,6 +59,20 @@ test("command palette can jump directly to a role definition", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Reviewer" })).toBeVisible();
 });
 
+test("command palette can open Harness settings", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("harness");
+  await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Open Settings → Harness" }).first().click();
+
+  await expect(page.getByRole("tab", { name: "Harness" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
+});
+
 test("command palette can jump directly to a workflow definition", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

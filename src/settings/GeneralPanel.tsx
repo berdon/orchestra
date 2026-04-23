@@ -1,23 +1,12 @@
-import { useEffect, useState } from "react";
-
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
-import type {
-  BridgeDiagnostics,
-  LogEntry,
-  PiRuntimeDiagnostics,
-  PiRuntimeSettings,
-  SystemNotificationEnvironmentStatus,
-  SystemNotificationPermissionState,
-} from "../types";
+import type { BridgeDiagnostics, LogEntry, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
   selectedThemeId: OrchestraThemeId;
   bridgeDiagnostics: BridgeDiagnostics | null;
-  piRuntimeSettings: PiRuntimeSettings | null;
-  piRuntimeDiagnostics: PiRuntimeDiagnostics | null;
   systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
   systemNotificationPermission: SystemNotificationPermissionState;
   refreshingSystemNotificationPermission: boolean;
@@ -39,8 +28,6 @@ interface GeneralPanelProps {
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
   onOpenPromptingSettings: () => void;
-  onSavePiRuntimeSettings: (input: { extraExtensions: string[]; defaultCompactionWindow: string }) => void;
-  onImportLegacyPiConfiguration: (input: { importAuth: boolean; importModels: boolean }) => void;
   onRefreshSystemNotificationPermission: () => void;
   onRequestSystemNotificationPermission: () => void;
   onSendTestSystemNotification: () => void;
@@ -78,8 +65,6 @@ export function GeneralPanel({
   availableThemes,
   selectedThemeId,
   bridgeDiagnostics,
-  piRuntimeSettings,
-  piRuntimeDiagnostics,
   systemNotificationEnvironment,
   systemNotificationPermission,
   refreshingSystemNotificationPermission,
@@ -101,8 +86,6 @@ export function GeneralPanel({
   onCleanupStaleBridges,
   onOpenLogsWindow,
   onOpenPromptingSettings,
-  onSavePiRuntimeSettings,
-  onImportLegacyPiConfiguration,
   onRefreshSystemNotificationPermission,
   onRequestSystemNotificationPermission,
   onSendTestSystemNotification,
@@ -111,15 +94,8 @@ export function GeneralPanel({
   onExportLogs,
   onClearLogs,
 }: GeneralPanelProps) {
-  const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
-  const [defaultCompactionWindowDraft, setDefaultCompactionWindowDraft] = useState("10%");
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
   const getTooltipProps = useExplanatoryTooltipProps();
-
-  useEffect(() => {
-    setPiExtensionsDraft(piRuntimeSettings?.extraExtensions.join("\n") ?? "");
-    setDefaultCompactionWindowDraft(piRuntimeSettings?.defaultCompactionWindow ?? "10%");
-  }, [piRuntimeSettings?.defaultCompactionWindow, piRuntimeSettings?.extraExtensions]);
   return (
     <section className="panel-stack">
       <section className="panel general-panel">
@@ -164,115 +140,13 @@ export function GeneralPanel({
             <div>
               <p className="eyebrow">Prompting</p>
               <h4>Prompt settings moved</h4>
-              <p className="muted-copy">Task session prompt editing now lives in Settings → Prompting so General can stay focused on appearance, diagnostics, notifications, and runtime configuration.</p>
+              <p className="muted-copy">Task session prompt editing now lives in Settings → Prompting so General can stay focused on appearance, diagnostics, notifications, and logs.</p>
             </div>
             <button className="secondary-button" data-role="open-prompting-settings" type="button" onClick={onOpenPromptingSettings}>
               Open Prompting
             </button>
           </div>
         </section>
-
-        {piRuntimeSettings ? (
-          <section className="task-section task-section--compact" data-role="pi-runtime-settings-panel">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Harness configuration</p>
-                <h4>PI settings</h4>
-                <p className="muted-copy">Add extra pi extensions to load for newly spawned Orchestra runtime sessions. In packaged mode, Orchestra only allows explicit local filesystem paths here. `npm:` / `git:` / URL-style sources are rejected.</p>
-              </div>
-              <div className="action-cluster action-cluster--wrap">
-                <button className="secondary-button" data-role="reset-pi-runtime-extensions" type="button" onClick={() => {
-                  setPiExtensionsDraft("");
-                  setDefaultCompactionWindowDraft("10%");
-                }}>
-                  Reset to built-in defaults
-                </button>
-                <button
-                  className="secondary-button"
-                  data-role="save-pi-runtime-extensions"
-                  type="button"
-                  onClick={() => onSavePiRuntimeSettings({
-                    extraExtensions: piExtensionsDraft.split(/\r?\n/g),
-                    defaultCompactionWindow: defaultCompactionWindowDraft,
-                  })}
-                >
-                  Save PI settings
-                </button>
-              </div>
-            </div>
-            {piRuntimeDiagnostics ? (
-              <div className="field-group field-group--compact" data-role="pi-runtime-diagnostics-summary">
-                <span className="field-group__label">Runtime diagnostics</span>
-                <span className="field-group__hint">Runtime: {piRuntimeDiagnostics.runtime.message}</span>
-                <span className="field-group__hint">Auth: {piRuntimeDiagnostics.auth.message}</span>
-                <span className="field-group__hint">Agent dir: {piRuntimeDiagnostics.auth.agentDir}</span>
-                {piRuntimeDiagnostics.addOns.blockedExtensions.length ? (
-                  <span className="field-error">Blocked packaged-mode add-ons: {piRuntimeDiagnostics.addOns.blockedExtensions.join(", ")}</span>
-                ) : (
-                  <span className="field-group__hint">Add-on policy: {piRuntimeDiagnostics.addOns.message}</span>
-                )}
-                {(piRuntimeDiagnostics.auth.legacyAuthAvailable || piRuntimeDiagnostics.auth.legacyModelsAvailable) ? (
-                  <div className="action-cluster action-cluster--wrap">
-                    {piRuntimeDiagnostics.auth.legacyAuthAvailable ? (
-                      <button
-                        className="secondary-button"
-                        data-role="import-legacy-pi-auth"
-                        type="button"
-                        onClick={() => onImportLegacyPiConfiguration({ importAuth: true, importModels: false })}
-                      >
-                        Import legacy auth.json
-                      </button>
-                    ) : null}
-                    {piRuntimeDiagnostics.auth.legacyModelsAvailable ? (
-                      <button
-                        className="secondary-button"
-                        data-role="import-legacy-pi-models"
-                        type="button"
-                        onClick={() => onImportLegacyPiConfiguration({ importAuth: false, importModels: true })}
-                      >
-                        Import legacy models.json
-                      </button>
-                    ) : null}
-                    {piRuntimeDiagnostics.auth.legacyAuthAvailable && piRuntimeDiagnostics.auth.legacyModelsAvailable ? (
-                      <button
-                        className="secondary-button"
-                        data-role="import-legacy-pi-auth-and-models"
-                        type="button"
-                        onClick={() => onImportLegacyPiConfiguration({ importAuth: true, importModels: true })}
-                      >
-                        Import both
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <label className="field-group field-group--compact">
-              <span className="field-group__label">Default compaction window</span>
-              <input
-                className="text-input"
-                data-role="pi-runtime-default-compaction-window"
-                type="text"
-                placeholder="10%"
-                value={defaultCompactionWindowDraft}
-                onChange={(event) => setDefaultCompactionWindowDraft(event.target.value)}
-              />
-              <span className="field-group__hint">Use `10%`, a token reserve like `16000`, or `off` to disable Orchestra-managed auto-compaction by default.</span>
-            </label>
-            <label className="field-group">
-              <span className="field-group__label">Extra runtime extensions</span>
-              <textarea
-                className="text-area"
-                data-role="pi-runtime-extensions"
-                rows={6}
-                placeholder="./extensions/local-extension.ts\n~/pi-extensions/custom/index.ts"
-                value={piExtensionsDraft}
-                onChange={(event) => setPiExtensionsDraft(event.target.value)}
-              />
-            </label>
-            <p className="muted-copy">Last updated: {formatDateTime(piRuntimeSettings.updatedAt)}</p>
-          </section>
-        ) : null}
 
         <section className="task-section task-section--compact" data-role="system-notifications-panel">
           <div className="task-section__header">

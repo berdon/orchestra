@@ -87,8 +87,8 @@ async function seedPiOAuthFlow(page: Page, flow: Record<string, unknown>) {
 async function openPiSettings(page: Page) {
   await page.goto("/");
   await page.locator('[data-role="nav-item-settings"]').click();
-  await page.getByRole("tab", { name: "Pi" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
-  await expect(page.getByRole("heading", { name: "Orchestra-managed Pi auth and models" })).toBeVisible();
+  await page.getByRole("tab", { name: "Harness" }).evaluate((element) => { (element as HTMLButtonElement).click(); });
+  await expect(page.getByRole("heading", { name: "Harness auth and models" })).toBeVisible();
 }
 
 test("browser OAuth resolves cleanly, hides raw URLs, and reset clears the provider", async ({ page }) => {

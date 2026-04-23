@@ -2355,7 +2355,7 @@ export async function getAppInfo(): Promise<AppInfo> {
       backendStatus: "mock",
       versionDisplay: "0.1.0-mock0000",
       dispatchBlocked: piSetup.status !== "ready",
-      dispatchBlockedReason: piSetup.status === "ready" ? null : "No Pi models are configured yet. Open Settings → Pi to connect a provider or import an existing Pi setup.",
+      dispatchBlockedReason: piSetup.status === "ready" ? null : "No Pi models are configured yet. Open Settings → Harness to connect a provider or import an existing Pi setup.",
       piRuntimeDiagnostics: {
         runtime: {
           available: true,
