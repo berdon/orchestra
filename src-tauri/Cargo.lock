@@ -2650,6 +2650,7 @@ dependencies = [
  "tauri-plugin-webdriver-automation",
  "tiny_http",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",

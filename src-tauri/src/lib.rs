@@ -21,12 +21,11 @@ use commands::{
         get_pi_runtime_diagnostics, get_pi_runtime_settings, get_pi_setup_state,
         get_session_storage_info, get_source_control_settings,
         get_system_notification_environment_status, get_system_notification_permission_state,
-        import_legacy_pi_configuration, import_pi_legacy_config, list_pi_models,
-        open_logs_window, preview_pi_legacy_import, remove_pi_provider_credential,
-        report_client_error, request_system_notification_permission, save_pi_models_json,
-        send_system_notification, set_pi_provider_api_key, start_pi_oauth_flow,
-        submit_pi_oauth_flow_input, update_pi_runtime_settings,
-        update_source_control_settings,
+        import_legacy_pi_configuration, import_pi_legacy_config, list_pi_models, open_logs_window,
+        preview_pi_legacy_import, remove_pi_provider_credential, report_client_error,
+        request_system_notification_permission, save_pi_models_json, send_system_notification,
+        set_pi_provider_api_key, start_pi_oauth_flow, submit_pi_oauth_flow_input,
+        update_pi_runtime_settings, update_source_control_settings,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -94,6 +93,10 @@ use commands::{
 use state::AppState;
 use std::env;
 use tauri::Manager;
+
+pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
+    services::remote_api::run_remote_api_route_probe(case)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -275,7 +275,11 @@ fn clear_current_flow_handle(flow_id: &str) -> Result<Option<Arc<PiOAuthFlowHand
     let mut slot = flow_slot()
         .lock()
         .map_err(|_| "Unable to access Pi OAuth flow slot".to_string())?;
-    if slot.as_ref().map(|handle| handle.id == flow_id).unwrap_or(false) {
+    if slot
+        .as_ref()
+        .map(|handle| handle.id == flow_id)
+        .unwrap_or(false)
+    {
         Ok(slot.take())
     } else {
         Ok(None)

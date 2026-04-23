@@ -582,6 +582,22 @@ pub fn start_tool_bridge() -> Result<Arc<ToolBridgeConfig>, String> {
     Ok(config)
 }
 
+pub(crate) fn dummy_tool_bridge_config(label: &str) -> Arc<ToolBridgeConfig> {
+    let metadata_path = std::env::temp_dir().join(format!("{}-bridge.json", label));
+    Arc::new(ToolBridgeConfig {
+        url: "http://127.0.0.1:0".into(),
+        token: "token".into(),
+        instance_id: format!("instance-{label}"),
+        started_at: crate::state::now_iso(),
+        metadata_path,
+        owner_pid: std::process::id(),
+        app_handle: Mutex::new(None),
+        clients: Mutex::new(HashMap::new()),
+        recent_requests: Mutex::new(VecDeque::new()),
+        recent_cleanup_events: Mutex::new(VecDeque::new()),
+    })
+}
+
 fn response_request(
     mut response: ToolBridgeResponse,
     status: StatusCode,

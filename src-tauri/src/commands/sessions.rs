@@ -1890,14 +1890,10 @@ pub async fn stop_session_runtime(
     attach_session_control_metadata(state.inner(), record)
 }
 
-#[tauri::command]
-pub async fn send_session_message(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
+pub(crate) fn validate_session_message_request(
+    state: &AppState,
     message: String,
-    run_id: String,
-) -> Result<QueuedSessionMessage, String> {
+) -> Result<String, String> {
     let trimmed_message = message.trim().to_string();
     if trimmed_message.is_empty() {
         return Err("Message cannot be empty".into());
@@ -1910,6 +1906,18 @@ pub async fn send_session_message(
         format!("Unable to send a session message because Pi setup is incomplete: {error}")
     })?;
 
+    Ok(trimmed_message)
+}
+
+pub async fn send_session_message_with_optional_run_id(
+    app: AppHandle,
+    state: &AppState,
+    session_id: String,
+    message: String,
+    requested_run_id: Option<String>,
+) -> Result<QueuedSessionMessage, String> {
+    let trimmed_message = validate_session_message_request(state, message)?;
+
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) =
         spawn_blocking(move || resolve_session_paths(&session_id_for_task))
@@ -1917,6 +1925,11 @@ pub async fn send_session_message(
             .map_err(|error| {
                 format!("Unable to join send_session_message context task: {error}")
             })??;
+
+    let run_id = requested_run_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| crate::state::generate_id("remote-run"));
 
     state.set_session_subscription(&session_id, true)?;
     let runtime = ensure_runtime(
@@ -2017,6 +2030,18 @@ pub async fn send_session_message(
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+pub async fn send_session_message(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    message: String,
+    run_id: String,
+) -> Result<QueuedSessionMessage, String> {
+    send_session_message_with_optional_run_id(app, state.inner(), session_id, message, Some(run_id))
+        .await
 }
 
 #[cfg(test)]

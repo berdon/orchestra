@@ -1830,7 +1830,10 @@ struct PartialStreamEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        env,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         let suffix = format!(

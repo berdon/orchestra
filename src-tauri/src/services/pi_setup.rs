@@ -36,19 +36,21 @@ struct BuiltInProviderCatalogEntry {
     oauth_methods: &'static [BuiltInProviderAuthMethodCatalogEntry],
 }
 
-const BROWSER_OAUTH_METHOD: BuiltInProviderAuthMethodCatalogEntry = BuiltInProviderAuthMethodCatalogEntry {
-    id: "browser_oauth",
-    label: "Browser sign-in",
-    kind: "browser",
-    is_default: true,
-};
+const BROWSER_OAUTH_METHOD: BuiltInProviderAuthMethodCatalogEntry =
+    BuiltInProviderAuthMethodCatalogEntry {
+        id: "browser_oauth",
+        label: "Browser sign-in",
+        kind: "browser",
+        is_default: true,
+    };
 
-const DEVICE_CODE_METHOD: BuiltInProviderAuthMethodCatalogEntry = BuiltInProviderAuthMethodCatalogEntry {
-    id: "device_code",
-    label: "Device code auth",
-    kind: "device_code",
-    is_default: true,
-};
+const DEVICE_CODE_METHOD: BuiltInProviderAuthMethodCatalogEntry =
+    BuiltInProviderAuthMethodCatalogEntry {
+        id: "device_code",
+        label: "Device code auth",
+        kind: "device_code",
+        is_default: true,
+    };
 
 const BUILT_IN_PROVIDER_CATALOG: &[BuiltInProviderCatalogEntry] = &[
     BuiltInProviderCatalogEntry {
