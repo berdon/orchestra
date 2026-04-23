@@ -804,6 +804,15 @@ pub struct PiSetupMetadata {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PiProviderAuthMethodSummary {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PiProviderSetupSummary {
     pub id: String,
     pub name: String,
@@ -812,6 +821,7 @@ pub struct PiProviderSetupSummary {
     pub using_oauth: bool,
     pub model_count: usize,
     pub uses_callback_server: bool,
+    pub oauth_methods: Option<Vec<PiProviderAuthMethodSummary>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -869,13 +879,24 @@ pub struct PiOAuthPromptState {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PiOAuthAuthStep {
+    pub kind: String,
+    pub url: String,
+    pub link_label: String,
+    pub instructions: Option<String>,
+    pub user_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PiOAuthFlowState {
     pub provider_id: String,
     pub provider_name: String,
+    pub method_id: String,
+    pub method_kind: String,
     pub uses_callback_server: bool,
     pub status: String,
-    pub auth_url: Option<String>,
-    pub auth_instructions: Option<String>,
+    pub auth_step: Option<PiOAuthAuthStep>,
     pub browser_opened: bool,
     pub browser_open_error: Option<String>,
     pub prompt: Option<PiOAuthPromptState>,

@@ -32,6 +32,7 @@ import {
   listTasks,
   importPiLegacyConfig,
   cancelPiOAuthFlow,
+  dismissPiOAuthFlow,
   listWorkflows,
   listenToInboxChanges,
   listenToSessionChanges,
@@ -1583,8 +1584,8 @@ export function App() {
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
-  async function handleStartPiOAuthFlow(providerId: string) {
-    setPiOAuthFlowState(await startPiOAuthFlow(providerId));
+  async function handleStartPiOAuthFlow(providerId: string, methodId?: string | null) {
+    setPiOAuthFlowState(await startPiOAuthFlow(providerId, methodId));
   }
 
   async function handleSubmitPiOAuthFlowInput(value: string) {
@@ -1595,8 +1596,8 @@ export function App() {
     setPiOAuthFlowState(await cancelPiOAuthFlow());
   }
 
-  function handleDismissPiOAuthFlow() {
-    setPiOAuthFlowState(null);
+  async function handleDismissPiOAuthFlow() {
+    setPiOAuthFlowState(await dismissPiOAuthFlow());
   }
 
   async function loadSessions(options?: { background?: boolean }) {
@@ -1877,11 +1878,14 @@ export function App() {
     loadProjectCatalog();
     const onProjectsChanged = () => loadProjectCatalog();
     const onPiSetupChanged = () => {
-      void refreshPiSetupState({ includeModelsJson: true });
+      void (async () => {
+        await refreshPiSetupState({ includeModelsJson: true });
+        await loadPiOAuthFlow();
+      })();
     };
     const onPiOAuthFlowChanged = (event: Event) => {
       if (event instanceof CustomEvent) {
-        setPiOAuthFlowState(event.detail as PiOAuthFlowState);
+        setPiOAuthFlowState(event.detail as PiOAuthFlowState | null);
       }
     };
     window.addEventListener("orchestra:projects-changed", onProjectsChanged);
@@ -3364,7 +3368,7 @@ export function App() {
               onRefresh={() => void refreshPiSetupState({ includeModelsJson: true })}
               onSaveProviderApiKey={(providerId, apiKey) => handleSavePiProviderApiKey(providerId, apiKey)}
               onRemoveProviderCredential={(providerId) => handleRemovePiProviderCredential(providerId)}
-              onStartOAuthFlow={(providerId) => handleStartPiOAuthFlow(providerId)}
+              onStartOAuthFlow={(providerId, methodId) => handleStartPiOAuthFlow(providerId, methodId)}
               onSubmitOAuthFlowInput={(value) => handleSubmitPiOAuthFlowInput(value)}
               onCancelOAuthFlow={() => handleCancelPiOAuthFlow()}
               onDismissOAuthFlow={() => handleDismissPiOAuthFlow()}

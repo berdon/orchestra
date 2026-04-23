@@ -16,7 +16,8 @@ use commands::{
     app::{
         cleanup_stale_bridge_instances, clear_logs, debug_seed_idle_task_whip_scenario,
         export_logs_bundle, get_app_info, get_bridge_diagnostics, get_logs,
-        cancel_pi_oauth_flow, dismiss_pi_legacy_import, get_pi_executable_diagnostic,
+        cancel_pi_oauth_flow, dismiss_pi_legacy_import, dismiss_pi_oauth_flow,
+        get_pi_executable_diagnostic,
         get_pi_models_json, get_pi_oauth_flow_state, get_pi_runtime_diagnostics,
         get_pi_runtime_settings, get_pi_setup_state, get_session_storage_info,
         get_system_notification_environment_status, get_system_notification_permission_state,
@@ -209,6 +210,7 @@ pub fn run() {
             start_pi_oauth_flow,
             submit_pi_oauth_flow_input,
             cancel_pi_oauth_flow,
+            dismiss_pi_oauth_flow,
             get_pi_executable_diagnostic,
             get_pi_runtime_diagnostics,
             import_legacy_pi_configuration,

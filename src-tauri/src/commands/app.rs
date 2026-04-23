@@ -344,6 +344,7 @@ pub fn remove_pi_provider_credential(
     provider_id: String,
 ) -> Result<PiSetupState, String> {
     let result = pi_setup::remove_provider_credential(&provider_id)?;
+    pi_oauth::clear_finished_flow_for_provider(&app, &provider_id)?;
     state.log(
         "info",
         "pi.setup.credential.removed",
@@ -352,7 +353,7 @@ pub fn remove_pi_provider_credential(
     let _ = app_events::emit_window_event(
         &app,
         "orchestra:pi-setup-change",
-        &json!({ "reason": "pi.setup.credential.removed" }),
+        &json!({ "reason": "pi.setup.credential.removed", "providerId": provider_id }),
     );
     Ok(result)
 }
@@ -421,8 +422,9 @@ pub fn get_pi_oauth_flow_state() -> Result<Option<PiOAuthFlowState>, String> {
 pub fn start_pi_oauth_flow(
     app: AppHandle,
     provider_id: String,
+    method_id: Option<String>,
 ) -> Result<PiOAuthFlowState, String> {
-    pi_oauth::start_flow(app, &provider_id)
+    pi_oauth::start_flow(app, &provider_id, method_id.as_deref())
 }
 
 #[tauri::command]
@@ -436,6 +438,11 @@ pub fn submit_pi_oauth_flow_input(
 #[tauri::command]
 pub fn cancel_pi_oauth_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>, String> {
     pi_oauth::cancel_flow(app)
+}
+
+#[tauri::command]
+pub fn dismiss_pi_oauth_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>, String> {
+    pi_oauth::dismiss_flow(app)
 }
 
 #[tauri::command]

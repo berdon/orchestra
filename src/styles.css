@@ -3449,6 +3449,28 @@ strong {
   position: relative;
 }
 
+.pi-oauth-method-menu__group {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.pi-oauth-method-menu__trigger {
+  min-width: 44px;
+  padding-inline: 12px;
+}
+
+.pi-oauth-method-menu__dropdown {
+  width: min(320px, calc(100vw - 48px));
+}
+
+.pi-oauth-provider__flow {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .task-relane-menu__dropdown {
   position: absolute;
   top: calc(100% + 8px);

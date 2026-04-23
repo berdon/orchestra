@@ -13,7 +13,7 @@ use serde_json::json;
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    models::{PiOAuthFlowState, PiOAuthPromptState},
+    models::{PiOAuthAuthStep, PiOAuthFlowState, PiOAuthPromptState},
     services::{
         app_events,
         orchestra_paths::{default_orchestra_root, pi_agent_dir, pi_runtime_root},
@@ -34,9 +34,12 @@ struct PiOAuthFlowHandle {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum HelperEvent {
-    Auth {
+    AuthStep {
+        kind: String,
         url: String,
+        link_label: String,
         instructions: Option<String>,
+        user_code: Option<String>,
     },
     Prompt {
         kind: String,
@@ -80,6 +83,10 @@ fn clone_flow_state(handle: &Arc<PiOAuthFlowHandle>) -> Result<PiOAuthFlowState,
 
 fn emit_flow_state(app: &AppHandle, state: &PiOAuthFlowState) {
     let _ = app_events::emit_window_event(app, "orchestra:pi-oauth-flow-change", state);
+}
+
+fn emit_flow_cleared(app: &AppHandle) {
+    let _ = app_events::emit_window_event(app, "orchestra:pi-oauth-flow-change", &json!(null));
 }
 
 fn update_flow_state<F>(
@@ -256,26 +263,62 @@ fn kill_child_process(handle: &Arc<PiOAuthFlowHandle>) {
     }
 }
 
+fn clear_current_flow_handle(flow_id: &str) -> Result<Option<Arc<PiOAuthFlowHandle>>, String> {
+    let mut slot = flow_slot()
+        .lock()
+        .map_err(|_| "Unable to access Pi OAuth flow slot".to_string())?;
+    if slot.as_ref().map(|handle| handle.id == flow_id).unwrap_or(false) {
+        Ok(slot.take())
+    } else {
+        Ok(None)
+    }
+}
+
+fn clear_finished_flow_for_provider_internal(
+    provider_id: Option<&str>,
+) -> Result<Option<Arc<PiOAuthFlowHandle>>, String> {
+    let mut slot = flow_slot()
+        .lock()
+        .map_err(|_| "Unable to access Pi OAuth flow slot".to_string())?;
+    let should_clear = slot
+        .as_ref()
+        .and_then(|handle| handle.state.lock().ok().map(|state| state.clone()))
+        .map(|state| {
+            state.finished_at.is_some()
+                && provider_id
+                    .map(|expected| state.provider_id == expected)
+                    .unwrap_or(true)
+        })
+        .unwrap_or(false);
+    if should_clear {
+        Ok(slot.take())
+    } else {
+        Ok(None)
+    }
+}
+
 fn finalize_success(app: &AppHandle, handle: &Arc<PiOAuthFlowHandle>) {
+    let provider_id = clone_flow_state(handle)
+        .map(|state| state.provider_id)
+        .unwrap_or_else(|_| "unknown".into());
     let _ = update_flow_state(app, handle, |state| {
         state.status = "succeeded".into();
         state.prompt = None;
         state.error = None;
         state.finished_at = Some(Utc::now().to_rfc3339());
     });
+    let _ = clear_current_flow_handle(&handle.id);
     let _ = app_events::emit_window_event(
         app,
         "orchestra:pi-setup-change",
-        &json!({ "reason": "pi.oauth.succeeded" }),
+        &json!({ "reason": "pi.oauth.succeeded", "providerId": provider_id }),
     );
     app.state::<AppState>().log(
         "info",
         "pi.oauth",
         &format!(
             "Completed Orchestra-managed Pi OAuth flow for provider {}",
-            clone_flow_state(handle)
-                .map(|state| state.provider_id)
-                .unwrap_or_else(|_| "unknown".into())
+            provider_id
         ),
     );
 }
@@ -304,12 +347,23 @@ fn finalize_failure(
 
 fn process_helper_event(app: &AppHandle, handle: &Arc<PiOAuthFlowHandle>, event: HelperEvent) {
     match event {
-        HelperEvent::Auth { url, instructions } => {
+        HelperEvent::AuthStep {
+            kind,
+            url,
+            link_label,
+            instructions,
+            user_code,
+        } => {
             let open_result = open_external_url(&url);
             let _ = update_flow_state(app, handle, |state| {
                 state.status = "running".into();
-                state.auth_url = Some(url.clone());
-                state.auth_instructions = instructions.clone();
+                state.auth_step = Some(PiOAuthAuthStep {
+                    kind,
+                    url: url.clone(),
+                    link_label,
+                    instructions,
+                    user_code,
+                });
                 state.prompt = None;
                 state.browser_opened = open_result.is_ok();
                 state.browser_open_error = open_result.err();
@@ -443,7 +497,11 @@ pub fn get_flow_state() -> Result<Option<PiOAuthFlowState>, String> {
     current_flow_handle()?.map(|handle| clone_flow_state(&handle)).transpose()
 }
 
-pub fn start_flow(app: AppHandle, provider_id: &str) -> Result<PiOAuthFlowState, String> {
+pub fn start_flow(
+    app: AppHandle,
+    provider_id: &str,
+    method_id: Option<&str>,
+) -> Result<PiOAuthFlowState, String> {
     if let Some(existing) = current_flow_handle()? {
         let existing_state = clone_flow_state(&existing)?;
         if existing_state.finished_at.is_none() {
@@ -464,6 +522,32 @@ pub fn start_flow(app: AppHandle, provider_id: &str) -> Result<PiOAuthFlowState,
             provider.name
         ));
     }
+
+    let oauth_methods = provider.oauth_methods.unwrap_or_default();
+    let selected_method = if let Some(requested_method_id) = method_id {
+        oauth_methods
+            .iter()
+            .find(|method| method.id == requested_method_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Provider {} does not support the OAuth method {}.",
+                    provider.name, requested_method_id
+                )
+            })?
+    } else {
+        oauth_methods
+            .iter()
+            .find(|method| method.is_default)
+            .or_else(|| oauth_methods.first())
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Provider {} does not expose any Orchestra OAuth methods.",
+                    provider.name
+                )
+            })?
+    };
 
     let pi_executable = pi_sessions::resolve_pi_executable(None)?;
     let pi_package_dir = resolve_pi_package_dir(&pi_executable)?;
@@ -486,6 +570,8 @@ pub fn start_flow(app: AppHandle, provider_id: &str) -> Result<PiOAuthFlowState,
         .arg(&pi_package_dir)
         .arg("--provider-id")
         .arg(provider_id)
+        .arg("--method-id")
+        .arg(&selected_method.id)
         .env("PI_CODING_AGENT_DIR", agent_dir.display().to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -516,10 +602,11 @@ pub fn start_flow(app: AppHandle, provider_id: &str) -> Result<PiOAuthFlowState,
         state: Arc::new(Mutex::new(PiOAuthFlowState {
             provider_id: provider.id.clone(),
             provider_name: provider.name.clone(),
+            method_id: selected_method.id.clone(),
+            method_kind: selected_method.kind.clone(),
             uses_callback_server: provider.uses_callback_server,
             status: "running".into(),
-            auth_url: None,
-            auth_instructions: None,
+            auth_step: None,
             browser_opened: false,
             browser_open_error: None,
             prompt: None,
@@ -592,4 +679,28 @@ pub fn cancel_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>, String> {
     let _ = send_helper_message(&handle, &json!({ "type": "cancel" }));
     kill_child_process(&handle);
     Ok(Some(next_state))
+}
+
+pub fn dismiss_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>, String> {
+    let Some(handle) = current_flow_handle()? else {
+        return Ok(None);
+    };
+
+    let state = clone_flow_state(&handle)?;
+    if state.finished_at.is_none() {
+        return Err("Active Pi OAuth flows must be cancelled before they can be dismissed.".into());
+    }
+
+    let cleared = clear_current_flow_handle(&handle.id)?;
+    if cleared.is_some() {
+        emit_flow_cleared(&app);
+    }
+    Ok(Some(state))
+}
+
+pub fn clear_finished_flow_for_provider(app: &AppHandle, provider_id: &str) -> Result<(), String> {
+    if clear_finished_flow_for_provider_internal(Some(provider_id))?.is_some() {
+        emit_flow_cleared(app);
+    }
+    Ok(())
 }

@@ -9,8 +9,8 @@ use serde_json::{Map, Value};
 
 use crate::{
     models::{
-        PiLegacyImportPreview, PiLegacyImportState, PiProviderSetupSummary, PiSetupIssue,
-        PiSetupMetadata, PiSetupState,
+        PiLegacyImportPreview, PiLegacyImportState, PiProviderAuthMethodSummary,
+        PiProviderSetupSummary, PiSetupIssue, PiSetupMetadata, PiSetupState,
     },
     services::{
         harness_settings,
@@ -21,12 +21,34 @@ use crate::{
     },
 };
 
+struct BuiltInProviderAuthMethodCatalogEntry {
+    id: &'static str,
+    label: &'static str,
+    kind: &'static str,
+    is_default: bool,
+}
+
 struct BuiltInProviderCatalogEntry {
     id: &'static str,
     name: &'static str,
     auth_modes: &'static [&'static str],
     uses_callback_server: bool,
+    oauth_methods: &'static [BuiltInProviderAuthMethodCatalogEntry],
 }
+
+const BROWSER_OAUTH_METHOD: BuiltInProviderAuthMethodCatalogEntry = BuiltInProviderAuthMethodCatalogEntry {
+    id: "browser_oauth",
+    label: "Browser sign-in",
+    kind: "browser",
+    is_default: true,
+};
+
+const DEVICE_CODE_METHOD: BuiltInProviderAuthMethodCatalogEntry = BuiltInProviderAuthMethodCatalogEntry {
+    id: "device_code",
+    label: "Device code auth",
+    kind: "device_code",
+    is_default: true,
+};
 
 const BUILT_IN_PROVIDER_CATALOG: &[BuiltInProviderCatalogEntry] = &[
     BuiltInProviderCatalogEntry {
@@ -34,42 +56,49 @@ const BUILT_IN_PROVIDER_CATALOG: &[BuiltInProviderCatalogEntry] = &[
         name: "Anthropic",
         auth_modes: &["api_key", "oauth"],
         uses_callback_server: true,
+        oauth_methods: &[BROWSER_OAUTH_METHOD],
     },
     BuiltInProviderCatalogEntry {
         id: "openai",
         name: "OpenAI",
         auth_modes: &["api_key"],
         uses_callback_server: false,
+        oauth_methods: &[],
     },
     BuiltInProviderCatalogEntry {
         id: "openai-codex",
         name: "OpenAI Codex",
         auth_modes: &["oauth"],
         uses_callback_server: true,
+        oauth_methods: &[BROWSER_OAUTH_METHOD],
     },
     BuiltInProviderCatalogEntry {
         id: "github-copilot",
         name: "GitHub Copilot",
         auth_modes: &["oauth"],
         uses_callback_server: false,
+        oauth_methods: &[DEVICE_CODE_METHOD],
     },
     BuiltInProviderCatalogEntry {
         id: "google",
         name: "Google",
         auth_modes: &["api_key"],
         uses_callback_server: false,
+        oauth_methods: &[],
     },
     BuiltInProviderCatalogEntry {
         id: "google-gemini-cli",
         name: "Google Gemini CLI",
         auth_modes: &["oauth"],
         uses_callback_server: true,
+        oauth_methods: &[BROWSER_OAUTH_METHOD],
     },
     BuiltInProviderCatalogEntry {
         id: "google-antigravity",
         name: "Google Antigravity",
         auth_modes: &["oauth"],
         uses_callback_server: true,
+        oauth_methods: &[BROWSER_OAUTH_METHOD],
     },
 ];
 
@@ -110,6 +139,27 @@ fn uses_callback_server(provider_id: &str) -> bool {
     provider_catalog_entry(provider_id)
         .map(|entry| entry.uses_callback_server)
         .unwrap_or(false)
+}
+
+fn oauth_methods_for_provider(provider_id: &str) -> Option<Vec<PiProviderAuthMethodSummary>> {
+    provider_catalog_entry(provider_id).and_then(|entry| {
+        if entry.oauth_methods.is_empty() {
+            return None;
+        }
+
+        Some(
+            entry
+                .oauth_methods
+                .iter()
+                .map(|method| PiProviderAuthMethodSummary {
+                    id: method.id.to_string(),
+                    label: method.label.to_string(),
+                    kind: method.kind.to_string(),
+                    is_default: method.is_default,
+                })
+                .collect(),
+        )
+    })
 }
 
 fn orchestra_pi_paths() -> Result<(PathBuf, PathBuf, PathBuf), String> {
@@ -443,6 +493,7 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
                 using_oauth: oauth_providers.contains(&provider_id),
                 model_count,
                 uses_callback_server: uses_callback_server(&provider_id),
+                oauth_methods: oauth_methods_for_provider(&provider_id),
             }
         })
         .collect::<Vec<_>>();

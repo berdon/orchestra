@@ -622,6 +622,13 @@ export interface PiSetupIssue {
   modelId?: string | null;
 }
 
+export interface PiProviderAuthMethodSummary {
+  id: string;
+  label: string;
+  kind: "browser" | "device_code" | string;
+  isDefault: boolean;
+}
+
 export interface PiProviderSetupSummary {
   id: string;
   name: string;
@@ -630,6 +637,7 @@ export interface PiProviderSetupSummary {
   usingOAuth: boolean;
   modelCount: number;
   usesCallbackServer: boolean;
+  oauthMethods?: PiProviderAuthMethodSummary[] | null;
 }
 
 export interface PiLegacyImportState {
@@ -668,13 +676,22 @@ export interface PiOAuthPromptState {
   allowEmpty: boolean;
 }
 
+export interface PiOAuthAuthStep {
+  kind: "browser" | "device_code" | string;
+  url: string;
+  linkLabel: string;
+  instructions?: string | null;
+  userCode?: string | null;
+}
+
 export interface PiOAuthFlowState {
   providerId: string;
   providerName: string;
+  methodId: string;
+  methodKind: "browser" | "device_code" | string;
   usesCallbackServer: boolean;
   status: "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | string;
-  authUrl?: string | null;
-  authInstructions?: string | null;
+  authStep?: PiOAuthAuthStep | null;
   browserOpened: boolean;
   browserOpenError?: string | null;
   prompt?: PiOAuthPromptState | null;

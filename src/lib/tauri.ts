@@ -23,6 +23,7 @@ import type {
   MarkMailboxMessagesReadInput,
   PiLegacyImportPreview,
   PiOAuthFlowState,
+  PiProviderAuthMethodSummary,
   PiSetupState,
   QueuedSessionMessage,
   RoleSummary,
@@ -253,8 +254,46 @@ function getStoredMockPiSetupState(): PiSetupState {
     modelsPath: "/mock/.orchestra/runtime/pi/agent/models.json",
     legacyAgentDir: "/mock/.pi/agent",
     availableProviders: [
-      { id: "anthropic", name: "Anthropic", authModes: ["api_key"], connected: true, usingOAuth: false, modelCount: 1, usesCallbackServer: false },
-      { id: "openai", name: "OpenAI", authModes: ["api_key"], connected: true, usingOAuth: false, modelCount: 1, usesCallbackServer: false },
+      {
+        id: "anthropic",
+        name: "Anthropic",
+        authModes: ["api_key", "oauth"],
+        connected: true,
+        usingOAuth: false,
+        modelCount: 1,
+        usesCallbackServer: true,
+        oauthMethods: [{ id: "browser_oauth", label: "Browser sign-in", kind: "browser", isDefault: true }],
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        authModes: ["api_key"],
+        connected: true,
+        usingOAuth: false,
+        modelCount: 1,
+        usesCallbackServer: false,
+        oauthMethods: null,
+      },
+      {
+        id: "openai-codex",
+        name: "OpenAI Codex",
+        authModes: ["oauth"],
+        connected: false,
+        usingOAuth: false,
+        modelCount: 1,
+        usesCallbackServer: true,
+        oauthMethods: [{ id: "browser_oauth", label: "Browser sign-in", kind: "browser", isDefault: true }],
+      },
+      {
+        id: "github-copilot",
+        name: "GitHub Copilot",
+        authModes: ["oauth"],
+        connected: false,
+        usingOAuth: false,
+        modelCount: 1,
+        usesCallbackServer: false,
+        oauthMethods: [{ id: "device_code", label: "Device code auth", kind: "device_code", isDefault: true }],
+      },
     ],
     availableModels: MOCK_MODELS,
     issues: [],
@@ -277,6 +316,53 @@ function saveStoredMockPiOAuthFlowState(state: PiOAuthFlowState | null) {
     return;
   }
   setStoredValue(PI_OAUTH_FLOW_STORAGE_KEY, state);
+}
+
+function dispatchMockPiSetupChange(detail: Record<string, unknown>) {
+  window.dispatchEvent(new CustomEvent("orchestra:pi-setup-change", { detail }));
+}
+
+function dispatchMockPiOAuthFlowChange(state: PiOAuthFlowState | null) {
+  window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: state }));
+}
+
+function getDefaultMockOAuthMethod(providerId: string, methods?: PiProviderAuthMethodSummary[] | null) {
+  const availableMethods = methods ?? [];
+  const selectedMethod = availableMethods.find((method) => method.isDefault) ?? availableMethods[0] ?? null;
+  if (!selectedMethod) {
+    throw new Error(`Provider ${providerId} does not expose any OAuth methods.`);
+  }
+  return selectedMethod;
+}
+
+function markMockPiProviderConnected(providerId: string, usingOAuth: boolean) {
+  const current = getStoredMockPiSetupState();
+  const next = {
+    ...current,
+    status: "ready",
+    issues: [],
+    warnings: [],
+    availableProviders: current.availableProviders.map((provider) => provider.id === providerId
+      ? { ...provider, connected: true, usingOAuth }
+      : provider),
+  } satisfies PiSetupState;
+  saveStoredMockPiSetupState(next);
+  return next;
+}
+
+function completeMockPiOAuthFlowSuccess(state: PiOAuthFlowState) {
+  const successState: PiOAuthFlowState = {
+    ...state,
+    status: "succeeded",
+    prompt: null,
+    error: null,
+    latestProgressMessage: "Connected.",
+    finishedAt: nowIso(),
+  };
+  dispatchMockPiOAuthFlowChange(successState);
+  markMockPiProviderConnected(state.providerId, true);
+  saveStoredMockPiOAuthFlowState(null);
+  dispatchMockPiSetupChange({ reason: "pi.oauth.succeeded", providerId: state.providerId });
 }
 
 function getStoredMockPiModelsJson() {
@@ -2908,7 +2994,7 @@ export async function setPiProviderApiKey(providerId: string, apiKey: string): P
       status: "ready",
       issues: [],
       warnings: [],
-      availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: true } : provider),
+      availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: true, usingOAuth: false } : provider),
     } satisfies PiSetupState;
     saveStoredMockPiSetupState(next);
     return next;
@@ -2925,6 +3011,11 @@ export async function removePiProviderCredential(providerId: string): Promise<Pi
       availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: false, usingOAuth: false } : provider),
     } satisfies PiSetupState;
     saveStoredMockPiSetupState(next);
+    const currentFlow = getStoredMockPiOAuthFlowState();
+    if (currentFlow?.providerId === providerId && currentFlow.finishedAt) {
+      saveStoredMockPiOAuthFlowState(null);
+      dispatchMockPiOAuthFlowChange(null);
+    }
     return next;
   }
 
@@ -2975,36 +3066,82 @@ export async function getPiOAuthFlowState(): Promise<PiOAuthFlowState | null> {
   return invoke<PiOAuthFlowState | null>("get_pi_oauth_flow_state");
 }
 
-export async function startPiOAuthFlow(providerId: string): Promise<PiOAuthFlowState> {
+export async function startPiOAuthFlow(providerId: string, methodId?: string | null): Promise<PiOAuthFlowState> {
   if (!isTauriAvailable()) {
     const current = getStoredMockPiSetupState();
     const provider = current.availableProviders.find((entry) => entry.id === providerId);
     if (!provider) {
       throw new Error(`Unknown Pi provider ${providerId}`);
     }
-    const next: PiOAuthFlowState = {
-      providerId,
-      providerName: provider.name,
-      usesCallbackServer: provider.usesCallbackServer,
-      status: providerId === "github-copilot" ? "awaiting_input" : "running",
-      authUrl: providerId === "github-copilot" ? null : `https://example.com/oauth/${providerId}`,
-      authInstructions: providerId === "github-copilot" ? null : "Mock OAuth flow started.",
-      browserOpened: providerId !== "github-copilot",
-      browserOpenError: null,
-      prompt: providerId === "github-copilot"
-        ? { kind: "prompt", message: "GitHub Enterprise URL/domain (blank for github.com)", placeholder: "company.ghe.com", allowEmpty: true }
-        : null,
-      latestProgressMessage: `Starting ${provider.name} sign-in…`,
-      error: null,
-      startedAt: nowIso(),
-      finishedAt: null,
-    };
+    const selectedMethod = methodId
+      ? (provider.oauthMethods ?? []).find((method) => method.id === methodId) ?? null
+      : getDefaultMockOAuthMethod(providerId, provider.oauthMethods);
+    if (!selectedMethod) {
+      throw new Error(`Provider ${providerId} does not support OAuth method ${methodId}`);
+    }
+    const next: PiOAuthFlowState = selectedMethod.kind === "device_code"
+      ? {
+        providerId,
+        providerName: provider.name,
+        methodId: selectedMethod.id,
+        methodKind: selectedMethod.kind,
+        usesCallbackServer: provider.usesCallbackServer,
+        status: providerId === "github-copilot" ? "awaiting_input" : "running",
+        authStep: providerId === "github-copilot"
+          ? null
+          : {
+            kind: "device_code",
+            url: `https://example.com/device/${providerId}`,
+            linkLabel: "Open verification page",
+            instructions: "Enter the device code on the verification page.",
+            userCode: "ABCD-EFGH",
+          },
+        browserOpened: providerId !== "github-copilot",
+        browserOpenError: null,
+        prompt: providerId === "github-copilot"
+          ? { kind: "prompt", message: "GitHub Enterprise URL/domain (blank for github.com)", placeholder: "company.ghe.com", allowEmpty: true }
+          : null,
+        latestProgressMessage: `Starting ${provider.name} sign-in…`,
+        error: null,
+        startedAt: nowIso(),
+        finishedAt: null,
+      }
+      : {
+        providerId,
+        providerName: provider.name,
+        methodId: selectedMethod.id,
+        methodKind: selectedMethod.kind,
+        usesCallbackServer: provider.usesCallbackServer,
+        status: "running",
+        authStep: {
+          kind: "browser",
+          url: `https://example.com/oauth/${providerId}`,
+          linkLabel: "Open browser sign-in",
+          instructions: "If nothing opened automatically, use the link above.",
+          userCode: null,
+        },
+        browserOpened: true,
+        browserOpenError: null,
+        prompt: null,
+        latestProgressMessage: `Starting ${provider.name} sign-in…`,
+        error: null,
+        startedAt: nowIso(),
+        finishedAt: null,
+      };
     saveStoredMockPiOAuthFlowState(next);
-    window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: next }));
+    dispatchMockPiOAuthFlowChange(next);
+    if (next.methodKind === "browser") {
+      window.setTimeout(() => {
+        const currentFlow = getStoredMockPiOAuthFlowState();
+        if (currentFlow && currentFlow.providerId === next.providerId && currentFlow.startedAt === next.startedAt) {
+          completeMockPiOAuthFlowSuccess(currentFlow);
+        }
+      }, 200);
+    }
     return next;
   }
 
-  return invoke<PiOAuthFlowState>("start_pi_oauth_flow", { providerId });
+  return invoke<PiOAuthFlowState>("start_pi_oauth_flow", { providerId, methodId: methodId ?? null });
 }
 
 export async function submitPiOAuthFlowInput(value: string): Promise<PiOAuthFlowState> {
@@ -3013,18 +3150,29 @@ export async function submitPiOAuthFlowInput(value: string): Promise<PiOAuthFlow
     if (!current) {
       throw new Error("No active Pi OAuth flow.");
     }
-    const next: PiOAuthFlowState = {
-      ...current,
-      status: current.authUrl ? "succeeded" : "running",
-      prompt: null,
-      authUrl: current.authUrl ?? `https://example.com/oauth/${current.providerId}`,
-      authInstructions: current.authInstructions ?? "Continue in your browser.",
-      browserOpened: true,
-      latestProgressMessage: current.authUrl ? "Authentication completed." : "Waiting for browser verification…",
-      finishedAt: current.authUrl ? nowIso() : null,
-    };
+    const next: PiOAuthFlowState = current.methodKind === "device_code"
+      ? {
+        ...current,
+        status: "running",
+        prompt: null,
+        authStep: current.authStep ?? {
+          kind: "device_code",
+          url: `https://example.com/device/${current.providerId}`,
+          linkLabel: "Open verification page",
+          instructions: "Enter the device code on the verification page.",
+          userCode: "ABCD-EFGH",
+        },
+        browserOpened: true,
+        latestProgressMessage: "Waiting for device-code verification…",
+      }
+      : {
+        ...current,
+        status: "running",
+        prompt: null,
+        latestProgressMessage: "Waiting for browser sign-in to finish…",
+      };
     saveStoredMockPiOAuthFlowState(next);
-    window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: next }));
+    dispatchMockPiOAuthFlowChange(next);
     return next;
   }
 
@@ -3045,11 +3193,28 @@ export async function cancelPiOAuthFlow(): Promise<PiOAuthFlowState | null> {
       finishedAt: nowIso(),
     };
     saveStoredMockPiOAuthFlowState(next);
-    window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: next }));
+    dispatchMockPiOAuthFlowChange(next);
     return next;
   }
 
   return invoke<PiOAuthFlowState | null>("cancel_pi_oauth_flow");
+}
+
+export async function dismissPiOAuthFlow(): Promise<PiOAuthFlowState | null> {
+  if (!isTauriAvailable()) {
+    const current = getStoredMockPiOAuthFlowState();
+    if (!current) {
+      return null;
+    }
+    if (!current.finishedAt) {
+      throw new Error("Active Pi OAuth flows must be cancelled before they can be dismissed.");
+    }
+    saveStoredMockPiOAuthFlowState(null);
+    dispatchMockPiOAuthFlowChange(null);
+    return current;
+  }
+
+  return invoke<PiOAuthFlowState | null>("dismiss_pi_oauth_flow");
 }
 
 export async function listPiModels(): Promise<SessionModel[]> {

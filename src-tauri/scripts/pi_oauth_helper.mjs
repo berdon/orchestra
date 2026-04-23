@@ -29,9 +29,10 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const packageDir = args["package-dir"];
 const providerId = args["provider-id"];
+const methodId = args["method-id"];
 
-if (!packageDir || !providerId) {
-  emit({ type: "error", message: "Missing required --package-dir or --provider-id argument." });
+if (!packageDir || !providerId || !methodId) {
+  emit({ type: "error", message: "Missing required --package-dir, --provider-id, or --method-id argument." });
   process.exit(2);
 }
 
@@ -98,14 +99,34 @@ for (const signalName of ["SIGINT", "SIGTERM"]) {
   });
 }
 
+function normalizeAuthStep(info) {
+  const instructions = typeof info.instructions === "string" ? info.instructions : null;
+  if (methodId === "device_code") {
+    const userCodeMatch = instructions?.match(/Enter code:\s*(.+)$/i) ?? null;
+    return {
+      type: "auth_step",
+      kind: "device_code",
+      url: info.url,
+      link_label: "Open verification page",
+      instructions: "Enter the device code on the verification page.",
+      user_code: userCodeMatch?.[1]?.trim() || null,
+    };
+  }
+
+  return {
+    type: "auth_step",
+    kind: "browser",
+    url: info.url,
+    link_label: "Open browser sign-in",
+    instructions: "If nothing opened automatically, use the link above.",
+    user_code: null,
+  };
+}
+
 try {
   await authStorage.login(providerId, {
     onAuth(info) {
-      emit({
-        type: "auth",
-        url: info.url,
-        instructions: typeof info.instructions === "string" ? info.instructions : null,
-      });
+      emit(normalizeAuthStep(info));
     },
     onPrompt(prompt) {
       emit({
