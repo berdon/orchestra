@@ -10,8 +10,8 @@ use crate::models::{
 };
 use crate::services::{
     orchestra_paths::{
-        current_orchestra_checkout_root, default_orchestra_root, managed_repository_checkout_dir,
-        managed_repository_root, project_root, sanitize_slug,
+        default_orchestra_root, discover_dev_checkout_root, infer_project_slug,
+        managed_repository_checkout_dir, managed_repository_root, project_root, sanitize_slug,
     },
     project_settings,
 };
@@ -248,8 +248,12 @@ pub fn resolve_project_runtime_root(
     connection: &Connection,
     project_slug: &str,
 ) -> Result<PathBuf, String> {
+    let normalized_slug = sanitize_slug(project_slug);
     let Some(project) = get_project_by_slug(connection, project_slug)? else {
-        return ensure_project_root_exists(project_slug);
+        return discover_dev_checkout_root()
+            .filter(|path| infer_project_slug(path) == normalized_slug)
+            .map(Ok)
+            .unwrap_or_else(|| ensure_project_root_exists(project_slug));
     };
 
     if let Some(default_repository_id) = project.default_repository_id.as_deref() {
@@ -267,6 +271,12 @@ pub fn resolve_project_runtime_root(
         .repositories
         .iter()
         .find_map(existing_repository_runtime_root)
+    {
+        return Ok(path);
+    }
+
+    if let Some(path) =
+        discover_dev_checkout_root().filter(|path| infer_project_slug(path) == project.slug)
     {
         return Ok(path);
     }
@@ -659,21 +669,7 @@ pub fn get_repository(
         .ok_or_else(|| format!("Repository {repository_id} was not found"))
 }
 
-const DEFAULT_PROJECT_ID: &str = "orchestra";
 const DEFAULT_REPOSITORY_ID: &str = "repo-orchestra";
-
-fn default_repository_seed_path() -> Result<PathBuf, String> {
-    if let Some(checkout_root) = current_orchestra_checkout_root() {
-        return Ok(checkout_root);
-    }
-
-    let orchestra_root = default_orchestra_root()?;
-    Ok(managed_repository_checkout_dir(
-        &orchestra_root,
-        DEFAULT_PROJECT_ID,
-        "orchestra",
-    ))
-}
 
 fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     let count: i64 = connection
@@ -684,19 +680,26 @@ fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     }
 
     let now = now_iso();
-    let default_path = default_repository_seed_path()?;
+    let default_repository_path = discover_dev_checkout_root();
+    let default_repository_id = default_repository_path
+        .as_ref()
+        .map(|_| DEFAULT_REPOSITORY_ID);
     connection
         .execute(
             "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', 'ORC', ?2, ?3, ?3)",
-            params![DEFAULT_PROJECT_ID, DEFAULT_REPOSITORY_ID, now],
+            params!["orchestra", default_repository_id, now],
         )
         .map_err(|error| format!("Unable to seed default project: {error}"))?;
-    connection
-        .execute(
-            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'existing', 'main', ?4, ?4)",
-            params![DEFAULT_REPOSITORY_ID, DEFAULT_PROJECT_ID, default_path.display().to_string(), now],
-        )
-        .map_err(|error| format!("Unable to seed default repository: {error}"))?;
+
+    if let Some(default_path) = default_repository_path {
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'existing', 'main', ?4, ?4)",
+                params![DEFAULT_REPOSITORY_ID, "orchestra", default_path.display().to_string(), now],
+            )
+            .map_err(|error| format!("Unable to seed default repository: {error}"))?;
+    }
+
     Ok(())
 }
 

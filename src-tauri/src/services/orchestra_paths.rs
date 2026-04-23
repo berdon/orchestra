@@ -66,6 +66,80 @@ pub fn orchestra_root_from_home(home_dir: &Path) -> PathBuf {
     home_dir.join(".orchestra")
 }
 
+pub fn configured_project_root() -> Option<PathBuf> {
+    env::var_os("ORCHESTRA_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+pub fn infer_project_slug(project_root: &Path) -> String {
+    let file_name = project_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("orchestra");
+
+    if file_name == "repository" {
+        return project_root
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .map(sanitize_slug)
+            .unwrap_or_else(|| "orchestra".into());
+    }
+
+    if project_root
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        == Some("worktrees")
+    {
+        return project_root
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .map(sanitize_slug)
+            .unwrap_or_else(|| "orchestra".into());
+    }
+
+    sanitize_slug(file_name)
+}
+
+pub fn is_dev_checkout_root(path: &Path) -> bool {
+    path.join("src-tauri/Cargo.toml").is_file()
+        && path.join("package.json").is_file()
+        && path.join("mobile").is_dir()
+}
+
+fn discover_dev_checkout_root_from(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|candidate| is_dev_checkout_root(candidate))
+        .map(Path::to_path_buf)
+}
+
+pub fn discover_dev_checkout_root() -> Option<PathBuf> {
+    if let Some(configured) = configured_project_root().filter(|path| is_dev_checkout_root(path)) {
+        return Some(configured);
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        if let Some(found) = discover_dev_checkout_root_from(&current_dir) {
+            return Some(found);
+        }
+    }
+
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(found) = current_exe
+            .parent()
+            .and_then(discover_dev_checkout_root_from)
+        {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
 pub fn default_orchestra_root() -> Result<PathBuf, String> {
     env::var_os("HOME")
         .map(PathBuf::from)
@@ -270,5 +344,52 @@ mod tests {
         );
 
         std::fs::remove_dir_all(temp_root).expect("temp checkout should be removed");
+    }
+
+    #[test]
+    fn infers_project_slug_from_repository_and_worktree_roots() {
+        assert_eq!(
+            infer_project_slug(Path::new(
+                "/tmp/orchestra/repositories/orchestra/repository"
+            )),
+            "orchestra"
+        );
+        assert_eq!(
+            infer_project_slug(Path::new(
+                "/tmp/orchestra/repositories/orchestra/worktrees/feature-1"
+            )),
+            "orchestra"
+        );
+        assert_eq!(
+            infer_project_slug(Path::new("/tmp/client-project")),
+            "client-project"
+        );
+    }
+
+    #[test]
+    fn detects_dev_checkout_root_from_nested_path() {
+        let root = std::env::temp_dir().join(format!(
+            "orchestra-paths-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ));
+        let nested = root.join("src-tauri/target/debug");
+        std::fs::create_dir_all(root.join("src-tauri")).expect("src-tauri should exist");
+        std::fs::create_dir_all(root.join("mobile")).expect("mobile should exist");
+        std::fs::create_dir_all(&nested).expect("nested path should exist");
+        std::fs::write(
+            root.join("src-tauri/Cargo.toml"),
+            "[package]\nname = \"orchestra\"\n",
+        )
+        .expect("cargo manifest should write");
+        std::fs::write(root.join("package.json"), "{}\n").expect("package manifest should write");
+
+        assert!(is_dev_checkout_root(&root));
+        assert_eq!(discover_dev_checkout_root_from(&nested), Some(root.clone()));
+
+        std::fs::remove_dir_all(root).expect("temp checkout should remove");
     }
 }

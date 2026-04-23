@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    env,
     fs::{self, File},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -20,8 +19,8 @@ use crate::{
     services::{
         database,
         orchestra_paths::{
-            configured_checkout_root, current_orchestra_checkout_root, default_orchestra_root,
-            pi_agent_dir, project_session_dir, sanitize_slug,
+            configured_project_root, default_orchestra_root, discover_dev_checkout_root,
+            infer_project_slug, pi_agent_dir, project_session_dir, sanitize_slug,
         },
         projects,
     },
@@ -48,30 +47,13 @@ pub struct StoredSession {
     pub record: SessionRecord,
 }
 
-fn configured_project_root() -> Option<PathBuf> {
-    configured_checkout_root()
-}
-
-fn fallback_checkout_root() -> Option<PathBuf> {
-    current_orchestra_checkout_root()
-}
-
 fn resolve_context_project_root(project_slug: &str) -> Result<PathBuf, String> {
     if let Some(project_root) = configured_project_root() {
         return Ok(project_root);
     }
 
     let connection = database::open_connection()?;
-    let resolved = projects::resolve_project_runtime_root(&connection, project_slug)?;
-    if resolved.is_dir() {
-        return Ok(resolved);
-    }
-
-    if let Some(checkout_root) = fallback_checkout_root().filter(|path| path.is_dir()) {
-        return Ok(checkout_root);
-    }
-
-    Ok(resolved)
+    projects::resolve_project_runtime_root(&connection, project_slug)
 }
 
 pub fn detect_session_context(
@@ -81,10 +63,13 @@ pub fn detect_session_context(
         sanitize_slug(project_slug)
     } else if let Some(project_root) = configured_project_root() {
         infer_project_slug(&project_root)
-    } else if let Some(project_root) = fallback_checkout_root() {
+    } else if let Some(project_root) = discover_dev_checkout_root() {
         infer_project_slug(&project_root)
     } else {
-        "orchestra".into()
+        let connection = database::open_connection()?;
+        projects::resolve_default_project_slug(&connection)?
+            .map(|slug| sanitize_slug(&slug))
+            .unwrap_or_else(|| "orchestra".into())
     };
 
     let project_root = resolve_context_project_root(&project_slug)?;
@@ -388,39 +373,6 @@ where
             record: event.record,
         });
     }
-}
-
-fn infer_project_slug(project_root: &Path) -> String {
-    let file_name = project_root
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("orchestra");
-
-    if file_name == "repository" {
-        return project_root
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|value| value.to_str())
-            .map(sanitize_slug)
-            .unwrap_or_else(|| "orchestra".into());
-    }
-
-    if project_root
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|value| value.to_str())
-        == Some("worktrees")
-    {
-        return project_root
-            .parent()
-            .and_then(Path::parent)
-            .and_then(Path::file_name)
-            .and_then(|value| value.to_str())
-            .map(sanitize_slug)
-            .unwrap_or_else(|| "orchestra".into());
-    }
-
-    sanitize_slug(file_name)
 }
 
 fn list_stored_session_summaries(
@@ -1878,7 +1830,7 @@ struct PartialStreamEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{env, time::{SystemTime, UNIX_EPOCH}};
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         let suffix = format!(

@@ -59,6 +59,62 @@ function npmView(specifier, field) {
   }).trim();
 }
 
+function replaceBufferOccurrences(buffer, from, to) {
+  const fromBuffer = Buffer.from(from, "utf8");
+  const toBuffer = Buffer.from(to, "utf8");
+  if (fromBuffer.length !== toBuffer.length) {
+    throw new Error(`Replacement length mismatch for ${from} -> ${to}`);
+  }
+
+  let replaced = 0;
+  let searchOffset = 0;
+  while (searchOffset < buffer.length) {
+    const index = buffer.indexOf(fromBuffer, searchOffset);
+    if (index === -1) {
+      break;
+    }
+    toBuffer.copy(buffer, index);
+    replaced += 1;
+    searchOffset = index + fromBuffer.length;
+  }
+  return replaced;
+}
+
+async function sanitizeBundledPiRuntime(runtimeRoot) {
+  const executablePath = path.join(runtimeRoot, executableName);
+  const executableBuffer = await readFile(executablePath);
+  for (const [from, to] of [
+    ["/home/runner/work/pi-mono/pi-mono", "/workspace/pi-build/pi-bundle-src"],
+    [
+      "/Users/administrator/Library/Services/buildkite-agent/builds/darwin-aarch64-15-1/bun/bun",
+      "/workspace/vendor/buildkite/bun-runtime/sanitized-source-root/arm64-darwin/bun/buildsrc-",
+    ],
+    [
+      "/Users/runner/work/_temp/webkit-release",
+      "/workspace/vendor/webkit-release-build-",
+    ],
+  ]) {
+    replaceBufferOccurrences(executableBuffer, from, to);
+  }
+  await writeFile(executablePath, executableBuffer);
+
+  const readmePath = path.join(runtimeRoot, "README.md");
+  if (existsSync(readmePath)) {
+    const readme = await readFile(readmePath, "utf8");
+    const sanitized = readme.replace(
+      /See \[openclaw\/openclaw\]\(https:\/\/github\.com\/openclaw\/openclaw\) for a real-world SDK integration\./g,
+      "See the Pi documentation for a real-world SDK integration.",
+    );
+    if (sanitized !== readme) {
+      await writeFile(readmePath, sanitized);
+    }
+  }
+
+  for (const relativePath of ["CHANGELOG.md", "examples"]) {
+    await rm(path.join(runtimeRoot, relativePath), { recursive: true, force: true });
+  }
+}
+
 function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
@@ -118,8 +174,10 @@ async function main() {
     await chmod(executablePath, 0o755);
 
     const nextGeneratedRoot = path.join(tempRoot, "generated", "pi-runtime");
+    const nextRuntimeRoot = path.join(nextGeneratedRoot, "runtime");
     await mkdir(nextGeneratedRoot, { recursive: true });
-    await cp(extractedRuntimeRoot, path.join(nextGeneratedRoot, "runtime"), { recursive: true });
+    await cp(extractedRuntimeRoot, nextRuntimeRoot, { recursive: true });
+    await sanitizeBundledPiRuntime(nextRuntimeRoot);
 
     const manifest = {
       schemaVersion: 1,

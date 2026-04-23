@@ -35,8 +35,7 @@ use crate::{
     },
     services::{
         agent_dispatch, app_events, database, live_sessions::ensure_runtime, messages,
-        orchestra_paths::current_orchestra_checkout_root, pi_sessions, projects, remote_access,
-        tasks,
+        orchestra_paths::discover_dev_checkout_root, pi_sessions, projects, remote_access, tasks,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle, RemoteWebServerHandle},
 };
@@ -587,22 +586,20 @@ fn resolve_mobile_web_root(app: &AppHandle) -> Result<PathBuf, String> {
         return Ok(bundled);
     }
 
-    if let Some(checkout_root) = current_orchestra_checkout_root() {
-        let repo = checkout_root.join("mobile/dist-web");
-        if repo.exists() {
-            return Ok(repo);
-        }
-
-        return Err(format!(
-            "Unable to locate Orchestra web driver assets. Expected {} or {}. Run `cd mobile && npm install && npm run web:build` before enabling Tailscale support.",
-            bundled.display(),
-            repo.display()
-        ));
+    let repo = discover_dev_checkout_root().map(|root| root.join("mobile/dist-web"));
+    if let Some(repo_path) = repo.as_ref().filter(|path| path.exists()) {
+        return Ok(repo_path.to_path_buf());
     }
 
+    let repo_display = repo
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<no development checkout detected>".into());
+
     Err(format!(
-        "Unable to locate Orchestra web driver assets. Expected bundled assets at {} or a local Orchestra checkout with mobile/dist-web available.",
-        bundled.display()
+        "Unable to locate Orchestra web driver assets. Expected {} or {}. Run `cd mobile && npm install && npm run web:build` before enabling Tailscale support.",
+        bundled.display(),
+        repo_display
     ))
 }
 

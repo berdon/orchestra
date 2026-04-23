@@ -57,7 +57,7 @@ function defaultHostUrlDraft() {
     url.hash = "";
     return url.toString().replace(/\/$/, "");
   }
-  return "http://192.0.2.10:49500";
+  return "";
 }
 
 function normalizePairedBaseUrlForWeb(enteredBaseUrl: string, pairedBaseUrl?: string | null) {
@@ -109,6 +109,10 @@ export default function App() {
   );
   const webDriverUrl = useMemo(() => currentWebDriverUrl(), []);
   const suggestedApiUrl = useMemo(() => defaultHostUrlDraft(), []);
+  const hostUrlPlaceholder = useMemo(
+    () => (Platform.OS === "web" ? "http://127.0.0.1:49500" : "https://orchestra.example:49500"),
+    [],
+  );
 
   useEffect(() => {
     void (async () => {
@@ -449,11 +453,14 @@ export default function App() {
 
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>API host URL</Text>
+            {Platform.OS !== "web" ? (
+              <Text style={styles.helperText}>Enter the Orchestra API URL for the machine you want to pair with, for example {hostUrlPlaceholder}.</Text>
+            ) : null}
             <TextInput
               style={styles.input}
               value={hostUrlDraft}
               onChangeText={setHostUrlDraft}
-              placeholder="Host URL"
+              placeholder={hostUrlPlaceholder}
               autoCapitalize="none"
               testID="connect-host-url"
             />
