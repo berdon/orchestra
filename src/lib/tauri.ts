@@ -3212,7 +3212,7 @@ export async function dismissPiOAuthFlow(): Promise<PiOAuthFlowState | null> {
     }
     saveStoredMockPiOAuthFlowState(null);
     dispatchMockPiOAuthFlowChange(null);
-    return current;
+    return null;
   }
 
   return invoke<PiOAuthFlowState | null>("dismiss_pi_oauth_flow");

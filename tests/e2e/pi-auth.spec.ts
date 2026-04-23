@@ -78,6 +78,12 @@ async function seedPiSetup(page: Page, setup: PiSetupSeed = defaultPiSetup) {
   }, setup);
 }
 
+async function seedPiOAuthFlow(page: Page, flow: Record<string, unknown>) {
+  await page.addInitScript((seed) => {
+    window.localStorage.setItem("orchestra.mock.pi-oauth-flow", JSON.stringify(seed));
+  }, flow);
+}
+
 async function openPiSettings(page: Page) {
   await page.goto("/");
   await page.locator('[data-role="nav-item-settings"]').click();
@@ -100,6 +106,41 @@ test("browser OAuth resolves cleanly, hides raw URLs, and reset clears the provi
   await expect(providerCard.locator('[data-role="pi-oauth-flow-openai-codex"]')).toHaveCount(0);
 
   await providerCard.locator('[data-role="pi-oauth-reset-openai-codex"]').click();
+  await expect(providerCard.getByRole("heading", { name: "Not connected" })).toBeVisible();
+});
+
+test("dismissing a finished OAuth flow clears the card immediately", async ({ page }) => {
+  await seedPiSetup(page);
+  await seedPiOAuthFlow(page, {
+    providerId: "openai-codex",
+    providerName: "OpenAI Codex",
+    methodId: "browser_oauth",
+    methodKind: "browser",
+    usesCallbackServer: true,
+    status: "cancelled",
+    authStep: {
+      kind: "browser",
+      url: "https://example.com/oauth/openai-codex",
+      linkLabel: "Open browser sign-in",
+      instructions: "If nothing opened automatically, use the link above.",
+      userCode: null,
+    },
+    browserOpened: true,
+    browserOpenError: null,
+    prompt: null,
+    latestProgressMessage: "Login cancelled",
+    error: "Login cancelled",
+    startedAt: "2026-04-22T00:00:00.000Z",
+    finishedAt: "2026-04-22T00:00:05.000Z",
+  });
+  await openPiSettings(page);
+
+  const providerCard = page.locator('[data-role="pi-oauth-provider-openai-codex"]');
+  await expect(providerCard.locator('[data-role="pi-oauth-flow-openai-codex"]')).toBeVisible();
+
+  await providerCard.locator('[data-role="pi-oauth-dismiss-openai-codex"]').click();
+
+  await expect(providerCard.locator('[data-role="pi-oauth-flow-openai-codex"]')).toHaveCount(0);
   await expect(providerCard.getByRole("heading", { name: "Not connected" })).toBeVisible();
 });
 

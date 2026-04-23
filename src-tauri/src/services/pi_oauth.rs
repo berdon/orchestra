@@ -718,7 +718,7 @@ pub fn dismiss_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>, String> 
     if cleared.is_some() {
         emit_flow_cleared(&app);
     }
-    Ok(Some(state))
+    Ok(None)
 }
 
 pub fn clear_finished_flow_for_provider(app: &AppHandle, provider_id: &str) -> Result<(), String> {

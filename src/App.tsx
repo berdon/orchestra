@@ -1611,7 +1611,8 @@ export function App() {
   }
 
   async function handleDismissPiOAuthFlow() {
-    setPiOAuthFlowState(await dismissPiOAuthFlow());
+    await dismissPiOAuthFlow();
+    setPiOAuthFlowState(null);
   }
 
   async function loadSessions(options?: { background?: boolean }) {
