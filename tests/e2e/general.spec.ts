@@ -110,7 +110,7 @@ test("settings general, prompting, and source control panels render and persist"
   }
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");
@@ -130,7 +130,7 @@ test("settings general, prompting, and source control panels render and persist"
   await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "disabled");
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.explanatory-tooltips"))).toBe("disabled");
   await page.reload();
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
   await expect(page.locator('[data-role="explanatory-tooltips-toggle"]')).not.toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "disabled");
@@ -139,7 +139,7 @@ test("settings general, prompting, and source control panels render and persist"
   await page.locator('[data-role="new-task"]').click();
   await expect.poll(() => page.locator('[data-role="task-workflow"]').evaluate((element) => element.closest('label')?.getAttribute('data-tooltip') ?? null)).toBeNull();
 
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
   await page.locator('[data-role="explanatory-tooltips-toggle"]').check();
   await expect(page.locator("html")).toHaveAttribute("data-explanatory-tooltips", "enabled");
@@ -148,7 +148,7 @@ test("settings general, prompting, and source control panels render and persist"
   await page.locator('[data-role="new-task"]').click();
   await expect.poll(() => page.locator('[data-role="task-workflow"]').evaluate((element) => element.closest('label')?.getAttribute('data-tooltip') ?? null)).toBe("Choose which workflow owns this task's lane transitions.");
 
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
   await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "PI settings" })).toBeVisible();
