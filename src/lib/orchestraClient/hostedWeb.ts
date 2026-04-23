@@ -1,15 +1,8 @@
-import type {
-  OrchestraCatalogService,
-  OrchestraClient,
-  OrchestraClientBinding,
-  OrchestraEventService,
-  OrchestraInboxService,
-  OrchestraSessionService,
-  OrchestraTaskService,
-} from "./client";
-import type { AppInfo } from "../../types";
+import type { OrchestraClientBinding } from "./client";
 import type { OrchestraClientBootstrap } from "./bootstrap";
 import { createDefaultOrchestraClientBinding } from "./defaultClient";
+import { createRemoteApiOrchestraClientBinding } from "./remoteApiClient";
+import type { RemoteApiOrchestraClientOptions } from "./remoteApiTransport";
 import { isTauriAvailable } from "../tauri";
 
 export type OrchestraClientHostMode = "tauri" | "hosted_web" | "mock";
@@ -67,78 +60,11 @@ export async function fetchHostedWebBootstrap(fetchImpl: typeof fetch = fetch): 
   return response.json() as Promise<OrchestraClientBootstrap>;
 }
 
-function resolveHostedWebAppInfoUrl(bootstrap: OrchestraClientBootstrap) {
-  return bootstrap.urls.apiBaseUrl
-    ? new URL("/api/v1/app-info", bootstrap.urls.apiBaseUrl).toString()
-    : "/api/v1/app-info";
-}
-
-async function fetchHostedWebAppInfo(
-  bootstrap: OrchestraClientBootstrap,
-  fetchImpl: typeof fetch = fetch,
-): Promise<AppInfo> {
-  const response = await fetchImpl(resolveHostedWebAppInfoUrl(bootstrap), {
-    credentials: bootstrap.authMode === "same_origin_cookie" ? "same-origin" : "omit",
-    headers: {
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Unable to load Orchestra app info (${response.status} ${response.statusText}).`);
-  }
-
-  return response.json() as Promise<AppInfo>;
-}
-
-function createHostedWebClientUnavailableError(operation: string) {
-  return new Error(
-    `Hosted-web bootstrap resolved successfully, but the shared remote OrchestraClient transport for ${operation} is not implemented yet. ORC-61 will attach the real remote adapter to this binding seam.`,
-  );
-}
-
-function createUnsupportedServiceProxy<T extends object>(serviceName: string): T {
-  return new Proxy({}, {
-    get(_target, property) {
-      return async () => {
-        throw createHostedWebClientUnavailableError(`${serviceName}.${String(property)}`);
-      };
-    },
-  }) as T;
-}
-
 export function createHostedWebBootstrapBinding(
   bootstrap: OrchestraClientBootstrap,
-  fetchImpl: typeof fetch = fetch,
+  options?: RemoteApiOrchestraClientOptions,
 ): OrchestraClientBinding {
-  const client: OrchestraClient = {
-    contractVersion: bootstrap.contractVersion,
-    async getBootstrap() {
-      return bootstrap;
-    },
-    app: {
-      async getInfo() {
-        if (bootstrap.appInfo) {
-          return bootstrap.appInfo;
-        }
-        return fetchHostedWebAppInfo(bootstrap, fetchImpl);
-      },
-      async reportError(_target, error, fallback) {
-        console.error("[orchestra-client.hosted-web]", error);
-        return fallback;
-      },
-    },
-    catalog: createUnsupportedServiceProxy<OrchestraCatalogService>("catalog"),
-    tasks: createUnsupportedServiceProxy<OrchestraTaskService>("tasks"),
-    inbox: createUnsupportedServiceProxy<OrchestraInboxService>("inbox"),
-    sessions: createUnsupportedServiceProxy<OrchestraSessionService>("sessions"),
-    events: createUnsupportedServiceProxy<OrchestraEventService>("events"),
-  };
-
-  return {
-    client,
-    bootstrap,
-  };
+  return createRemoteApiOrchestraClientBinding(bootstrap, options);
 }
 
 export async function resolveInitialOrchestraClientBinding(): Promise<OrchestraClientBinding> {

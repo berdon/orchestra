@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+function normalizeHexColor(value: string) {
+  const normalized = value.trim().toLowerCase();
+  const shorthand = normalized.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+  if (!shorthand) {
+    return normalized;
+  }
+  return `#${shorthand[1]}${shorthand[1]}${shorthand[2]}${shorthand[2]}${shorthand[3]}${shorthand[3]}`;
+}
+
 const THEME_CASES = [
   {
     id: "orchestra-light",
@@ -128,7 +137,7 @@ for (const themeCase of THEME_CASES) {
     expect(themeState.rootTheme).toBe(themeCase.id);
     expect(themeState.rootThemeKind).toBe(themeCase.kind);
     expect(themeState.rootColorScheme).toBe(themeCase.colorScheme);
-    expect(themeState.appBackground).toBe(themeCase.appBackground);
+    expect(normalizeHexColor(themeState.appBackground)).toBe(normalizeHexColor(themeCase.appBackground));
     expect(themeState.shellTheme).toBe(themeCase.id);
     expect(themeState.shellThemeKind).toBe(themeCase.kind);
   });

@@ -44,6 +44,7 @@ cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
 cp -a /src/src-tauri/scripts "${WORKSPACE_DIR}/src-tauri/scripts"
 cp -a /src/src-tauri/icons "${WORKSPACE_DIR}/src-tauri/icons"
 cp -a /src/src-tauri/gen "${WORKSPACE_DIR}/src-tauri/gen"
+cp -a /src/src-tauri/scripts "${WORKSPACE_DIR}/src-tauri/scripts"
 
 mkdir -p /root
 if [[ -d /seed-home/.pi ]]; then

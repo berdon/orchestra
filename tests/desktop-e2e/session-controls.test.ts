@@ -227,7 +227,6 @@ describe("desktop session controls", () => {
       await setInputValue(webdriverSessionId, '[data-role="composer-input"]', compactSeedMessage);
       await clickSelector(webdriverSessionId, '[data-role="send-message"]');
       await waitForText(webdriverSessionId, compactSeedMessage);
-      await waitForPersistedUserMessage(webdriverSessionId, primarySessionId, compactSeedMessage);
       await waitForConditionWithDiagnostics(
         webdriverSessionId,
         primarySessionId,

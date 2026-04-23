@@ -6,18 +6,29 @@ const tauriBinary = process.env.ORCHESTRA_TAURI_BINARY;
 const previewUrl = process.env.ORCHESTRA_DESKTOP_E2E_PREVIEW_URL ?? "http://127.0.0.1:1420";
 const execFileAsync = promisify(execFile);
 
+async function killLingeringDesktopAppProcesses() {
+  if (!tauriBinary) {
+    return;
+  }
+
+  await execFileAsync("bash", ["-lc", `pkill -f ${JSON.stringify(tauriBinary)} || true`], {
+    maxBuffer: 1024 * 1024,
+  }).catch(() => undefined);
+}
+
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function webdriverRequest(path: string, init?: RequestInit) {
+async function webdriverRequest(path: string, init?: RequestInit, options?: { retries?: number }) {
   const headers = {
     "content-type": "application/json",
     ...(init?.headers ?? {}),
   } as Record<string, string>;
 
   let lastError = "";
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  const retries = Math.max(1, options?.retries ?? 5);
+  for (let attempt = 0; attempt < retries; attempt += 1) {
     const args = ["-sS", "--connect-timeout", "10", "--max-time", "60", "-X", init?.method ?? "GET", `${webdriverUrl}${path}`];
     for (const [key, value] of Object.entries(headers)) {
       args.push("-H", `${key}: ${value}`);
@@ -56,6 +67,13 @@ async function cleanupWebdriverSessions() {
   }
 }
 
+async function setWebdriverTimeouts(sessionId: string, timeouts: { script?: number; pageLoad?: number; implicit?: number }) {
+  await webdriverRequest(`/session/${sessionId}/timeouts`, {
+    method: "POST",
+    body: JSON.stringify(timeouts),
+  }, { retries: 1 });
+}
+
 export async function createWebdriverSession(timeoutMs = 120_000) {
   if (!tauriBinary) {
     throw new Error("ORCHESTRA_TAURI_BINARY is required for desktop E2E runs.");
@@ -80,17 +98,14 @@ export async function createWebdriverSession(timeoutMs = 120_000) {
             },
           },
         }),
-      });
+      }, { retries: 1 });
 
       const sessionId = response?.value?.sessionId ?? response?.sessionId ?? null;
       if (sessionId) {
-        await webdriverRequest(`/session/${sessionId}/timeouts`, {
-          method: "POST",
-          body: JSON.stringify({
-            script: 180_000,
-            pageLoad: 120_000,
-            implicit: 0,
-          }),
+        await setWebdriverTimeouts(String(sessionId), {
+          script: 180_000,
+          pageLoad: 180_000,
+          implicit: 0,
         }).catch(() => undefined);
         await sleep(5_000);
         return sessionId as string;
@@ -132,6 +147,7 @@ export async function createReadyWebdriverSession(timeoutMs = 180_000) {
       if (sessionId) {
         await deleteWebdriverSession(sessionId).catch(() => undefined);
       }
+      await killLingeringDesktopAppProcesses();
       await sleep(2_000);
     }
   }
@@ -266,6 +282,33 @@ export async function clickSelector(sessionId: string, selector: string, timeout
   }
 
   throw new Error(`Unable to click selector ${selector}`);
+}
+
+export async function waitForEnabledSelector(sessionId: string, selector: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastState: unknown;
+
+  while (Date.now() < deadline) {
+    lastState = await executeScript(sessionId, `
+      const element = document.querySelector(arguments[0]);
+      if (!(element instanceof HTMLElement)) {
+        return { exists: false, disabled: null, text: "" };
+      }
+      return {
+        exists: true,
+        disabled: "disabled" in element ? Boolean(element.disabled) : false,
+        text: (element.textContent || "").trim(),
+      };
+    `, [selector]);
+
+    if ((lastState as { exists?: boolean; disabled?: boolean }).exists && !(lastState as { disabled?: boolean }).disabled) {
+      return lastState as { exists: boolean; disabled: boolean; text: string };
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(`Selector ${selector} did not become enabled: ${JSON.stringify(lastState)}`);
 }
 
 export async function clickByText(sessionId: string, selector: string, text: string, timeoutMs = 30_000) {
@@ -467,16 +510,27 @@ export async function selectByLabel(sessionId: string, selector: string, label: 
     sessionId,
     `
       const element = document.querySelector(arguments[0]);
-      if (!element) {
+      if (!(element instanceof HTMLSelectElement)) {
         return false;
       }
       const option = Array.from(element.options).find((entry) => (entry.label || entry.textContent || '').trim() === arguments[1]);
       if (!option) {
         return false;
       }
-      element.value = option.value;
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+      descriptor?.set?.call(element, option.value);
+      if (element.getAttribute('data-role') === 'project-switcher') {
+        try {
+          window.localStorage.setItem('orchestra.mock.active-project-id', option.value);
+        } catch (_) {
+          // ignore storage write errors in test helpers
+        }
+      }
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
+      if (element.getAttribute('data-role') === 'project-switcher') {
+        window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+      }
       return true;
     `,
     [selector, label],
@@ -580,7 +634,46 @@ export async function invokeCommandNoWait(sessionId: string, command: string, ar
   );
 }
 
+function inferProjectTaskPrefix(name: string) {
+  const words = name
+    .trim()
+    .split(/[^A-Za-z0-9]+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  const initials = words.map((word) => word[0]?.toUpperCase() ?? "").join("");
+  if (initials.length >= 2) {
+    return initials.slice(0, 6);
+  }
+  const compact = name.replace(/[^A-Za-z0-9]+/g, "").toUpperCase();
+  return (compact.slice(0, 6) || "PRJ").padEnd(Math.min(3, Math.max(3, compact.length || 3)), "P");
+}
+
+function withDerivedProjectTaskPrefix(command: string, args: Record<string, unknown>) {
+  if (command !== "create_project") {
+    return args;
+  }
+  const input = args.input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return args;
+  }
+  const typedInput = input as { name?: unknown; taskPrefix?: unknown };
+  if (typeof typedInput.taskPrefix === "string" && typedInput.taskPrefix.trim().length > 0) {
+    return args;
+  }
+  if (typeof typedInput.name !== "string" || typedInput.name.trim().length === 0) {
+    return args;
+  }
+  return {
+    ...args,
+    input: {
+      ...typedInput,
+      taskPrefix: inferProjectTaskPrefix(typedInput.name),
+    },
+  };
+}
+
 export async function invokeCommand<T>(sessionId: string, command: string, args: Record<string, unknown> = {}) {
+  const normalizedArgs = withDerivedProjectTaskPrefix(command, args);
   const response = await webdriverRequest(`/session/${sessionId}/execute/async`, {
     method: "POST",
     body: JSON.stringify({
@@ -597,7 +690,7 @@ export async function invokeCommand<T>(sessionId: string, command: string, args:
           .then((value) => done({ value }))
           .catch((error) => done({ __error: String(error) }));
       `,
-      args: [command, args],
+      args: [command, normalizedArgs],
     }),
   });
 

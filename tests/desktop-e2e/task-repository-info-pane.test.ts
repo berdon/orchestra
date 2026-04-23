@@ -12,12 +12,11 @@ import {
   ensureReactReady,
   invokeCommand,
   selectByLabel,
-  setFieldByLabel,
   setInputValue,
   waitForSelectedLabel,
-  waitForSelector,
   waitForText,
 } from "./driver";
+import { addRepositoryViaSettings, createProjectViaSettings } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -39,21 +38,13 @@ describe("desktop task repository info pane", () => {
     try {
       await ensureReactReady(sessionId);
 
-      await clickByText(sessionId, "button", "Settings");
-      await waitForText(sessionId, "Project catalog");
-      await clickByText(sessionId, "button", "New project");
-      await waitForText(sessionId, "New project");
-      await setInputValue(sessionId, '[data-role="project-name"]', "Task Repository Info Project");
-      await setInputValue(sessionId, '[data-role="project-description"]', "Desktop repository info pane test.");
-      await clickSelector(sessionId, '.task-detail-panel .panel__header .primary-button');
-      await waitForText(sessionId, "Task Repository Info Project");
-      await waitForSelector(sessionId, '[data-role="repository-name"]');
-
-      await setFieldByLabel(sessionId, "Repository name", "Task Repository Info Repo");
-      await setFieldByLabel(sessionId, "Repository Path", repoPath);
-      await setFieldByLabel(sessionId, "Default branch", "main");
-      await clickSelector(sessionId, '[data-role="add-repository"]');
-      await waitForText(sessionId, "Task Repository Info Repo");
+      await createProjectViaSettings(sessionId, "Task Repository Info Project", "Desktop repository info pane test.");
+      await addRepositoryViaSettings(sessionId, {
+        name: "Task Repository Info Repo",
+        path: repoPath,
+        defaultBranch: "main",
+        makeDefault: false,
+      });
 
       const projects = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
       const project = projects.find((entry) => entry.name === 'Task Repository Info Project');

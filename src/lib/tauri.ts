@@ -3297,6 +3297,24 @@ export async function sendSessionMessage(sessionId: string, message: string, run
     activeRuns[sessionId] = Array.from(new Set([...(activeRuns[sessionId] ?? []), runId]));
     setMockActiveSessionRuns(activeRuns);
 
+    updateMockSession(sessionId, (current) => ({
+      ...current,
+      status: "streaming",
+      updatedAt: queued.timestamp,
+      events: [
+        ...current.events.filter((event) => event.runId !== runId),
+        {
+          id: `pending-user-${runId}`,
+          kind: "user",
+          message: trimmedMessage,
+          timestamp: queued.timestamp,
+          pending: true,
+          runId,
+        },
+      ],
+    }));
+    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.message.queued" });
+
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);
     const thinkingReply = `Considering: ${trimmedMessage}`;
@@ -3378,14 +3396,15 @@ export async function sendSessionMessage(sessionId: string, message: string, run
 
         const session = updateMockSession(sessionId, (current) => {
           const timestamp = nowIso();
+          const remainingActiveRuns = (getMockActiveSessionRuns()[sessionId] ?? []).filter((activeRunId) => activeRunId !== runId);
           return {
             ...current,
-            status: "idle",
+            status: remainingActiveRuns.length > 0 ? "streaming" : "idle",
             updatedAt: timestamp,
             events: [
-              ...current.events,
-              createEvent("user", trimmedMessage),
-              createEvent("assistant", assistantReply, { thinkingText: thinkingReply, timestamp }),
+              ...current.events.filter((event) => event.runId !== runId),
+              createEvent("user", trimmedMessage, { runId, timestamp }),
+              createEvent("assistant", assistantReply, { thinkingText: thinkingReply, timestamp, runId }),
             ],
           };
         });

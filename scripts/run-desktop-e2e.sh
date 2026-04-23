@@ -233,12 +233,18 @@ run_inner() {
     exit 1
   fi
 
-  ORCHESTRA_DESKTOP_E2E=1 \
-  ORCHESTRA_DESKTOP_E2E_PREVIEW_URL="${PREVIEW_URL}" \
-  ORCHESTRA_TAURI_BINARY="${BINARY_PATH}" \
-  ORCHESTRA_TEST_HOME="${TEST_HOME}" \
-  ORCHESTRA_WEBDRIVER_URL="http://127.0.0.1:${WEBDRIVER_PORT}" \
-  npx vitest run "${TEST_FILE}"
+  if ! ORCHESTRA_DESKTOP_E2E=1 \
+    ORCHESTRA_DESKTOP_E2E_PREVIEW_URL="${PREVIEW_URL}" \
+    ORCHESTRA_TAURI_BINARY="${BINARY_PATH}" \
+    ORCHESTRA_TEST_HOME="${TEST_HOME}" \
+    ORCHESTRA_WEBDRIVER_URL="http://127.0.0.1:${WEBDRIVER_PORT}" \
+    npx vitest run "${TEST_FILE}"; then
+    echo "[desktop-e2e-runner] vitest failed; tauri-driver log follows" >&2
+    cat "${DRIVER_LOG}" >&2 || true
+    echo "[desktop-e2e-runner] vite preview log follows" >&2
+    cat "${PREVIEW_LOG}" >&2 || true
+    return 1
+  fi
 }
 
 run_inner

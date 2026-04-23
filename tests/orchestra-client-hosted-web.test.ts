@@ -69,10 +69,6 @@ const bootstrapFixture: OrchestraClientBootstrap = {
       logsWindow: { availability: "unavailable", reason: "Desktop only" },
       agentTerminal: { availability: "unavailable", reason: "Desktop only" },
       systemNotifications: { availability: "unavailable", reason: "Desktop only" },
-      bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
-      runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
-      harnessSettings: { availability: "unavailable", reason: "Desktop only" },
-      remoteAccess: { availability: "unavailable", reason: "Desktop only" },
     },
   },
   appInfo: {
@@ -147,13 +143,25 @@ describe("hosted web orchestra client helpers", () => {
     await expect(fetchHostedWebBootstrap(fetchImpl)).resolves.toEqual(bootstrapFixture);
   });
 
-  test("creates a hosted-web binding that preserves the fetched bootstrap and app info without desktop extensions", async () => {
-    const binding = createHostedWebBootstrapBinding(bootstrapFixture);
+  test("creates a hosted-web binding that preserves the fetched bootstrap and uses the remote transport", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://orchestra.example.test/api/v1/tasks?includeArchived=false&tagMatch=all&sortBy=updatedAt&sortDirection=desc");
+      expect(init).toMatchObject({
+        method: "GET",
+        credentials: "same-origin",
+        headers: expect.any(Headers),
+      });
+      return {
+        ok: true,
+        text: async () => "[]",
+      } satisfies Partial<Response> as Response;
+    });
+
+    const binding = createHostedWebBootstrapBinding(bootstrapFixture, { fetchImpl });
 
     await expect(binding.client.getBootstrap()).resolves.toEqual(bootstrapFixture);
     await expect(binding.client.app.getInfo()).resolves.toEqual(bootstrapFixture.appInfo);
-    await expect(binding.client.tasks.list()).rejects.toThrow(/ORC-61/);
-    expect(binding.client.shell).toBeUndefined();
-    expect(binding.client.hostAdmin).toBeUndefined();
+    await expect(binding.client.tasks.list()).resolves.toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

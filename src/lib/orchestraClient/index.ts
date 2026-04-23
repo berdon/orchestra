@@ -6,3 +6,6 @@ export * from "./events";
 export * from "./extensions";
 export * from "./hostedWeb";
 export * from "./provider";
+export * from "./remoteApiClient";
+export * from "./remoteApiEvents";
+export * from "./remoteApiTransport";

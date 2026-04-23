@@ -78,7 +78,7 @@ fn open_configured_connection(path: &Path) -> Result<Connection, String> {
 
 fn configure_connection(connection: &Connection) -> Result<(), String> {
     connection
-        .busy_timeout(Duration::from_secs(5))
+        .busy_timeout(Duration::from_secs(60))
         .map_err(|error| format!("Unable to set Orchestra database busy timeout: {error}"))?;
     connection
         .pragma_update(None, "foreign_keys", "ON")

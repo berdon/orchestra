@@ -51,6 +51,15 @@ test("command palette can jump directly to a role definition", async ({ page }) 
   });
 
   await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: /^Roles$/ }).click();
+  await page.locator('[data-role="new-role"]').click();
+  await page.locator('[data-role="role-name"]').fill("Reviewer");
+  await page.getByLabel("Capacity").fill("1");
+  await page.locator('[data-role="save-role"]').click();
+  await expect(page.getByRole("heading", { name: "Reviewer" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Sessions" }).click();
   await triggerShortcut(page, "o");
   await page.locator('[data-role="command-palette-input"]').fill("Architect");
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Architect" }).first().click();
@@ -120,6 +129,7 @@ test("ctrl+o can fuzzy-match a project and switch the active project", async ({ 
   await page.getByRole("button", { name: /Create project/i }).click();
 
   await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Second Project");
+  await page.locator('[data-role="project-switcher"]').selectOption({ label: "Orchestra" });
 
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.locator('[data-role="new-task"]').click();
@@ -149,6 +159,12 @@ test("ctrl+o can fuzzy-match a project and switch the active project", async ({ 
   await page.locator('[data-role="command-palette-item"]').filter({ hasText: "Switch to project Second Project" }).first().click();
 
   await expect(page.locator('[data-role="project-switcher-trigger"]')).toContainText("Second Project");
+  await expect(page.locator('[data-role="draft-task-section"]')).toHaveCount(0);
+
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Project two task");
+  await page.locator('[data-role="save-task"]').click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Project two task");
   await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Project one task");
 

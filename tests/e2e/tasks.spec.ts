@@ -1718,9 +1718,11 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.locator('[data-role="repository-name"]').fill("orchestra-docs");
-  await page.locator('[data-role="repository-path"]').fill("/tmp/orchestra-docs");
+  await page.locator('[data-role="repository-name"]').fill("Docs repo");
+  await page.locator('[data-role="repository-path"]').fill("/tmp/docs-repo");
+  await page.locator('[data-role="repository-default-branch"]').fill("main");
   await page.locator('[data-role="add-repository"]').click();
+  await expect(page.locator('[data-role="project-repositories"]')).toContainText("Docs repo");
 
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.getByRole("button", { name: "New task" }).click();
@@ -1728,6 +1730,7 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await page.locator('[data-role="save-task"]').click();
 
   await page.locator('[data-role="task-detail-tab-repo-files"]').click();
+  await expect(page.locator('[data-role="task-file-reference-repository"]')).toHaveValue(/repo-/);
   await page.locator('[data-role="task-file-reference-path"]').fill("docs/design.md");
   await page.locator('[data-role="add-task-file-reference"]').click();
   await expect(page.locator('[data-role="task-file-references"]')).toContainText("docs/design.md");
@@ -1740,13 +1743,18 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await page.locator('[data-role="task-comment-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
   await expect(page.locator('[data-role="selected-task-file-reference-card"]')).toBeVisible();
-  const repoFileState = await page.evaluate(() => {
+  await expect.poll(async () => page.evaluate(() => {
     const select = document.querySelector('[data-role="task-file-references"] select');
+    const card = document.querySelector('[data-role="selected-task-file-reference-card"]');
+    const cardTop = card instanceof HTMLElement ? card.getBoundingClientRect().top : null;
     return {
       selectedLabel: select instanceof HTMLSelectElement ? select.options[select.selectedIndex]?.textContent ?? "" : "",
+      cardVisibleInViewport: cardTop !== null && cardTop < window.innerHeight,
     };
+  })).toMatchObject({
+    selectedLabel: expect.stringContaining("docs/design.md"),
+    cardVisibleInViewport: true,
   });
-  expect(repoFileState.selectedLabel).toContain("docs/design.md");
 });
 
 test("task comment composer autocompletes tasks, agents, and roles and renders task mentions as links", async ({ page }) => {

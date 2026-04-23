@@ -186,7 +186,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       await expect(
         invokeCommand(sessionId, "dispatch_task_lane", { taskId: activeTask.id }),
-      ).rejects.toThrow(/blocked by unresolved dependencies|unfinished subtasks|cannot be dispatched until it becomes runnable/);
+      ).rejects.toThrow(/blocked and cannot be dispatched|blocked by unresolved dependencies|unfinished subtasks|cannot be dispatched until it becomes runnable/);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
@@ -486,7 +486,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       await expect(
         invokeCommand(sessionId, "dispatch_task_lane", { taskId: parentTask.id }),
-      ).rejects.toThrow(/unfinished subtasks|cannot be dispatched until it becomes runnable/);
+      ).rejects.toThrow(/blocked and cannot be dispatched|unfinished subtasks|cannot be dispatched until it becomes runnable/);
 
       await invokeCommand(sessionId, "update_task", {
         taskId: childTask.id,

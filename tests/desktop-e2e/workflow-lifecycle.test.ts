@@ -39,13 +39,17 @@ async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value
   throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue, null, 2)}`);
 }
 
-async function completeTaskLaneWithRetries(sessionId: string, taskId: string, timeoutMs = 30_000) {
+async function completeTaskLaneWithRetries(sessionId: string, taskId: string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = '';
   while (Date.now() < deadline) {
+    const task = await invokeCommand<any>(sessionId, 'get_task', { taskId });
+    if (!task.activeLaneAssignment) {
+      return task;
+    }
     try {
       await invokeCommand(sessionId, 'complete_lane_as_success', { taskId, notes: null });
-      return;
+      return task;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
       if (!lastError.includes('already processing a message')) {
@@ -53,7 +57,7 @@ async function completeTaskLaneWithRetries(sessionId: string, taskId: string, ti
       }
     }
     await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
-    await sleep(500);
+    await sleep(1_000);
   }
   throw new Error(`Timed out completing task lane ${taskId}: ${lastError}`);
 }

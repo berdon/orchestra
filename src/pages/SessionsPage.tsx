@@ -150,7 +150,7 @@ export function SessionsPage({
   const [runtimeDetailsError, setRuntimeDetailsError] = useState<string | null>(null);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
   const revealTimerRef = useRef<number | null>(null);
-  const canShowDebugInfo = import.meta.env.DEV && Boolean(selectedSession?.debugInfo);
+  const canShowDebugInfo = (import.meta.env.DEV || navigator.webdriver) && Boolean(selectedSession?.debugInfo);
   const getTooltipProps = useExplanatoryTooltipProps();
 
   useEffect(() => {
