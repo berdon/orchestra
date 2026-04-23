@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { getActiveProjectId, getDefaultProjectId, getProjectRuntimeCwd } from "./projects";
-import { createMockSessionRecord, emitMockSessionChange, isTauriAvailable, upsertMockSession } from "./tauri";
+import { emitMockSessionChange } from "./mockOrchestra/events";
+import { isTauriAvailable } from "./mockOrchestra/host";
+import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
 import type {
   AgentDefinition,
   AgentMemoryInfo,

@@ -4,6 +4,9 @@ import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import { getStoredMockProjectRuntimeSettings } from "./mockProjectRuntimeSettings";
 import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
 import { sortSessionRecords } from "./sessionList";
+import { emitMockInboxChange, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "./mockOrchestra/events";
+import { isTauriAvailable } from "./mockOrchestra/host";
+import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
 import { getTaskTags } from "./taskListQuery";
 import { normalizeTaskTags, TASK_TAG_COUNT_ERROR, validateTaskTag } from "./taskTags";
 import type {
@@ -192,9 +195,15 @@ const MOCK_MODELS: SessionModel[] = [
   },
 ];
 
-export function isTauriAvailable() {
-  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
-}
+export { emitMockSessionChange } from "./mockOrchestra/events";
+export { isTauriAvailable } from "./mockOrchestra/host";
+export { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
+export {
+  listenToInboxChanges,
+  listenToSessionChanges,
+  listenToSessionStream,
+  listenToTaskChanges,
+} from "./orchestraClient/browserEvents";
 
 function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
@@ -414,22 +423,6 @@ function getStoredMailboxMessages() {
 
 function saveStoredMailboxMessages(messages: MailboxMessage[]) {
   setStoredValue(MAILBOX_STORAGE_KEY, messages);
-}
-
-function emitMockSessionStream(event: SessionStreamEnvelope) {
-  window.dispatchEvent(new CustomEvent("orchestra:session-stream", { detail: event }));
-}
-
-export function emitMockSessionChange(event: SessionChangeEvent) {
-  window.dispatchEvent(new CustomEvent("orchestra:session-change", { detail: event }));
-}
-
-function emitMockInboxChange(event: InboxChangeEvent) {
-  window.dispatchEvent(new CustomEvent("orchestra:inbox-change", { detail: event }));
-}
-
-function emitMockTaskChange(event: TaskChangeEvent) {
-  window.dispatchEvent(new CustomEvent("orchestra:task-change", { detail: event }));
 }
 
 function createMockSessionEnvelope(sessionId: string, runId: string, event: JsonValue): SessionStreamEnvelope {
@@ -700,35 +693,6 @@ function syncMockSessionTaskActivity(previousAssignment?: TaskDetail["activeLane
 
   updateMockSession(previousSessionId, (current) => clearMockSessionActiveTaskMetadata(current));
   emitMockSessionChange({ sessionIds: [previousSessionId], reason: "task.assignment.cleared" });
-}
-
-export function upsertMockSession(session: SessionRecord) {
-  const sessions = ensureMockSessions().filter((entry) => entry.id !== session.id);
-  saveMockSessions(sortSessions([session, ...sessions]));
-}
-
-export function createMockSessionRecord(title: string, openingAssistantMessage: string): SessionRecord {
-  const timestamp = nowIso();
-  return {
-    id: createId("session"),
-    title,
-    status: "active",
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    subscribed: false,
-    events: [
-      createEvent("system", `${title} created from Orchestra runtime.`),
-      createEvent("assistant", openingAssistantMessage),
-    ],
-    controlCapabilities: {
-      reload: { status: "supported", reason: null },
-      compact: { status: "supported", reason: null },
-      autoCompact: { status: "supported", reason: null },
-      effectiveCompactionWindow: "10%",
-      effectiveCompactionWindowSource: "global",
-    },
-    controlOperation: null,
-  };
 }
 
 function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
@@ -2257,66 +2221,6 @@ function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow
     lanes,
     createdAt: existingWorkflow?.createdAt ?? timestamp,
     updatedAt: timestamp,
-  };
-}
-
-export async function listenToSessionStream(
-  handler: (event: SessionStreamEnvelope) => void,
-): Promise<() => void> {
-  const listener = (event: Event) => {
-    if (event instanceof CustomEvent) {
-      handler(event.detail as SessionStreamEnvelope);
-    }
-  };
-
-  window.addEventListener("orchestra:session-stream", listener);
-  return () => {
-    window.removeEventListener("orchestra:session-stream", listener);
-  };
-}
-
-export async function listenToSessionChanges(
-  handler: (event: SessionChangeEvent) => void,
-): Promise<() => void> {
-  const listener = (event: Event) => {
-    if (event instanceof CustomEvent) {
-      handler(event.detail as SessionChangeEvent);
-    }
-  };
-
-  window.addEventListener("orchestra:session-change", listener);
-  return () => {
-    window.removeEventListener("orchestra:session-change", listener);
-  };
-}
-
-export async function listenToTaskChanges(
-  handler: (event: TaskChangeEvent) => void,
-): Promise<() => void> {
-  const listener = (event: Event) => {
-    if (event instanceof CustomEvent) {
-      handler(event.detail as TaskChangeEvent);
-    }
-  };
-
-  window.addEventListener("orchestra:task-change", listener);
-  return () => {
-    window.removeEventListener("orchestra:task-change", listener);
-  };
-}
-
-export async function listenToInboxChanges(
-  handler: (event: InboxChangeEvent) => void,
-): Promise<() => void> {
-  const listener = (event: Event) => {
-    if (event instanceof CustomEvent) {
-      handler(event.detail as InboxChangeEvent);
-    }
-  };
-
-  window.addEventListener("orchestra:inbox-change", listener);
-  return () => {
-    window.removeEventListener("orchestra:inbox-change", listener);
   };
 }
 
