@@ -23,7 +23,8 @@ use crate::{
         pi_sessions::{
             all_session_contexts, create_session_file, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
-            get_session_stats as load_session_stats_from_file, list_sessions as list_real_sessions,
+            get_session_stats as load_session_stats_from_file,
+            list_sessions_with_connection as list_real_sessions_with_connection,
             session_context_for_project_id, set_session_model as apply_session_model,
         },
         pi_setup, role_dispatch, role_runtime, roles, task_runtime,
@@ -694,6 +695,35 @@ fn cleanup_dismissed_sessions(connection: &rusqlite::Connection) -> Result<Vec<S
     Ok(session_ids)
 }
 
+fn list_command_sessions_with_connection(
+    connection: &rusqlite::Connection,
+    contexts: &[crate::services::pi_sessions::SessionContext],
+    subscribed: &HashSet<String>,
+    terminal_attached_session_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
+    cleanup_dismissed_sessions(connection)?;
+    let dismissed_ids = load_dismissed_session_ids(connection)?;
+    let mut sessions = contexts
+        .iter()
+        .map(|context| {
+            list_real_sessions_with_connection(connection, context, subscribed, &dismissed_ids)
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .map(|record| {
+            decorate_session_record_with_connection(
+                connection,
+                terminal_attached_session_ids,
+                record,
+                false,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(sessions)
+}
+
 #[tauri::command]
 pub async fn list_sessions(
     state: State<'_, AppState>,
@@ -703,28 +733,17 @@ pub async fn list_sessions(
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let sessions = spawn_blocking(move || {
         let connection = database::open_connection()?;
-        cleanup_dismissed_sessions(&connection)?;
-        let dismissed_ids = load_dismissed_session_ids(&connection)?;
-        let session_dirs = match project_id.as_deref() {
-            Some(project_id) => vec![session_context_for_project_id(project_id)?.session_dir],
-            None => all_session_contexts()?
-                .into_iter()
-                .map(|context| context.session_dir)
-                .collect(),
+        let contexts = match project_id.as_deref() {
+            Some(project_id) => vec![session_context_for_project_id(project_id)?],
+            None => all_session_contexts()?,
         };
-        drop(connection);
 
-        let mut sessions = session_dirs
-            .into_iter()
-            .map(|session_dir| list_real_sessions(&session_dir, &subscribed))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .filter(|record| !dismissed_ids.contains(&record.id))
-            .map(|record| decorate_session_record(&terminal_attached_session_ids, record, false))
-            .collect::<Result<Vec<_>, _>>()?;
-        sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        Ok::<_, String>(sessions)
+        list_command_sessions_with_connection(
+            &connection,
+            &contexts,
+            &subscribed,
+            &terminal_attached_session_ids,
+        )
     })
     .await
     .map_err(|error| format!("Unable to join list_sessions task: {error}"))??;
@@ -2047,7 +2066,15 @@ pub async fn send_session_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{models::SessionEvent, services::database};
+    use crate::{
+        models::SessionEvent,
+        services::{database, pi_sessions::SessionContext},
+    };
+    use std::{
+        env, fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn make_session_record(session_id: &str) -> SessionRecord {
         SessionRecord {
@@ -2079,6 +2106,77 @@ mod tests {
             control_capabilities: None,
             control_operation: None,
         }
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let suffix = format!(
+            "{}-{}-{}",
+            label,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_millis()
+        );
+        let dir = env::temp_dir().join(suffix);
+        fs::create_dir_all(&dir).expect("temp dir should be creatable");
+        dir
+    }
+
+    fn make_list_test_context(label: &str, project_slug: &str) -> SessionContext {
+        let root = unique_temp_dir(label);
+        let orchestra_root = root.join("orchestra-root");
+        let project_root = root.join("project-root");
+        let session_dir = orchestra_root
+            .join("projects")
+            .join(project_slug)
+            .join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+        SessionContext {
+            project_root,
+            project_slug: project_slug.to_string(),
+            orchestra_root,
+            session_dir,
+        }
+    }
+
+    fn write_list_test_session(
+        context: &SessionContext,
+        file_name: &str,
+        session_id: &str,
+        title: &str,
+        timestamp: &str,
+    ) {
+        let session_path = context.session_dir.join(file_name);
+        let content = format!(
+            "{}\n{}\n{}\n",
+            serde_json::json!({
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": timestamp,
+                "cwd": context.project_root.display().to_string(),
+            }),
+            serde_json::json!({
+                "type": "session_info",
+                "id": format!("info-{session_id}"),
+                "parentId": serde_json::Value::Null,
+                "timestamp": timestamp,
+                "name": title,
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": format!("msg-{session_id}"),
+                "timestamp": timestamp,
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": format!("hello from {session_id}") }],
+                    "timestamp": 1773835261000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
     }
 
     #[test]
@@ -2313,6 +2411,101 @@ mod tests {
         .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "active");
+    }
+
+    #[test]
+    fn list_sessions_path_filters_dismissed_entries_and_preserves_awaiting_approval_sessions() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        let context = make_list_test_context(
+            "orchestra-command-session-list",
+            "command-session-list-test",
+        );
+        write_list_test_session(
+            &context,
+            "2026-03-21T00-01-00Z_session-1.jsonl",
+            "session-1",
+            "Awaiting approval session",
+            "2026-03-21T00:01:00Z",
+        );
+        write_list_test_session(
+            &context,
+            "2026-03-21T00-00-00Z_session-dismissed.jsonl",
+            "session-dismissed",
+            "Dismissed session",
+            "2026-03-21T00:00:00Z",
+        );
+        dismiss_session_entry(&connection, "session-dismissed")
+            .expect("dismissed entry should insert");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, ?9, ?10, NULL, NULL, NULL, 0, ?11, ?12)
+                "#,
+                rusqlite::params![
+                    "task-1",
+                    "project-1",
+                    1,
+                    "ORC-1",
+                    "Awaiting approval task",
+                    "task",
+                    "in_review",
+                    "P1",
+                    "lane-implement",
+                    "user",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("task insert should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id,
+                    runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome,
+                    completion_notes, started_at, completed_at, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, NULL, 'success', 'Ready', ?10, NULL, ?11, ?12)
+                "#,
+                rusqlite::params![
+                    "assignment-1",
+                    "task-1",
+                    "workflow-1",
+                    "lane-implement",
+                    "role",
+                    "role-1",
+                    "awaiting_user_approval",
+                    "session-1",
+                    "instance-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:01:00Z",
+                ],
+            )
+            .expect("awaiting approval assignment insert should succeed");
+
+        let listed = list_command_sessions_with_connection(
+            &connection,
+            std::slice::from_ref(&context),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("session list should succeed");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "session-1");
+        assert_ne!(listed[0].status, "closed");
+        assert_eq!(listed[0].task_id.as_deref(), Some("task-1"));
+        assert_eq!(listed[0].task_number.as_deref(), Some("ORC-1"));
     }
 
     #[test]

@@ -311,6 +311,28 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_session_list_entries_dismissed_at
                 ON session_list_entries(dismissed_at ASC);
 
+            CREATE TABLE IF NOT EXISTS session_catalog (
+                session_id TEXT PRIMARY KEY,
+                project_slug TEXT NOT NULL,
+                session_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                file_mtime_ms INTEGER NOT NULL,
+                last_indexed_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_catalog_project_updated
+                ON session_catalog(project_slug, updated_at DESC);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_session_catalog_path
+                ON session_catalog(session_path);
+
+            CREATE INDEX IF NOT EXISTS idx_session_catalog_project_path
+                ON session_catalog(project_slug, session_path);
+
             CREATE TABLE IF NOT EXISTS worker_reminders (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

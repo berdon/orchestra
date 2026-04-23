@@ -5,9 +5,11 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
+    time::UNIX_EPOCH,
 };
 
 use chrono::{DateTime, TimeZone, Utc};
+use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -47,6 +49,26 @@ pub struct StoredSession {
     pub record: SessionRecord,
 }
 
+#[derive(Debug, Clone)]
+struct SessionCatalogEntry {
+    session_id: String,
+    project_slug: String,
+    session_path: PathBuf,
+    created_at: String,
+    updated_at: String,
+    title: String,
+    status: String,
+    file_size: u64,
+    file_mtime_ms: i64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SessionCatalogRefreshStats {
+    parsed_files: usize,
+    skipped_dismissed_files: usize,
+    repaired_rows: usize,
+    evicted_rows: usize,
+}
 fn resolve_context_project_root(project_slug: &str) -> Result<PathBuf, String> {
     if let Some(project_root) = configured_project_root() {
         return Ok(project_root);
@@ -112,9 +134,489 @@ pub fn all_session_contexts() -> Result<Vec<SessionContext>, String> {
     Ok(contexts)
 }
 
+fn session_context_for_session_dir(session_dir: &Path) -> Option<SessionContext> {
+    if session_dir.file_name().and_then(|value| value.to_str()) != Some("sessions") {
+        return None;
+    }
+    let project_slug = session_dir.parent()?.file_name()?.to_str()?;
+    let context = detect_session_context(Some(project_slug)).ok()?;
+    if context.session_dir == session_dir {
+        Some(context)
+    } else {
+        None
+    }
+}
+
+fn load_dismissed_session_ids(
+    connection: &rusqlite::Connection,
+) -> Result<HashSet<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT session_id FROM session_list_entries WHERE dismissed_at IS NOT NULL")
+        .map_err(|error| format!("Unable to prepare dismissed session query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query dismissed sessions: {error}"))?;
+    rows.collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("Unable to read dismissed sessions: {error}"))
+}
+
+fn derive_session_id_from_path(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    if Uuid::parse_str(stem).is_ok() {
+        return Some(stem.to_string());
+    }
+    let (_, maybe_uuid) = stem.rsplit_once('_')?;
+    if Uuid::parse_str(maybe_uuid).is_ok() {
+        Some(maybe_uuid.to_string())
+    } else {
+        None
+    }
+}
+
+fn session_file_fingerprint(path: &Path) -> Result<(u64, i64), String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Unable to inspect session file {}: {error}", path.display()))?;
+    let file_size = metadata.len();
+    let modified = metadata.modified().map_err(|error| {
+        format!(
+            "Unable to inspect session file modified time {}: {error}",
+            path.display()
+        )
+    })?;
+    let file_mtime_ms = modified
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| {
+            format!(
+                "Unable to normalize session file modified time {}: {error}",
+                path.display()
+            )
+        })?
+        .as_millis() as i64;
+    Ok((file_size, file_mtime_ms))
+}
+
+fn load_session_catalog_entry(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<SessionCatalogEntry>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT project_slug, session_path, created_at, updated_at, title, status, file_size, file_mtime_ms
+            FROM session_catalog
+            WHERE session_id = ?1
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| {
+                Ok(SessionCatalogEntry {
+                    session_id: session_id.to_string(),
+                    project_slug: row.get::<_, String>(0)?,
+                    session_path: PathBuf::from(row.get::<_, String>(1)?),
+                    created_at: row.get::<_, String>(2)?,
+                    updated_at: row.get::<_, String>(3)?,
+                    title: row.get::<_, String>(4)?,
+                    status: row.get::<_, String>(5)?,
+                    file_size: row.get::<_, i64>(6)? as u64,
+                    file_mtime_ms: row.get::<_, i64>(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load session catalog entry {session_id}: {error}"))
+}
+
+fn load_session_catalog_entries_for_project(
+    connection: &rusqlite::Connection,
+    project_slug: &str,
+) -> Result<Vec<SessionCatalogEntry>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT session_id, project_slug, session_path, created_at, updated_at, title, status, file_size, file_mtime_ms
+            FROM session_catalog
+            WHERE project_slug = ?1
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare session catalog query for {project_slug}: {error}"))?;
+    let rows = statement
+        .query_map([project_slug], |row| {
+            Ok(SessionCatalogEntry {
+                session_id: row.get::<_, String>(0)?,
+                project_slug: row.get::<_, String>(1)?,
+                session_path: PathBuf::from(row.get::<_, String>(2)?),
+                created_at: row.get::<_, String>(3)?,
+                updated_at: row.get::<_, String>(4)?,
+                title: row.get::<_, String>(5)?,
+                status: row.get::<_, String>(6)?,
+                file_size: row.get::<_, i64>(7)? as u64,
+                file_mtime_ms: row.get::<_, i64>(8)?,
+            })
+        })
+        .map_err(|error| format!("Unable to query session catalog for {project_slug}: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read session catalog for {project_slug}: {error}"))
+}
+
+fn upsert_session_catalog_entry(
+    connection: &rusqlite::Connection,
+    project_slug: &str,
+    stored: &StoredSession,
+) -> Result<(), String> {
+    let (file_size, file_mtime_ms) = session_file_fingerprint(&stored.path)?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO session_catalog (
+                session_id, project_slug, session_path, created_at, updated_at,
+                title, status, file_size, file_mtime_ms, last_indexed_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(session_id) DO UPDATE SET
+                project_slug = excluded.project_slug,
+                session_path = excluded.session_path,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                title = excluded.title,
+                status = excluded.status,
+                file_size = excluded.file_size,
+                file_mtime_ms = excluded.file_mtime_ms,
+                last_indexed_at = excluded.last_indexed_at
+            "#,
+            params![
+                stored.record.id,
+                project_slug,
+                stored.path.display().to_string(),
+                stored.record.created_at,
+                stored.record.updated_at,
+                stored.record.title,
+                stored.record.status,
+                file_size as i64,
+                file_mtime_ms,
+                now_iso(),
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to upsert session catalog entry {}: {error}",
+                stored.record.id
+            )
+        })?;
+    Ok(())
+}
+
+fn remove_session_catalog_entry(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM session_catalog WHERE session_id = ?1",
+            [session_id],
+        )
+        .map_err(|error| format!("Unable to delete session catalog entry {session_id}: {error}"))?;
+    Ok(())
+}
+
+fn remove_session_catalog_entry_by_path(
+    connection: &rusqlite::Connection,
+    path: &Path,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM session_catalog WHERE session_path = ?1",
+            [path.display().to_string()],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to delete session catalog entry for {}: {error}",
+                path.display()
+            )
+        })?;
+    Ok(())
+}
+
+fn session_record_from_catalog_entry(
+    entry: &SessionCatalogEntry,
+    subscribed_ids: &HashSet<String>,
+) -> SessionRecord {
+    SessionRecord {
+        id: entry.session_id.clone(),
+        title: entry.title.clone(),
+        status: entry.status.clone(),
+        created_at: entry.created_at.clone(),
+        updated_at: entry.updated_at.clone(),
+        subscribed: subscribed_ids.contains(&entry.session_id),
+        events: Vec::new(),
+        terminal_attached: false,
+        debug_info: None,
+        task_id: None,
+        task_project_id: None,
+        task_number: None,
+        task_title: None,
+        active_task_id: None,
+        active_task_project_id: None,
+        active_task_number: None,
+        active_task_title: None,
+        worker_type: None,
+        worker_name: None,
+        control_capabilities: None,
+        control_operation: None,
+    }
+}
+
+fn load_session_catalog_records(
+    connection: &rusqlite::Connection,
+    project_slug: &str,
+    subscribed_ids: &HashSet<String>,
+    dismissed_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
+    let mut entries = load_session_catalog_entries_for_project(connection, project_slug)?;
+    entries.retain(|entry| !dismissed_ids.contains(&entry.session_id));
+    entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(entries
+        .into_iter()
+        .map(|entry| session_record_from_catalog_entry(&entry, subscribed_ids))
+        .collect())
+}
+
+fn validate_catalog_session_path(path: &Path, session_id: &str) -> bool {
+    path.exists() && parse_session_header_id(path).ok().as_deref() == Some(session_id)
+}
+
+fn summarize_session_for_catalog(path: &Path) -> Result<StoredSession, String> {
+    match parse_session_file_summary(path, false) {
+        Ok(session) => Ok(session),
+        Err(_) => {
+            let session_id = parse_session_header_id(path)?;
+            fallback_session_file_summary(path, &session_id, false)
+        }
+    }
+}
+
+fn maybe_repair_session_catalog_entry(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+    path: &Path,
+) -> Result<(), String> {
+    let stored = summarize_session_for_catalog(path)?;
+    upsert_session_catalog_entry(connection, &context.project_slug, &stored)
+}
+
+fn discover_session_path_in_dir(
+    session_dir: &Path,
+    session_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    if !session_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut fallback_candidates = Vec::new();
+    let entries = fs::read_dir(session_dir).map_err(|error| {
+        format!(
+            "Unable to read session directory {}: {error}",
+            session_dir.display()
+        )
+    })?;
+
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+            continue;
+        }
+        if derive_session_id_from_path(&path).as_deref() == Some(session_id)
+            && validate_catalog_session_path(&path, session_id)
+        {
+            return Ok(Some(path));
+        }
+        fallback_candidates.push(path);
+    }
+
+    for path in fallback_candidates {
+        if parse_session_header_id(&path).ok().as_deref() == Some(session_id) {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
+fn resolve_session_path_with_catalog(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+    session_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(entry) = load_session_catalog_entry(connection, session_id)? {
+        if entry.project_slug == context.project_slug {
+            if validate_catalog_session_path(&entry.session_path, session_id) {
+                return Ok(Some(entry.session_path));
+            }
+            remove_session_catalog_entry(connection, session_id)?;
+        }
+    }
+
+    let discovered = discover_session_path_in_dir(&context.session_dir, session_id)?;
+    if let Some(path) = discovered.as_ref() {
+        maybe_repair_session_catalog_entry(connection, context, path)?;
+    }
+    Ok(discovered)
+}
+
+fn refresh_session_catalog(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+    dismissed_ids: &HashSet<String>,
+) -> Result<SessionCatalogRefreshStats, String> {
+    fs::create_dir_all(&context.session_dir).map_err(|error| {
+        format!(
+            "Unable to create session directory {}: {error}",
+            context.session_dir.display()
+        )
+    })?;
+
+    let existing_entries =
+        load_session_catalog_entries_for_project(connection, &context.project_slug)?;
+    let existing_by_session_id = existing_entries
+        .iter()
+        .map(|entry| (entry.session_id.clone(), entry))
+        .collect::<HashMap<_, _>>();
+    let existing_by_path = existing_entries
+        .iter()
+        .map(|entry| (entry.session_path.clone(), entry))
+        .collect::<HashMap<_, _>>();
+
+    let mut stats = SessionCatalogRefreshStats::default();
+    let mut seen_session_ids = HashSet::new();
+    let mut seen_paths = HashSet::new();
+
+    let entries = fs::read_dir(&context.session_dir).map_err(|error| {
+        format!(
+            "Unable to read session directory {}: {error}",
+            context.session_dir.display()
+        )
+    })?;
+
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        let derived_session_id = derive_session_id_from_path(&path);
+        let existing_entry = derived_session_id
+            .as_ref()
+            .and_then(|session_id| existing_by_session_id.get(session_id).copied())
+            .or_else(|| existing_by_path.get(&path).copied());
+
+        if derived_session_id
+            .as_ref()
+            .is_some_and(|session_id| dismissed_ids.contains(session_id))
+        {
+            if let Some(session_id) = derived_session_id.as_ref() {
+                if remove_session_catalog_entry(connection, session_id).is_ok() {
+                    stats.evicted_rows += 1;
+                }
+            }
+            if remove_session_catalog_entry_by_path(connection, &path).is_ok() {
+                stats.evicted_rows += 1;
+            }
+            stats.skipped_dismissed_files += 1;
+            continue;
+        }
+
+        let (file_size, file_mtime_ms) = session_file_fingerprint(&path)?;
+        if let Some(existing) = existing_entry {
+            let same_file = existing.session_path == path;
+            let same_identity = derived_session_id
+                .as_ref()
+                .is_some_and(|session_id| session_id == &existing.session_id)
+                || derived_session_id.is_none();
+            let unchanged = same_file
+                && same_identity
+                && existing.file_size == file_size
+                && existing.file_mtime_ms == file_mtime_ms;
+            if unchanged {
+                seen_session_ids.insert(existing.session_id.clone());
+                seen_paths.insert(path.clone());
+                continue;
+            }
+        }
+
+        let stored = summarize_session_for_catalog(&path)?;
+        if dismissed_ids.contains(&stored.record.id) {
+            remove_session_catalog_entry(connection, &stored.record.id)?;
+            remove_session_catalog_entry_by_path(connection, &path)?;
+            stats.skipped_dismissed_files += 1;
+            continue;
+        }
+
+        if let Some(existing) = existing_entry {
+            if existing.session_id != stored.record.id || existing.session_path != path {
+                stats.repaired_rows += 1;
+            }
+        } else {
+            stats.repaired_rows += 1;
+        }
+
+        if let Some(derived_session_id) = derived_session_id.as_ref() {
+            if derived_session_id != &stored.record.id {
+                remove_session_catalog_entry(connection, derived_session_id)?;
+                stats.evicted_rows += 1;
+            }
+        }
+
+        upsert_session_catalog_entry(connection, &context.project_slug, &stored)?;
+        stats.parsed_files += 1;
+        seen_session_ids.insert(stored.record.id.clone());
+        seen_paths.insert(path.clone());
+    }
+
+    for existing in existing_entries {
+        if seen_session_ids.contains(&existing.session_id)
+            || seen_paths.contains(&existing.session_path)
+        {
+            continue;
+        }
+        if !existing.session_path.exists() || dismissed_ids.contains(&existing.session_id) {
+            remove_session_catalog_entry(connection, &existing.session_id)?;
+            stats.evicted_rows += 1;
+        }
+    }
+
+    Ok(stats)
+}
+
+pub fn list_sessions_with_connection(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+    subscribed_ids: &HashSet<String>,
+    dismissed_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
+    refresh_session_catalog(connection, context, dismissed_ids)?;
+    load_session_catalog_records(
+        connection,
+        &context.project_slug,
+        subscribed_ids,
+        dismissed_ids,
+    )
+}
+
 pub fn find_session_context_for_session(session_id: &str) -> Result<SessionContext, String> {
+    let connection = database::open_connection()?;
+    if let Some(entry) = load_session_catalog_entry(&connection, session_id)? {
+        if validate_catalog_session_path(&entry.session_path, session_id) {
+            return detect_session_context(Some(&entry.project_slug));
+        }
+        remove_session_catalog_entry(&connection, session_id)?;
+    }
+
     for context in all_session_contexts()? {
-        if get_session(&context.session_dir, session_id, false).is_ok() {
+        if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
+            maybe_repair_session_catalog_entry(&connection, &context, &path)?;
             return Ok(context);
         }
     }
@@ -128,12 +630,8 @@ pub fn get_session_header_cwd(
     session_id: &str,
 ) -> Result<Option<PathBuf>, String> {
     let path = get_session_path(session_dir, session_id)?;
-    let lines = read_jsonl(&path)?;
-    let header = lines.first();
-    Ok(header
-        .and_then(|value| value.get("cwd"))
-        .and_then(Value::as_str)
-        .map(PathBuf::from))
+    let header = parse_session_header(&path)?;
+    Ok(header.get("cwd").and_then(Value::as_str).map(PathBuf::from))
 }
 
 pub fn create_session_file(
@@ -206,13 +704,30 @@ pub fn create_session_file(
         )
     })?;
 
-    parse_session_file(&session_path, subscribed)
+    let stored = parse_session_file(&session_path, subscribed)?;
+    if let Some(context) = session_context_for_session_dir(session_dir) {
+        if let Ok(connection) = database::open_connection() {
+            let _ = upsert_session_catalog_entry(&connection, &context.project_slug, &stored);
+        }
+    }
+    Ok(stored)
 }
 
 pub fn list_sessions(
     session_dir: &Path,
     subscribed_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
+    if let Some(context) = session_context_for_session_dir(session_dir) {
+        let connection = database::open_connection()?;
+        let dismissed_ids = load_dismissed_session_ids(&connection)?;
+        return list_sessions_with_connection(
+            &connection,
+            &context,
+            subscribed_ids,
+            &dismissed_ids,
+        );
+    }
+
     let mut sessions = list_stored_session_summaries(session_dir, subscribed_ids)?;
     sessions.sort_by(|left, right| right.record.updated_at.cmp(&left.record.updated_at));
     Ok(sessions.into_iter().map(|session| session.record).collect())
@@ -227,13 +742,27 @@ pub fn get_session(
 }
 
 pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf, String> {
+    if let Some(context) = session_context_for_session_dir(session_dir) {
+        let connection = database::open_connection()?;
+        if let Some(path) = resolve_session_path_with_catalog(&connection, &context, session_id)? {
+            return Ok(path);
+        }
+        return Err(format!("Unable to find session {session_id}"));
+    }
+
     resolve_session(session_dir, session_id, true).map(|session| session.path)
 }
 
 pub fn delete_session_file(session_dir: &Path, session_id: &str) -> Result<(), String> {
     let path = get_session_path(session_dir, session_id)?;
     fs::remove_file(&path)
-        .map_err(|error| format!("Unable to delete session file {}: {error}", path.display()))
+        .map_err(|error| format!("Unable to delete session file {}: {error}", path.display()))?;
+    if session_context_for_session_dir(session_dir).is_some() {
+        if let Ok(connection) = database::open_connection() {
+            let _ = remove_session_catalog_entry(&connection, session_id);
+        }
+    }
+    Ok(())
 }
 
 pub fn stream_prompt_session<F>(
@@ -423,6 +952,14 @@ fn resolve_session(
     session_id: &str,
     subscribed: bool,
 ) -> Result<StoredSession, String> {
+    if let Some(context) = session_context_for_session_dir(session_dir) {
+        let connection = database::open_connection()?;
+        if let Some(path) = resolve_session_path_with_catalog(&connection, &context, session_id)? {
+            return parse_session_file(&path, subscribed);
+        }
+        return Err(format!("Unable to find session {session_id}"));
+    }
+
     if !session_dir.exists() {
         return Err(format!(
             "Session directory {} does not exist yet",
@@ -454,16 +991,23 @@ fn resolve_session(
 }
 
 fn parse_session_header(path: &Path) -> Result<Value, String> {
-    // List views only need the header. Reading and parsing the full JSONL body here
-    // makes active sessions disappear from the list whenever the body is temporarily
-    // mid-write or otherwise unreadable.
-    let content = fs::read_to_string(path)
+    let file = File::open(path)
         .map_err(|error| format!("Unable to read session file {}: {error}", path.display()))?;
-    let header_line = content
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .ok_or_else(|| format!("Session file {} is empty", path.display()))?;
-    serde_json::from_str::<Value>(header_line.trim()).map_err(|error| {
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line).map_err(|error| {
+            format!("Unable to read session header {}: {error}", path.display())
+        })?;
+        if bytes_read == 0 {
+            return Err(format!("Session file {} is empty", path.display()));
+        }
+        if !line.trim().is_empty() {
+            break;
+        }
+    }
+    serde_json::from_str::<Value>(line.trim()).map_err(|error| {
         format!(
             "Unable to parse session header {} as JSON: {error}",
             path.display()
@@ -1850,6 +2394,78 @@ mod tests {
         dir
     }
 
+    fn make_catalog_test_context(label: &str) -> SessionContext {
+        let root = unique_temp_dir(label);
+        let orchestra_root = root.join("orchestra-root");
+        let project_root = root.join("project-root");
+        let session_dir = orchestra_root
+            .join("projects")
+            .join("catalog-test")
+            .join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+        SessionContext {
+            project_root,
+            project_slug: "catalog-test".to_string(),
+            orchestra_root,
+            session_dir,
+        }
+    }
+
+    fn in_memory_session_catalog_connection() -> rusqlite::Connection {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+        connection
+    }
+
+    fn write_catalog_test_session(
+        context: &SessionContext,
+        file_name: &str,
+        session_id: &str,
+        title: &str,
+        timestamp: &str,
+    ) -> PathBuf {
+        let session_path = context.session_dir.join(file_name);
+        let content = format!(
+            "{}\n{}\n{}\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": timestamp,
+                "cwd": context.project_root.display().to_string(),
+            }),
+            json!({
+                "type": "session_info",
+                "id": format!("info-{session_id}"),
+                "parentId": Value::Null,
+                "timestamp": timestamp,
+                "name": title,
+            }),
+            json!({
+                "type": "message",
+                "id": format!("msg-{session_id}"),
+                "timestamp": timestamp,
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": format!("hello from {session_id}") }],
+                    "timestamp": 1773835261000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+        session_path
+    }
+
+    fn write_catalog_dismiss_entry(connection: &rusqlite::Connection, session_id: &str) {
+        connection
+            .execute(
+                "INSERT INTO session_list_entries (session_id, dismissed_at, created_at, updated_at) VALUES (?1, ?2, ?2, ?2)",
+                params![session_id, "2026-03-20T00:00:00Z"],
+            )
+            .expect("dismiss entry should insert");
+    }
+
     fn write_fake_pi_executable(path: &Path) {
         let script = r#"#!/usr/bin/env node
 import fs from 'node:fs';
@@ -2205,6 +2821,189 @@ process.stdin.on('end', () => {
         assert!(stored.record.subscribed);
         assert_eq!(stored.record.events.len(), 1);
         assert_eq!(stored.record.events[0].kind, "system");
+    }
+
+    #[test]
+    fn refresh_session_catalog_skips_dismissed_files_before_summary_parsing() {
+        let context = make_catalog_test_context("orchestra-session-catalog-dismissed-skip");
+        let connection = in_memory_session_catalog_connection();
+        let visible_session_id = Uuid::new_v4().to_string();
+        let dismissed_session_id = Uuid::new_v4().to_string();
+
+        write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-00Z_{visible_session_id}.jsonl"),
+            &visible_session_id,
+            "Visible session",
+            "2026-03-20T10:00:00Z",
+        );
+        write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-01Z_{dismissed_session_id}.jsonl"),
+            &dismissed_session_id,
+            "Dismissed session",
+            "2026-03-20T10:00:01Z",
+        );
+        write_catalog_dismiss_entry(&connection, &dismissed_session_id);
+
+        let dismissed_ids =
+            load_dismissed_session_ids(&connection).expect("dismissed ids should load");
+        let stats = refresh_session_catalog(&connection, &context, &dismissed_ids)
+            .expect("catalog refresh should succeed");
+        assert_eq!(stats.parsed_files, 1);
+        assert_eq!(stats.skipped_dismissed_files, 1);
+
+        let listed =
+            list_sessions_with_connection(&connection, &context, &HashSet::new(), &dismissed_ids)
+                .expect("catalog-backed list should succeed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, visible_session_id);
+
+        let dismissed_catalog_entry =
+            load_session_catalog_entry(&connection, &dismissed_session_id)
+                .expect("dismissed catalog lookup should succeed");
+        assert!(dismissed_catalog_entry.is_none());
+    }
+
+    #[test]
+    fn refresh_session_catalog_only_reparses_changed_files() {
+        let context = make_catalog_test_context("orchestra-session-catalog-incremental");
+        let connection = in_memory_session_catalog_connection();
+        let first_session_id = Uuid::new_v4().to_string();
+        let second_session_id = Uuid::new_v4().to_string();
+
+        let first_path = write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-00Z_{first_session_id}.jsonl"),
+            &first_session_id,
+            "First session",
+            "2026-03-20T10:00:00Z",
+        );
+        write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-01Z_{second_session_id}.jsonl"),
+            &second_session_id,
+            "Second session",
+            "2026-03-20T10:00:01Z",
+        );
+
+        let first_refresh = refresh_session_catalog(&connection, &context, &HashSet::new())
+            .expect("first refresh should succeed");
+        assert_eq!(first_refresh.parsed_files, 2);
+
+        let second_refresh = refresh_session_catalog(&connection, &context, &HashSet::new())
+            .expect("second refresh should succeed");
+        assert_eq!(second_refresh.parsed_files, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(
+            &first_path,
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                json!({
+                    "type": "session",
+                    "version": 3,
+                    "id": first_session_id.clone(),
+                    "timestamp": "2026-03-20T10:00:00Z",
+                    "cwd": context.project_root.display().to_string(),
+                }),
+                json!({
+                    "type": "session_info",
+                    "id": "info-updated",
+                    "parentId": Value::Null,
+                    "timestamp": "2026-03-20T10:00:00Z",
+                    "name": "First session",
+                }),
+                json!({
+                    "type": "message",
+                    "id": "msg-1",
+                    "timestamp": "2026-03-20T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{ "type": "text", "text": "before update" }],
+                        "timestamp": 1773835261000i64,
+                    }
+                }),
+                json!({
+                    "type": "message",
+                    "id": "msg-2",
+                    "timestamp": "2026-03-20T10:05:00Z",
+                    "message": {
+                        "role": "user",
+                        "content": "updated",
+                        "timestamp": 1773835561000i64,
+                    }
+                })
+            ),
+        )
+        .expect("updated session file should be writable");
+
+        let third_refresh = refresh_session_catalog(&connection, &context, &HashSet::new())
+            .expect("third refresh should succeed");
+        assert_eq!(third_refresh.parsed_files, 1);
+
+        let records =
+            list_sessions_with_connection(&connection, &context, &HashSet::new(), &HashSet::new())
+                .expect("catalog-backed list should succeed");
+        let updated_record = records
+            .iter()
+            .find(|record| record.id == first_session_id)
+            .expect("updated record should remain visible");
+        assert_eq!(updated_record.status, "active");
+    }
+
+    #[test]
+    fn resolve_session_path_with_catalog_repairs_stale_rows() {
+        let context = make_catalog_test_context("orchestra-session-catalog-repair");
+        let connection = in_memory_session_catalog_connection();
+        let session_id = Uuid::new_v4().to_string();
+        let session_path = write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-00Z_{session_id}.jsonl"),
+            &session_id,
+            "Repair me",
+            "2026-03-20T10:00:00Z",
+        );
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO session_catalog (
+                    session_id, project_slug, session_path, created_at, updated_at,
+                    title, status, file_size, file_mtime_ms, last_indexed_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "#,
+                params![
+                    session_id.clone(),
+                    context.project_slug.clone(),
+                    context
+                        .session_dir
+                        .join("missing.jsonl")
+                        .display()
+                        .to_string(),
+                    "2026-03-20T10:00:00Z",
+                    "2026-03-20T10:00:00Z",
+                    "Stale entry",
+                    "idle",
+                    1i64,
+                    1i64,
+                    "2026-03-20T10:00:00Z",
+                ],
+            )
+            .expect("stale catalog row should insert");
+
+        let resolved = resolve_session_path_with_catalog(&connection, &context, &session_id)
+            .expect("catalog lookup should succeed")
+            .expect("session should be rediscovered from disk");
+        assert_eq!(resolved, session_path);
+
+        let repaired = load_session_catalog_entry(&connection, &session_id)
+            .expect("catalog row should reload");
+        assert_eq!(
+            repaired.expect("catalog row should exist").session_path,
+            session_path
+        );
     }
 
     #[test]
