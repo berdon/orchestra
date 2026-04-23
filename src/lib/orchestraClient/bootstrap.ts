@@ -1,10 +1,10 @@
 import type { AppInfo } from "../../types";
 
-export const ORCHESTRA_CLIENT_CONTRACT_VERSION = "2026-04-22" as const;
+export const ORCHESTRA_CLIENT_CONTRACT_VERSION = "2026-04-23" as const;
 
 export type OrchestraClientContractVersion = typeof ORCHESTRA_CLIENT_CONTRACT_VERSION;
 export type OrchestraClientHostKind = "tauri" | "remote_api" | "mock";
-export type OrchestraClientAuthMode = "desktop_session" | "bearer_token" | "none";
+export type OrchestraClientAuthMode = "desktop_session" | "same_origin_cookie" | "bearer_token" | "none";
 export type OrchestraCapabilityAvailability = "available" | "unavailable" | "unknown";
 
 export interface OrchestraCapabilityDescriptor {

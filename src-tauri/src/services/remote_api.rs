@@ -11,7 +11,7 @@ use axum::{
         ws::{Message, WebSocket},
         Path, Query, State as AxumState, WebSocketUpgrade,
     },
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, get_service, post},
     Json, Router,
@@ -29,9 +29,15 @@ use tower_http::{
 use crate::{
     commands::{app::build_app_info, sessions as session_commands, tasks as task_commands},
     models::{
-        AppInfo, MailboxMessage, QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus,
-        RemoteAuthResponse, RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput,
-        RemotePushTokenInput, SendMailboxMessageInput, SessionRecord, TaskDetail, TaskSummary,
+        AppInfo, MailboxMessage, OrchestraCapabilityAvailability, OrchestraCapabilityDescriptor,
+        OrchestraClientAppCapabilities, OrchestraClientAuthMode, OrchestraClientBootstrap,
+        OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
+        OrchestraClientFeatureFlags, OrchestraClientHostCapabilities, OrchestraClientHostKind,
+        OrchestraClientInboxCapabilities, OrchestraClientSessionCapabilities,
+        OrchestraClientTaskCapabilities, OrchestraClientTransportUrls, QueuedSessionMessage,
+        RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse, RemoteDeviceRecord,
+        RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
+        SendMailboxMessageInput, SessionRecord, TaskDetail, TaskSummary,
     },
     services::{
         agent_dispatch, app_events, database, live_sessions::ensure_runtime, messages,
@@ -104,6 +110,28 @@ struct WsAuthQuery {
 const REMOTE_WEB_BIND_HOST: &str = "127.0.0.1";
 const REMOTE_WEB_PORT: u16 = 8788;
 const REMOTE_WEB_TAILSCALE_PORT: u16 = 9443;
+const ORCHESTRA_CLIENT_CONTRACT_VERSION: &str = "2026-04-23";
+const REMOTE_AUTH_COOKIE_NAME: &str = "orchestra_remote_device_token";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteAuthSource {
+    SameOriginCookie,
+    BearerToken,
+    QueryToken,
+}
+
+#[derive(Debug, Clone)]
+struct RemoteAuthCandidate {
+    source: RemoteAuthSource,
+    token: String,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRemoteAuth {
+    source: RemoteAuthSource,
+    token: String,
+    device: RemoteDeviceRecord,
+}
 
 #[derive(Debug)]
 struct TailscaleServeInfo {
@@ -509,6 +537,62 @@ mod tests {
         assert_eq!(params.sort_by.as_deref(), Some("tags"));
         assert_eq!(params.sort_direction.as_deref(), Some("asc"));
     }
+
+    #[test]
+    fn build_remote_auth_candidate_prefers_cookie_then_bearer_then_query_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("other=value; orchestra_remote_device_token=cookie-token"),
+        );
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer bearer-token"),
+        );
+
+        let candidate = build_remote_auth_candidate(&headers, Some("query-token"))
+            .expect("cookie auth candidate should resolve");
+        assert_eq!(candidate.source, RemoteAuthSource::SameOriginCookie);
+        assert_eq!(candidate.token, "cookie-token");
+
+        headers.remove(header::COOKIE);
+        let candidate = build_remote_auth_candidate(&headers, Some("query-token"))
+            .expect("bearer auth candidate should resolve");
+        assert_eq!(candidate.source, RemoteAuthSource::BearerToken);
+        assert_eq!(candidate.token, "bearer-token");
+
+        headers.remove(header::AUTHORIZATION);
+        let candidate = build_remote_auth_candidate(&headers, Some("query-token"))
+            .expect("query auth candidate should resolve");
+        assert_eq!(candidate.source, RemoteAuthSource::QueryToken);
+        assert_eq!(candidate.token, "query-token");
+    }
+
+    #[test]
+    fn websocket_url_from_base_url_tracks_http_and_https_schemes() {
+        assert_eq!(
+            websocket_url_from_base_url("http://127.0.0.1:49500"),
+            "ws://127.0.0.1:49500/api/v1/ws"
+        );
+        assert_eq!(
+            websocket_url_from_base_url("https://orchestra.example.test"),
+            "wss://orchestra.example.test/api/v1/ws"
+        );
+    }
+
+    #[test]
+    fn build_remote_auth_cookie_sets_http_only_same_site_cookie() {
+        let cookie = build_remote_auth_cookie("token-123", true)
+            .expect("cookie header should build")
+            .to_str()
+            .expect("cookie should be utf-8")
+            .to_string();
+
+        assert!(cookie.contains("orchestra_remote_device_token=token-123"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Secure"));
+    }
 }
 
 fn detect_lan_base_url(port: u16) -> Option<String> {
@@ -528,6 +612,7 @@ fn build_remote_api_context(app: AppHandle) -> Router {
     Router::new()
         .route("/api/v1/health", get(get_health))
         .route("/api/v1/app-info", get(get_remote_app_info))
+        .route("/api/v1/frontend/bootstrap", get(get_frontend_bootstrap))
         .route("/api/v1/pair/complete", post(post_pair_complete))
         .route("/api/v1/projects", get(get_projects))
         .route("/api/v1/projects/:project_id/tasks", get(get_project_tasks))
@@ -911,41 +996,128 @@ pub fn start_remote_api_server(
     Ok(())
 }
 
-fn resolve_remote_auth(
-    app: &AppHandle,
+fn websocket_url_from_base_url(base_url: &str) -> String {
+    format!(
+        "{}/api/v1/ws",
+        base_url
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1)
+    )
+}
+
+fn extract_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.split(';').find_map(|segment| {
+                let (cookie_name, cookie_value) = segment.trim().split_once('=')?;
+                if cookie_name == name {
+                    let trimmed = cookie_value.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+fn build_remote_auth_candidate(
     headers: &HeaderMap,
     query_token: Option<&str>,
-) -> Result<RemoteDeviceRecord, (StatusCode, Json<ApiError>)> {
-    let bearer_token = headers
-        .get("authorization")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
+) -> Option<RemoteAuthCandidate> {
+    extract_cookie_value(headers, REMOTE_AUTH_COOKIE_NAME)
+        .map(|token| RemoteAuthCandidate {
+            source: RemoteAuthSource::SameOriginCookie,
+            token,
+        })
+        .or_else(|| {
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.strip_prefix("Bearer "))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|token| RemoteAuthCandidate {
+                    source: RemoteAuthSource::BearerToken,
+                    token: token.to_string(),
+                })
+        })
         .or_else(|| {
             query_token
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(str::to_string)
+                .map(|token| RemoteAuthCandidate {
+                    source: RemoteAuthSource::QueryToken,
+                    token: token.to_string(),
+                })
         })
-        .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "Missing remote device token"))?;
+}
 
-    let connection = database::open_connection()
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    remote_access::authenticate_token(&connection, &bearer_token)
+fn authenticate_remote_auth_candidate(
+    app: &AppHandle,
+    candidate: RemoteAuthCandidate,
+) -> Result<ResolvedRemoteAuth, String> {
+    let connection = database::open_connection()?;
+    let device = remote_access::authenticate_token(&connection, &candidate.token)?;
+    app.state::<AppState>().log(
+        "info",
+        "remote.api.auth",
+        &format!(
+            "Authenticated remote device {} ({}) via {:?}",
+            device.label, device.id, candidate.source
+        ),
+    );
+    Ok(ResolvedRemoteAuth {
+        source: candidate.source,
+        token: candidate.token,
+        device,
+    })
+}
+
+fn resolve_optional_remote_auth(
+    app: &AppHandle,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> Option<ResolvedRemoteAuth> {
+    let candidate = build_remote_auth_candidate(headers, query_token)?;
+    authenticate_remote_auth_candidate(app, candidate).ok()
+}
+
+fn resolve_remote_auth(
+    app: &AppHandle,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> Result<ResolvedRemoteAuth, (StatusCode, Json<ApiError>)> {
+    let candidate = build_remote_auth_candidate(headers, query_token)
+        .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "Missing remote device token"))?;
+    authenticate_remote_auth_candidate(app, candidate)
         .map_err(|error| api_error(StatusCode::UNAUTHORIZED, error))
-        .map(|device| {
-            app.state::<AppState>().log(
-                "info",
-                "remote.api.auth",
-                &format!(
-                    "Authenticated remote device {} ({})",
-                    device.label, device.id
-                ),
-            );
-            device
-        })
+}
+
+fn auth_mode_for_remote_auth(auth: Option<&ResolvedRemoteAuth>) -> OrchestraClientAuthMode {
+    match auth.map(|auth| auth.source) {
+        Some(RemoteAuthSource::SameOriginCookie) => OrchestraClientAuthMode::SameOriginCookie,
+        Some(RemoteAuthSource::BearerToken | RemoteAuthSource::QueryToken) => {
+            OrchestraClientAuthMode::BearerToken
+        }
+        None => OrchestraClientAuthMode::None,
+    }
+}
+
+fn build_remote_auth_cookie(token: &str, secure: bool) -> Result<HeaderValue, String> {
+    let mut cookie = format!(
+        "{REMOTE_AUTH_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000"
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie)
+        .map_err(|error| format!("Unable to build remote auth cookie header: {error}"))
 }
 
 fn attach_remote_urls(
@@ -960,8 +1132,7 @@ fn attach_remote_urls(
             .and_then(request_base_url_from_headers)
             .or(lan_base_url)
             .unwrap_or(base_url);
-        let chosen_websocket_url =
-            format!("{}/api/v1/ws", chosen_base_url.replacen("http", "ws", 1));
+        let chosen_websocket_url = websocket_url_from_base_url(&chosen_base_url);
         response.base_url = Some(chosen_base_url);
         response.websocket_url = Some(if chosen_websocket_url.is_empty() {
             websocket_url
@@ -970,6 +1141,150 @@ fn attach_remote_urls(
         });
     }
     Ok(response)
+}
+
+fn available_capability() -> OrchestraCapabilityDescriptor {
+    OrchestraCapabilityDescriptor {
+        availability: OrchestraCapabilityAvailability::Available,
+        reason: None,
+    }
+}
+
+fn unavailable_capability(reason: impl Into<String>) -> OrchestraCapabilityDescriptor {
+    OrchestraCapabilityDescriptor {
+        availability: OrchestraCapabilityAvailability::Unavailable,
+        reason: Some(reason.into()),
+    }
+}
+
+fn auth_guarded_capability(
+    authenticated: bool,
+    available_when_authenticated: bool,
+    unavailable_reason: &str,
+) -> OrchestraCapabilityDescriptor {
+    if !authenticated {
+        return unavailable_capability("Authentication required.");
+    }
+    if available_when_authenticated {
+        available_capability()
+    } else {
+        unavailable_capability(unavailable_reason)
+    }
+}
+
+fn build_frontend_feature_flags(authenticated: bool) -> OrchestraClientFeatureFlags {
+    OrchestraClientFeatureFlags {
+        shared_catalog: false,
+        shared_tasks: false,
+        shared_inbox: authenticated,
+        shared_sessions: authenticated,
+        task_schedules: false,
+        session_streaming: authenticated,
+        session_controls: authenticated,
+        task_comments: false,
+        task_files: false,
+        desktop_windows: false,
+        agent_terminal: false,
+    }
+}
+
+fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabilities {
+    OrchestraClientCapabilities {
+        app: OrchestraClientAppCapabilities {
+            bootstrap: available_capability(),
+            error_reporting: unavailable_capability(
+                "Hosted-web client error reporting has not been implemented for the remote API yet.",
+            ),
+        },
+        catalog: OrchestraClientCatalogCapabilities {
+            projects: auth_guarded_capability(authenticated, true, "Catalog listing beyond projects is not implemented yet."),
+            agents: auth_guarded_capability(authenticated, false, "Remote agent catalog endpoints are not implemented yet."),
+            roles: auth_guarded_capability(authenticated, false, "Remote role catalog endpoints are not implemented yet."),
+            workflows: auth_guarded_capability(authenticated, false, "Remote workflow catalog endpoints are not implemented yet."),
+        },
+        tasks: OrchestraClientTaskCapabilities {
+            read: auth_guarded_capability(authenticated, true, "Remote task read endpoints are not implemented yet."),
+            write: auth_guarded_capability(authenticated, false, "Remote task mutation endpoints are not implemented yet."),
+            review: auth_guarded_capability(authenticated, true, "Remote review endpoints are not implemented yet."),
+            comments: auth_guarded_capability(authenticated, false, "Remote task comment endpoints are not implemented yet."),
+            todos: auth_guarded_capability(authenticated, false, "Remote task todo endpoints are not implemented yet."),
+            dependencies: auth_guarded_capability(authenticated, false, "Remote task dependency endpoints are not implemented yet."),
+            attachments: auth_guarded_capability(authenticated, false, "Remote task attachment endpoints are not implemented yet."),
+            file_references: auth_guarded_capability(authenticated, false, "Remote task file-reference endpoints are not implemented yet."),
+            file_contents: auth_guarded_capability(authenticated, false, "Remote task file-content endpoints are not implemented yet."),
+            schedules: auth_guarded_capability(authenticated, false, "Remote task schedule endpoints are not implemented yet."),
+        },
+        inbox: OrchestraClientInboxCapabilities {
+            read: auth_guarded_capability(authenticated, true, "Remote inbox read endpoints are not implemented yet."),
+            write: auth_guarded_capability(authenticated, true, "Remote inbox send endpoints are not implemented yet."),
+            archive: auth_guarded_capability(authenticated, true, "Remote inbox archive endpoints are not implemented yet."),
+        },
+        sessions: OrchestraClientSessionCapabilities {
+            read: auth_guarded_capability(authenticated, true, "Remote session read endpoints are not implemented yet."),
+            write: auth_guarded_capability(authenticated, true, "Remote session send endpoints are not implemented yet."),
+            stream: auth_guarded_capability(authenticated, true, "Remote session stream endpoints are not implemented yet."),
+            runtime_controls: auth_guarded_capability(authenticated, true, "Remote session runtime control endpoints are not implemented yet."),
+            model_selection: auth_guarded_capability(authenticated, false, "Remote session model-selection endpoints are not implemented yet."),
+        },
+        host: OrchestraClientHostCapabilities {
+            logs_window: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+            agent_terminal: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+            system_notifications: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+        },
+    }
+}
+
+fn resolve_frontend_transport_urls(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<OrchestraClientTransportUrls, String> {
+    if let Some((_, _, base_url, websocket_url, lan_base_url, _)) =
+        state.remote_server_snapshot()?
+    {
+        let chosen_base_url = request_base_url_from_headers(headers)
+            .or(lan_base_url)
+            .unwrap_or(base_url);
+        let chosen_websocket_url = websocket_url_from_base_url(&chosen_base_url);
+        return Ok(OrchestraClientTransportUrls {
+            api_base_url: Some(chosen_base_url),
+            websocket_url: Some(if chosen_websocket_url.is_empty() {
+                websocket_url
+            } else {
+                chosen_websocket_url
+            }),
+        });
+    }
+
+    let api_base_url = request_base_url_from_headers(headers);
+    let websocket_url = api_base_url.as_deref().map(websocket_url_from_base_url);
+    Ok(OrchestraClientTransportUrls {
+        api_base_url,
+        websocket_url,
+    })
+}
+
+fn build_frontend_bootstrap(
+    app: &AppHandle,
+    headers: &HeaderMap,
+) -> Result<OrchestraClientBootstrap, String> {
+    let auth = resolve_optional_remote_auth(app, headers, None);
+    let authenticated = auth.is_some();
+    Ok(OrchestraClientBootstrap {
+        contract_version: ORCHESTRA_CLIENT_CONTRACT_VERSION.to_string(),
+        bootstrapped_at: now_iso(),
+        host_kind: OrchestraClientHostKind::RemoteApi,
+        auth_mode: auth_mode_for_remote_auth(auth.as_ref()),
+        urls: resolve_frontend_transport_urls(app.state::<AppState>().inner(), headers)?,
+        feature_flags: build_frontend_feature_flags(authenticated),
+        capabilities: build_frontend_capabilities(authenticated),
+        app_info: Some(build_app_info(app.state::<AppState>().inner())),
+    })
 }
 
 fn resolve_session_runtime_root(
@@ -1121,11 +1436,20 @@ async fn get_remote_app_info(AxumState(context): AxumState<RemoteApiContext>) ->
     Json(build_app_info(context.app.state::<AppState>().inner()))
 }
 
+async fn get_frontend_bootstrap(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<Json<OrchestraClientBootstrap>, (StatusCode, Json<ApiError>)> {
+    build_frontend_bootstrap(&context.app, &headers)
+        .map(Json)
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))
+}
+
 async fn post_pair_complete(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Json(input): Json<RemotePairingCompleteInput>,
-) -> Result<Json<RemoteAuthResponse>, (StatusCode, Json<ApiError>)> {
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let connection = database::open_connection()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     let response = remote_access::consume_pairing_code(&connection, input)
@@ -1136,7 +1460,16 @@ async fn post_pair_complete(
         response,
     )
     .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    Ok(Json(response))
+    let secure_cookie = request_base_url_from_headers(&headers)
+        .map(|base_url| base_url.starts_with("https://"))
+        .unwrap_or(false);
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::SET_COOKIE,
+        build_remote_auth_cookie(&response.token, secure_cookie)
+            .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
+    );
+    Ok((response_headers, Json(response)))
 }
 
 async fn get_projects(
@@ -1206,7 +1539,7 @@ async fn post_task_approve(
     context.app.state::<AppState>().log(
         "info",
         "remote.api.task.approve",
-        &format!("{} approved task {}", device.label, task_id),
+        &format!("{} approved task {}", device.device.label, task_id),
     );
     Ok(Json(task))
 }
@@ -1228,7 +1561,10 @@ async fn post_task_needs_work(
     context.app.state::<AppState>().log(
         "info",
         "remote.api.task.needs_work",
-        &format!("{} sent task {} back for work", device.label, task_id),
+        &format!(
+            "{} sent task {} back for work",
+            device.device.label, task_id
+        ),
     );
     Ok(Json(task))
 }
@@ -1250,7 +1586,7 @@ async fn post_task_resume(
     context.app.state::<AppState>().log(
         "info",
         "remote.api.task.resume",
-        &format!("{} resumed task {}", device.label, task_id),
+        &format!("{} resumed task {}", device.device.label, task_id),
     );
     Ok(Json(task))
 }
@@ -1272,7 +1608,7 @@ async fn post_task_pause(
     context.app.state::<AppState>().log(
         "info",
         "remote.api.task.pause",
-        &format!("{} paused task {}", device.label, task_id),
+        &format!("{} paused task {}", device.device.label, task_id),
     );
     Ok(Json(task))
 }
@@ -1294,7 +1630,10 @@ async fn post_task_stop_activity(
     context.app.state::<AppState>().log(
         "info",
         "remote.api.task.stop_activity",
-        &format!("{} stopped task activity for {}", device.label, task_id),
+        &format!(
+            "{} stopped task activity for {}",
+            device.device.label, task_id
+        ),
     );
     Ok(Json(task))
 }
@@ -1357,7 +1696,7 @@ async fn post_send_inbox_message(
         context.app.state::<AppState>().inner(),
         &connection,
         SendMailboxMessageInput {
-            sender_label: Some(device.label),
+            sender_label: Some(device.device.label),
             ..input
         },
     )
@@ -1378,9 +1717,12 @@ async fn post_register_push_token(
     let device = resolve_remote_auth(&context.app, &headers, None)?;
     let connection = database::open_connection()
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let updated =
-        remote_access::set_device_push_token(&connection, &device.id, input.push_token.as_deref())
-            .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    let updated = remote_access::set_device_push_token(
+        &connection,
+        &device.device.id,
+        input.push_token.as_deref(),
+    )
+    .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
     Ok(Json(updated))
 }
 
@@ -1444,7 +1786,7 @@ async fn post_stop_session_runtime(
     context.app.state::<AppState>().log(
         "info",
         "remote.api.session.stop",
-        &format!("{} stopped session {}", device.label, session_id),
+        &format!("{} stopped session {}", device.device.label, session_id),
     );
     Ok(Json(record))
 }
@@ -1489,26 +1831,27 @@ async fn ws_handler(
     Query(query): Query<WsAuthQuery>,
     AxumState(context): AxumState<RemoteApiContext>,
 ) -> Response {
-    let token = query.token.clone().unwrap_or_default();
-    let device = match resolve_remote_auth(&context.app, &headers, query.token.as_deref()) {
-        Ok(device) => device,
+    let auth = match resolve_remote_auth(&context.app, &headers, query.token.as_deref()) {
+        Ok(auth) => auth,
         Err((status, body)) => return (status, body).into_response(),
     };
 
-    ws.on_upgrade(move |socket| handle_ws_socket(context.app, socket, device, token))
+    ws.on_upgrade(move |socket| handle_ws_socket(context.app, socket, auth))
 }
 
-async fn handle_ws_socket(
-    app: AppHandle,
-    socket: WebSocket,
-    device: RemoteDeviceRecord,
-    token: String,
-) {
+async fn handle_ws_socket(app: AppHandle, socket: WebSocket, auth: ResolvedRemoteAuth) {
     let client_id = generate_id("remote-client");
+    let device = auth.device;
+    let token = auth.token;
+    let client_kind = if auth.source == RemoteAuthSource::SameOriginCookie {
+        "hosted_web"
+    } else {
+        "remote_driver"
+    };
     let state = app.state::<AppState>();
     if let Err(error) = state.register_remote_client(
         &client_id,
-        "remote_driver",
+        client_kind,
         Some(device.id.clone()),
         Some(device.label.clone()),
         None,
@@ -1536,7 +1879,7 @@ async fn handle_ws_socket(
             message = receiver.next() => {
                 match message {
                     Some(Ok(Message::Text(payload))) => {
-                        if remote_device_token_still_valid(&app, &token).is_err() {
+                        if remote_device_token_still_valid(&token).is_err() {
                             break;
                         }
                         let _ = state.touch_remote_client(&client_id);
@@ -1573,7 +1916,7 @@ async fn handle_ws_socket(
             event = event_rx.recv() => {
                 match event {
                     Ok(event) => {
-                        if remote_device_token_still_valid(&app, &token).is_err() {
+                        if remote_device_token_still_valid(&token).is_err() {
                             break;
                         }
                         if should_deliver_event(state.inner(), &client_id, &event).unwrap_or(false) {
@@ -1592,10 +1935,9 @@ async fn handle_ws_socket(
     let _ = state.unregister_remote_client(&client_id);
 }
 
-fn remote_device_token_still_valid(app: &AppHandle, token: &str) -> Result<(), String> {
+fn remote_device_token_still_valid(token: &str) -> Result<(), String> {
     let connection = database::open_connection()?;
     let _ = remote_access::authenticate_token(&connection, token)?;
-    let _ = app;
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub app_name: String,
@@ -145,6 +145,142 @@ pub struct RemotePairingCompleteInput {
 #[serde(rename_all = "camelCase")]
 pub struct RemotePushTokenInput {
     pub push_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestraClientHostKind {
+    Tauri,
+    RemoteApi,
+    Mock,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestraClientAuthMode {
+    DesktopSession,
+    SameOriginCookie,
+    BearerToken,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestraCapabilityAvailability {
+    Available,
+    Unavailable,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraCapabilityDescriptor {
+    pub availability: OrchestraCapabilityAvailability,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientFeatureFlags {
+    pub shared_catalog: bool,
+    pub shared_tasks: bool,
+    pub shared_inbox: bool,
+    pub shared_sessions: bool,
+    pub task_schedules: bool,
+    pub session_streaming: bool,
+    pub session_controls: bool,
+    pub task_comments: bool,
+    pub task_files: bool,
+    pub desktop_windows: bool,
+    pub agent_terminal: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientAppCapabilities {
+    pub bootstrap: OrchestraCapabilityDescriptor,
+    pub error_reporting: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientCatalogCapabilities {
+    pub projects: OrchestraCapabilityDescriptor,
+    pub agents: OrchestraCapabilityDescriptor,
+    pub roles: OrchestraCapabilityDescriptor,
+    pub workflows: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientTaskCapabilities {
+    pub read: OrchestraCapabilityDescriptor,
+    pub write: OrchestraCapabilityDescriptor,
+    pub review: OrchestraCapabilityDescriptor,
+    pub comments: OrchestraCapabilityDescriptor,
+    pub todos: OrchestraCapabilityDescriptor,
+    pub dependencies: OrchestraCapabilityDescriptor,
+    pub attachments: OrchestraCapabilityDescriptor,
+    pub file_references: OrchestraCapabilityDescriptor,
+    pub file_contents: OrchestraCapabilityDescriptor,
+    pub schedules: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientInboxCapabilities {
+    pub read: OrchestraCapabilityDescriptor,
+    pub write: OrchestraCapabilityDescriptor,
+    pub archive: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientSessionCapabilities {
+    pub read: OrchestraCapabilityDescriptor,
+    pub write: OrchestraCapabilityDescriptor,
+    pub stream: OrchestraCapabilityDescriptor,
+    pub runtime_controls: OrchestraCapabilityDescriptor,
+    pub model_selection: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientHostCapabilities {
+    pub logs_window: OrchestraCapabilityDescriptor,
+    pub agent_terminal: OrchestraCapabilityDescriptor,
+    pub system_notifications: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientCapabilities {
+    pub app: OrchestraClientAppCapabilities,
+    pub catalog: OrchestraClientCatalogCapabilities,
+    pub tasks: OrchestraClientTaskCapabilities,
+    pub inbox: OrchestraClientInboxCapabilities,
+    pub sessions: OrchestraClientSessionCapabilities,
+    pub host: OrchestraClientHostCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientTransportUrls {
+    pub api_base_url: Option<String>,
+    pub websocket_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientBootstrap {
+    pub contract_version: String,
+    pub bootstrapped_at: String,
+    pub host_kind: OrchestraClientHostKind,
+    pub auth_mode: OrchestraClientAuthMode,
+    pub urls: OrchestraClientTransportUrls,
+    pub feature_flags: OrchestraClientFeatureFlags,
+    pub capabilities: OrchestraClientCapabilities,
+    pub app_info: Option<AppInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
