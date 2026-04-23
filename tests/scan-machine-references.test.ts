@@ -88,7 +88,7 @@ describe("machine-reference guardrail scanner", () => {
 
   it("suppresses allowlisted placeholders that intentionally exercise home-path logic", () => {
     const result = scanTextContent(
-      'expect(getProjectSlugFromCwd("/home/openclaw/workspace/orchestra")).toBe("orchestra");\n',
+      'expect(getProjectSlugFromCwd("/home/example-user/workspace/orchestra")).toBe("orchestra");\n',
       "tests/orchestra-paths.test.ts",
       matcherConfig,
     );

@@ -36,12 +36,12 @@
     },
     {
       "pathGlob": "guardrails/machine-reference-allowlist.json",
-      "matchContains": "/home/openclaw/workspace/orchestra",
+      "matchContains": "/home/example-user/workspace/orchestra",
       "reason": "The allowlist documents an intentional placeholder Linux workspace fixture."
     },
     {
       "pathGlob": "tests/orchestra-paths.test.ts",
-      "matchContains": "/home/openclaw/workspace/orchestra",
+      "matchContains": "/home/example-user/workspace/orchestra",
       "reason": "Unit test fixture for deriving a project slug from a Linux workspace path."
     },
     {
