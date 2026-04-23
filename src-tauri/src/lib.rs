@@ -1,3 +1,4 @@
+mod cli;
 mod commands;
 mod models;
 mod services;
@@ -100,24 +101,12 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    services::logging::init_logging();
-    let database_path = services::database::initialize_database()
-        .expect("unable to initialize Orchestra SQLite database");
-    let tool_bridge =
-        services::tool_bridge::start_tool_bridge().expect("unable to start Orchestra tool bridge");
-    let mut bootstrap_connection = services::database::open_connection()
-        .expect("unable to open Orchestra SQLite database for bootstrap");
-    let (supervisor_policy, supervisor_agent) =
-        services::auth_bootstrap::ensure_system_authorization_state(
-            &mut bootstrap_connection,
-            None,
-        )
-        .expect("unable to seed Orchestra supervisor authorization state");
-    services::install_seed::ensure_install_baseline_seeded(&mut bootstrap_connection)
-        .expect("unable to seed Orchestra install baseline");
-    services::agent_runtime::reconcile_agent_runtime_states(&bootstrap_connection)
-        .expect("unable to reconcile Orchestra agent runtime state");
-
+    let bootstrap = services::backend_bootstrap::initialize_backend()
+        .expect("unable to initialize Orchestra backend");
+    let database_path = bootstrap.database_path;
+    let tool_bridge = bootstrap.tool_bridge;
+    let supervisor_policy = bootstrap.supervisor_policy;
+    let supervisor_agent = bootstrap.supervisor_agent;
     let app_state = AppState::new(tool_bridge.clone());
     app_state.log(
         "info",
@@ -414,4 +403,8 @@ pub fn run() {
             }
         }
     });
+}
+
+pub fn run_orc_cli() -> Result<i32, String> {
+    cli::run()
 }

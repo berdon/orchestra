@@ -322,7 +322,23 @@ pub fn send_mailbox_message_from_user(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "User".into()),
     };
-    send_mailbox_message_internal(app, state, connection, sender, input)
+    send_mailbox_message_internal(Some(&app), Some(state), connection, sender, input)
+}
+
+pub fn send_mailbox_message_from_user_without_app(
+    connection: &Connection,
+    input: SendMailboxMessageInput,
+) -> Result<MailboxMessage, String> {
+    let sender = ResolvedSender {
+        sender_type: RECIPIENT_USER.into(),
+        sender_id: Some(DEFAULT_USER_ID.into()),
+        sender_label: input
+            .sender_label
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "User".into()),
+    };
+    send_mailbox_message_internal(None, None, connection, sender, input)
 }
 
 pub fn send_mailbox_message_from_authorization(
@@ -334,12 +350,12 @@ pub fn send_mailbox_message_from_authorization(
     input: SendMailboxMessageInput,
 ) -> Result<MailboxMessage, String> {
     let sender = resolve_sender(connection, authorization, session_id, &input)?;
-    send_mailbox_message_internal(app, state, connection, sender, input)
+    send_mailbox_message_internal(Some(&app), Some(state), connection, sender, input)
 }
 
 fn send_mailbox_message_internal(
-    app: AppHandle,
-    state: &AppState,
+    app: Option<&AppHandle>,
+    state: Option<&AppState>,
     connection: &Connection,
     sender: ResolvedSender,
     input: SendMailboxMessageInput,
@@ -614,8 +630,8 @@ fn resolve_recipient(
 }
 
 fn deliver_message(
-    app: AppHandle,
-    state: &AppState,
+    app: Option<&AppHandle>,
+    state: Option<&AppState>,
     connection: &Connection,
     project_id: &str,
     task_id: Option<&str>,
@@ -652,11 +668,13 @@ fn deliver_message(
                 },
             )?;
             mark_delivery_notified(connection, delivery_id)?;
-            let _ = crate::services::app_events::emit_session_change(
-                &app,
-                "mail.sent",
-                Vec::<String>::new(),
-            );
+            if let Some(app) = app {
+                let _ = crate::services::app_events::emit_session_change(
+                    app,
+                    "mail.sent",
+                    Vec::<String>::new(),
+                );
+            }
             Ok(())
         }
         RECIPIENT_ASSIGNMENT => {
@@ -664,9 +682,16 @@ fn deliver_message(
                 .active_assignment
                 .as_ref()
                 .ok_or_else(|| "Assignment delivery is missing an active assignment".to_string())?;
+            let app = app.ok_or_else(|| {
+                "Active-assignment mail delivery requires the Orchestra desktop/runtime app handle"
+                    .to_string()
+            })?;
+            let state = state.ok_or_else(|| {
+                "Active-assignment mail delivery requires live Orchestra app state".to_string()
+            })?;
             let context = pi_sessions::session_context_for_project_id(project_id)?;
             task_runtime::notify_active_assignment_of_unread_mail(
-                app,
+                app.clone(),
                 state,
                 PathBuf::from(context.session_dir),
                 assignment,
@@ -918,7 +943,7 @@ fn normalize_priority(priority: Option<&str>) -> Result<String, String> {
     }
 }
 
-fn resolve_agent_mail_delivery_mode(
+pub fn resolve_agent_mail_delivery_mode(
     connection: &Connection,
     project_id: &str,
     agent_id: &str,

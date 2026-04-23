@@ -214,6 +214,9 @@ impl AgentTerminalSession {
         let state = self.app.state::<AppState>();
         let _ = state.clear_terminal_window(&self.session_id);
         let _ = state.remove_terminal_session(&self.session_id);
+        let _ = crate::services::session_attachments::clear_session_terminal_attachment(
+            &self.session_id,
+        );
         let _ = self.app.emit(
             "orchestra:session-change",
             serde_json::json!({ "sessionIds": [self.session_id.clone()], "reason": "sessions.terminal.detach" }),

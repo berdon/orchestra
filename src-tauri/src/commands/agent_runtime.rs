@@ -11,10 +11,15 @@ use crate::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{find_session_context_for_session, get_session, get_session_path},
-        pi_setup,
+        pi_setup, session_attachments,
     },
     state::AppState,
 };
+
+fn session_has_terminal_attachment(state: &AppState, session_id: &str) -> Result<bool, String> {
+    Ok(state.get_terminal_window_label(session_id)?.is_some()
+        || session_attachments::session_terminal_attached(session_id)?)
+}
 
 fn decorate_runtime_state(
     state: &AppState,
@@ -24,10 +29,9 @@ fn decorate_runtime_state(
         .runtime_state
         .main_session_id
         .as_deref()
-        .map(|session_id| state.get_terminal_window_label(session_id))
+        .map(|session_id| session_has_terminal_attachment(state, session_id))
         .transpose()?
-        .flatten()
-        .is_some();
+        .unwrap_or(false);
     Ok(detail)
 }
 
@@ -39,10 +43,9 @@ fn decorate_snapshot(
         .runtime_state
         .main_session_id
         .as_deref()
-        .map(|session_id| state.get_terminal_window_label(session_id))
+        .map(|session_id| session_has_terminal_attachment(state, session_id))
         .transpose()?
-        .flatten()
-        .is_some();
+        .unwrap_or(false);
     Ok(snapshot)
 }
 
@@ -152,7 +155,7 @@ pub async fn ensure_agent_session(
 
     let session_context = find_session_context_for_session(&session_id)?;
 
-    if state.get_terminal_window_label(&session_id)?.is_some() {
+    if session_has_terminal_attachment(&state, &session_id)? {
         let mut record = get_session(&session_context.session_dir, &session_id, false)?;
         record.terminal_attached = true;
         let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
@@ -250,14 +253,23 @@ pub async fn open_agent_session_terminal(
         return Ok(record);
     }
 
-    state.set_terminal_window(&session_id, &window_label)?;
+    session_attachments::claim_session_terminal_attachment(
+        &session_id,
+        "desktop-agent-terminal",
+        Some(&window_label),
+        std::process::id(),
+    )?;
+    if let Err(error) = state.set_terminal_window(&session_id, &window_label) {
+        let _ = session_attachments::clear_session_terminal_attachment(&session_id);
+        return Err(error);
+    };
 
     let initialization_script = format!(
         "window.__ORCHESTRA_WINDOW_KIND__ = 'agent-terminal'; window.__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__ = {};",
         serde_json::to_string(&session_id).map_err(|error| format!("Unable to serialize agent terminal session id: {error}"))?
     );
 
-    let window = WebviewWindowBuilder::new(
+    let window = match WebviewWindowBuilder::new(
         &app,
         &window_label,
         WebviewUrl::App(PathBuf::from("index.html")),
@@ -268,7 +280,14 @@ pub async fn open_agent_session_terminal(
     .resizable(true)
     .visible(true)
     .build()
-    .map_err(|error| format!("Unable to create agent terminal window: {error}"))?;
+    {
+        Ok(window) => window,
+        Err(error) => {
+            let _ = state.clear_terminal_window(&session_id);
+            let _ = session_attachments::clear_session_terminal_attachment(&session_id);
+            return Err(format!("Unable to create agent terminal window: {error}"));
+        }
+    };
 
     let app_for_window_events = app.clone();
     let session_id_for_window_events = session_id.clone();
@@ -283,6 +302,9 @@ pub async fn open_agent_session_terminal(
                 session.shutdown();
             }
             let _ = state.clear_terminal_window(&session_id_for_window_events);
+            let _ = session_attachments::clear_session_terminal_attachment(
+                &session_id_for_window_events,
+            );
             let _ = app_events::emit_session_change(
                 &app_for_window_events,
                 "sessions.terminal.detach",
@@ -296,15 +318,26 @@ pub async fn open_agent_session_terminal(
         .runtime_cwd
         .clone()
         .unwrap_or_else(|| context.project_root.display().to_string());
-    let terminal_session = agent_terminal::AgentTerminalSession::spawn(
+    let terminal_session = match agent_terminal::AgentTerminalSession::spawn(
         app.clone(),
         &session_id,
         &session_path,
         &session_context.session_dir,
         std::path::Path::new(&runtime_cwd),
         &window_label,
-    )?;
-    state.insert_terminal_session(&session_id, terminal_session)?;
+    ) {
+        Ok(session) => session,
+        Err(error) => {
+            let _ = state.clear_terminal_window(&session_id);
+            let _ = session_attachments::clear_session_terminal_attachment(&session_id);
+            return Err(error);
+        }
+    };
+    if let Err(error) = state.insert_terminal_session(&session_id, terminal_session) {
+        let _ = state.clear_terminal_window(&session_id);
+        let _ = session_attachments::clear_session_terminal_attachment(&session_id);
+        return Err(error);
+    };
     let _ = app_events::emit_session_change(&app, "sessions.terminal.attach", [session_id.clone()]);
 
     let mut record = get_session(&session_context.session_dir, &session_id, false)?;
@@ -361,5 +394,6 @@ pub fn shutdown_agent_terminal_session(
         session.shutdown();
     }
     state.clear_terminal_window(&session_id)?;
+    let _ = session_attachments::clear_session_terminal_attachment(&session_id);
     Ok(())
 }

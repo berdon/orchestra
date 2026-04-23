@@ -1772,9 +1772,15 @@ pub fn get_session_runtime_details(
     })
 }
 
-fn runtime_authorization_context(session_id: &str) -> Result<Option<AuthorizationContext>, String> {
+pub fn authorization_context_for_session(
+    session_id: &str,
+) -> Result<Option<AuthorizationContext>, String> {
     let connection = database::open_connection()?;
     runtime_authorization_context_for_connection(&connection, session_id)
+}
+
+fn runtime_authorization_context(session_id: &str) -> Result<Option<AuthorizationContext>, String> {
+    authorization_context_for_session(session_id)
 }
 
 fn runtime_authorization_context_for_connection(
