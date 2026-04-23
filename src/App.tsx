@@ -980,6 +980,15 @@ export function App() {
   }, [chatSessionId, liveChatSession, selectedChatAgentId]);
 
   const viewedSession = activePage === "chat" ? chatSession : selectedSession;
+  const sessionSurfaceKey = useMemo(() => {
+    if (activePage === "sessions") {
+      return selectedSession?.id ? `sessions:${selectedSession.id}` : null;
+    }
+    if (activePage === "chat") {
+      return chatSession?.id ? `chat:${chatSession.id}` : null;
+    }
+    return null;
+  }, [activePage, chatSession?.id, selectedSession?.id]);
   const viewedSessionPendingRun = viewedSession ? pendingRuns[viewedSession.id] : undefined;
   const viewedModelState = viewedSession ? modelStates[viewedSession.id] : undefined;
   const viewedSessionStats = viewedSession ? sessionStats[viewedSession.id] : undefined;
@@ -2599,6 +2608,23 @@ export function App() {
     };
   }, [activePage, isDetachedWindow, mergeSessionRecord, viewedSession?.id, viewedSession?.status]);
 
+  useLayoutEffect(() => {
+    if (isDetachedWindow || !sessionSurfaceKey) {
+      return;
+    }
+
+    setSessionScrollState((current) => (current.lockedToBottom ? current : { lockedToBottom: true }));
+
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+
+    // Treat every session/chat surface entry as a fresh follow-latest view before paint so
+    // the passive DOM sync effect cannot preserve a stale top-of-transcript position.
+    node.scrollTop = node.scrollHeight;
+  }, [isDetachedWindow, sessionSurfaceKey]);
+
   useEffect(() => {
     if (isDetachedWindow) {
       return;
@@ -2610,11 +2636,7 @@ export function App() {
     }
 
     node.scrollTop = node.scrollHeight;
-  }, [displayedEvents, isDetachedWindow, viewedSession?.id, sessionScrollState.lockedToBottom]);
-
-  useEffect(() => {
-    setSessionScrollState({ lockedToBottom: true });
-  }, [viewedSession?.id]);
+  }, [displayedEvents, isDetachedWindow, sessionSurfaceKey, sessionScrollState.lockedToBottom]);
 
   useEffect(() => {
     if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat")) {
@@ -2633,7 +2655,7 @@ export function App() {
     syncScrollLockState();
     window.addEventListener("resize", syncScrollLockState);
     return () => window.removeEventListener("resize", syncScrollLockState);
-  }, [activePage, displayedEvents.length, handleSessionScrollLockChange, isDetachedWindow, viewedSession?.id]);
+  }, [activePage, displayedEvents.length, handleSessionScrollLockChange, isDetachedWindow, sessionSurfaceKey]);
 
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);

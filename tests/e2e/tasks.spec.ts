@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { appendMockSessionEvent, buildMockSessionEvents, expectTranscriptAutoScrollOn } from "./session-scroll-helpers";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5ioAAAAASUVORK5CYII=";
 
@@ -2348,6 +2349,128 @@ test("task detail only shows session navigation when the task has an active sess
   });
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task without active session");
   await expect(page.locator('[data-role="task-open-session"]')).toHaveCount(0);
+});
+
+test("task detail opens a linked session at the latest message with auto-scroll on", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+  const sessionId = "session-task-linked-scroll";
+  const linkedTaskId = "task-session-linked-scroll";
+  const seededSession = {
+    id: sessionId,
+    title: "Active task session",
+    status: "active",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    subscribed: false,
+    events: buildMockSessionEvents(80, "Task-linked event"),
+    taskId: linkedTaskId,
+    taskNumber: "ORC-301",
+    taskTitle: "Task with active session and transcript history",
+    activeTaskId: linkedTaskId,
+    activeTaskNumber: "ORC-301",
+    activeTaskTitle: "Task with active session and transcript history",
+    workerType: "role",
+    workerName: "Developer",
+  };
+
+  await page.addInitScript(({ nextTimestamp, nextLinkedTaskId, nextSession }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: nextLinkedTaskId,
+          projectId: "orchestra",
+          number: "ORC-301",
+          title: "Task with active session and transcript history",
+          description: null,
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: "lane-implementation",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: {
+            id: "assignment-session-linked-scroll",
+            taskId: nextLinkedTaskId,
+            workflowId: "workflow-dev",
+            laneId: "lane-implementation",
+            workerType: "role",
+            workerId: "developer",
+            status: "active",
+            sessionId: nextSession.id,
+            runtimeCwd: "/tmp/orchestra/task-session-linked-scroll",
+            roleQueueEntryId: null,
+            roleInstanceId: null,
+            prompt: "Implement the active session task.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: nextTimestamp,
+            completedAt: null,
+            createdAt: nextTimestamp,
+            updatedAt: nextTimestamp,
+          },
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([nextSession]));
+  }, { nextTimestamp: timestamp, nextLinkedTaskId: linkedTaskId, nextSession: seededSession });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.evaluate((taskId) => {
+    const testWindow = window as typeof window & {
+      __orchestraTestOpenTaskDetail?: (nextTaskId: string) => void;
+    };
+    testWindow.__orchestraTestOpenTaskDetail?.(taskId);
+  }, linkedTaskId);
+
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with active session and transcript history");
+  await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
+  await page.locator('[data-role="task-open-session"]').click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const toggle = page.locator('[data-role="session-scroll-lock-toggle"]');
+
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", sessionId);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Active task session");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
+
+  await appendMockSessionEvent(page, sessionId, "Newest event immediately after task navigation", "test.task_session_entry_live_after_open");
+  await expect(transcript).toContainText("Newest event immediately after task navigation");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
 });
 
 test("task detail dispatches a role-owned lane and shows its runtime assignment", async ({ page }) => {

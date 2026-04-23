@@ -1,4 +1,11 @@
 import { expect, test } from "@playwright/test";
+import {
+  appendMockSessionEvent,
+  buildMockSessionEvents,
+  expectTranscriptAutoScrollOn,
+  expectTranscriptNotAtBottom,
+  scrollTranscriptUp,
+} from "./session-scroll-helpers";
 
 async function measureSessionLayout(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
@@ -1789,6 +1796,88 @@ test("sessions transcript exposes an auto-scroll toggle that pauses and resumes 
       return metrics.top + metrics.clientHeight >= metrics.scrollHeight - 24;
     })
   ).toBe(true);
+});
+
+test("sessions entry opens at latest message, resets auto-scroll on re-entry, and follows new events", async ({ page }) => {
+  const sessionId = "session-entry-scroll-reset";
+  const timestamp = new Date().toISOString();
+  const seededSession = {
+    id: sessionId,
+    title: "Entry scroll reset",
+    status: "idle",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    subscribed: false,
+    events: buildMockSessionEvents(80, "Entry reset event"),
+  };
+
+  await page.addInitScript(({ nextSession }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([nextSession]));
+  }, { nextSession: seededSession });
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Entry scroll reset" }).click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const toggle = page.locator('[data-role="session-scroll-lock-toggle"]');
+
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", sessionId);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Entry scroll reset");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
+
+  await appendMockSessionEvent(page, sessionId, "Newest event immediately after opening", "test.sessions_entry_live_after_open");
+  await expect(transcript).toContainText("Newest event immediately after opening");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
+
+  await scrollTranscriptUp(transcript);
+  await expect(toggle).toHaveAttribute("data-auto-scroll-mode", "off");
+  await expect(transcript).toHaveAttribute("data-scroll-locked", "false");
+  await expectTranscriptNotAtBottom(transcript);
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
+  await page.getByRole("button", { name: "Sessions" }).click();
+
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", sessionId);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Entry scroll reset");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
+
+  await appendMockSessionEvent(page, sessionId, "Newest event immediately after returning", "test.sessions_entry_live_after_return");
+  await expect(transcript).toContainText("Newest event immediately after returning");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
+});
+
+test("sessions route restoration opens at the latest message with auto-scroll enabled", async ({ page }) => {
+  const sessionId = "session-entry-route-restore";
+  const timestamp = new Date().toISOString();
+  const seededSession = {
+    id: sessionId,
+    title: "Route restored session",
+    status: "idle",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    subscribed: false,
+    events: buildMockSessionEvents(80, "Route restore event"),
+  };
+
+  await page.addInitScript(({ nextSession }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([nextSession]));
+  }, { nextSession: seededSession });
+
+  await page.goto(`/?page=sessions&selectedSessionId=${sessionId}`);
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const toggle = page.locator('[data-role="session-scroll-lock-toggle"]');
+
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", sessionId);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Route restored session");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
+
+  await appendMockSessionEvent(page, sessionId, "Newest event after restored entry", "test.sessions_entry_live_after_restore");
+  await expect(transcript).toContainText("Newest event after restored entry");
+  await expectTranscriptAutoScrollOn(transcript, toggle);
 });
 
 test("sessions transcript unlocks on manual scroll and relocks at bottom", async ({ page }) => {
