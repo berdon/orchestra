@@ -8,7 +8,7 @@ use std::{
 
 use chrono::Utc;
 use serde_json::json;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{async_runtime::spawn_blocking, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::{
@@ -33,7 +33,7 @@ use crate::{
     state::AppState,
 };
 
-pub fn build_app_info(state: &AppState) -> AppInfo {
+pub fn build_app_info() -> AppInfo {
     let version = env!("CARGO_PKG_VERSION");
     let hash = option_env!("ORCHESTRA_GIT_HASH").unwrap_or("dev");
     let pi_runtime_diagnostics = crate::services::pi_runtime::get_pi_runtime_diagnostics()
@@ -73,12 +73,11 @@ pub fn build_app_info(state: &AppState) -> AppInfo {
                 message: error,
             },
         });
-    let dispatch_blocked_reason = pi_runtime_diagnostics.runtime.error.clone().or_else(|| {
-        match state.sync_pi_runtime_health() {
-            Ok(_) => pi_setup::require_pi_setup_ready().err(),
-            Err(error) => Some(error),
-        }
-    });
+    let dispatch_blocked_reason = pi_runtime_diagnostics
+        .runtime
+        .error
+        .clone()
+        .or_else(|| pi_setup::require_pi_setup_ready().err());
     AppInfo {
         app_name: "Orchestra".into(),
         environment: "tauri".into(),
@@ -91,8 +90,10 @@ pub fn build_app_info(state: &AppState) -> AppInfo {
 }
 
 #[tauri::command]
-pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
-    build_app_info(state.inner())
+pub async fn get_app_info() -> Result<AppInfo, String> {
+    spawn_blocking(build_app_info)
+        .await
+        .map_err(|error| format!("Unable to load app info: {error}"))
 }
 
 #[tauri::command]
@@ -300,8 +301,10 @@ pub fn get_session_storage_info(
 }
 
 #[tauri::command]
-pub fn get_pi_runtime_settings() -> Result<PiRuntimeSettings, String> {
-    harness_settings::get_pi_runtime_settings()
+pub async fn get_pi_runtime_settings() -> Result<PiRuntimeSettings, String> {
+    spawn_blocking(harness_settings::get_pi_runtime_settings)
+        .await
+        .map_err(|error| format!("Unable to load Pi runtime settings: {error}"))?
 }
 
 #[tauri::command]
@@ -313,18 +316,24 @@ pub fn update_pi_runtime_settings(
 }
 
 #[tauri::command]
-pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
-    pi_setup::get_pi_setup_state()
+pub async fn get_pi_setup_state() -> Result<PiSetupState, String> {
+    spawn_blocking(pi_setup::get_pi_setup_state)
+        .await
+        .map_err(|error| format!("Unable to load Pi setup state: {error}"))?
 }
 
 #[tauri::command]
-pub fn preview_pi_legacy_import() -> Result<PiLegacyImportPreview, String> {
-    pi_setup::preview_legacy_import()
+pub async fn preview_pi_legacy_import() -> Result<PiLegacyImportPreview, String> {
+    spawn_blocking(pi_setup::preview_legacy_import)
+        .await
+        .map_err(|error| format!("Unable to preview legacy Pi import: {error}"))?
 }
 
 #[tauri::command]
-pub fn get_pi_models_json() -> Result<String, String> {
-    pi_setup::get_models_json()
+pub async fn get_pi_models_json() -> Result<String, String> {
+    spawn_blocking(pi_setup::get_models_json)
+        .await
+        .map_err(|error| format!("Unable to load Pi models.json: {error}"))?
 }
 
 #[tauri::command]
@@ -467,8 +476,12 @@ pub fn dismiss_pi_oauth_flow(app: AppHandle) -> Result<Option<PiOAuthFlowState>,
 }
 
 #[tauri::command]
-pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableDiagnostic {
-    let diagnostic = pi_runtime::current_pi_runtime_health();
+pub async fn get_pi_executable_diagnostic(
+    state: State<'_, AppState>,
+) -> Result<PiExecutableDiagnostic, String> {
+    let diagnostic = spawn_blocking(pi_runtime::current_pi_runtime_health)
+        .await
+        .map_err(|error| format!("Unable to load Pi executable diagnostic: {error}"))?;
     if let Some(error) = diagnostic.error_message.as_ref() {
         state.log(
             "error",
@@ -476,12 +489,14 @@ pub fn get_pi_executable_diagnostic(state: State<'_, AppState>) -> PiExecutableD
             &format!("Unable to resolve Pi runtime: {error}"),
         );
     }
-    diagnostic
+    Ok(diagnostic)
 }
 
 #[tauri::command]
-pub fn get_pi_runtime_diagnostics() -> Result<PiRuntimeDiagnostics, String> {
-    crate::services::pi_runtime::get_pi_runtime_diagnostics()
+pub async fn get_pi_runtime_diagnostics() -> Result<PiRuntimeDiagnostics, String> {
+    spawn_blocking(crate::services::pi_runtime::get_pi_runtime_diagnostics)
+        .await
+        .map_err(|error| format!("Unable to load Pi runtime diagnostics: {error}"))?
 }
 
 #[tauri::command]

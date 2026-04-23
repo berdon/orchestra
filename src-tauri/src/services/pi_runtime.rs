@@ -3,7 +3,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 use serde::Deserialize;
@@ -25,6 +25,15 @@ use crate::{
 };
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static BUNDLED_RUNTIME_CACHE: OnceLock<
+    Mutex<HashMap<String, Result<Option<ResolvedPiRuntime>, PiRuntimeHealth>>>,
+> =
+    OnceLock::new();
+
+fn bundled_runtime_cache(
+) -> &'static Mutex<HashMap<String, Result<Option<ResolvedPiRuntime>, PiRuntimeHealth>>> {
+    BUNDLED_RUNTIME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedPiRuntime {
@@ -540,7 +549,18 @@ fn resolve_bundled_runtime(
         };
     };
 
-    validate_bundled_runtime_root(&root, mode, agent_dir).map(Some)
+    let cache_key = format!("{}:{}", mode.as_str(), root.display());
+    if let Ok(cache) = bundled_runtime_cache().lock() {
+        if let Some(cached) = cache.get(&cache_key).cloned() {
+            return cached;
+        }
+    }
+
+    let validated = validate_bundled_runtime_root(&root, mode, agent_dir).map(Some);
+    if let Ok(mut cache) = bundled_runtime_cache().lock() {
+        cache.insert(cache_key, validated.clone());
+    }
+    validated
 }
 
 fn validate_bundled_runtime_root(
