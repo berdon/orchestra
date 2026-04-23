@@ -16,9 +16,8 @@ use crate::{
         AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
         PiImportLegacyResult, PiLegacyImportPreview, PiOAuthFlowState, PiRuntimeDiagnostics,
         PiRuntimeSettings, PiSetupState, ProjectUpsertInput, RoleUpsertInput, SessionModel,
-        SessionStorageInfo, SystemNotificationEnvironmentStatus,
-        SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
-        WorkflowLaneInput, WorkflowUpsertInput,
+        SessionStorageInfo, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState,
+        SystemNotificationRequest, TaskUpsertInput, WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
         app_events, database, harness_settings,
@@ -73,14 +72,12 @@ pub fn build_app_info(state: &AppState) -> AppInfo {
                 message: error,
             },
         });
-    let dispatch_blocked_reason = pi_runtime_diagnostics
-        .runtime
-        .error
-        .clone()
-        .or_else(|| match state.sync_pi_runtime_health() {
+    let dispatch_blocked_reason = pi_runtime_diagnostics.runtime.error.clone().or_else(|| {
+        match state.sync_pi_runtime_health() {
             Ok(_) => pi_setup::require_pi_setup_ready().err(),
             Err(error) => Some(error),
-        });
+        }
+    });
     AppInfo {
         app_name: "Orchestra".into(),
         environment: "tauri".into(),
@@ -327,7 +324,10 @@ pub fn set_pi_provider_api_key(
     state.log(
         "info",
         "pi.setup.api_key.saved",
-        &format!("Saved Orchestra-managed API key for provider {}", provider_id),
+        &format!(
+            "Saved Orchestra-managed API key for provider {}",
+            provider_id
+        ),
     );
     let _ = app_events::emit_window_event(
         &app,
@@ -348,7 +348,10 @@ pub fn remove_pi_provider_credential(
     state.log(
         "info",
         "pi.setup.credential.removed",
-        &format!("Removed Orchestra-managed Pi credential for provider {}", provider_id),
+        &format!(
+            "Removed Orchestra-managed Pi credential for provider {}",
+            provider_id
+        ),
     );
     let _ = app_events::emit_window_event(
         &app,
@@ -365,7 +368,11 @@ pub fn save_pi_models_json(
     content: String,
 ) -> Result<PiSetupState, String> {
     let result = pi_setup::save_models_json(&content)?;
-    state.log("info", "pi.setup.models.saved", "Saved Orchestra-managed Pi models.json");
+    state.log(
+        "info",
+        "pi.setup.models.saved",
+        "Saved Orchestra-managed Pi models.json",
+    );
     let _ = app_events::emit_window_event(
         &app,
         "orchestra:pi-setup-change",

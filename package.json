@@ -8,6 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "prepare:bundled-pi-runtime": "node ./scripts/prepare-bundled-pi-runtime.mjs",
+    "validate:packaged-runtime": "./scripts/run-packaged-runtime-validation.sh",
+    "verify:bundled-pi-release": "./scripts/verify-bundled-pi-release.sh release",
     "scan:secrets": "./scripts/run-secret-scan.sh source",
     "scan:history": "./scripts/run-secret-scan.sh history",
     "scan:machine-refs": "node ./scripts/scan-machine-references.mjs --mode source",

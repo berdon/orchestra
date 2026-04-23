@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 use crate::{
@@ -68,8 +69,23 @@ struct BundledPiRuntimeManifest {
     orchestra_pack_version: u32,
     executable_relative_path: String,
     package_dir_relative_path: String,
+    #[serde(default)]
+    notice_relative_path: Option<String>,
+    #[serde(default)]
+    sbom_relative_path: Option<String>,
+    #[serde(default)]
+    files: Vec<BundledPiRuntimeManifestFile>,
     built_at: Option<String>,
     notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BundledPiRuntimeManifestFile {
+    path: String,
+    sha256: String,
+    #[serde(default)]
+    executable: bool,
 }
 
 pub fn register_app_handle(app: AppHandle) {
@@ -331,8 +347,8 @@ pub fn import_legacy_pi_configuration(
     let orchestra_root = default_orchestra_root()?;
     let agent_dir = pi_agent_dir(&orchestra_root);
     ensure_pi_agent_dir(&agent_dir)?;
-    let legacy_agent_dir =
-        legacy_pi_agent_dir().ok_or_else(|| "No legacy Pi agent directory was found at ~/.pi/agent".to_string())?;
+    let legacy_agent_dir = legacy_pi_agent_dir()
+        .ok_or_else(|| "No legacy Pi agent directory was found at ~/.pi/agent".to_string())?;
 
     let mut imported = Vec::new();
     let mut skipped = Vec::new();
@@ -537,7 +553,7 @@ fn validate_bundled_runtime_root(
         return Err(runtime_error(
             mode,
             "bundled",
-            "bundled_runtime_missing",
+            "bundled_runtime_manifest_missing",
             format!(
                 "Bundled Pi runtime manifest is missing: {}",
                 manifest_path.display()
@@ -550,28 +566,28 @@ fn validate_bundled_runtime_root(
         ));
     }
 
+    let manifest_bytes = fs::read(&manifest_path).map_err(|error| {
+        runtime_error(
+            mode,
+            "bundled",
+            "bundled_runtime_manifest_invalid",
+            format!(
+                "Unable to read bundled Pi runtime manifest {}: {error}",
+                manifest_path.display()
+            ),
+            None,
+            Some(&manifest_path),
+            Some(agent_dir),
+            Some(mode.as_str().to_string()),
+            None,
+        )
+    })?;
     let manifest: BundledPiRuntimeManifest =
-        serde_json::from_slice(&fs::read(&manifest_path).map_err(|error| {
+        serde_json::from_slice(&manifest_bytes).map_err(|error| {
             runtime_error(
                 mode,
                 "bundled",
-                "bundled_runtime_invalid",
-                format!(
-                    "Unable to read bundled Pi runtime manifest {}: {error}",
-                    manifest_path.display()
-                ),
-                None,
-                Some(&manifest_path),
-                Some(agent_dir),
-                Some(mode.as_str().to_string()),
-                None,
-            )
-        })?)
-        .map_err(|error| {
-            runtime_error(
-                mode,
-                "bundled",
-                "bundled_runtime_invalid",
+                "bundled_runtime_manifest_invalid",
                 format!(
                     "Unable to parse bundled Pi runtime manifest {}: {error}",
                     manifest_path.display()
@@ -588,7 +604,7 @@ fn validate_bundled_runtime_root(
         return Err(runtime_error(
             mode,
             "bundled",
-            "bundled_runtime_invalid",
+            "bundled_runtime_manifest_invalid",
             format!(
                 "Bundled Pi runtime manifest schema {} is unsupported (expected 1).",
                 manifest.schema_version
@@ -628,7 +644,7 @@ fn validate_bundled_runtime_root(
         return Err(runtime_error(
             mode,
             "bundled",
-            "bundled_runtime_missing",
+            "bundled_runtime_file_missing",
             format!(
                 "Bundled Pi runtime executable is missing: {}",
                 executable_path.display()
@@ -663,7 +679,7 @@ fn validate_bundled_runtime_root(
         return Err(runtime_error(
             mode,
             "bundled",
-            "bundled_runtime_invalid",
+            "bundled_runtime_file_missing",
             format!(
                 "Bundled Pi runtime package directory is missing: {}",
                 package_dir.display()
@@ -674,6 +690,121 @@ fn validate_bundled_runtime_root(
             Some(mode.as_str().to_string()),
             Some(manifest.package_version.clone()),
         ));
+    }
+
+    for optional_path in [
+        manifest.notice_relative_path.as_deref(),
+        manifest.sbom_relative_path.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let resolved_path = root.join(optional_path);
+        if !resolved_path.exists() {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_file_missing",
+                format!(
+                    "Bundled Pi runtime manifest references a missing artifact: {}",
+                    resolved_path.display()
+                ),
+                None,
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
+    }
+
+    if manifest.files.is_empty() {
+        return Err(runtime_error(
+            mode,
+            "bundled",
+            "bundled_runtime_manifest_invalid",
+            format!(
+                "Bundled Pi runtime manifest {} does not include a verifiable file inventory.",
+                manifest_path.display()
+            ),
+            None,
+            Some(&manifest_path),
+            Some(agent_dir),
+            Some(mode.as_str().to_string()),
+            Some(manifest.package_version.clone()),
+        ));
+    }
+
+    for file in &manifest.files {
+        let resolved_path = root.join(&file.path);
+        if !resolved_path.exists() {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_file_missing",
+                format!(
+                    "Bundled Pi runtime manifest references a missing file: {}",
+                    resolved_path.display()
+                ),
+                None,
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
+
+        if file.executable && !is_executable(&resolved_path) {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_unexecutable",
+                format!(
+                    "Bundled Pi runtime manifest requires an executable file, but it is not runnable: {}",
+                    resolved_path.display()
+                ),
+                Some(&resolved_path),
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
+
+        let actual_sha256 = sha256_for_file(&resolved_path).map_err(|error| {
+            runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_manifest_invalid",
+                format!(
+                    "Unable to hash bundled Pi runtime file {}: {error}",
+                    resolved_path.display()
+                ),
+                Some(&resolved_path),
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            )
+        })?;
+        if !actual_sha256.eq_ignore_ascii_case(&file.sha256) {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_checksum_mismatch",
+                format!(
+                    "Bundled Pi runtime file failed checksum verification: {} (expected {}, got {}).",
+                    resolved_path.display(),
+                    file.sha256,
+                    actual_sha256,
+                ),
+                Some(&resolved_path),
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
     }
 
     let version = manifest
@@ -706,7 +837,20 @@ fn validate_bundled_runtime_root(
     })
 }
 
+fn sha256_for_file(path: &Path) -> Result<String, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 fn bundled_runtime_root() -> Option<PathBuf> {
+    if let Some(override_root) = env::var_os("ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT") {
+        let override_path = PathBuf::from(override_root);
+        if !override_path.as_os_str().is_empty() {
+            return Some(override_path);
+        }
+    }
+
     APP_HANDLE.get().and_then(|app| {
         app.path()
             .resolve("pi-runtime", BaseDirectory::Resource)
@@ -1001,6 +1145,7 @@ impl ResolvedPiRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{json, Value};
     use uuid::Uuid;
 
     fn make_temp_dir(name: &str) -> PathBuf {
@@ -1008,6 +1153,14 @@ mod tests {
             std::env::temp_dir().join(format!("orchestra-pi-runtime-{name}-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         dir
+    }
+
+    fn executable_relative_path() -> &'static str {
+        if cfg!(windows) {
+            "runtime/pi.exe"
+        } else {
+            "runtime/pi"
+        }
     }
 
     fn write_file(path: &Path, content: &str) {
@@ -1028,11 +1181,49 @@ mod tests {
         }
     }
 
-    fn write_manifest(root: &Path, platform: &str, arch: &str) {
+    fn manifest_file_entry(root: &Path, relative_path: &str, executable: bool) -> Value {
+        let file_path = root.join(relative_path);
+        json!({
+            "path": relative_path,
+            "sha256": sha256_for_file(&file_path).expect("sha256 should compute"),
+            "executable": executable,
+        })
+    }
+
+    fn write_notice_and_sbom(root: &Path) {
+        write_file(
+            &root.join("THIRD_PARTY_NOTICES.txt"),
+            "Bundled Pi runtime notices\n",
+        );
+        write_file(
+            &root.join("sbom.cyclonedx.json"),
+            "{\n  \"bomFormat\": \"CycloneDX\"\n}\n",
+        );
+    }
+
+    fn write_manifest(root: &Path, platform: &str, arch: &str, files: Vec<Value>) {
+        write_notice_and_sbom(root);
+        let manifest = json!({
+            "schemaVersion": 1,
+            "source": "test",
+            "platform": platform,
+            "arch": arch,
+            "packageName": "@mariozechner/pi-coding-agent",
+            "packageVersion": "0.68.1",
+            "runtimeVersion": "0.68.1",
+            "orchestraPackVersion": 2,
+            "executableRelativePath": executable_relative_path(),
+            "packageDirRelativePath": "runtime",
+            "noticeRelativePath": "THIRD_PARTY_NOTICES.txt",
+            "sbomRelativePath": "sbom.cyclonedx.json",
+            "files": files,
+            "builtAt": "2026-04-22T00:00:00Z"
+        });
         write_file(
             &root.join("manifest.json"),
             &format!(
-                "{{\n  \"schemaVersion\": 1,\n  \"source\": \"test\",\n  \"platform\": \"{platform}\",\n  \"arch\": \"{arch}\",\n  \"packageName\": \"@mariozechner/pi-coding-agent\",\n  \"packageVersion\": \"0.68.1\",\n  \"runtimeVersion\": \"0.68.1\",\n  \"orchestraPackVersion\": 1,\n  \"executableRelativePath\": \"runtime/pi\",\n  \"packageDirRelativePath\": \"runtime\",\n  \"builtAt\": \"2026-04-22T00:00:00Z\"\n}}\n"
+                "{}\n",
+                serde_json::to_string_pretty(&manifest).expect("manifest should serialize")
             ),
         );
     }
@@ -1040,12 +1231,19 @@ mod tests {
     #[test]
     fn validates_bundled_runtime_manifest() {
         let root = make_temp_dir("bundled-valid");
+        let executable_path = root.join(executable_relative_path());
+        write_fake_executable(&executable_path);
+        write_notice_and_sbom(&root);
+        let files = vec![
+            manifest_file_entry(&root, executable_relative_path(), true),
+            manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+        ];
         write_manifest(
             &root,
             expected_manifest_platform(),
             expected_manifest_arch(),
+            files,
         );
-        write_fake_executable(&root.join("runtime/pi"));
         let agent_dir = make_temp_dir("agent-dir");
 
         let runtime = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
@@ -1060,10 +1258,91 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_manifest_with_specific_error() {
+        let root = make_temp_dir("bundled-missing-manifest");
+        let agent_dir = make_temp_dir("agent-dir-missing-manifest");
+
+        let error = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect_err("bundled runtime should fail without a manifest");
+
+        assert_eq!(
+            error.error_kind.as_deref(),
+            Some("bundled_runtime_manifest_missing")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_manifest_json_with_specific_error() {
+        let root = make_temp_dir("bundled-invalid-manifest-json");
+        write_file(&root.join("manifest.json"), "{not json\n");
+        let agent_dir = make_temp_dir("agent-dir-invalid-manifest-json");
+
+        let error = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect_err("bundled runtime should fail with invalid manifest json");
+
+        assert_eq!(
+            error.error_kind.as_deref(),
+            Some("bundled_runtime_manifest_invalid")
+        );
+    }
+
+    #[test]
+    fn rejects_checksum_mismatch_with_specific_error() {
+        let root = make_temp_dir("bundled-checksum-mismatch");
+        let executable_path = root.join(executable_relative_path());
+        write_fake_executable(&executable_path);
+        write_file(
+            &root.join("THIRD_PARTY_NOTICES.txt"),
+            "Bundled Pi runtime notices\n",
+        );
+        write_file(
+            &root.join("sbom.cyclonedx.json"),
+            "{\n  \"bomFormat\": \"CycloneDX\"\n}\n",
+        );
+        write_manifest(
+            &root,
+            expected_manifest_platform(),
+            expected_manifest_arch(),
+            vec![
+                json!({
+                    "path": executable_relative_path(),
+                    "sha256": "deadbeef",
+                    "executable": true,
+                }),
+                manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+            ],
+        );
+        let agent_dir = make_temp_dir("agent-dir-checksum-mismatch");
+
+        let error = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect_err("bundled runtime should fail checksum verification");
+
+        assert_eq!(
+            error.error_kind.as_deref(),
+            Some("bundled_runtime_checksum_mismatch")
+        );
+    }
+
+    #[test]
     fn rejects_incompatible_bundled_runtime() {
         let root = make_temp_dir("bundled-incompatible");
-        write_manifest(&root, "darwin", "x64");
-        write_fake_executable(&root.join("runtime/pi"));
+        let executable_path = root.join(executable_relative_path());
+        let incompatible_arch = if expected_manifest_arch() == "x64" {
+            "arm64"
+        } else {
+            "x64"
+        };
+        write_fake_executable(&executable_path);
+        write_notice_and_sbom(&root);
+        write_manifest(
+            &root,
+            expected_manifest_platform(),
+            incompatible_arch,
+            vec![
+                manifest_file_entry(&root, executable_relative_path(), true),
+                manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+            ],
+        );
         let agent_dir = make_temp_dir("agent-dir-incompatible");
 
         let error = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)

@@ -86,6 +86,8 @@ fn ensure_bundled_pi_runtime() {
         .expect("src-tauri should have a repository parent");
     let generated_root = manifest_dir.join("gen/pi-runtime");
     let manifest_path = generated_root.join("manifest.json");
+    let notice_path = generated_root.join("THIRD_PARTY_NOTICES.txt");
+    let sbom_path = generated_root.join("sbom.cyclonedx.json");
     let executable_path = generated_root.join(if cfg!(windows) {
         "runtime/pi.exe"
     } else {
@@ -104,9 +106,13 @@ fn ensure_bundled_pi_runtime() {
         return;
     }
 
-    if !manifest_path.exists() || !executable_path.exists() {
+    if !manifest_path.exists()
+        || !executable_path.exists()
+        || !notice_path.exists()
+        || !sbom_path.exists()
+    {
         panic!(
-            "missing bundled Pi runtime artifacts at {}. Run `npm run prepare:bundled-pi-runtime` first, or use `cargo tauri build` so Tauri's beforeBuildCommand refreshes the bundled runtime automatically.",
+            "missing bundled Pi runtime artifacts at {}. Expected manifest, executable, third-party notice, and CycloneDX SBOM. Run `npm run prepare:bundled-pi-runtime` first, or use `cargo tauri build` so Tauri's beforeBuildCommand refreshes the bundled runtime automatically.",
             generated_root.display()
         );
     }

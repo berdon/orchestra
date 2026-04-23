@@ -191,7 +191,11 @@ fn resolve_pi_package_dir(pi_executable: &Path) -> Result<PathBuf, String> {
     let canonical = fs::canonicalize(pi_executable).unwrap_or_else(|_| pi_executable.to_path_buf());
     for ancestor in canonical.ancestors() {
         if ancestor.join("package.json").exists()
-            && ancestor.join("dist").join("core").join("auth-storage.js").exists()
+            && ancestor
+                .join("dist")
+                .join("core")
+                .join("auth-storage.js")
+                .exists()
         {
             return Ok(ancestor.to_path_buf());
         }
@@ -241,7 +245,10 @@ fn open_external_url(url: &str) -> Result<(), String> {
     ))
 }
 
-fn send_helper_message(handle: &Arc<PiOAuthFlowHandle>, payload: &serde_json::Value) -> Result<(), String> {
+fn send_helper_message(
+    handle: &Arc<PiOAuthFlowHandle>,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
     let serialized = serde_json::to_string(payload)
         .map_err(|error| format!("Unable to serialize Pi OAuth helper message: {error}"))?;
     let mut stdin_guard = handle
@@ -253,7 +260,8 @@ fn send_helper_message(handle: &Arc<PiOAuthFlowHandle>, payload: &serde_json::Va
         .ok_or_else(|| "Pi OAuth flow is no longer accepting input.".to_string())?;
     writeln!(stdin, "{serialized}")
         .map_err(|error| format!("Unable to write Pi OAuth helper input: {error}"))?;
-    stdin.flush()
+    stdin
+        .flush()
         .map_err(|error| format!("Unable to flush Pi OAuth helper input: {error}"))
 }
 
@@ -339,7 +347,11 @@ fn finalize_failure(
         state.finished_at = Some(Utc::now().to_rfc3339());
     });
     app.state::<AppState>().log(
-        if status == "cancelled" { "info" } else { "warn" },
+        if status == "cancelled" {
+            "info"
+        } else {
+            "warn"
+        },
         "pi.oauth",
         &message,
     );
@@ -404,7 +416,11 @@ fn process_helper_event(app: &AppHandle, handle: &Arc<PiOAuthFlowHandle>, event:
     }
 }
 
-fn watch_helper_stdout(app: AppHandle, handle: Arc<PiOAuthFlowHandle>, stdout: impl std::io::Read + Send + 'static) {
+fn watch_helper_stdout(
+    app: AppHandle,
+    handle: Arc<PiOAuthFlowHandle>,
+    stdout: impl std::io::Read + Send + 'static,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line_result in reader.lines() {
@@ -474,14 +490,19 @@ fn watch_helper_stdout(app: AppHandle, handle: Arc<PiOAuthFlowHandle>, stdout: i
     });
 }
 
-fn watch_helper_stderr(app: AppHandle, handle: Arc<PiOAuthFlowHandle>, stderr: impl std::io::Read + Send + 'static) {
+fn watch_helper_stderr(
+    app: AppHandle,
+    handle: Arc<PiOAuthFlowHandle>,
+    stderr: impl std::io::Read + Send + 'static,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
             if !is_current_flow(&handle.id) {
                 break;
             }
-            app.state::<AppState>().log("debug", "pi.oauth.stderr", &line);
+            app.state::<AppState>()
+                .log("debug", "pi.oauth.stderr", &line);
         }
     });
 }
@@ -494,7 +515,9 @@ fn current_flow_handle() -> Result<Option<Arc<PiOAuthFlowHandle>>, String> {
 }
 
 pub fn get_flow_state() -> Result<Option<PiOAuthFlowState>, String> {
-    current_flow_handle()?.map(|handle| clone_flow_state(&handle)).transpose()
+    current_flow_handle()?
+        .map(|handle| clone_flow_state(&handle))
+        .transpose()
 }
 
 pub fn start_flow(

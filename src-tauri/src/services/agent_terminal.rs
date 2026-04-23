@@ -47,7 +47,8 @@ impl AgentTerminalSession {
         let runtime = crate::services::pi_runtime::resolve_pi_runtime(None)?;
         let pi_executable = runtime.executable_path.clone();
         let temp_home_dir = prepare_terminal_home_dir(session_id, &pi_executable)?;
-        let orchestra_extension_path = crate::services::live_sessions::resolve_orchestra_extension_path(&app)?;
+        let orchestra_extension_path =
+            crate::services::live_sessions::resolve_orchestra_extension_path(&app)?;
         let extra_extensions = crate::services::harness_settings::resolve_spawn_extra_extensions(
             crate::services::harness_settings::get_pi_runtime_settings()?.extra_extensions,
         )?;

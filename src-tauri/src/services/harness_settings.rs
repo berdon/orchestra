@@ -89,11 +89,7 @@ pub fn update_pi_setup_metadata(
     dismissed_legacy_import_at: Option<String>,
 ) -> Result<PiSetupMetadata, String> {
     let orchestra_root = default_orchestra_root()?;
-    update_pi_setup_metadata_in(
-        &orchestra_root,
-        imported_at,
-        dismissed_legacy_import_at,
-    )
+    update_pi_setup_metadata_in(&orchestra_root, imported_at, dismissed_legacy_import_at)
 }
 
 pub fn update_pi_setup_metadata_in(

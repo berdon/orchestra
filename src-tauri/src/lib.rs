@@ -14,18 +14,18 @@ use commands::{
         validate_agent,
     },
     app::{
-        cleanup_stale_bridge_instances, clear_logs, debug_seed_idle_task_whip_scenario,
+        cancel_pi_oauth_flow, cleanup_stale_bridge_instances, clear_logs,
+        debug_seed_idle_task_whip_scenario, dismiss_pi_legacy_import, dismiss_pi_oauth_flow,
         export_logs_bundle, get_app_info, get_bridge_diagnostics, get_logs,
-        cancel_pi_oauth_flow, dismiss_pi_legacy_import, dismiss_pi_oauth_flow,
-        get_pi_executable_diagnostic,
-        get_pi_models_json, get_pi_oauth_flow_state, get_pi_runtime_diagnostics,
+        get_pi_executable_diagnostic, get_pi_models_json, get_pi_oauth_flow_state,
+        get_pi_runtime_diagnostics,
         get_pi_runtime_settings, get_pi_setup_state, get_session_storage_info,
         get_system_notification_environment_status, get_system_notification_permission_state,
-        import_legacy_pi_configuration, import_pi_legacy_config, list_pi_models,
-        open_logs_window, preview_pi_legacy_import, report_client_error,
-        request_system_notification_permission, remove_pi_provider_credential,
-        save_pi_models_json, send_system_notification, set_pi_provider_api_key,
-        start_pi_oauth_flow, submit_pi_oauth_flow_input, update_pi_runtime_settings,
+        import_legacy_pi_configuration, import_pi_legacy_config, list_pi_models, open_logs_window,
+        preview_pi_legacy_import, remove_pi_provider_credential, report_client_error,
+        request_system_notification_permission, save_pi_models_json, send_system_notification,
+        set_pi_provider_api_key, start_pi_oauth_flow, submit_pi_oauth_flow_input,
+        update_pi_runtime_settings,
     },
     channels::{
         create_channel, delete_channel, get_channel, list_channel_activity, list_channels,
@@ -90,6 +90,7 @@ use commands::{
     },
 };
 use state::AppState;
+use std::env;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -141,9 +142,17 @@ pub fn run() {
     );
 
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
-    #[cfg(all(debug_assertions, target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     {
-        builder = builder.plugin(tauri_plugin_webdriver_automation::init());
+        let enable_webdriver_automation = env::var("ORCHESTRA_DESKTOP_E2E")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+            || env::var("ORCHESTRA_ENABLE_WEBDRIVER_AUTOMATION")
+                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+        if enable_webdriver_automation {
+            builder = builder.plugin(tauri_plugin_webdriver_automation::init());
+        }
     }
 
     let app = builder

@@ -26,8 +26,7 @@ use crate::{
             get_session_stats as load_session_stats_from_file, list_sessions as list_real_sessions,
             session_context_for_project_id, set_session_model as apply_session_model,
         },
-        pi_setup,
-        role_dispatch, role_runtime, roles, task_runtime,
+        pi_setup, role_dispatch, role_runtime, roles, task_runtime,
     },
     state::AppState,
 };

@@ -131,7 +131,13 @@ fn display_name_for_provider(provider_id: &str) -> String {
 
 fn auth_modes_for_provider(provider_id: &str) -> Vec<String> {
     provider_catalog_entry(provider_id)
-        .map(|entry| entry.auth_modes.iter().map(|mode| (*mode).to_string()).collect())
+        .map(|entry| {
+            entry
+                .auth_modes
+                .iter()
+                .map(|mode| (*mode).to_string())
+                .collect()
+        })
         .unwrap_or_else(|| vec!["api_key".into()])
 }
 
@@ -233,9 +239,8 @@ fn set_restrictive_permissions(path: &Path, mode: u32) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
 
         let permissions = fs::Permissions::from_mode(mode);
-        fs::set_permissions(path, permissions).map_err(|error| {
-            format!("Unable to set permissions on {}: {error}", path.display())
-        })?;
+        fs::set_permissions(path, permissions)
+            .map_err(|error| format!("Unable to set permissions on {}: {error}", path.display()))?;
     }
 
     #[cfg(not(unix))]
@@ -345,10 +350,7 @@ pub fn remove_provider_credential(provider_id: &str) -> Result<PiSetupState, Str
 
 pub fn dismiss_legacy_import() -> Result<PiSetupState, String> {
     let metadata = setup_metadata()?;
-    save_setup_metadata(
-        metadata.imported_at,
-        Some(Utc::now().to_rfc3339()),
-    )?;
+    save_setup_metadata(metadata.imported_at, Some(Utc::now().to_rfc3339()))?;
     get_pi_setup_state()
 }
 
@@ -469,7 +471,11 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
     }
 
     let mut provider_ids = BTreeSet::new();
-    provider_ids.extend(BUILT_IN_PROVIDER_CATALOG.iter().map(|entry| entry.id.to_string()));
+    provider_ids.extend(
+        BUILT_IN_PROVIDER_CATALOG
+            .iter()
+            .map(|entry| entry.id.to_string()),
+    );
     provider_ids.extend(auth_map.keys().cloned());
     provider_ids.extend(available_models.iter().map(|model| model.provider.clone()));
     if let Some(models_object) = models.as_ref() {
@@ -570,10 +576,85 @@ pub fn block_message_for_state(state: &PiSetupState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{PiLegacyImportState, PiSetupState};
+
+    fn setup_state_with_issue(code: &str, auth_path: &str, models_path: &str) -> PiSetupState {
+        PiSetupState {
+            status: "invalid".into(),
+            agent_dir: "/tmp/orchestra/runtime/pi/agent".into(),
+            auth_path: auth_path.into(),
+            models_path: models_path.into(),
+            legacy_agent_dir: Some("/Users/test/.pi/agent".into()),
+            available_providers: Vec::new(),
+            available_models: Vec::new(),
+            issues: vec![crate::models::PiSetupIssue {
+                code: code.into(),
+                message: "invalid".into(),
+                provider_id: None,
+                model_id: None,
+            }],
+            warnings: Vec::new(),
+            import_state: PiLegacyImportState {
+                can_import_legacy: false,
+                imported_at: None,
+                dismissed_at: None,
+            },
+        }
+    }
 
     #[test]
     fn provider_display_names_are_humanized() {
         assert_eq!(display_name_for_provider("anthropic"), "Anthropic");
         assert_eq!(display_name_for_provider("custom-openai"), "Custom Openai");
+    }
+
+    #[test]
+    fn block_message_points_to_invalid_auth_file() {
+        let state = setup_state_with_issue(
+            "auth_json_invalid",
+            "/tmp/orchestra/runtime/pi/agent/auth.json",
+            "/tmp/orchestra/runtime/pi/agent/models.json",
+        );
+
+        let message = block_message_for_state(&state);
+        assert!(message.contains("auth.json"));
+        assert!(message.contains("Settings → Pi"));
+    }
+
+    #[test]
+    fn block_message_points_to_invalid_models_file() {
+        let state = setup_state_with_issue(
+            "models_json_invalid",
+            "/tmp/orchestra/runtime/pi/agent/auth.json",
+            "/tmp/orchestra/runtime/pi/agent/models.json",
+        );
+
+        let message = block_message_for_state(&state);
+        assert!(message.contains("models.json"));
+        assert!(message.contains("Settings → Pi"));
+    }
+
+    #[test]
+    fn block_message_mentions_legacy_import_when_available() {
+        let state = PiSetupState {
+            status: "legacy_import_available".into(),
+            agent_dir: "/tmp/orchestra/runtime/pi/agent".into(),
+            auth_path: "/tmp/orchestra/runtime/pi/agent/auth.json".into(),
+            models_path: "/tmp/orchestra/runtime/pi/agent/models.json".into(),
+            legacy_agent_dir: Some("/Users/test/.pi/agent".into()),
+            available_providers: Vec::new(),
+            available_models: Vec::new(),
+            issues: Vec::new(),
+            warnings: Vec::new(),
+            import_state: PiLegacyImportState {
+                can_import_legacy: true,
+                imported_at: None,
+                dismissed_at: None,
+            },
+        };
+
+        let message = block_message_for_state(&state);
+        assert!(message.contains("~/.pi/agent"));
+        assert!(message.contains("Settings → Pi"));
     }
 }
