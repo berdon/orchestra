@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
+import { filterInboxMessages, getArchivableInboxMessages, type InboxMailFilter } from "../lib/inboxMessages";
 import { reportUiError } from "../lib/orchestraData/errors";
 import { useInboxData } from "../lib/orchestraData/inbox";
 import { useOrchestraClient } from "../lib/orchestraClient";
@@ -11,8 +12,6 @@ interface InboxPageProps {
   projectId?: string | null;
   onOpenTask: (taskId: string) => void;
 }
-
-type InboxMailFilter = "all" | "unread" | "read";
 
 function summarizeAttentionReason(task: TaskSummary) {
   if (task.status === "in_review") {
@@ -32,6 +31,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const getTooltipProps = useExplanatoryTooltipProps();
   const {
     agents,
+    applyMessageUpdates,
     connection,
     error,
     loading,
@@ -52,6 +52,8 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const [composeOpen, setComposeOpen] = useState(false);
   const [mailFilter, setMailFilter] = useState<InboxMailFilter>("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [archiveAllConfirmationArmed, setArchiveAllConfirmationArmed] = useState(false);
+  const [archiveAllPending, setArchiveAllPending] = useState(false);
 
   useEffect(() => {
     setSelectedAgentId((current) => current || agents[0]?.id || "");
@@ -62,18 +64,16 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     [tasks],
   );
 
-  const filteredMessages = useMemo(() => messages.filter((message) => {
-    if (!showArchived && message.archivedAt) {
-      return false;
-    }
-    if (mailFilter === "unread") {
-      return !message.readAt;
-    }
-    if (mailFilter === "read") {
-      return Boolean(message.readAt);
-    }
-    return true;
-  }), [mailFilter, messages, showArchived]);
+  const filteredMessages = useMemo(() => filterInboxMessages(messages, mailFilter, showArchived), [mailFilter, messages, showArchived]);
+  const archivableMessages = useMemo(() => getArchivableInboxMessages(filteredMessages), [filteredMessages]);
+  const archivableDeliveryIds = useMemo(() => archivableMessages.map((message) => message.deliveryId), [archivableMessages]);
+  const archivableCount = archivableDeliveryIds.length;
+  const archiveAllConfirmLabel = archivableCount === 1 ? "Confirm archive 1 message" : `Confirm archive ${archivableCount} messages`;
+  const archivableDeliveryIdsKey = useMemo(() => archivableDeliveryIds.join(","), [archivableDeliveryIds]);
+
+  useEffect(() => {
+    setArchiveAllConfirmationArmed(false);
+  }, [archivableDeliveryIdsKey, mailFilter, showArchived]);
 
   async function handleSend() {
     if (!selectedAgentId || !messageBody.trim()) {
@@ -106,7 +106,8 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     setMarkingRead(deliveryId ?? "all");
     setError(null);
     try {
-      await orchestraClient.inbox.markRead({ deliveryIds: deliveryId ? [deliveryId] : undefined });
+      const updatedMessages = await orchestraClient.inbox.markRead({ deliveryIds: deliveryId ? [deliveryId] : undefined });
+      applyMessageUpdates(updatedMessages);
       await refresh({ silent: true });
     } catch (nextError) {
       setError(await reportUiError(orchestraClient, "ui.inbox.mark_read", nextError, "Unable to mark messages read."));
@@ -119,12 +120,37 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
     setArchiving(deliveryId);
     setError(null);
     try {
-      await orchestraClient.inbox.archive({ deliveryIds: [deliveryId] });
+      const updatedMessages = await orchestraClient.inbox.archive({ deliveryIds: [deliveryId] });
+      applyMessageUpdates(updatedMessages);
       await refresh({ silent: true });
     } catch (nextError) {
       setError(await reportUiError(orchestraClient, "ui.inbox.archive", nextError, "Unable to archive message."));
     } finally {
       setArchiving(null);
+    }
+  }
+
+  async function handleArchiveAll() {
+    if (!archivableCount || archiveAllPending) {
+      return;
+    }
+    if (!archiveAllConfirmationArmed) {
+      setArchiveAllConfirmationArmed(true);
+      return;
+    }
+
+    const targetDeliveryIds = [...archivableDeliveryIds];
+    setArchiveAllPending(true);
+    setArchiveAllConfirmationArmed(false);
+    setError(null);
+    try {
+      const updatedMessages = await orchestraClient.inbox.archive({ deliveryIds: targetDeliveryIds });
+      applyMessageUpdates(updatedMessages);
+      await refresh({ silent: true });
+    } catch (nextError) {
+      setError(await reportUiError(orchestraClient, "ui.inbox.archive_all", nextError, "Unable to archive visible messages."));
+    } finally {
+      setArchiveAllPending(false);
     }
   }
 
@@ -160,6 +186,28 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
               >
                 Mark all read
               </button>
+              <button
+                className={archiveAllConfirmationArmed ? "secondary-button secondary-button--danger" : "secondary-button"}
+                data-role="archive-all-inbox-messages"
+                data-confirmation-armed={archiveAllConfirmationArmed ? "true" : "false"}
+                type="button"
+                disabled={!archivableCount || archiveAllPending}
+                {...getTooltipProps("Archive the visible unarchived inbox messages in the current view. Read and unread state is preserved.")}
+                onClick={() => void handleArchiveAll()}
+              >
+                {archiveAllPending ? "Archiving…" : archiveAllConfirmationArmed ? archiveAllConfirmLabel : "Archive all"}
+              </button>
+              {archiveAllConfirmationArmed ? (
+                <button
+                  className="secondary-button"
+                  data-role="cancel-archive-all-inbox-messages"
+                  type="button"
+                  disabled={archiveAllPending}
+                  onClick={() => setArchiveAllConfirmationArmed(false)}
+                >
+                  Cancel
+                </button>
+              ) : null}
             </div>
           </div>
 

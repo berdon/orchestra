@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { AgentSummary, MailboxMessage, TaskSummary } from "../../types";
+import { mergeInboxMessageUpdates, sortInboxMessages } from "../inboxMessages";
 import type { OrchestraConnectionSnapshot } from "../orchestraClient";
 import { retryOrchestraRead, useOrchestraClient } from "../orchestraClient";
 import { useOrchestraConnection } from "./connection";
@@ -10,6 +11,7 @@ import { deriveOrchestraInitialLoadState, type OrchestraInitialLoadState } from 
 
 interface UseInboxDataResult {
   agents: AgentSummary[];
+  applyMessageUpdates: (updatedMessages: MailboxMessage[]) => void;
   connection: OrchestraConnectionSnapshot;
   error: UiErrorState | null;
   initialLoadState: OrchestraInitialLoadState;
@@ -32,6 +34,10 @@ export function useInboxData(projectId: string | null = null): UseInboxDataResul
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<UiErrorState | null>(null);
 
+  const applyMessageUpdates = useCallback((updatedMessages: MailboxMessage[]) => {
+    setMessages((current) => mergeInboxMessageUpdates(current, updatedMessages));
+  }, []);
+
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     const hasData = messages.length > 0 || tasks.length > 0 || agents.length > 0;
     if (options?.silent || hasData) {
@@ -46,7 +52,7 @@ export function useInboxData(projectId: string | null = null): UseInboxDataResul
         orchestraClient.tasks.list({ includeArchived: false, projectId }),
         orchestraClient.catalog.listAgents(false, projectId),
       ]));
-      setMessages(nextMessages);
+      setMessages(sortInboxMessages(nextMessages));
       setTasks(nextTasks);
       setAgents(nextAgents);
       setError(null);
@@ -75,6 +81,7 @@ export function useInboxData(projectId: string | null = null): UseInboxDataResul
 
   return {
     agents,
+    applyMessageUpdates,
     connection,
     error,
     initialLoadState: deriveOrchestraInitialLoadState({
