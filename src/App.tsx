@@ -8,6 +8,7 @@ import { getActiveProjectId, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
+import { listenToAgentCatalogChanges } from "./lib/agentCatalogEvents";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
 import {
   ExplanatoryTooltipsProvider,
@@ -43,6 +44,7 @@ import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal"
 import { InboxPage } from "./pages/InboxPage";
 import { AgentChatPage } from "./pages/AgentChatPage";
 import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
+import { shouldApplyChatAgentLoad } from "./pages/chat/chatAgentLoadGuards";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import {
@@ -885,6 +887,10 @@ export function App() {
   const lastKnownChatSessionIdRef = useRef<string | null>(null);
   const lastKnownChatSessionAgentIdRef = useRef<string | null>(null);
   const lastKnownChatSessionDraftRef = useRef("");
+  const activePageRef = useRef(activePage);
+  const activeProjectIdRef = useRef(activeProjectId);
+  const chatAgentLoadRequestIdRef = useRef(0);
+  const latestForegroundChatAgentLoadRequestIdRef = useRef(0);
   const lastKnownSupervisorSessionRef = useRef<SessionRecord | null>(null);
   const lastKnownSupervisorSessionIdRef = useRef<string | null>(null);
   const lastKnownSupervisorDraftRef = useRef("");
@@ -895,6 +901,14 @@ export function App() {
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const commandPaletteRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
+
+  useEffect(() => {
+    activeProjectIdRef.current = activeProjectId;
+  }, [activeProjectId]);
 
   useEffect(() => {
     commandPaletteRequestIdRef.current += 1;
@@ -1886,13 +1900,27 @@ export function App() {
     }
   }, [activeProjectId, chatSessionId, orchestraClient, pendingRuns, pendingSessionOpenRequest, selectedSessionId, supervisorSessionId]);
 
-  async function loadChatAgents(options?: { background?: boolean }) {
-    if (!options?.background) {
+  const loadChatAgents = useCallback(async (options?: { background?: boolean }) => {
+    const requestId = ++chatAgentLoadRequestIdRef.current;
+    const requestProjectId = activeProjectId;
+    const isForeground = !options?.background;
+
+    if (isForeground) {
+      latestForegroundChatAgentLoadRequestIdRef.current = requestId;
       setLoadingChatAgents(true);
     }
 
     try {
-      const nextAgents = await listAgentOperations(false, activeProjectId);
+      const nextAgents = await listAgentOperations(false, requestProjectId);
+      if (!shouldApplyChatAgentLoad(
+        activePageRef.current,
+        requestProjectId,
+        activeProjectIdRef.current,
+        requestId,
+        chatAgentLoadRequestIdRef.current,
+      )) {
+        return;
+      }
       setChatAgents(nextAgents);
       setSelectedChatAgentId((current) => {
         if (current && nextAgents.some((agent) => agent.agent.id === current)) {
@@ -1901,13 +1929,22 @@ export function App() {
         return nextAgents[0]?.agent.id ?? null;
       });
     } catch (error) {
+      if (!shouldApplyChatAgentLoad(
+        activePageRef.current,
+        requestProjectId,
+        activeProjectIdRef.current,
+        requestId,
+        chatAgentLoadRequestIdRef.current,
+      )) {
+        return;
+      }
       setSessionActionError(toUiErrorState(error, "Unable to load chat agents."));
     } finally {
-      if (!options?.background) {
+      if (isForeground && latestForegroundChatAgentLoadRequestIdRef.current === requestId) {
         setLoadingChatAgents(false);
       }
     }
-  }
+  }, [activeProjectId]);
 
   async function loadSelectedSessionRuntimeDetails(sessionId: string): Promise<SessionRuntimeDetails> {
     setLoadingRuntimeDetailsSessionId(sessionId);
@@ -2315,7 +2352,21 @@ export function App() {
     }
 
     void loadChatAgents();
-  }, [activePage, activeProjectId, isDetachedWindow]);
+  }, [activePage, activeProjectId, isDetachedWindow, loadChatAgents]);
+
+  useEffect(() => {
+    if (isDetachedWindow) {
+      return;
+    }
+
+    return listenToAgentCatalogChanges(() => {
+      if (activePageRef.current !== "chat") {
+        return;
+      }
+
+      void loadChatAgents({ background: true });
+    });
+  }, [isDetachedWindow, loadChatAgents]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "chat" || !selectedChatAgentId) {

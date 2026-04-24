@@ -66,6 +66,78 @@ test("chat nav lists named agents and excludes roles", async ({ page }) => {
   await expect(page.getByRole("tab", { name: "Reviewer" })).toHaveCount(0);
 });
 
+test("chat nav refreshes project-scoped agents in place and keeps archived agents hidden", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.locator('[data-role="project-name"]').fill("Client Project");
+  await page.getByRole("button", { name: /Create project/i }).click();
+
+  await page.locator('[data-role="project-switcher"]').selectOption({ label: "Client Project" });
+  await page.getByRole("button", { name: "Chat" }).click();
+  await expect(page.locator('[data-role="chat-agent-nav-supervisor"]')).toBeVisible();
+  await expect(page.locator('[data-role="chat-agent-nav-data"]')).toBeVisible();
+  await expect(page.locator('[data-role="chat-agent-nav-client-builder"]')).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const projects = JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]") as Array<{ id: string; name: string }>;
+    const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]") as Array<Record<string, unknown>>;
+    const clientProjectId = projects.find((project) => project.name === "Client Project")?.id ?? null;
+    const template = agents.find((agent) => agent.slug === "data") ?? agents[0];
+    if (!clientProjectId || !template) {
+      throw new Error("Unable to prepare project-scoped chat agent test data.");
+    }
+
+    const now = new Date().toISOString();
+    const nextAgent = {
+      ...template,
+      id: "agent-client-builder",
+      name: "Client Builder",
+      slug: "client-builder",
+      description: "Project-scoped builder for chat nav refresh coverage.",
+      archived: false,
+      immutable: false,
+      system: false,
+      roleId: null,
+      scope: "project",
+      projectId: clientProjectId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    window.localStorage.setItem("orchestra.mock.agents", JSON.stringify([nextAgent, ...agents]));
+    window.dispatchEvent(new CustomEvent("orchestra:agent-catalog-changed", {
+      detail: { agentId: nextAgent.id, projectId: clientProjectId, reason: "created" },
+    }));
+  });
+
+  await expect(page.locator('[data-role="chat-agent-nav-client-builder"]')).toBeVisible();
+
+  await page.locator('[data-role="project-switcher"]').selectOption({ label: "Orchestra" });
+  await expect(page.locator('[data-role="chat-agent-nav-client-builder"]')).toHaveCount(0);
+
+  await page.locator('[data-role="project-switcher"]').selectOption({ label: "Client Project" });
+  await expect(page.locator('[data-role="chat-agent-nav-client-builder"]')).toBeVisible();
+
+  await page.evaluate(() => {
+    const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]") as Array<Record<string, unknown>>;
+    const archivedAgents = agents.map((agent) => agent.id === "agent-client-builder"
+      ? { ...agent, archived: true, updatedAt: new Date().toISOString() }
+      : agent);
+    window.localStorage.setItem("orchestra.mock.agents", JSON.stringify(archivedAgents));
+    window.dispatchEvent(new CustomEvent("orchestra:agent-catalog-changed", {
+      detail: { agentId: "agent-client-builder", projectId: archivedAgents.find((agent) => agent.id === "agent-client-builder")?.projectId ?? null, reason: "archived" },
+    }));
+  });
+
+  await expect(page.locator('[data-role="chat-agent-nav-client-builder"]')).toHaveCount(0);
+});
+
 test("chat composer autocompletes project tasks, agents, and roles and renders task mentions as links", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

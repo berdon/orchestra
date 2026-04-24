@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { getActiveProjectId, getDefaultProjectId, getProjectRuntimeCwd } from "./projects";
+import { dispatchAgentCatalogChanged } from "./agentCatalogEvents";
 import { emitMockSessionChange } from "./mockOrchestra/events";
 import { isTauriAvailable } from "./mockOrchestra/host";
 import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
@@ -668,30 +669,32 @@ export async function validateAgent(input: AgentUpsertInput): Promise<AgentValid
 }
 
 export async function createAgent(input: AgentUpsertInput): Promise<AgentDefinition> {
+  let agent: AgentDefinition;
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.workers.createAgent(input);
-  }
-  if (!isTauriAvailable()) {
+    agent = await hostedWebClient.workers.createAgent(input);
+  } else if (!isTauriAvailable()) {
     const validation = buildMockAgentValidation(input);
     if (!validation.valid) {
       throw new Error(validation.errors.map((error) => `${error.path}: ${error.message}`).join("; "));
     }
 
-    const agent = normalizeMockAgentInput(input);
+    agent = normalizeMockAgentInput(input);
     saveStoredAgents([agent, ...ensureMockAgents()]);
-    return agent;
+  } else {
+    agent = await invoke<AgentDefinition>("create_agent", { input });
   }
 
-  return invoke<AgentDefinition>("create_agent", { input });
+  dispatchAgentCatalogChanged({ agentId: agent.id, projectId: agent.projectId ?? null, reason: "created" });
+  return agent;
 }
 
 export async function updateAgent(agentId: string, input: AgentUpsertInput): Promise<AgentDefinition> {
+  let updated: AgentDefinition;
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.workers.updateAgent(agentId, input);
-  }
-  if (!isTauriAvailable()) {
+    updated = await hostedWebClient.workers.updateAgent(agentId, input);
+  } else if (!isTauriAvailable()) {
     const validation = buildMockAgentValidation(input);
     if (!validation.valid) {
       throw new Error(validation.errors.map((error) => `${error.path}: ${error.message}`).join("; "));
@@ -703,7 +706,7 @@ export async function updateAgent(agentId: string, input: AgentUpsertInput): Pro
       throw new Error(`Agent ${agentId} was not found`);
     }
 
-    const updated = existing.immutable || existing.system
+    updated = existing.immutable || existing.system
       ? {
           ...existing,
           provider: input.provider?.trim() || null,
@@ -715,18 +718,20 @@ export async function updateAgent(agentId: string, input: AgentUpsertInput): Pro
         }
       : normalizeMockAgentInput(input, existing);
     saveStoredAgents(agents.map((agent) => (agent.id === agentId ? updated : agent)));
-    return updated;
+  } else {
+    updated = await invoke<AgentDefinition>("update_agent", { agentId, input });
   }
 
-  return invoke<AgentDefinition>("update_agent", { agentId, input });
+  dispatchAgentCatalogChanged({ agentId: updated.id, projectId: updated.projectId ?? null, reason: "updated" });
+  return updated;
 }
 
 export async function archiveAgent(agentId: string): Promise<AgentDefinition> {
+  let archived: AgentDefinition;
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.workers.archiveAgent(agentId);
-  }
-  if (!isTauriAvailable()) {
+    archived = await hostedWebClient.workers.archiveAgent(agentId);
+  } else if (!isTauriAvailable()) {
     const agents = ensureMockAgents();
     const existing = agents.find((agent) => agent.id === agentId);
     if (!existing) {
@@ -737,17 +742,19 @@ export async function archiveAgent(agentId: string): Promise<AgentDefinition> {
       throw new Error(`Agent ${agentId} is protected and cannot be archived`);
     }
 
-    const archived: AgentDefinition = {
+    archived = {
       ...existing,
       archived: true,
       updatedAt: nowIso(),
     };
 
     saveStoredAgents(agents.map((agent) => (agent.id === agentId ? archived : agent)));
-    return archived;
+  } else {
+    archived = await invoke<AgentDefinition>("archive_agent", { agentId });
   }
 
-  return invoke<AgentDefinition>("archive_agent", { agentId });
+  dispatchAgentCatalogChanged({ agentId: archived.id, projectId: archived.projectId ?? null, reason: "archived" });
+  return archived;
 }
 
 export async function getAgentMemoryInfo(agentId: string): Promise<AgentMemoryInfo> {
