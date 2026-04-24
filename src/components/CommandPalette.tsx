@@ -96,34 +96,32 @@ export function CommandPalette({ open, items, loading, onClose, onSelect }: Comm
 
         <div className="command-palette__results" data-role="command-palette-results">
           {loading ? <p className="muted-copy">Loading commands…</p> : null}
-          {!loading && matches.length === 0 ? <p className="muted-copy">No matches yet.</p> : null}
+          {matches.length === 0 && !loading ? <p className="muted-copy">No matches yet.</p> : null}
 
-          {!loading
-            ? matches.map((item, index) => {
-                const showGroup = item.group !== currentGroup;
-                currentGroup = item.group;
-                return (
-                  <div key={item.id}>
-                    {showGroup ? <p className="command-palette__group-label">{item.group}</p> : null}
-                    <button
-                      ref={(node) => {
-                        itemRefs.current[index] = node;
-                      }}
-                      className={index === selectedIndex ? "command-palette__item command-palette__item--active" : "command-palette__item"}
-                      data-role="command-palette-item"
-                      data-command-id={item.id}
-                      data-active={index === selectedIndex ? "true" : "false"}
-                      type="button"
-                      onMouseEnter={() => setSelectedIndex(index)}
-                      onClick={() => onSelect(item)}
-                    >
-                      <span className="command-palette__item-title">{item.title}</span>
-                      {item.subtitle ? <span className="command-palette__item-subtitle">{item.subtitle}</span> : null}
-                    </button>
-                  </div>
-                );
-              })
-            : null}
+          {matches.map((item, index) => {
+            const showGroup = item.group !== currentGroup;
+            currentGroup = item.group;
+            return (
+              <div key={item.id}>
+                {showGroup ? <p className="command-palette__group-label">{item.group}</p> : null}
+                <button
+                  ref={(node) => {
+                    itemRefs.current[index] = node;
+                  }}
+                  className={index === selectedIndex ? "command-palette__item command-palette__item--active" : "command-palette__item"}
+                  data-role="command-palette-item"
+                  data-command-id={item.id}
+                  data-active={index === selectedIndex ? "true" : "false"}
+                  type="button"
+                  onMouseEnter={() => setSelectedIndex(index)}
+                  onClick={() => onSelect(item)}
+                >
+                  <span className="command-palette__item-title">{item.title}</span>
+                  {item.subtitle ? <span className="command-palette__item-subtitle">{item.subtitle}</span> : null}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </section>
     </div>

@@ -268,10 +268,11 @@
       "id": "command-palette",
       "surface": "Navigation",
       "journey": "Use the command palette to drive shell navigation and actions",
-      "requiredHarnesses": ["browser"],
+      "requiredHarnesses": ["browser", "desktop"],
       "status": "covered",
       "specs": [
-        "tests/e2e/command-palette.spec.ts"
+        "tests/e2e/command-palette.spec.ts",
+        "tests/desktop-e2e/command-palette.test.ts"
       ]
     },
     {

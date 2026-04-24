@@ -23,6 +23,37 @@ test("ctrl+o opens the command palette and can launch an agent session", async (
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
 });
 
+test("command palette stays usable and clears loading when one source hangs", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.evaluate(() => {
+    const testWindow = window as Window & {
+      __orchestraTestCommandPalette?: {
+        hangSources?: string[];
+        sourceTimeoutMs?: number;
+      };
+    };
+    testWindow.__orchestraTestCommandPalette = {
+      hangSources: ["roles"],
+      sourceTimeoutMs: 50,
+    };
+  });
+
+  await triggerShortcut(page, "o");
+  await expect(page.locator('[data-role="command-palette-overlay"]')).toBeVisible();
+  await expect(page.locator('[data-role="command-palette-item"]').filter({ hasText: "Create task" }).first()).toBeVisible();
+  await expect(page.getByText("Loading commands…")).toHaveCount(0);
+
+  await page.locator('[data-role="command-palette-input"]').fill("create task");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByRole("button", { name: "Tasks", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
+});
+
 test("command palette can open an agent terminal window", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

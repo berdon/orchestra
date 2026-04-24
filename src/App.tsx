@@ -76,6 +76,7 @@ import type {
   SystemNotificationEnvironmentStatus,
   SystemNotificationPermissionState,
   ProjectSummary,
+  RoleOperationsSnapshot,
   RoleSummary,
   SessionActivityState,
   SessionEvent,
@@ -89,7 +90,10 @@ import type {
   SettingsTab,
   TaskDetail,
   TaskSummary,
+  WorkflowSummary,
 } from "./types";
+
+const COMMAND_PALETTE_SOURCE_TIMEOUT_MS = 4_000;
 
 const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "tasks", label: "Tasks" },
@@ -851,8 +855,14 @@ export function App() {
   const pendingSessionRecordRequestKeyRef = useRef<string | null>(null);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
+  const commandPaletteRequestIdRef = useRef(0);
   const notifiedInboxDeliveryIdsRef = useRef(new Set<string>());
   const notifiedTaskAttentionKeysRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    commandPaletteRequestIdRef.current += 1;
+    setCommandPaletteLoading(false);
+  }, [activeProjectId]);
 
   useLayoutEffect(() => {
     applyOrchestraTheme(themeId);
@@ -2789,26 +2799,45 @@ export function App() {
   }
 
   async function refreshCommandPaletteItems() {
-    setCommandPaletteLoading(true);
-    try {
-      const [nextSessions, nextTasks, nextAgents, nextRoles, nextWorkflows, nextProjects] = await Promise.all([
-        orchestraClient.sessions.list(activeProjectId),
-        orchestraClient.tasks.list({ includeArchived: false, projectId: activeProjectId }),
-        listAgentOperations(false, activeProjectId),
-        listRoleOperations(false),
-        orchestraClient.catalog.listWorkflows(false),
-        orchestraClient.catalog.listProjects(),
-      ]);
-      setSessions(nextSessions);
-      setProjects(nextProjects);
+    const requestId = commandPaletteRequestIdRef.current + 1;
+    commandPaletteRequestIdRef.current = requestId;
+    const testWindow = window as typeof window & {
+      __orchestraTestCommandPalette?: {
+        hangSources?: Array<"sessions" | "tasks" | "agents" | "roles" | "workflows" | "projects">;
+        delayMsBySource?: Partial<Record<"sessions" | "tasks" | "agents" | "roles" | "workflows" | "projects", number>>;
+        sourceTimeoutMs?: number;
+      };
+    };
+    const testConfig = testWindow.__orchestraTestCommandPalette;
+    const sourceTimeoutMs = Math.max(50, testConfig?.sourceTimeoutMs ?? COMMAND_PALETTE_SOURCE_TIMEOUT_MS);
+    const commandPaletteState: {
+      sessions: SessionRecord[];
+      tasks: TaskSummary[];
+      agents: AgentOperationsSnapshot[];
+      roles: RoleOperationsSnapshot[];
+      workflows: WorkflowSummary[];
+      projects: ProjectSummary[];
+    } = {
+      sessions,
+      tasks: activeProjectId ? referenceTasks.filter((task) => task.projectId === activeProjectId) : referenceTasks,
+      agents: activeProjectId ? chatAgents.filter((agent) => agent.runtimeState.projectId === activeProjectId) : chatAgents,
+      roles: [],
+      workflows: [],
+      projects,
+    };
+
+    const applyCommandPaletteItems = () => {
+      if (commandPaletteRequestIdRef.current !== requestId) {
+        return;
+      }
       setCommandPaletteItems(
         buildCommandPaletteItems({
-          sessions: nextSessions,
-          tasks: nextTasks,
-          agents: nextAgents,
-          roles: nextRoles,
-          workflows: nextWorkflows,
-          projects: nextProjects,
+          sessions: commandPaletteState.sessions,
+          tasks: commandPaletteState.tasks,
+          agents: commandPaletteState.agents,
+          roles: commandPaletteState.roles,
+          workflows: commandPaletteState.workflows,
+          projects: commandPaletteState.projects,
           activeProjectId,
           supportsLogsWindow: canOpenLogsWindow,
           supportsHarnessSettings: canManageHarnessSettings,
@@ -2816,11 +2845,122 @@ export function App() {
           supportsRemoteAccess: canManageRemoteAccess,
         }),
       );
-    } catch (error) {
-      setSessionActionError(toUiErrorState(error, "Unable to load command palette items."));
-    } finally {
-      setCommandPaletteLoading(false);
+    };
+
+    async function wrapCommandPaletteSource<T>(
+      sourceName: "sessions" | "tasks" | "agents" | "roles" | "workflows" | "projects",
+      load: () => Promise<T>,
+    ) {
+      const delayMs = testConfig?.delayMsBySource?.[sourceName] ?? 0;
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, delayMs);
+        });
+      }
+      if (testConfig?.hangSources?.includes(sourceName)) {
+        return await new Promise<T>(() => undefined);
+      }
+      return load();
     }
+
+    const loadSessions = () => retryOrchestraRead(async () => sortSessionRecords((await orchestraClient.sessions.list(activeProjectId)).map(normalizeSessionRecord)));
+    const trackedSources: Array<{
+      name: "sessions" | "tasks" | "agents" | "roles" | "workflows" | "projects";
+      load: () => Promise<unknown>;
+      apply: (value: unknown) => void;
+    }> = [
+      {
+        name: "sessions",
+        load: () => wrapCommandPaletteSource("sessions", loadSessions),
+        apply: (value) => {
+          const nextSessions = value as SessionRecord[];
+          commandPaletteState.sessions = nextSessions;
+          setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
+        },
+      },
+      {
+        name: "tasks",
+        load: () => wrapCommandPaletteSource("tasks", () => retryOrchestraRead(() => orchestraClient.tasks.list({ includeArchived: false, projectId: activeProjectId }))),
+        apply: (value) => {
+          commandPaletteState.tasks = value as TaskSummary[];
+        },
+      },
+      {
+        name: "agents",
+        load: () => wrapCommandPaletteSource("agents", () => listAgentOperations(false, activeProjectId)),
+        apply: (value) => {
+          commandPaletteState.agents = value as AgentOperationsSnapshot[];
+        },
+      },
+      {
+        name: "roles",
+        load: () => wrapCommandPaletteSource("roles", () => listRoleOperations(false)),
+        apply: (value) => {
+          commandPaletteState.roles = value as RoleOperationsSnapshot[];
+        },
+      },
+      {
+        name: "workflows",
+        load: () => wrapCommandPaletteSource("workflows", () => retryOrchestraRead(() => orchestraClient.catalog.listWorkflows(false))),
+        apply: (value) => {
+          commandPaletteState.workflows = value as WorkflowSummary[];
+        },
+      },
+      {
+        name: "projects",
+        load: () => wrapCommandPaletteSource("projects", () => retryOrchestraRead(() => orchestraClient.catalog.listProjects())),
+        apply: (value) => {
+          const nextProjects = value as ProjectSummary[];
+          commandPaletteState.projects = nextProjects;
+          setProjects(nextProjects);
+        },
+      },
+    ];
+
+    setCommandPaletteLoading(true);
+    applyCommandPaletteItems();
+
+    const sourceErrors: unknown[] = [];
+    await Promise.all(trackedSources.map((source) => new Promise<void>((resolve) => {
+      let finished = false;
+      const timeoutHandle = window.setTimeout(() => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        console.warn(`[command-palette] ${source.name} is still loading after ${sourceTimeoutMs}ms; keeping partial results visible.`);
+        resolve();
+      }, sourceTimeoutMs);
+
+      source.load()
+        .then((value) => {
+          if (commandPaletteRequestIdRef.current !== requestId) {
+            return;
+          }
+          source.apply(value);
+          applyCommandPaletteItems();
+        })
+        .catch((error) => {
+          sourceErrors.push(error);
+          console.warn(`[command-palette] Failed to load ${source.name}.`, error);
+        })
+        .finally(() => {
+          window.clearTimeout(timeoutHandle);
+          if (finished) {
+            return;
+          }
+          finished = true;
+          resolve();
+        });
+    })));
+
+    if (commandPaletteRequestIdRef.current !== requestId) {
+      return;
+    }
+    if (sourceErrors.length === trackedSources.length) {
+      setSessionActionError(toUiErrorState(sourceErrors[0], "Unable to load command palette items."));
+    }
+    setCommandPaletteLoading(false);
   }
 
   function handleOpenCommandPalette() {
