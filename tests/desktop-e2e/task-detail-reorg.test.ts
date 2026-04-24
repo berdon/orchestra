@@ -73,13 +73,19 @@ describe("desktop task detail reorganization", () => {
       await switchProject(sessionId, "Task Detail Reorg Project");
       await createWorkflowViaSettings(sessionId, {
         name: "Detail Reorg Flow",
-        description: "Single user lane for layout testing.",
+        description: "Two user lanes for layout testing.",
         lanes: [
           {
             name: "Review",
             key: "review",
             ownerType: "user",
             entryPromptTemplate: "Review the task.",
+          },
+          {
+            name: "Follow-up",
+            key: "follow-up",
+            ownerType: "user",
+            entryPromptTemplate: "Handle follow-up work.",
           },
         ],
       });
@@ -116,6 +122,36 @@ describe("desktop task detail reorganization", () => {
       await ensureReactReady(sessionId);
       await switchProject(sessionId, 'Task Detail Reorg Project');
       await openTaskCard(sessionId, 'Task detail redesign');
+
+      const headerLayout = await executeScript<{
+        hasExactTaskDetailEyebrow: boolean;
+        relaneLeftOfAction: boolean;
+        relaneSharesRowWithAction: boolean;
+      }>(sessionId, `
+        const hasExactTaskDetailEyebrow = Array.from(document.querySelectorAll('[data-role="task-detail-primary-header"] .eyebrow')).some((entry) =>
+          (entry.textContent || '').trim() === 'Task detail'
+        );
+        const actions = document.querySelector('[data-role="task-detail-primary-actions"]');
+        if (!(actions instanceof HTMLElement)) {
+          throw new Error('Task detail header actions were not rendered');
+        }
+        const relane = actions.querySelector('[data-role="toggle-task-relane"]');
+        const actionMenu = actions.querySelector('.task-action-menu');
+        if (!(relane instanceof HTMLElement) || !(actionMenu instanceof HTMLElement)) {
+          throw new Error('Expected Re-lane and the task action menu in the task detail header');
+        }
+        const relaneRect = relane.getBoundingClientRect();
+        const actionMenuRect = actionMenu.getBoundingClientRect();
+        return {
+          hasExactTaskDetailEyebrow,
+          relaneLeftOfAction: relaneRect.left < actionMenuRect.left,
+          relaneSharesRowWithAction: Math.abs(relaneRect.top - actionMenuRect.top) < 8,
+        };
+      `);
+      expect(headerLayout.hasExactTaskDetailEyebrow).toBe(false);
+      expect(headerLayout.relaneLeftOfAction).toBe(true);
+      expect(headerLayout.relaneSharesRowWithAction).toBe(true);
+
       await addTaskFileReferenceViaUi(sessionId, "Task Detail Repo", "docs/design.md", true);
       await addTaskCommentViaUi(sessionId, "Reviewer", "First history item");
       await addTaskCommentViaUi(sessionId, "Reviewer", "Second history item");
@@ -124,7 +160,7 @@ describe("desktop task detail reorganization", () => {
       await waitForText(sessionId, "Task detail redesign");
       await clickByText(sessionId, '[data-role="task-card"]', "Task detail redesign");
 
-      await waitForText(sessionId, "Tracked repository file changes and references");
+      await waitForText(sessionId, "Tracked repo files");
       await waitForText(sessionId, "Default repo file");
       await waitForText(sessionId, "docs/design.md");
       await waitForText(sessionId, "Task detail preview file");
@@ -184,7 +220,7 @@ describe("desktop task detail reorganization", () => {
     }
   }, 180_000);
 
-  it.skipIf(!isDesktopE2E)("supports dispatch, approve, needs work, whip, and pause actions from the reorganized task detail header", async () => {
+  it.skipIf(!isDesktopE2E)("supports dispatch, approve, needs work, whip, and pause actions from the reorganized task detail header when Pi setup is ready", async () => {
     expect(testHome).toBeTruthy();
 
     const repoRoot = join(testHome!, "workspace", "task-detail-actions-repo", "repository");
@@ -193,6 +229,12 @@ describe("desktop task detail reorganization", () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
+
+      const piSetupState = await invokeCommand<any>(sessionId, 'get_pi_setup_state');
+      if (piSetupState?.status !== 'ready') {
+        console.warn(`Skipping runtime action coverage because Pi setup is not ready: ${piSetupState?.status ?? 'unknown'}`);
+        return;
+      }
 
       await createProjectViaSettings(sessionId, "Task Detail Actions Project", "Desktop action button test.");
       await addRepositoryViaSettings(sessionId, {

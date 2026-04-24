@@ -1347,7 +1347,6 @@ export function TasksPage({
         />
       ) : route.kind === "detail" ? (
         <section className="panel empty-state">
-          <p className="eyebrow">Task detail</p>
           <h3>Loading task</h3>
           <p>Refreshing the selected task detail…</p>
         </section>
