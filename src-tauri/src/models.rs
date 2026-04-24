@@ -1421,10 +1421,25 @@ pub struct SkillSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillBindingScopeCount {
+    pub scope_kind: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBindingSummary {
+    pub total_count: i64,
+    pub scope_counts: Vec<SkillBindingScopeCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillDetail {
     #[serde(flatten)]
     pub summary: SkillSummary,
     pub markdown_body: Option<String>,
+    pub binding_summary: SkillBindingSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

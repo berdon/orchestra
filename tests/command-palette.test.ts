@@ -130,6 +130,7 @@ describe("command palette items", () => {
       activeProjectId: "orchestra",
       supportsLogsWindow: true,
       supportsHarnessSettings: true,
+      supportsSkillsSettings: true,
       supportsAgentTerminal: true,
     });
 
@@ -141,6 +142,7 @@ describe("command palette items", () => {
     expect(items.some((item) => item.action.type === "open-workflow" && item.action.workflowId === "workflow-1")).toBe(true);
     expect(items.some((item) => item.action.type === "open-session" && item.action.sessionId === "session-1")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "prompting")).toBe(true);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "skills" && item.title === "Open Settings → Skills")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "source_control")).toBe(true);
     expect(items.some((item) => item.action.type === "open-logs")).toBe(true);
   });
@@ -192,6 +194,7 @@ describe("command palette items", () => {
     });
 
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "harness")).toBe(false);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "skills")).toBe(false);
     expect(items.some((item) => item.action.type === "open-logs")).toBe(false);
     expect(items.some((item) => item.action.type === "launch-agent-session-terminal")).toBe(false);
     expect(items.some((item) => item.action.type === "launch-agent-session")).toBe(true);

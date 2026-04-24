@@ -9,7 +9,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::{
-    models::{LocalSkillUpsertInput, SkillDetail, SkillSummary},
+    models::{
+        LocalSkillUpsertInput, SkillBindingScopeCount, SkillBindingSummary, SkillDetail,
+        SkillSummary,
+    },
     services::orchestra_paths::{
         default_orchestra_root, orchestra_local_skill_path, sanitize_slug,
     },
@@ -129,6 +132,7 @@ pub fn get_skill(connection: &Connection, skill_id: &str) -> Result<SkillDetail,
     let row = get_skill_row(connection, skill_id)?;
     Ok(SkillDetail {
         markdown_body: load_skill_markdown_body(&row.summary)?,
+        binding_summary: load_skill_binding_summary(connection, skill_id)?,
         summary: row.summary,
     })
 }
@@ -600,6 +604,48 @@ fn normalize_local_skill_input(
 
 fn normalize_markdown_body(value: &str) -> String {
     value.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn load_skill_binding_summary(
+    connection: &Connection,
+    skill_id: &str,
+) -> Result<SkillBindingSummary, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT scope_kind, COUNT(1) AS binding_count
+            FROM skill_scope_bindings
+            WHERE skill_id = ?1
+            GROUP BY scope_kind
+            ORDER BY CASE scope_kind
+                WHEN 'global' THEN 0
+                WHEN 'project' THEN 1
+                WHEN 'role' THEN 2
+                WHEN 'agent' THEN 3
+                WHEN 'workflow' THEN 4
+                WHEN 'workflow_lane' THEN 5
+                ELSE 6
+            END ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare binding summary query for skill {skill_id}: {error}"))?;
+
+    let scope_counts = statement
+        .query_map([skill_id], |row| {
+            Ok(SkillBindingScopeCount {
+                scope_kind: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })
+        .map_err(|error| format!("Unable to query bindings for skill {skill_id}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read bindings for skill {skill_id}: {error}"))?;
+
+    let total_count = scope_counts.iter().map(|entry| entry.count).sum();
+    Ok(SkillBindingSummary {
+        total_count,
+        scope_counts,
+    })
 }
 
 fn load_skill_markdown_body(summary: &SkillSummary) -> Result<Option<String>, String> {
@@ -1410,6 +1456,58 @@ mod tests {
             .find(|skill| skill.id == valid.id)
             .expect("previously valid skill should still exist");
         assert_eq!(missing.status, SKILL_STATUS_MISSING);
+    }
+
+    #[test]
+    fn reports_binding_summary_counts_in_skill_detail() {
+        let root = unique_temp_dir("skills-binding-summary");
+        let mut connection = test_connection();
+        let created = create_local_skill(
+            &mut connection,
+            &root,
+            LocalSkillUpsertInput {
+                name: "Bound Skill".into(),
+                slug: None,
+                markdown_body: "Bound description.".into(),
+            },
+        )
+        .expect("local skill should create");
+
+        let now = now_iso();
+        connection
+            .execute(
+                r#"
+                INSERT INTO skill_scope_bindings (
+                    id,
+                    skill_id,
+                    scope_kind,
+                    project_id,
+                    role_id,
+                    agent_id,
+                    workflow_id,
+                    workflow_lane_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES
+                    (?1, ?2, 'global', NULL, NULL, NULL, NULL, NULL, ?4, ?4),
+                    (?3, ?2, 'workflow_lane', NULL, NULL, NULL, 'workflow-1', 'lane-1', ?4, ?4)
+                "#,
+                params!["binding-1", created.summary.id, "binding-2", now],
+            )
+            .expect("bindings should insert");
+
+        let detail = get_skill(&connection, &created.summary.id).expect("skill detail should load");
+        assert_eq!(detail.binding_summary.total_count, 2);
+        assert_eq!(
+            detail
+                .binding_summary
+                .scope_counts
+                .iter()
+                .map(|entry| (entry.scope_kind.as_str(), entry.count))
+                .collect::<Vec<_>>(),
+            vec![("global", 1), ("workflow_lane", 1)]
+        );
     }
 
     #[test]

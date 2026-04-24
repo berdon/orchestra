@@ -63,6 +63,7 @@ import { HarnessPanel } from "./settings/HarnessPanel";
 import { PromptingPanel } from "./settings/PromptingPanel";
 import { RemotePanel } from "./settings/RemotePanel";
 import { SourceControlPanel } from "./settings/SourceControlPanel";
+import { SkillsPanel } from "./settings/SkillsPanel";
 import { WorkflowsPanel } from "./settings/WorkflowsPanel";
 import type {
   AgentOperationsSnapshot,
@@ -176,6 +177,7 @@ const SETTINGS_TABS = [
   { id: "agents", label: "Agents" },
   { id: "roles", label: "Roles" },
   { id: "workflows", label: "Workflows" },
+  { id: "skills", label: "Skills" },
   { id: "channels", label: "Channels" },
   { id: "remote", label: "Remote" },
   { id: "source_control", label: "Source Control" },
@@ -788,6 +790,7 @@ export function App() {
   const canManageRuntimeLogs = supportsRuntimeLogs(orchestraClient, orchestraBootstrap);
   const canManageBridgeDiagnostics = supportsBridgeDiagnostics(orchestraClient, orchestraBootstrap);
   const canManageHarnessSettings = supportsHarnessSettings(orchestraClient, orchestraBootstrap);
+  const canManageSkillsSettings = orchestraBootstrap.hostKind === "tauri";
   const canManageRemoteAccess = supportsRemoteAccess(orchestraClient, orchestraBootstrap);
   const canManageSystemNotifications = supportsSystemNotifications(orchestraClient);
 
@@ -1065,12 +1068,15 @@ export function App() {
       if (tab.id === "harness") {
         return canManageHarnessSettings;
       }
+      if (tab.id === "skills") {
+        return canManageSkillsSettings;
+      }
       if (tab.id === "remote") {
         return canManageRemoteAccess;
       }
       return true;
     }),
-    [canManageHarnessSettings, canManageRemoteAccess],
+    [canManageHarnessSettings, canManageRemoteAccess, canManageSkillsSettings],
   );
   const activeSettingsTab = visibleSettingsTabs.some((tab) => tab.id === settingsTab)
     ? settingsTab
@@ -3067,6 +3073,7 @@ export function App() {
           activeProjectId,
           supportsLogsWindow: canOpenLogsWindow,
           supportsHarnessSettings: canManageHarnessSettings,
+          supportsSkillsSettings: canManageSkillsSettings,
           supportsAgentTerminal: canUseAgentTerminal,
           supportsRemoteAccess: canManageRemoteAccess,
         }),
@@ -3919,6 +3926,8 @@ export function App() {
             <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} />
           ) : activeSettingsTab === "workflows" ? (
             <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
+          ) : activeSettingsTab === "skills" ? (
+            <SkillsPanel />
           ) : activeSettingsTab === "channels" ? (
             <ChannelsPanel />
           ) : activeSettingsTab === "remote" ? (

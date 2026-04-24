@@ -4509,6 +4509,181 @@ strong {
   overflow-wrap: anywhere;
 }
 
+.skills-nav-panel,
+.skills-detail-panel {
+  min-height: 0;
+}
+
+.skills-nav-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.skills-filter-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.skills-list {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.skills-list-empty {
+  padding: 14px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--bg-subtle));
+}
+
+.skills-list-item {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--bg-subtle));
+  color: inherit;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.skills-list-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 26%, var(--bg-elevated));
+}
+
+.skills-list-item--active {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 32%, var(--bg-elevated));
+}
+
+.skills-list-item__header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.skills-list-item__badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.skills-list-item__meta,
+.skills-list-item__description {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.skills-list-item__description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skills-form-section,
+.skills-warning-stack,
+.skills-path-list {
+  display: grid;
+  gap: 14px;
+}
+
+.skills-form-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.skills-form-grid__full {
+  grid-column: 1 / -1;
+}
+
+.skills-markdown-input {
+  min-height: 320px;
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.skills-derived-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.skills-derived-preview p,
+.skills-warning p,
+.skills-markdown-preview-shell p {
+  margin: 0;
+}
+
+.skills-binding-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skills-warning {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+.skills-warning strong {
+  font-size: 0.95rem;
+}
+
+.skills-warning--neutral {
+  background: color-mix(in srgb, var(--bg-elevated) 90%, var(--bg-subtle));
+}
+
+.skills-warning--warning {
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--border));
+  background: color-mix(in srgb, var(--warning-soft) 56%, transparent);
+}
+
+.skills-warning--error {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 52%, transparent);
+}
+
+.skills-path-list {
+  margin: 0;
+}
+
+.skills-path-list div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 90%, var(--bg-subtle));
+}
+
+.skills-path-list dt {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.skills-path-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.skills-markdown-preview-shell {
+  overflow: auto;
+}
+
+.skills-markdown-preview-shell .transcript-render {
+  margin: 0;
+}
+
 .empty-state {
   display: grid;
   gap: 10px;
@@ -4532,9 +4707,22 @@ strong {
 }
 
 @media (max-width: 1100px) {
+  .skills-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .skills-list-item__header {
+    flex-direction: column;
+  }
+
+  .skills-list-item__badges {
+    justify-content: flex-start;
+  }
+
   .task-shell,
   .role-shell,
   .workflow-shell,
+  .skills-shell,
   .workforce-shell,
   .panel--split,
   .panel--session-hero,

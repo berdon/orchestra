@@ -113,6 +113,20 @@ test("command palette can open Harness settings", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
 });
 
+test("browser mode hides the desktop-only Skills settings surface", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("tab", { name: "Skills" })).toHaveCount(0);
+
+  await triggerShortcut(page, "o");
+  await page.locator('[data-role="command-palette-input"]').fill("skills");
+  await expect(page.locator('[data-role="command-palette-item"]').filter({ hasText: "Open Settings → Skills" })).toHaveCount(0);
+});
+
 test("command palette can jump directly to a workflow definition", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

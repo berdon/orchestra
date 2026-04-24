@@ -43,6 +43,7 @@ interface BuildCommandPaletteItemsOptions {
   activeProjectId?: string | null;
   supportsLogsWindow?: boolean;
   supportsHarnessSettings?: boolean;
+  supportsSkillsSettings?: boolean;
   supportsAgentTerminal?: boolean;
   supportsRemoteAccess?: boolean;
 }
@@ -64,6 +65,7 @@ export function buildCommandPaletteItems({
   activeProjectId,
   supportsLogsWindow = false,
   supportsHarnessSettings = false,
+  supportsSkillsSettings = false,
   supportsAgentTerminal = false,
   supportsRemoteAccess = false,
 }: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
@@ -132,6 +134,14 @@ export function buildCommandPaletteItems({
       keywords: ["settings", "workflows", "lanes"],
       action: { type: "navigate-settings", tab: "workflows" },
     }),
+    ...(supportsSkillsSettings ? [commandItem({
+      id: "settings-skills",
+      title: "Open Settings → Skills",
+      subtitle: "Managed local and external skills catalog",
+      group: "Pages",
+      keywords: ["settings", "skills", "catalog", "managed skills", "skill editor"],
+      action: { type: "navigate-settings", tab: "skills" },
+    })] : []),
     commandItem({
       id: "settings-source-control",
       title: "Open Settings → Source Control",

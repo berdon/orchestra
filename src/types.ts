@@ -1,5 +1,5 @@
 export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
-export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "channels" | "remote" | "source_control" | "prompting" | "harness" | "general";
+export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "skills" | "channels" | "remote" | "source_control" | "prompting" | "harness" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -975,6 +975,7 @@ export interface RoleValidationResult {
 
 export type SkillSourceKind = "local" | "external";
 export type SkillStatus = "active" | "shadowed" | "missing" | "invalid" | "unloadable";
+export type SkillBindingScopeKind = "global" | "project" | "role" | "agent" | "workflow" | "workflow_lane";
 
 export interface SkillSummary {
   id: string;
@@ -994,8 +995,19 @@ export interface SkillSummary {
   updatedAt: string;
 }
 
+export interface SkillBindingScopeCount {
+  scopeKind: SkillBindingScopeKind;
+  count: number;
+}
+
+export interface SkillBindingSummary {
+  totalCount: number;
+  scopeCounts: SkillBindingScopeCount[];
+}
+
 export interface SkillDetail extends SkillSummary {
   markdownBody?: string | null;
+  bindingSummary: SkillBindingSummary;
 }
 
 export interface LocalSkillUpsertInput {
