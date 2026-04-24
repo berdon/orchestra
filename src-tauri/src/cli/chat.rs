@@ -20,9 +20,14 @@ impl ChatArgs {
     }
 }
 
-pub fn run(args: ChatArgs, backend: &CliBackend) -> Result<i32, String> {
+pub fn run(
+    args: ChatArgs,
+    backend: &CliBackend,
+    requested_project: Option<&str>,
+) -> Result<i32, String> {
     let connection = database::open_connection()?;
-    let target = super::resolve_agent_target(&connection, args.agent.as_deref())?;
+    let target =
+        super::resolve_agent_target(&connection, requested_project, args.agent.as_deref())?;
 
     if super::interactive_attach_blocked(&target.runtime_state) {
         return Err(format!(
@@ -50,7 +55,7 @@ pub fn run(args: ChatArgs, backend: &CliBackend) -> Result<i32, String> {
         std::process::id(),
     )?;
 
-    backend.state.log(
+    backend.state().log(
         "info",
         "orc.chat.launch",
         &format!(

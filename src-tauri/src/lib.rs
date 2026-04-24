@@ -4,6 +4,10 @@ mod models;
 mod services;
 mod state;
 
+pub(crate) fn tauri_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 use commands::{
     agent_runtime::{
         delete_agent_queue_entry, enqueue_agent_work, ensure_agent_session, get_agent_operations,
@@ -367,7 +371,7 @@ pub fn run() {
             duplicate_workflow,
             archive_workflow
         ])
-        .build(tauri::generate_context!())
+        .build(tauri_context())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {

@@ -28,9 +28,10 @@ impl MsgArgs {
     }
 }
 
-pub fn run(args: MsgArgs) -> Result<i32, String> {
+pub fn run(args: MsgArgs, requested_project: Option<&str>) -> Result<i32, String> {
     let connection = database::open_connection()?;
-    let target = super::resolve_agent_target(&connection, args.agent.as_deref())?;
+    let target =
+        super::resolve_agent_target(&connection, requested_project, args.agent.as_deref())?;
     let delivery_mode = messages::resolve_agent_mail_delivery_mode(
         &connection,
         &target.project_id,

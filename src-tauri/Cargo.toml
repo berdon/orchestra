@@ -36,6 +36,7 @@ hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
+ctor = "0.2"
 tower = { version = "0.5", features = ["util"] }
 
 [profile.release]

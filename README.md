@@ -160,6 +160,32 @@ npm run test:web-driver:e2e
 
 The repository includes a `src-tauri/` scaffold and matching session command surface, but building/running the desktop app requires a Rust toolchain and Tauri system prerequisites to be installed locally.
 
+### `orc` CLI
+
+The Rust backend also ships an `orc` CLI under `src-tauri/src/bin/orc.rs`.
+
+Current command surface:
+
+```bash
+orc chat [--agent <agent>]
+orc msg [--agent <agent>] <message...>
+orc [--project <project>] task list [--json]
+orc [--project <project>] task show <task> [--json]
+orc [--project <project>] task create --title <title> [...flags] [--json]
+orc [--project <project>] task update <task> [...flags] [--json]
+orc [--project <project>] task comment <task> <message...> [--reply-to <comment-id>] [--interrupt] [--json]
+orc [--project <project>] task comments <task> [--json]
+orc [--project <project>] task approve <task> [--json]
+orc [--project <project>] task needs-work <task> [--notes <text>] [--json]
+orc [--project <project>] task pause <task> [--notes <text>] [--json]
+orc [--project <project>] task resume <task> [--notes <text>] [--json]
+orc [--project <project>] task stop <task> [--notes <text>] [--json]
+orc [--project <project>] task dispatch <task> [--json]
+orc [--project <project>] task move <task> --lane <lane-id> [--notes <text>] [--json]
+```
+
+Task selectors accept canonical ids, task numbers like `ORC-67`, and numeric shorthand like `67` when a selected/default project makes the reference unambiguous. Human-readable text is the default output mode; pass `--json` for structured scripting output.
+
 #### Prerequisites
 
 - Rust toolchain (`cargo install tauri-cli`)

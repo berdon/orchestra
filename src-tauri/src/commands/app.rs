@@ -8,7 +8,9 @@ use std::{
 
 use chrono::Utc;
 use serde_json::json;
-use tauri::{async_runtime::spawn_blocking, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    async_runtime::spawn_blocking, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder,
+};
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::{

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use serde_json::json;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     models::{
@@ -959,18 +959,10 @@ pub fn remove_task_attachment(
     Ok(attachment)
 }
 
-#[tauri::command]
-pub async fn dispatch_task_lane(
+pub(crate) async fn dispatch_task_lane_via_app(
     app: AppHandle,
-    state: State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDetail, String> {
-    state.sync_pi_runtime_health().map_err(|error| {
-        format!("Unable to dispatch task lane because PI is unavailable: {error}")
-    })?;
-    pi_setup::require_pi_setup_ready().map_err(|error| {
-        format!("Unable to dispatch task lane because Pi setup is incomplete: {error}")
-    })?;
     let task_id_for_context = task_id.clone();
     let context = tauri::async_runtime::spawn_blocking(move || {
         session_context_for_task_id(&task_id_for_context)
@@ -984,6 +976,7 @@ pub async fn dispatch_task_lane(
         &context.session_dir,
         &task_id,
     )?;
+    let state = app.state::<AppState>();
     task_runtime::start_assignment_run(
         app.clone(),
         &state,
@@ -1012,6 +1005,21 @@ pub async fn dispatch_task_lane(
     );
     emit_task_change(&app, "task.dispatch", [task.id.clone()]);
     Ok(task)
+}
+
+#[tauri::command]
+pub async fn dispatch_task_lane(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
+    state.sync_pi_runtime_health().map_err(|error| {
+        format!("Unable to dispatch task lane because PI is unavailable: {error}")
+    })?;
+    pi_setup::require_pi_setup_ready().map_err(|error| {
+        format!("Unable to dispatch task lane because Pi setup is incomplete: {error}")
+    })?;
+    dispatch_task_lane_via_app(app, task_id).await
 }
 
 #[tauri::command]

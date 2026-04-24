@@ -1,5 +1,6 @@
 mod chat;
 mod msg;
+mod task;
 
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
@@ -23,6 +24,10 @@ const CLI_UNSUPPORTED_BRIDGE_COMMANDS: &[&str] = &[
 #[derive(Debug, Parser)]
 #[command(name = "orc", about = "Orchestra command-line interface")]
 pub struct Cli {
+    /// Project id or slug to scope CLI operations.
+    #[arg(long = "project", global = true)]
+    project: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -33,6 +38,8 @@ enum Commands {
     Chat(chat::ChatArgs),
     /// Send a durable Orchestra mailbox message to an agent.
     Msg(msg::MsgArgs),
+    /// Task and workflow operations.
+    Task(task::TaskArgs),
 }
 
 #[derive(Debug, Clone)]
@@ -51,18 +58,51 @@ pub fn run() -> Result<i32, String> {
     let backend = services::backend_bootstrap::initialize_cli_backend()?;
 
     match cli.command {
-        Commands::Chat(args) => chat::run(args, &backend),
-        Commands::Msg(args) => msg::run(args),
+        Commands::Chat(args) => chat::run(args, &backend, cli.project.as_deref()),
+        Commands::Msg(args) => msg::run(args, cli.project.as_deref()),
+        Commands::Task(args) => task::run(args, &backend, cli.project.as_deref()),
     }
+}
+
+pub(super) fn resolve_optional_project_id(
+    connection: &Connection,
+    requested_project: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(selector) = requested_project
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return projects::resolve_requested_or_default_project_id(connection, None);
+    };
+
+    if projects::get_project(connection, selector).is_ok() {
+        return Ok(Some(selector.to_string()));
+    }
+
+    if let Some(project) = projects::get_project_by_slug(connection, selector)? {
+        return Ok(Some(project.id));
+    }
+
+    Err(format!("Project {selector} was not found"))
+}
+
+pub(super) fn require_project_id(
+    connection: &Connection,
+    requested_project: Option<&str>,
+    missing_message: &str,
+) -> Result<String, String> {
+    resolve_optional_project_id(connection, requested_project)?
+        .ok_or_else(|| missing_message.to_string())
 }
 
 pub(super) fn resolve_agent_target(
     connection: &Connection,
+    requested_project: Option<&str>,
     requested_agent: Option<&str>,
 ) -> Result<ResolvedAgentTarget, String> {
-    let project_id = projects::require_requested_or_default_project_id(
+    let project_id = require_project_id(
         connection,
-        None,
+        requested_project,
         "Create a project first before using orc chat.",
     )?;
     let context = pi_sessions::session_context_for_project_id(&project_id)?;
@@ -211,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn clap_command_surface_includes_chat_and_msg() {
+    fn clap_command_surface_includes_chat_msg_and_task() {
         let command = Cli::command();
         let names = command
             .get_subcommands()
@@ -219,5 +259,57 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(names.contains(&"chat".to_string()));
         assert!(names.contains(&"msg".to_string()));
+        assert!(names.contains(&"task".to_string()));
+    }
+
+    #[test]
+    fn global_project_flag_parses_before_task_command() {
+        let cli = Cli::try_parse_from(["orc", "--project", "orchestra", "task", "list"])
+            .expect("task list should parse");
+        assert_eq!(cli.project.as_deref(), Some("orchestra"));
+        match cli.command {
+            Commands::Task(_) => {}
+            _ => panic!("expected task command"),
+        }
+    }
+
+    #[test]
+    fn task_show_parser_accepts_human_task_number() {
+        let cli =
+            Cli::try_parse_from(["orc", "task", "show", "ORC-67"]).expect("task show should parse");
+        match cli.command {
+            Commands::Task(task::TaskArgs {
+                command: task::TaskCommand::Show(args),
+            }) => {
+                assert_eq!(args.task, "ORC-67");
+                assert!(!args.json);
+            }
+            _ => panic!("expected task show command"),
+        }
+    }
+
+    #[test]
+    fn task_comment_parser_collects_message_and_interrupt_flag() {
+        let cli = Cli::try_parse_from([
+            "orc",
+            "task",
+            "comment",
+            "67",
+            "please",
+            "re-check",
+            "this",
+            "--interrupt",
+        ])
+        .expect("task comment should parse");
+        match cli.command {
+            Commands::Task(task::TaskArgs {
+                command: task::TaskCommand::Comment(args),
+            }) => {
+                assert_eq!(args.task, "67");
+                assert_eq!(args.message, vec!["please", "re-check", "this"]);
+                assert!(args.interrupt);
+            }
+            _ => panic!("expected task comment command"),
+        }
     }
 }

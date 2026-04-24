@@ -27,8 +27,7 @@ use crate::{
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 static BUNDLED_RUNTIME_CACHE: OnceLock<
     Mutex<HashMap<String, Result<Option<ResolvedPiRuntime>, PiRuntimeHealth>>>,
-> =
-    OnceLock::new();
+> = OnceLock::new();
 
 fn bundled_runtime_cache(
 ) -> &'static Mutex<HashMap<String, Result<Option<ResolvedPiRuntime>, PiRuntimeHealth>>> {
