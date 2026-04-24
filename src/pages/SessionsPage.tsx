@@ -69,6 +69,7 @@ interface SessionsPageProps {
   selectedModelState?: SessionModelState;
   selectedSessionStats?: SessionStats;
   selectedSessionReadOnly?: boolean;
+  selectedSessionMessageable?: boolean;
   loadingSessions: boolean;
   refreshingSessions: boolean;
   loadingStatsSessionId: string | null;
@@ -122,6 +123,7 @@ export function SessionsPage({
   selectedModelState,
   selectedSessionStats,
   selectedSessionReadOnly = false,
+  selectedSessionMessageable = true,
   loadingSessions,
   refreshingSessions,
   loadingStatsSessionId,
@@ -419,6 +421,7 @@ export function SessionsPage({
             selectedModelState={selectedModelState}
             selectedSessionStats={selectedSessionStats}
             sessionReadOnly={selectedSessionReadOnly}
+            sessionMessageable={selectedSessionMessageable}
             loadingStatsSessionId={loadingStatsSessionId}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}

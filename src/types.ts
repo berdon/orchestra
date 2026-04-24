@@ -5,6 +5,8 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type SessionStatus = "starting" | "active" | "idle" | "paused" | "failed" | "streaming" | "closed";
+export type SessionListVisibility = "active" | "closed" | "hidden";
+export type SessionMessageability = "messageable" | "closed";
 export type SessionEventKind = "system" | "user" | "assistant";
 
 export interface LogEntry {
@@ -437,6 +439,8 @@ export interface SessionRecord {
   activeTaskTitle?: string | null;
   workerType?: string | null;
   workerName?: string | null;
+  listVisibility?: SessionListVisibility | null;
+  messageability?: SessionMessageability | null;
   controlCapabilities?: SessionControlCapabilities | null;
   controlOperation?: SessionControlOperationState | null;
 }

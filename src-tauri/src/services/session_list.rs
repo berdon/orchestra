@@ -32,6 +32,7 @@ pub struct SessionListDecoration {
     pub active_task_title: Option<String>,
     pub worker_type: Option<String>,
     pub worker_name: Option<String>,
+    pub persistent_agent_session: bool,
     pub visibility: Option<SessionListVisibility>,
 }
 
@@ -232,6 +233,7 @@ pub fn load_session_list_decoration(
             .clone()
             .or(persistent_agent_name.clone())
             .or(role_binding_name.clone()),
+        persistent_agent_session: persistent_agent_name.is_some(),
         visibility: None,
     };
 

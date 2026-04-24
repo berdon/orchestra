@@ -32,6 +32,7 @@ interface AgentChatPageProps {
   selectedModelState?: SessionModelState;
   selectedSessionStats?: SessionStats;
   sessionReadOnly?: boolean;
+  sessionMessageable?: boolean;
   loadingStatsSessionId: string | null;
   loadingAgents: boolean;
   loadingSession: boolean;
@@ -78,6 +79,7 @@ export function AgentChatPage({
   selectedModelState,
   selectedSessionStats,
   sessionReadOnly = false,
+  sessionMessageable = true,
   loadingStatsSessionId,
   loadingAgents,
   loadingSession,
@@ -196,6 +198,7 @@ export function AgentChatPage({
           selectedModelState={selectedModelState}
           selectedSessionStats={selectedSessionStats}
           sessionReadOnly={sessionReadOnly}
+          sessionMessageable={sessionMessageable}
           loadingStatsSessionId={loadingStatsSessionId}
           loadingModelSessionId={loadingModelSessionId}
           changingModelSessionId={changingModelSessionId}

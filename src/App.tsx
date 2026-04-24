@@ -81,6 +81,8 @@ import type {
   RoleSummary,
   SessionActivityState,
   SessionEvent,
+  SessionListVisibility,
+  SessionMessageability,
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
@@ -635,6 +637,34 @@ function deriveSessionActivityState(session: SessionRecord): SessionActivityStat
   return "idle";
 }
 
+function deriveSessionListVisibility(session: SessionRecord): SessionListVisibility {
+  return session.status === "closed" ? "closed" : "active";
+}
+
+function deriveSessionMessageability(session: SessionRecord): SessionMessageability {
+  return session.status === "closed" ? "closed" : "messageable";
+}
+
+function getSessionListVisibility(session: SessionRecord): SessionListVisibility {
+  return session.listVisibility ?? deriveSessionListVisibility(session);
+}
+
+function getSessionMessageability(session: SessionRecord): SessionMessageability {
+  return session.messageability ?? deriveSessionMessageability(session);
+}
+
+function isSessionVisibleInList(session: SessionRecord) {
+  return getSessionListVisibility(session) !== "hidden";
+}
+
+function isSessionClosedInList(session: SessionRecord) {
+  return getSessionListVisibility(session) === "closed";
+}
+
+function isSessionMessageable(session: SessionRecord) {
+  return getSessionMessageability(session) === "messageable";
+}
+
 function normalizeSessionRecord(session: SessionRecord): SessionRecord {
   return {
     ...session,
@@ -651,6 +681,8 @@ function normalizeSessionRecord(session: SessionRecord): SessionRecord {
     activeTaskTitle: session.activeTaskTitle ?? null,
     workerType: session.workerType ?? null,
     workerName: session.workerName ?? null,
+    listVisibility: session.listVisibility ?? deriveSessionListVisibility(session),
+    messageability: session.messageability ?? deriveSessionMessageability(session),
     controlCapabilities: session.controlCapabilities ?? null,
     controlOperation: session.controlOperation ?? null,
   };
@@ -695,6 +727,8 @@ function areSessionMetadataEqual(left: SessionRecord, right: SessionRecord) {
     && left.activeTaskTitle === right.activeTaskTitle
     && left.workerType === right.workerType
     && left.workerName === right.workerName
+    && left.listVisibility === right.listVisibility
+    && left.messageability === right.messageability
     && left.controlCapabilities?.reload.status === right.controlCapabilities?.reload.status
     && left.controlCapabilities?.reload.reason === right.controlCapabilities?.reload.reason
     && left.controlCapabilities?.compact.status === right.controlCapabilities?.compact.status
@@ -1048,12 +1082,12 @@ export function App() {
   );
 
   const filteredSessions = useMemo(
-    () => sessions.filter((session) => (sessionFilter === "closed" ? session.status === "closed" : session.status !== "closed")),
+    () => sessions.filter((session) => isSessionVisibleInList(session) && (sessionFilter === "closed" ? isSessionClosedInList(session) : !isSessionClosedInList(session))),
     [sessionFilter, sessions],
   );
 
   const activeSessionCount = useMemo(
-    () => sessions.filter((session) => session.status !== "closed").length,
+    () => sessions.filter((session) => isSessionVisibleInList(session) && !isSessionClosedInList(session)).length,
     [sessions],
   );
 
@@ -1063,7 +1097,7 @@ export function App() {
 
   const selectedSession = useMemo(() => {
     const matchedSelectedSession = selectedSessionId
-      ? filteredSessions.find((session) => session.id === selectedSessionId) ?? null
+      ? sessions.find((session) => session.id === selectedSessionId) ?? null
       : null;
     if (matchedSelectedSession) {
       return matchedSelectedSession;
@@ -1072,7 +1106,7 @@ export function App() {
       return null;
     }
     return filteredSessions[0] ?? null;
-  }, [filteredSessions, pendingSelectedSessionId, selectedSessionId]);
+  }, [filteredSessions, pendingSelectedSessionId, selectedSessionId, sessions]);
 
   const selectedChatAgentSnapshot = useMemo(
     () => chatAgents.find((agent) => agent.agent.id === selectedChatAgentId) ?? null,
@@ -1188,7 +1222,7 @@ export function App() {
       return;
     }
 
-    setSessionFilter(targetSession.status === "closed" ? "closed" : "active");
+    setSessionFilter(getSessionListVisibility(targetSession) === "closed" ? "closed" : "active");
     setSelectedSessionId((current) => (current === targetSession.id ? current : targetSession.id));
     setPendingSessionOpenRequest((current) => (
       current && current.sessionId === targetSession.id && current.projectId === activeProjectId
@@ -1941,7 +1975,7 @@ export function App() {
     setSessionActionError(null);
     setIsSubmitting(true);
     try {
-      const closedSessions = sessions.filter((session) => session.status === "closed");
+      const closedSessions = sessions.filter((session) => isSessionClosedInList(session));
       for (const session of closedSessions) {
         await orchestraClient.sessions.remove(session.id);
       }
@@ -2781,7 +2815,7 @@ export function App() {
       setActiveProjectIdState(targetProjectId);
     }
     setActivePage("sessions");
-    setSessionFilter(session?.status === "closed" ? "closed" : "active");
+    setSessionFilter(session && getSessionListVisibility(session) === "closed" ? "closed" : "active");
     setSelectedSessionId(sessionId);
     setPendingSessionOpenRequest((current) => ({ sessionId, token: (current?.token ?? 0) + 1, projectId: targetProjectId }));
   }
@@ -3941,6 +3975,7 @@ export function App() {
             selectedModelState={chatModelState}
             selectedSessionStats={viewedSession?.id === chatSession?.id ? viewedSessionStats : undefined}
             sessionReadOnly={Boolean(chatSession?.terminalAttached)}
+            sessionMessageable={chatSession ? isSessionMessageable(chatSession) : true}
             loadingStatsSessionId={loadingStatsSessionId}
             loadingAgents={loadingChatAgents}
             loadingSession={Boolean(selectedChatAgent && loadingChatSessionAgentId === selectedChatAgent.id && !chatSession)}
@@ -3973,7 +4008,7 @@ export function App() {
               }
             }}
             onSendMessage={() => {
-              if (chatSession?.terminalAttached) {
+              if (chatSession?.terminalAttached || (chatSession && !isSessionMessageable(chatSession))) {
                 return;
               }
               if (chatSession) {
@@ -4008,6 +4043,7 @@ export function App() {
             selectedModelState={selectedModelState}
             selectedSessionStats={viewedSession?.id === selectedSession?.id ? viewedSessionStats : undefined}
             selectedSessionReadOnly={Boolean(selectedSession?.terminalAttached)}
+            selectedSessionMessageable={selectedSession ? isSessionMessageable(selectedSession) : true}
             loadingSessions={loadingSessions}
             refreshingSessions={refreshingSessions}
             loadingStatsSessionId={loadingStatsSessionId}

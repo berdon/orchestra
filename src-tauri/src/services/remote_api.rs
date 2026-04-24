@@ -2898,6 +2898,7 @@ fn load_remote_session_record(state: &AppState, session_id: &str) -> Result<Sess
         &terminal_attached,
         record.clone(),
         false,
+        session_commands::SessionDecorationSurface::Detail,
     ) {
         Ok(decorated) => Ok(decorated),
         Err(error) if error.contains("is hidden from the session list") => {

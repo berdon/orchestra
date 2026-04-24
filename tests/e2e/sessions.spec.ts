@@ -2263,6 +2263,10 @@ test("quick supervisor chat recovers a stored hidden session via getSessionRecor
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Recovered hidden supervisor transcript.");
   await expect(page.locator('[data-role="supervisor-composer-input"]')).toHaveValue("Recovered hidden draft");
+  await expect(page.locator('[data-role="supervisor-send-message"]')).toBeEnabled();
+
+  await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Recovered hidden draft", { timeout: 20_000 });
 
   await expect.poll(async () => {
     const logs = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]"));
@@ -2271,7 +2275,7 @@ test("quick supervisor chat recovers a stored hidden session via getSessionRecor
 
   const storedQuickChat = await readStoredSupervisorQuickChat(page);
   expect(storedQuickChat?.sessionId).toBe("session-hidden-supervisor");
-  expect(storedQuickChat?.draft).toBe("Recovered hidden draft");
+  expect(storedQuickChat?.draft ?? "").toBe("");
 });
 
 test("quick supervisor chat falls back to a fresh supervisor session when the stored session is gone", async ({ page }) => {
