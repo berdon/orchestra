@@ -900,6 +900,7 @@ export function App() {
   const pendingSessionRecordRequestKeyRef = useRef<string | null>(null);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
+  const testPinnedSessionIdsRef = useRef<Set<string>>(new Set());
   const commandPaletteRequestIdRef = useRef(0);
 
   useEffect(() => {
@@ -1247,6 +1248,19 @@ export function App() {
   }, [activeProjectId, pendingSessionOpenRequest, sessions]);
 
   useEffect(() => {
+    if (activePage !== "sessions" || pendingSelectedSessionId) {
+      return;
+    }
+
+    if (selectedSessionId && sessions.some((session) => session.id === selectedSessionId)) {
+      return;
+    }
+
+    const fallbackSessionId = filteredSessions[0]?.id ?? null;
+    setSelectedSessionId((current) => (current === fallbackSessionId ? current : fallbackSessionId));
+  }, [activePage, filteredSessions, pendingSelectedSessionId, selectedSessionId, sessions]);
+
+  useEffect(() => {
     if (isDetachedWindow || !viewedSession?.id || viewedSessionPendingRun) {
       return;
     }
@@ -1334,13 +1348,13 @@ export function App() {
       return areSessionListsEqual(current, nextSessions) ? current : nextSessions;
     });
 
-    if (options?.select !== false) {
+    if (options?.select) {
       setSelectedSessionId((current) => (current === updatedSession.id ? current : updatedSession.id));
     }
   }, []);
 
   const applySessionUpdate = useCallback((updatedSession: SessionRecord) => {
-    mergeSessionRecord(updatedSession);
+    mergeSessionRecord(updatedSession, { select: false });
   }, [mergeSessionRecord]);
 
   useEffect(() => {
@@ -1869,6 +1883,7 @@ export function App() {
           preserveMissingSessionIds: [
             viewedSessionIdRef.current,
             supervisorSessionId,
+            ...Array.from(testPinnedSessionIdsRef.current),
           ].filter((value): value is string => Boolean(value)),
           pendingSessionIds: Object.keys(pendingRuns),
         }),
@@ -1880,11 +1895,17 @@ export function App() {
         const requestedSessionId = pendingSessionOpenRequest?.projectId === activeProjectId
           ? pendingSessionOpenRequest.sessionId
           : null;
-        const nextSelectedSessionId = requestedSessionId
-          ?? (current && nextSessions.some((session) => session.id === current)
-            ? current
-            : nextSessions[0]?.id ?? null);
-        return current === nextSelectedSessionId ? current : nextSelectedSessionId;
+        if (requestedSessionId) {
+          return current === requestedSessionId ? current : requestedSessionId;
+        }
+        if (current && nextSessions.some((session) => session.id === current)) {
+          return current;
+        }
+        if (activePage !== "sessions") {
+          return current;
+        }
+        const fallbackSessionId = nextSessions[0]?.id ?? null;
+        return current === fallbackSessionId ? current : fallbackSessionId;
       });
       const hasCurrentChatSession = Boolean(chatSessionId && nextSessions.some((session) => session.id === chatSessionId));
       setChatSessionId((current) => (current && nextSessions.some((session) => session.id === current) ? current : null));
@@ -1898,7 +1919,7 @@ export function App() {
       setRefreshingSessions(false);
       backgroundSessionRefreshInFlightRef.current = false;
     }
-  }, [activeProjectId, chatSessionId, orchestraClient, pendingRuns, pendingSessionOpenRequest, selectedSessionId, supervisorSessionId]);
+  }, [activePage, activeProjectId, chatSessionId, orchestraClient, pendingRuns, pendingSessionOpenRequest, selectedSessionId, supervisorSessionId]);
 
   const loadChatAgents = useCallback(async (options?: { background?: boolean }) => {
     const requestId = ++chatAgentLoadRequestIdRef.current;
@@ -1955,13 +1976,13 @@ export function App() {
     }
   }
 
-  async function runSessionAction(action: () => Promise<SessionRecord>) {
+  async function runSessionAction(action: () => Promise<SessionRecord>, options?: { select?: boolean }) {
     setIsSubmitting(true);
     setSessionActionError(null);
 
     try {
       const updatedSession = await action();
-      applySessionUpdate(updatedSession);
+      mergeSessionRecord(updatedSession, { select: options?.select });
     } catch (error) {
       setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.action", error, "Session action failed."));
     } finally {
@@ -1970,7 +1991,7 @@ export function App() {
   }
 
   async function handleCreateSession() {
-    await runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null));
+    await runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null), { select: true });
   }
 
   async function handleDeleteSession(sessionId: string) {
@@ -2104,6 +2125,8 @@ export function App() {
       __orchestraTestInjectSessionStream?: (payload: SessionStreamEnvelope) => void;
       __orchestraTestApplySessionRecord?: (record: SessionRecord) => void;
       __orchestraTestSessionRefreshStats?: () => { listRefreshCount: number; recordLoadCounts: Record<string, number> };
+      __orchestraTestHydrateChatAgentSession?: (payload: { agentId: string; sessionId: string; select?: boolean }) => void;
+      __orchestraTestPinSessionIds?: (sessionIds: string[]) => void;
     };
     testWindow.__orchestraTestInjectSessionStream = handleSessionStreamEvent;
     testWindow.__orchestraTestApplySessionRecord = applySessionUpdate;
@@ -2111,10 +2134,45 @@ export function App() {
       listRefreshCount: sessionListRefreshCountRef.current,
       recordLoadCounts: { ...sessionRecordLoadCountsRef.current },
     });
+    testWindow.__orchestraTestHydrateChatAgentSession = ({ agentId, sessionId, select = true }) => {
+      let matchedAgent = false;
+      const timestamp = new Date().toISOString();
+      setChatAgents((current) => current.map((snapshot) => {
+        if (snapshot.agent.id !== agentId) {
+          return snapshot;
+        }
+        matchedAgent = true;
+        return {
+          ...snapshot,
+          runtimeState: {
+            ...snapshot.runtimeState,
+            mainSessionId: sessionId,
+            updatedAt: timestamp,
+          },
+        };
+      }));
+      if (!matchedAgent) {
+        throw new Error(`Missing chat agent ${agentId}`);
+      }
+      if (select) {
+        setSelectedChatAgentId(agentId);
+      }
+      setChatSessionId(sessionId);
+      chatSessionAgentIdRef.current = agentId;
+      lastKnownChatSessionIdRef.current = sessionId;
+      lastKnownChatSessionAgentIdRef.current = agentId;
+      chatSessionRecoveryMissRef.current = null;
+      setSessionActionError(null);
+    };
+    testWindow.__orchestraTestPinSessionIds = (sessionIds) => {
+      testPinnedSessionIdsRef.current = new Set(sessionIds.filter((value) => value.trim().length > 0));
+    };
     return () => {
       delete testWindow.__orchestraTestInjectSessionStream;
       delete testWindow.__orchestraTestApplySessionRecord;
       delete testWindow.__orchestraTestSessionRefreshStats;
+      delete testWindow.__orchestraTestHydrateChatAgentSession;
+      delete testWindow.__orchestraTestPinSessionIds;
     };
   }, [applySessionUpdate, handleSessionStreamEvent]);
 
@@ -2936,7 +2994,7 @@ export function App() {
     setSessionActionError(null);
     try {
       const session = await ensureAgentSession(agentId, activeProject?.id ?? getActiveProjectId() ?? null);
-      mergeSessionRecord(session, { select: !options?.openQuickChat });
+      mergeSessionRecord(session, { select: false });
       if (options?.openQuickChat) {
         setSupervisorSessionId(session.id);
         setSupervisorQuickChatOpen(true);
@@ -2957,7 +3015,7 @@ export function App() {
     setSessionActionError(null);
     try {
       const session = await shellExtension.agentTerminal.openSession(agentId, activeProject?.id ?? getActiveProjectId() ?? null);
-      mergeSessionRecord(session);
+      mergeSessionRecord(session, { select: false });
       setActivePage("sessions");
       setPendingSessionOpenRequest(null);
       setSelectedSessionId(session.id);
@@ -3319,7 +3377,9 @@ export function App() {
         : await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null);
       mergeSessionRecord(nextSession, { select: false });
       setPendingSessionOpenRequest(null);
-      setSelectedSessionId(nextSession.id);
+      if (!options?.chatAgentId) {
+        setSelectedSessionId(nextSession.id);
+      }
 
       if (options?.chatAgentId) {
         setChatSessionId(nextSession.id);

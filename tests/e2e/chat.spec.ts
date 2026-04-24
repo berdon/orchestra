@@ -376,12 +376,21 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toHaveCount(0);
 });
 
-test("chat page session actions can reload the current agent chat and rotate a new session in place", async ({ page }) => {
+test("chat page session actions can reload the current agent chat without overwriting the Sessions selection", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
 
   await page.goto("/");
+  await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
+  await expect(page.locator('.session-list-link--active[data-role="session-link"]')).toHaveCount(1);
+  await expect.poll(async () => page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id")).toBeTruthy();
+
+  const initialSessionsSessionId = await page.locator('.session-list-link--active[data-role="session-link"]').getAttribute("data-session-id");
+  const initialSessionsTitle = (await page.locator('[data-role="selected-session-title"]').textContent())?.trim() ?? "";
+  expect(initialSessionsSessionId).toBeTruthy();
+  expect(initialSessionsTitle).toBeTruthy();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", initialSessionsSessionId ?? "");
 
   await page.getByRole("button", { name: "Chat" }).click();
   await page.locator('[data-role="chat-agent-nav-data"]').click();
@@ -406,13 +415,63 @@ test("chat page session actions can reload the current agent chat and rotate a n
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Session reloaded.");
   await expect(page.locator('[data-role="session-transcript"]')).not.toContainText("/reload");
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", secondSessionId ?? "");
+  await expect.poll(async () => page.evaluate(() => window.location.search)).not.toContain("selectedSessionId=");
 
   await page.getByRole("button", { name: "Sessions" }).click();
   await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
   await expect(page.locator('[data-role="session-link"]').filter({ hasText: "Data main session" })).toHaveCount(2);
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", initialSessionsSessionId ?? "");
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText(initialSessionsTitle);
 
   const selectedSessionId = await page.locator('.session-list-link--active[data-role="session-link"]').getAttribute("data-session-id");
-  expect(selectedSessionId).toBe(secondSessionId);
+  expect(selectedSessionId).toBe(initialSessionsSessionId);
+  expect(selectedSessionId).not.toBe(secondSessionId);
+  await expect.poll(async () => page.evaluate(() => window.location.search)).toContain(`selectedSessionId=${initialSessionsSessionId}`);
+
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", secondSessionId ?? "");
+});
+
+test("sessions navigation does not inherit the Supervisor chat session", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
+  await expect(page.locator('.session-list-link--active[data-role="session-link"]')).toHaveCount(1);
+  await expect.poll(async () => page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id")).toBeTruthy();
+
+  const initialSessionsSessionId = await page.locator('.session-list-link--active[data-role="session-link"]').getAttribute("data-session-id");
+  const initialSessionsTitle = (await page.locator('[data-role="selected-session-title"]').textContent())?.trim() ?? "";
+  expect(initialSessionsSessionId).toBeTruthy();
+  expect(initialSessionsTitle).toBeTruthy();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", initialSessionsSessionId ?? "");
+
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-supervisor"]').click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+
+  const supervisorChatSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(supervisorChatSessionId).toBeTruthy();
+  await expect.poll(async () => page.evaluate(() => window.location.search)).not.toContain("selectedSessionId=");
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", initialSessionsSessionId ?? "");
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText(initialSessionsTitle);
+  await expect(page.locator('[data-role="selected-session-title"]')).not.toContainText("Supervisor chat");
+
+  const selectedSessionId = await page.locator('.session-list-link--active[data-role="session-link"]').getAttribute("data-session-id");
+  expect(selectedSessionId).toBe(initialSessionsSessionId);
+  expect(selectedSessionId).not.toBe(supervisorChatSessionId);
+  await expect.poll(async () => page.evaluate(() => window.location.search)).toContain(`selectedSessionId=${initialSessionsSessionId}`);
+
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-supervisor"]').click();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", supervisorChatSessionId ?? "");
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
 });
 
 test("chat page reuses a cached main session from the session list before reopening the agent runtime", async ({ page }) => {

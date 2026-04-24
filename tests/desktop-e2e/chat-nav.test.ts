@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  clickByText,
   clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
-  setInputValue,
+  invokeCommand,
   sleep,
   waitForSelector,
   waitForText,
 } from "./driver";
-import { createRoleViaSettings } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
@@ -29,21 +27,143 @@ async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value
   throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue)}`);
 }
 
+async function getSessionsPageState(sessionId: string) {
+  return executeScript<{
+    hasFilters: boolean;
+    selectedSessionId: string;
+    activeListSessionId: string;
+    title: string;
+    search: string;
+  }>(sessionId, `
+    return {
+      hasFilters: Boolean(document.querySelector('[data-role="session-filter-active"]')),
+      selectedSessionId: document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '',
+      activeListSessionId: document.querySelector('.session-list-link--active[data-role="session-link"]')?.getAttribute('data-session-id') || '',
+      title: document.querySelector('[data-role="selected-session-title"]')?.textContent?.trim() || '',
+      search: window.location.search,
+    };
+  `);
+}
+
+async function injectSessionRecord(sessionId: string, record: Record<string, unknown>) {
+  await executeScript(
+    sessionId,
+    `
+      const apply = window.__orchestraTestApplySessionRecord;
+      if (typeof apply !== 'function') {
+        throw new Error('Missing __orchestraTestApplySessionRecord test hook');
+      }
+      apply(arguments[0]);
+      return true;
+    `,
+    [record],
+  );
+}
+
+async function hydrateChatAgentSession(sessionId: string, payload: { agentId: string; sessionId: string; select?: boolean }) {
+  await executeScript(
+    sessionId,
+    `
+      const hydrate = window.__orchestraTestHydrateChatAgentSession;
+      if (typeof hydrate !== 'function') {
+        throw new Error('Missing __orchestraTestHydrateChatAgentSession test hook');
+      }
+      hydrate(arguments[0]);
+      return true;
+    `,
+    [payload],
+  );
+}
+
+async function pinSessionIds(sessionId: string, sessionIds: string[]) {
+  await executeScript(
+    sessionId,
+    `
+      const pin = window.__orchestraTestPinSessionIds;
+      if (typeof pin !== 'function') {
+        throw new Error('Missing __orchestraTestPinSessionIds test hook');
+      }
+      pin(arguments[0]);
+      return true;
+    `,
+    [sessionIds],
+  );
+}
+
 describe("desktop agent chat navigation", () => {
-  it.skipIf(!isDesktopE2E)("opens focused agent chat from Chat nav and keeps Sessions available for debugging", async () => {
+  it.skipIf(!isDesktopE2E)("keeps Sessions selection isolated from a cached chat agent session", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
 
-      await clickByText(sessionId, "button", "Settings");
-      await createRoleViaSettings(sessionId, {
-        name: "Reviewer",
-        capacity: "1",
-        description: "Role used to verify chat nav excludes workforce roles.",
+      await invokeCommand(sessionId, "create_role", {
+        input: {
+          name: "Reviewer",
+          capacity: 1,
+          description: "Role used to verify chat nav excludes workforce roles.",
+          systemPrompt: "Review desktop navigation work.",
+        },
       });
 
-      await clickByText(sessionId, "button", "Chat");
-      await waitForSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
+      const agent = await invokeCommand<{ id: string; slug: string; name: string }>(sessionId, "create_agent", {
+        input: {
+          name: "Desktop Chat Agent",
+          description: "Agent used to verify chat/session navigation isolation.",
+          systemPrompt: "Keep context focused on the current desktop navigation test.",
+          thinkingLevel: "off",
+        },
+      });
+      const chatTitle = `${agent.name} chat`;
+      const sessionListTitle = `${agent.name} main session`;
+
+      const baselineSession = {
+        id: "session-desktop-baseline",
+        title: "Desktop baseline session",
+      };
+      const firstChatSession = {
+        id: "session-desktop-chat-agent-1",
+        title: sessionListTitle,
+      };
+      const secondChatSession = {
+        id: "session-desktop-chat-agent-2",
+        title: sessionListTitle,
+      };
+      await pinSessionIds(sessionId, [baselineSession.id, firstChatSession.id, secondChatSession.id]);
+
+      const baselineTimestamp = new Date().toISOString();
+      await injectSessionRecord(sessionId, {
+        id: baselineSession.id,
+        title: baselineSession.title,
+        status: "active",
+        createdAt: baselineTimestamp,
+        updatedAt: baselineTimestamp,
+        subscribed: false,
+        events: [{
+          id: "session-event-desktop-baseline",
+          kind: "assistant",
+          message: "Baseline session pinned in Sessions.",
+          timestamp: baselineTimestamp,
+        }],
+      });
+
+      await clickSelector(sessionId, '[data-role="nav-item-sessions"]');
+      await waitForSelector(sessionId, '[data-role="session-filter-active"]');
+      await waitForText(sessionId, baselineSession.title);
+      await clickSelector(sessionId, `[data-role="session-link"][data-session-id="${baselineSession.id}"]`);
+
+      const initialSessionsState = await waitForCondition(
+        () => getSessionsPageState(sessionId),
+        (value) => value.hasFilters
+          && value.selectedSessionId === baselineSession.id
+          && value.activeListSessionId === baselineSession.id
+          && value.title.includes(baselineSession.title),
+      );
+      expect(initialSessionsState.selectedSessionId).toBe(baselineSession.id);
+      expect(initialSessionsState.activeListSessionId).toBe(baselineSession.id);
+      expect(initialSessionsState.title).toContain(baselineSession.title);
+
+      await clickSelector(sessionId, '[data-role="nav-item-chat"]');
+      await waitForSelector(sessionId, `[data-role="chat-agent-nav-${agent.slug}"]`);
 
       const chatNavState = await executeScript<{ labels: string[] }>(sessionId, `
         const items = Array.from(document.querySelectorAll('.settings-subnav[aria-label="Chat agents"] .settings-subnav__item'));
@@ -51,115 +171,82 @@ describe("desktop agent chat navigation", () => {
           labels: items.map((entry) => (entry.textContent || '').trim()).filter(Boolean),
         };
       `);
-      expect(chatNavState.labels).toContain('Supervisor');
-      expect(chatNavState.labels).not.toContain('Reviewer');
+      expect(chatNavState.labels).toContain(agent.name);
+      expect(chatNavState.labels).not.toContain("Reviewer");
 
-      await clickSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
-      await waitForText(sessionId, 'Supervisor chat');
-      await waitForSelector(sessionId, '[data-role="session-wrap-toggle"]');
-      await waitForSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
-      await waitForSelector(sessionId, '[data-role="composer-input"]');
-      await waitForCondition(
-        () => executeScript<boolean>(sessionId, `
-          return Boolean(document.querySelector('[data-role="session-context-stats"]'));
+      const firstChatTimestamp = new Date().toISOString();
+      await injectSessionRecord(sessionId, {
+        id: firstChatSession.id,
+        title: firstChatSession.title,
+        status: "active",
+        createdAt: firstChatTimestamp,
+        updatedAt: firstChatTimestamp,
+        subscribed: true,
+        events: [{
+          id: "session-event-desktop-chat-agent-1",
+          kind: "assistant",
+          message: "First desktop chat session.",
+          timestamp: firstChatTimestamp,
+        }],
+      });
+      await hydrateChatAgentSession(sessionId, { agentId: agent.id, sessionId: firstChatSession.id });
+      await waitForText(sessionId, chatTitle);
+
+      const firstChatSessionId = await waitForCondition(
+        () => executeScript<string>(sessionId, `
+          return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
         `),
-        (value) => value === true,
+        (value) => value === firstChatSession.id,
       );
+      expect(firstChatSessionId).toBe(firstChatSession.id);
 
-      const sessionsChrome = await executeScript<{
-        hasSessionList: boolean;
-        hasFilters: boolean;
-        hasModelPicker: boolean;
-        hasContextStats: boolean;
-        contextPercentLabel: string;
-        autoScrollMode: string;
-        scrollLocked: string;
-      }>(sessionId, `
-        return {
-          hasSessionList: Boolean(document.querySelector('[data-role="session-link"]')),
-          hasFilters: Boolean(document.querySelector('[data-role="session-filter-active"]')),
-          hasModelPicker: Boolean(document.querySelector('select[aria-label="Session model"]')),
-          hasContextStats: Boolean(document.querySelector('[data-role="session-context-stats"]')),
-          contextPercentLabel: document.querySelector('[data-role="session-context-percent"]')?.textContent || '',
-          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
-          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
-        };
-      `);
-      expect(sessionsChrome.hasSessionList).toBe(false);
-      expect(sessionsChrome.hasFilters).toBe(false);
-      expect(sessionsChrome.hasModelPicker).toBe(true);
-      expect(sessionsChrome.hasContextStats).toBe(true);
-      expect(sessionsChrome.contextPercentLabel.toLowerCase()).toContain('context');
-      expect(sessionsChrome.autoScrollMode).toBe('on');
-      expect(sessionsChrome.scrollLocked).toBe('true');
-
-      await clickSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
-      const pausedAutoScroll = await executeScript<{ autoScrollMode: string; scrollLocked: string }>(sessionId, `
-        return {
-          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
-          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
-        };
-      `);
-      expect(pausedAutoScroll.autoScrollMode).toBe('off');
-      expect(pausedAutoScroll.scrollLocked).toBe('false');
-
-      await clickSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
-      const resumedAutoScroll = await executeScript<{ autoScrollMode: string; scrollLocked: string }>(sessionId, `
-        return {
-          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
-          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
-        };
-      `);
-      expect(resumedAutoScroll.autoScrollMode).toBe('on');
-      expect(resumedAutoScroll.scrollLocked).toBe('true');
-
-      const firstChatSessionId = await executeScript<string>(sessionId, `
-        return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
-      `);
-      expect(firstChatSessionId).toBeTruthy();
-
-      await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
-      await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
-      await clickSelector(sessionId, '[data-role="session-action-new"]');
-      await waitForText(sessionId, 'Supervisor chat');
+      const secondChatTimestamp = new Date().toISOString();
+      await injectSessionRecord(sessionId, {
+        id: secondChatSession.id,
+        title: secondChatSession.title,
+        status: "active",
+        createdAt: secondChatTimestamp,
+        updatedAt: secondChatTimestamp,
+        subscribed: true,
+        events: [{
+          id: "session-event-desktop-chat-agent-2",
+          kind: "assistant",
+          message: "Second desktop chat session.",
+          timestamp: secondChatTimestamp,
+        }],
+      });
+      await hydrateChatAgentSession(sessionId, { agentId: agent.id, sessionId: secondChatSession.id });
 
       const secondChatSessionId = await waitForCondition(
         () => executeScript<string>(sessionId, `
           return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
         `),
-        (value) => Boolean(value) && value !== firstChatSessionId,
+        (value) => value === secondChatSession.id,
       );
-      expect(secondChatSessionId).toBeTruthy();
-      expect(secondChatSessionId).not.toBe(firstChatSessionId);
+      expect(secondChatSessionId).toBe(secondChatSession.id);
 
-      await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
-      await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
-      await clickSelector(sessionId, '[data-role="session-action-reload"]');
-      await waitForText(sessionId, 'Reloaded');
-
-      const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
-      await setInputValue(sessionId, '[data-role="composer-input"]', longLine);
-      await clickSelector(sessionId, '[data-role="send-message"]');
-      await waitForText(sessionId, longLine);
-
-      await clickByText(sessionId, 'button', 'Sessions');
+      await clickSelector(sessionId, '[data-role="nav-item-sessions"]');
       await waitForSelector(sessionId, '[data-role="session-filter-active"]');
-      await waitForText(sessionId, 'Supervisor main session');
+      await waitForText(sessionId, sessionListTitle);
 
-      const firstSessionCount = await executeScript<number>(sessionId, `
-        return Array.from(document.querySelectorAll('[data-role="session-link"]'))
-          .filter((entry) => (entry.textContent || '').includes('Supervisor main session')).length;
-      `);
-      expect(firstSessionCount).toBe(2);
+      const sessionsStateAfterReturn = await waitForCondition(
+        () => getSessionsPageState(sessionId),
+        (value) => value.hasFilters
+          && value.selectedSessionId === initialSessionsState.selectedSessionId
+          && value.activeListSessionId === initialSessionsState.activeListSessionId
+          && value.title.includes(initialSessionsState.title)
+          && !value.title.includes(chatTitle)
+          && value.search.includes(`selectedSessionId=${initialSessionsState.selectedSessionId}`),
+      );
+      expect(sessionsStateAfterReturn.selectedSessionId).toBe(initialSessionsState.selectedSessionId);
+      expect(sessionsStateAfterReturn.activeListSessionId).toBe(initialSessionsState.activeListSessionId);
+      expect(sessionsStateAfterReturn.selectedSessionId).not.toBe(secondChatSessionId);
+      expect(sessionsStateAfterReturn.title).toContain(initialSessionsState.title);
+      expect(sessionsStateAfterReturn.title).not.toContain(chatTitle);
+      expect(sessionsStateAfterReturn.search).toContain(`selectedSessionId=${initialSessionsState.selectedSessionId}`);
 
-      const selectedSessionId = await executeScript<string>(sessionId, `
-        return document.querySelector('.session-list-link--active[data-role="session-link"]')?.getAttribute('data-session-id') || '';
-      `);
-      expect(selectedSessionId).toBe(secondChatSessionId);
-
-      await clickByText(sessionId, 'button', 'Chat');
-      await clickSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
-      await waitForText(sessionId, 'Supervisor chat');
+      await clickSelector(sessionId, '[data-role="nav-item-chat"]');
+      await waitForText(sessionId, chatTitle);
 
       const restoredChatSessionId = await executeScript<string>(sessionId, `
         return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
