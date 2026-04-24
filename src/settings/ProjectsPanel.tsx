@@ -359,7 +359,6 @@ export function ProjectsPanel() {
           <div>
             <p className="eyebrow">Project catalog</p>
             <h3>Projects</h3>
-            <p className="supporting-copy">Built-in projects are editable like any other project.</p>
           </div>
           <button className="primary-button" type="button" onClick={() => {
             setSelectedProjectId(null);

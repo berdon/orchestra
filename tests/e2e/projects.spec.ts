@@ -8,6 +8,7 @@ test("settings projects panel creates a project and repository", async ({ page }
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
 
+  await expect(page.getByText("Built-in projects are editable like any other project.")).toHaveCount(0);
   await page.getByRole("button", { name: "New project" }).click();
   await page.locator('[data-role="project-name"]').fill("Client Work");
   await page.locator('[data-role="project-task-prefix"]').fill("CLI");

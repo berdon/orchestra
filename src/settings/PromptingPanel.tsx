@@ -32,7 +32,6 @@ export function PromptingPanel({
         <div>
           <p className="eyebrow">Prompting</p>
           <h3>Task session context prompt</h3>
-          <p className="supporting-copy">Edit the task-session prompt for the active project{activeProjectName ? ` (${activeProjectName})` : ""}.</p>
         </div>
       </div>
 

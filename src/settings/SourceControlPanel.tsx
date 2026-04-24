@@ -77,7 +77,6 @@ export function SourceControlPanel() {
         <div>
           <p className="eyebrow">Source Control</p>
           <h3>Global git identity defaults</h3>
-          <p className="supporting-copy">Set the default git identity templates used unless a project overrides them.</p>
         </div>
         <div className="action-cluster action-cluster--wrap">
           <button className="secondary-button" data-role="save-source-control-settings" type="button" disabled={saveDisabled} onClick={() => void handleSave()}>

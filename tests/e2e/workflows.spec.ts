@@ -10,7 +10,7 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Workflows" }).click();
 
-  await expect(page.getByText("Orchestra includes ready-to-use Product Strategy, Planning, and Development workflows on first install. They're regular workflow records, so you can edit, duplicate, archive, or permanently delete them when nothing else still references them.")).toBeVisible();
+  await expect(page.getByText("Orchestra includes ready-to-use Product Strategy, Planning, and Development workflows on first install. They're regular workflow records, so you can edit, duplicate, archive, or permanently delete them when nothing else still references them.")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Development" })).toBeVisible();
 
   const seededWorkflowRefs = await page.evaluate(() => {

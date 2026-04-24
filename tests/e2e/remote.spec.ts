@@ -55,6 +55,7 @@ test("remote settings panel enables remote access, creates pairing codes, and re
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Remote" }).click();
 
+  await expect(page.getByText("Enable Orchestra's host-side remote API, expose the hosted browser app, generate pairing codes, and manage trusted remote devices.")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Remote API host" })).toBeVisible();
   await page.locator('[data-role="remote-enabled"]').check();
   await page.locator('[data-role="save-remote-settings"]').click();

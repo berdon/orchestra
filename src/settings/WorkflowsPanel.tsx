@@ -524,7 +524,6 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
             <div>
               <p className="eyebrow">Workflow library</p>
               <h3>Workflows</h3>
-              <p className="muted-copy">Orchestra includes ready-to-use Product Strategy, Planning, and Development workflows on first install. They&apos;re regular workflow records, so you can edit, duplicate, archive, or permanently delete them when nothing else still references them.</p>
             </div>
             <div className="action-cluster">
               <label className="checkbox-row">

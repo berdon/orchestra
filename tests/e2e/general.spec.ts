@@ -183,6 +183,7 @@ test("settings general, harness, prompting, and source control panels render and
 
   await page.locator('[data-role="open-prompting-settings"]').click();
   await expect(page.getByRole("heading", { name: "Task session context prompt" })).toBeVisible();
+  await expect(page.getByText(/Edit the task-session prompt for the active project/)).toHaveCount(0);
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
   await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{TASK.ID}");
   await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{SOURCE_CONTROL.CONTEXT}");
@@ -194,6 +195,7 @@ test("settings general, harness, prompting, and source control panels render and
 
   await openSettingsTab("Source Control");
   await expect(page.getByRole("heading", { name: "Global git identity defaults" })).toBeVisible();
+  await expect(page.getByText("Set the default git identity templates used unless a project overrides them.")).toHaveCount(0);
   await expect(page.locator('[data-role="source-control-git-user-name-template"]')).toHaveValue("Orchestra {role}{agent}");
   await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("Orchestra architect");
   await page.locator('[data-role="source-control-git-email-template"]').fill("team+{role}{agent}@example.com");
@@ -202,6 +204,7 @@ test("settings general, harness, prompting, and source control panels render and
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.source-control-settings"))).toContain("team+{role}{agent}@example.com");
 
   await openSettingsTab("Projects");
+  await expect(page.getByText("Built-in projects are editable like any other project.")).toHaveCount(0);
   await expect(page.locator('[data-role="project-source-control-settings"]')).toBeVisible();
   await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("Global default");
   await page.locator('[data-role="project-git-email-template"]').fill("project+{role}{agent}@example.com");

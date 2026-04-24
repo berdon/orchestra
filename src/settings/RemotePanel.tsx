@@ -205,7 +205,6 @@ export function RemotePanel() {
           <div>
             <p className="eyebrow">Remote access</p>
             <h3>Hosted Orchestra web app + mobile pairing</h3>
-            <p className="muted-copy">Enable Orchestra's host-side remote API, expose the hosted browser app, generate pairing codes, and manage trusted remote devices.</p>
           </div>
           <div className="action-cluster action-cluster--wrap">
             <button className="secondary-button" type="button" onClick={() => void loadStatus()}>

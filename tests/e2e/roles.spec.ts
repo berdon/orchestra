@@ -9,6 +9,7 @@ test("settings roles panel creates a role with supervisor access and direct perm
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: /^Roles$/ }).click();
+  await expect(page.getByText("Built-in roles are editable like any other role.")).toHaveCount(0);
   await expect(page.locator('[data-role="new-role"]')).toBeVisible();
   await page.locator('[data-role="new-role"]').click();
 

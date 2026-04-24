@@ -341,7 +341,6 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
           <div>
             <p className="eyebrow">Role library</p>
             <h3>Roles</h3>
-            <p className="supporting-copy">Built-in roles are editable like any other role.</p>
           </div>
           <div className="action-cluster">
             <label className="checkbox-row">
