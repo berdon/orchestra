@@ -2890,41 +2890,40 @@ fn prepare_session_message_request<R: Runtime>(
 fn load_remote_session_record(state: &AppState, session_id: &str) -> Result<SessionRecord, String> {
     let context = pi_sessions::find_session_context_for_session(session_id)?;
     let subscribed = state.has_session_subscribers(session_id)?;
+    let terminal_attached = state.terminal_attached_session_ids()?;
     let mut record = pi_sessions::get_session(&context.session_dir, session_id, subscribed)?;
-    record.terminal_attached = state.get_terminal_window_label(session_id)?.is_some();
-    Ok(record)
+    let connection = database::open_connection()?;
+    match session_commands::decorate_session_record_with_connection(
+        &connection,
+        &terminal_attached,
+        record.clone(),
+        false,
+    ) {
+        Ok(decorated) => Ok(decorated),
+        Err(error) if error.contains("is hidden from the session list") => {
+            record.terminal_attached = terminal_attached.contains(session_id);
+            Ok(record)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn list_remote_sessions(
     state: &AppState,
     project_id: Option<&str>,
 ) -> Result<Vec<SessionRecord>, String> {
-    let project_slug = if let Some(project_id) = project_id {
-        let connection = database::open_connection()?;
-        Some(projects::get_project(&connection, project_id)?.slug)
-    } else {
-        None
+    let connection = database::open_connection()?;
+    let contexts = match project_id {
+        Some(project_id) => vec![pi_sessions::session_context_for_project_id(project_id)?],
+        None => pi_sessions::all_session_contexts()?,
     };
 
-    let subscribed = state.subscribed_session_ids()?;
-    let terminal_attached = state.terminal_attached_session_ids()?;
-    let mut sessions = Vec::new();
-    for context in pi_sessions::all_session_contexts()? {
-        if project_slug
-            .as_deref()
-            .is_some_and(|slug| slug != context.project_slug)
-        {
-            continue;
-        }
-        let mut records = pi_sessions::list_sessions(&context.session_dir, &subscribed)?;
-        for record in &mut records {
-            record.subscribed = state.has_session_subscribers(&record.id)?;
-            record.terminal_attached = terminal_attached.contains(&record.id);
-        }
-        sessions.extend(records);
-    }
-    sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    Ok(sessions)
+    session_commands::list_command_sessions_with_connection(
+        &connection,
+        &contexts,
+        &state.subscribed_session_ids()?,
+        &state.terminal_attached_session_ids()?,
+    )
 }
 
 async fn send_session_message_internal(

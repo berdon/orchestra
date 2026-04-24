@@ -24,7 +24,7 @@ use crate::{
             configured_project_root, default_orchestra_root, discover_dev_checkout_root,
             infer_project_slug, pi_agent_dir, project_session_dir, sanitize_slug,
         },
-        projects,
+        projects, session_list,
     },
 };
 
@@ -145,19 +145,6 @@ fn session_context_for_session_dir(session_dir: &Path) -> Option<SessionContext>
     } else {
         None
     }
-}
-
-fn load_dismissed_session_ids(
-    connection: &rusqlite::Connection,
-) -> Result<HashSet<String>, String> {
-    let mut statement = connection
-        .prepare("SELECT session_id FROM session_list_entries WHERE dismissed_at IS NOT NULL")
-        .map_err(|error| format!("Unable to prepare dismissed session query: {error}"))?;
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("Unable to query dismissed sessions: {error}"))?;
-    rows.collect::<Result<HashSet<_>, _>>()
-        .map_err(|error| format!("Unable to read dismissed sessions: {error}"))
 }
 
 fn derive_session_id_from_path(path: &Path) -> Option<String> {
@@ -719,13 +706,8 @@ pub fn list_sessions(
 ) -> Result<Vec<SessionRecord>, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        let dismissed_ids = load_dismissed_session_ids(&connection)?;
-        return list_sessions_with_connection(
-            &connection,
-            &context,
-            subscribed_ids,
-            &dismissed_ids,
-        );
+        let hidden_ids = session_list::load_hidden_session_ids(&connection)?;
+        return list_sessions_with_connection(&connection, &context, subscribed_ids, &hidden_ids);
     }
 
     let mut sessions = list_stored_session_summaries(session_dir, subscribed_ids)?;
@@ -2847,7 +2829,7 @@ process.stdin.on('end', () => {
         write_catalog_dismiss_entry(&connection, &dismissed_session_id);
 
         let dismissed_ids =
-            load_dismissed_session_ids(&connection).expect("dismissed ids should load");
+            session_list::load_hidden_session_ids(&connection).expect("dismissed ids should load");
         let stats = refresh_session_catalog(&connection, &context, &dismissed_ids)
             .expect("catalog refresh should succeed");
         assert_eq!(stats.parsed_files, 1);

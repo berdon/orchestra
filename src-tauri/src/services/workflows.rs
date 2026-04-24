@@ -5,9 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::{
-    WorkflowDefinition, WorkflowDeleteImpact, WorkflowDeleteImpactReferenceCounts,
-    WorkflowLane, WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
-    WorkflowSummary, WorkflowUpsertInput, WorkflowValidationError, WorkflowValidationResult,
+    WorkflowDefinition, WorkflowDeleteImpact, WorkflowDeleteImpactReferenceCounts, WorkflowLane,
+    WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput, WorkflowSummary,
+    WorkflowUpsertInput, WorkflowValidationError, WorkflowValidationResult,
 };
 
 pub fn list_workflows(
@@ -805,9 +805,7 @@ fn count_workflow_references(
         })
 }
 
-fn workflow_delete_blocker_messages(
-    counts: &WorkflowDeleteImpactReferenceCounts,
-) -> Vec<String> {
+fn workflow_delete_blocker_messages(counts: &WorkflowDeleteImpactReferenceCounts) -> Vec<String> {
     let mut messages = Vec::new();
 
     if counts.tasks > 0 {
@@ -1334,7 +1332,8 @@ mod tests {
     }
 
     fn seed_agent_queue_reference(connection: &Connection, workflow_id: &str) {
-        seed_worker(connection, "agents", "agent-reviewer", "Reviewer Agent").expect("agent should seed");
+        seed_worker(connection, "agents", "agent-reviewer", "Reviewer Agent")
+            .expect("agent should seed");
         let now = now_iso();
         connection
             .execute(
@@ -1427,8 +1426,8 @@ mod tests {
         assert!(impact.can_delete);
         assert!(impact.blocker_messages.is_empty());
 
-        let deleted = delete_workflow(&mut connection, &created.id)
-            .expect("workflow should delete");
+        let deleted =
+            delete_workflow(&mut connection, &created.id).expect("workflow should delete");
         assert_eq!(deleted.workflow_id, created.id);
         assert!(deleted.can_delete);
         assert!(get_workflow(&connection, &created.id).is_err());

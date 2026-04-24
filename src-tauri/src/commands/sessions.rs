@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{Duration, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
@@ -27,7 +26,7 @@ use crate::{
             list_sessions_with_connection as list_real_sessions_with_connection,
             session_context_for_project_id, set_session_model as apply_session_model,
         },
-        pi_setup, role_dispatch, role_runtime, roles, task_runtime,
+        pi_setup, role_dispatch, role_runtime, roles, session_list, task_runtime,
     },
     state::AppState,
 };
@@ -431,7 +430,7 @@ fn load_session_list_metadata(
     ))
 }
 
-fn decorate_session_record_with_connection(
+pub(crate) fn decorate_session_record_with_connection(
     connection: &rusqlite::Connection,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     mut record: SessionRecord,
@@ -441,92 +440,24 @@ fn decorate_session_record_with_connection(
         record.debug_info = load_session_debug_info(connection, &record.id)?;
     }
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
-    let (
-        task_id,
-        task_project_id,
-        task_number,
-        task_title,
-        active_task_id,
-        active_task_project_id,
-        active_task_number,
-        active_task_title,
-        worker_type,
-        worker_name,
-    ) = load_session_list_metadata(connection, &record.id)?;
-    record.task_id = task_id;
-    record.task_project_id = task_project_id;
-    record.task_number = task_number;
-    record.task_title = task_title;
-    record.active_task_id = active_task_id;
-    record.active_task_project_id = active_task_project_id;
-    record.active_task_number = active_task_number;
-    record.active_task_title = active_task_title;
-    record.worker_type = worker_type;
-    record.worker_name = worker_name;
 
-    let is_persistent_agent_session = connection
-        .query_row(
-            "SELECT 1 FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
-            [record.id.as_str()],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()
-        .map_err(|error| {
-            format!(
-                "Unable to query agent runtime session {}: {error}",
-                record.id
-            )
-        })?
-        .is_some();
+    let decoration = session_list::load_session_list_decoration(connection, &record.id)?;
+    record.task_id = decoration.task_id;
+    record.task_project_id = decoration.task_project_id;
+    record.task_number = decoration.task_number;
+    record.task_title = decoration.task_title;
+    record.active_task_id = decoration.active_task_id;
+    record.active_task_project_id = decoration.active_task_project_id;
+    record.active_task_number = decoration.active_task_number;
+    record.active_task_title = decoration.active_task_title;
+    record.worker_type = decoration.worker_type;
+    record.worker_name = decoration.worker_name;
 
-    if !is_persistent_agent_session
-        && task_runtime::get_active_assignment_for_session(connection, &record.id)?.is_none()
-    {
-        let latest_assignment_status = connection
-            .query_row(
-                r#"
-                SELECT status
-                FROM task_lane_assignments
-                WHERE session_id = ?1
-                ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, id DESC
-                LIMIT 1
-                "#,
-                [record.id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| {
-                format!(
-                    "Unable to query latest session assignment status {}: {error}",
-                    record.id
-                )
-            })?;
-
-        let task_status = connection
-            .query_row(
-                r#"
-                SELECT t.status
-                FROM task_lane_runs lr
-                JOIN tasks t ON t.id = lr.task_id
-                WHERE lr.session_id = ?1
-                ORDER BY COALESCE(lr.completed_at, lr.started_at) DESC, lr.id DESC
-                LIMIT 1
-                "#,
-                [record.id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| {
-                format!("Unable to query session task status {}: {error}", record.id)
-            })?;
-
-        if matches!(
-            latest_assignment_status.as_deref(),
-            Some("completed") | Some("failed") | Some("canceled")
-        ) || matches!(task_status.as_deref(), Some("completed") | Some("canceled"))
-        {
-            record.status = "closed".into();
-        }
+    match decoration.visibility {
+        Some(session_list::SessionListVisibility::Active) => record.status = "active".into(),
+        Some(session_list::SessionListVisibility::Closed)
+        | Some(session_list::SessionListVisibility::Hidden(_)) => record.status = "closed".into(),
+        Some(session_list::SessionListVisibility::Unchanged) | None => {}
     }
 
     Ok(record)
@@ -611,8 +542,6 @@ fn resolve_session_paths(session_id: &str) -> Result<(PathBuf, PathBuf), String>
     Ok((runtime_root, storage_context.session_dir))
 }
 
-const DISMISSED_SESSION_RETENTION_DAYS: i64 = 7;
-
 fn log_session_command_failure(
     state: &AppState,
     target: &str,
@@ -630,72 +559,36 @@ fn log_session_command_failure(
 fn load_dismissed_session_ids(
     connection: &rusqlite::Connection,
 ) -> Result<HashSet<String>, String> {
-    let mut statement = connection
-        .prepare("SELECT session_id FROM session_list_entries WHERE dismissed_at IS NOT NULL")
-        .map_err(|error| format!("Unable to prepare dismissed session query: {error}"))?;
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("Unable to query dismissed sessions: {error}"))?;
-    rows.collect::<Result<HashSet<_>, _>>()
-        .map_err(|error| format!("Unable to read dismissed sessions: {error}"))
+    session_list::load_hidden_session_ids(connection)
 }
 
 fn dismiss_session_entry(
     connection: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<(), String> {
-    let now = crate::state::now_iso();
-    connection
-        .execute(
-            r#"
-            INSERT INTO session_list_entries (session_id, dismissed_at, created_at, updated_at)
-            VALUES (?1, ?2, ?2, ?2)
-            ON CONFLICT(session_id) DO UPDATE SET dismissed_at = excluded.dismissed_at, updated_at = excluded.updated_at
-            "#,
-            params![session_id, now],
-        )
-        .map_err(|error| format!("Unable to dismiss session {session_id}: {error}"))?;
-    Ok(())
+    session_list::dismiss_session(connection, session_id)
 }
 
 fn restore_session_entry(
     connection: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<(), String> {
-    connection
-        .execute(
-            "DELETE FROM session_list_entries WHERE session_id = ?1",
-            [session_id],
-        )
-        .map_err(|error| format!("Unable to restore dismissed session {session_id}: {error}"))?;
-    Ok(())
+    session_list::restore_user_dismissed_session(connection, session_id)
 }
 
 fn cleanup_dismissed_sessions(connection: &rusqlite::Connection) -> Result<Vec<String>, String> {
-    let cutoff = (Utc::now() - Duration::days(DISMISSED_SESSION_RETENTION_DAYS)).to_rfc3339();
-    let mut statement = connection
-        .prepare("SELECT session_id FROM session_list_entries WHERE dismissed_at IS NOT NULL AND dismissed_at <= ?1")
-        .map_err(|error| format!("Unable to prepare dismissed session cleanup query: {error}"))?;
-    let rows = statement
-        .query_map([cutoff], |row| row.get::<_, String>(0))
-        .map_err(|error| {
-            format!("Unable to query dismissed session cleanup candidates: {error}")
-        })?;
-    let session_ids = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read dismissed session cleanup candidates: {error}"))?;
+    let session_ids = session_list::cleanup_user_dismissed_sessions(connection)?;
 
     for session_id in &session_ids {
         if let Ok(context) = find_session_context_for_session(session_id) {
             let _ = delete_session_file(&context.session_dir, session_id);
         }
-        let _ = restore_session_entry(connection, session_id);
     }
 
     Ok(session_ids)
 }
 
-fn list_command_sessions_with_connection(
+pub(crate) fn list_command_sessions_with_connection(
     connection: &rusqlite::Connection,
     contexts: &[crate::services::pi_sessions::SessionContext],
     subscribed: &HashSet<String>,
@@ -703,7 +596,8 @@ fn list_command_sessions_with_connection(
 ) -> Result<Vec<SessionRecord>, String> {
     cleanup_dismissed_sessions(connection)?;
     let dismissed_ids = load_dismissed_session_ids(connection)?;
-    let mut sessions = contexts
+    let mut sessions = Vec::new();
+    for record in contexts
         .iter()
         .map(|context| {
             list_real_sessions_with_connection(connection, context, subscribed, &dismissed_ids)
@@ -711,15 +605,21 @@ fn list_command_sessions_with_connection(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
-        .map(|record| {
-            decorate_session_record_with_connection(
-                connection,
-                terminal_attached_session_ids,
-                record,
-                false,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    {
+        let decoration = session_list::load_session_list_decoration(connection, &record.id)?;
+        if matches!(
+            decoration.visibility,
+            Some(session_list::SessionListVisibility::Hidden(_))
+        ) {
+            continue;
+        }
+        sessions.push(decorate_session_record_with_connection(
+            connection,
+            terminal_attached_session_ids,
+            record,
+            false,
+        )?);
+    }
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     Ok(sessions)
 }
@@ -2068,7 +1968,7 @@ mod tests {
     use super::*;
     use crate::{
         models::SessionEvent,
-        services::{database, pi_sessions::SessionContext},
+        services::{database, pi_sessions::SessionContext, session_list},
     };
     use std::{
         env, fs,
@@ -2576,5 +2476,106 @@ mod tests {
         .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "active");
+    }
+
+    #[test]
+    fn list_sessions_auto_hides_stale_role_sessions_without_task_history() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO roles (id, slug, name, archived, created_at, updated_at) VALUES ('role-1', 'reviewer', 'Reviewer', 0, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("role insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-1', 'role-1', 'Reviewer 1', 'completed', NULL, 'session-stale-role', '/tmp/reviewer', NULL, NULL, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("role instance insert should succeed");
+
+        let context = make_list_test_context(
+            "orchestra-command-stale-role-session-list",
+            "command-stale-role-session-list-test",
+        );
+        write_list_test_session(
+            &context,
+            "2026-03-21T00-00-00Z_session-stale-role.jsonl",
+            "session-stale-role",
+            "Stale role session",
+            "2026-03-21T00:00:00Z",
+        );
+
+        let listed = list_command_sessions_with_connection(
+            &connection,
+            std::slice::from_ref(&context),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("session list should succeed");
+
+        assert!(listed.is_empty());
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, "session-stale-role")
+                .expect("hidden reason should load")
+                .as_deref(),
+            Some(session_list::SESSION_HIDDEN_REASON_STALE_ROLE_SESSION)
+        );
+    }
+
+    #[test]
+    fn list_sessions_auto_hides_completed_task_sessions() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES ('task-1', 'project-1', 1, 'ORC-1', 'Completed task', NULL, 'task', 'completed', 'P1', NULL, NULL, 'unassigned', NULL, NULL, NULL, 0, ?1, ?1)
+                "#,
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("task insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at) VALUES ('lane-run-1', 'task-1', 'lane-1', 'session-completed', 'success', NULL, ?1, ?2)",
+                rusqlite::params!["2026-03-21T00:00:00Z", "2026-03-21T00:01:00Z"],
+            )
+            .expect("lane run insert should succeed");
+
+        let context = make_list_test_context(
+            "orchestra-command-completed-session-list",
+            "command-completed-session-list-test",
+        );
+        write_list_test_session(
+            &context,
+            "2026-03-21T00-00-00Z_session-completed.jsonl",
+            "session-completed",
+            "Completed task session",
+            "2026-03-21T00:00:00Z",
+        );
+
+        let listed = list_command_sessions_with_connection(
+            &connection,
+            std::slice::from_ref(&context),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("session list should succeed");
+
+        assert!(listed.is_empty());
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, "session-completed")
+                .expect("hidden reason should load")
+                .as_deref(),
+            Some(session_list::SESSION_HIDDEN_REASON_TASK_COMPLETED)
+        );
     }
 }

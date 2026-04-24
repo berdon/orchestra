@@ -304,6 +304,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS session_list_entries (
                 session_id TEXT PRIMARY KEY,
                 dismissed_at TEXT,
+                hidden_reason TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -901,6 +902,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_tasks_table_columns(connection)?;
     ensure_task_tag_tables(connection)?;
     ensure_task_comments_table_columns(connection)?;
+    ensure_session_list_entry_columns(connection)?;
     ensure_mailbox_tables(connection)?;
     ensure_mailbox_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
@@ -1881,6 +1883,23 @@ fn ensure_mailbox_tables(connection: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|error| format!("Unable to ensure mailbox tables: {error}"))?;
+    Ok(())
+}
+
+fn ensure_session_list_entry_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "session_list_entries")?;
+
+    if !columns.contains("hidden_reason") {
+        connection
+            .execute(
+                "ALTER TABLE session_list_entries ADD COLUMN hidden_reason TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add hidden_reason column to session_list_entries: {error}")
+            })?;
+    }
+
     Ok(())
 }
 
