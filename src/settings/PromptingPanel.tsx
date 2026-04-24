@@ -32,8 +32,7 @@ export function PromptingPanel({
         <div>
           <p className="eyebrow">Prompting</p>
           <h3>Task session context prompt</h3>
-          <p className="muted-copy">Prompt settings moved here from Settings → General. These settings apply to the currently active project{activeProjectName ? ` (${activeProjectName})` : ""}.</p>
-          <p className="muted-copy">Global git identity defaults live in Settings → Source Control, and project-specific git identity overrides live in Settings → Projects.</p>
+          <p className="supporting-copy">Edit the task-session prompt for the active project{activeProjectName ? ` (${activeProjectName})` : ""}.</p>
         </div>
       </div>
 
@@ -84,7 +83,7 @@ export function PromptingPanel({
           </div>
         </section>
       ) : (
-        <p className="muted-copy">Select an active project to edit prompting settings.</p>
+        <p className="supporting-copy">Select an active project to edit prompting settings.</p>
       )}
     </section>
   );

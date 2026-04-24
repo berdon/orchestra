@@ -341,7 +341,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
           <div>
             <p className="eyebrow">Role library</p>
             <h3>Roles</h3>
-            <p className="muted-copy">Orchestra seeds a ready-to-use baseline of standard roles on first install. Edit, archive, or replace them to match your team.</p>
+            <p className="supporting-copy">Built-in roles are editable like any other role.</p>
           </div>
           <div className="action-cluster">
             <label className="checkbox-row">

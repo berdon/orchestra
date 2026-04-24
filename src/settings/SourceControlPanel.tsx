@@ -77,8 +77,7 @@ export function SourceControlPanel() {
         <div>
           <p className="eyebrow">Source Control</p>
           <h3>Global git identity defaults</h3>
-          <p className="muted-copy">Use template variables like <code>{"{role}"}</code> and <code>{"{agent}"}</code> to adapt default git identity values to the current worker context.</p>
-          <p className="muted-copy">Project overrides live in Settings → Projects. Unknown template variables are rejected on save.</p>
+          <p className="supporting-copy">Set the default git identity templates used unless a project overrides them.</p>
         </div>
         <div className="action-cluster action-cluster--wrap">
           <button className="secondary-button" data-role="save-source-control-settings" type="button" disabled={saveDisabled} onClick={() => void handleSave()}>

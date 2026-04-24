@@ -117,7 +117,7 @@ test("settings projects panel deletes a non-default project and falls back clean
   await expect(page.locator('nav[aria-label="Projects"]')).not.toContainText("Disposable Project");
 
   const storedState = await page.evaluate(() => ({
-    activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),
+    activeProjectId: window.localStorage.getItem("orchestra.preferences.active-project-id") ?? window.localStorage.getItem("orchestra.mock.active-project-id"),
     projects: JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]"),
   }));
 
@@ -141,7 +141,7 @@ test("settings projects panel deletes the seeded default project cleanly", async
   await expect(page.locator('nav[aria-label="Projects"]')).not.toContainText("Orchestra");
 
   const storedState = await page.evaluate(() => ({
-    activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),
+    activeProjectId: window.localStorage.getItem("orchestra.preferences.active-project-id") ?? window.localStorage.getItem("orchestra.mock.active-project-id"),
     projects: JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]"),
   }));
 
@@ -170,7 +170,7 @@ test("deleting the seeded default project does not resurrect or write browser-mo
   await expect(page.locator('[data-role="tasks-status-error"]')).toContainText("Create a project before creating a task.");
 
   const storedState = await page.evaluate(() => ({
-    activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),
+    activeProjectId: window.localStorage.getItem("orchestra.preferences.active-project-id") ?? window.localStorage.getItem("orchestra.mock.active-project-id"),
     projects: JSON.parse(window.localStorage.getItem("orchestra.mock.projects") ?? "[]"),
     tasks: JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]"),
   }));

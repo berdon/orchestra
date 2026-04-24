@@ -112,7 +112,7 @@ export function GeneralPanel({
             <div>
               <p className="eyebrow">Appearance</p>
               <h3>Theme</h3>
-              <p className="muted-copy">Choose the default Orchestra workbench theme from a larger built-in catalog inspired by popular VS Code and Ghostty palettes.</p>
+              <p className="supporting-copy">Choose the default workbench theme.</p>
             </div>
           </div>
           <label className="field-group field-group--compact">
@@ -140,7 +140,7 @@ export function GeneralPanel({
             />
             <span>Show explanatory tooltips</span>
           </label>
-          <p className="muted-copy">Hover supported controls and fields to see brief help text.</p>
+          <p className="supporting-copy">Hover supported controls to see brief help.</p>
         </section>
 
         <section className="task-section task-section--compact" data-role="general-prompting-moved-notice">
@@ -148,7 +148,7 @@ export function GeneralPanel({
             <div>
               <p className="eyebrow">Prompting</p>
               <h4>Prompt settings moved</h4>
-              <p className="muted-copy">Task session prompt editing now lives in Settings → Prompting so General can stay focused on appearance, diagnostics, notifications, and logs.</p>
+              <p className="supporting-copy">Task session prompts now live in Settings → Prompting.</p>
             </div>
             <button className="secondary-button" data-role="open-prompting-settings" type="button" onClick={onOpenPromptingSettings}>
               Open Prompting
@@ -162,7 +162,7 @@ export function GeneralPanel({
             <div>
               <p className="eyebrow">Desktop integration</p>
               <h4>System notifications</h4>
-              <p className="muted-copy">Orchestra uses a native macOS notification bridge so Notification Center sees the app as Orchestra instead of a browser/webview sender.</p>
+              <p className="supporting-copy">Manage macOS notification access and send a test notification.</p>
             </div>
             <div className="action-cluster action-cluster--wrap">
               <button
@@ -203,9 +203,9 @@ export function GeneralPanel({
           {systemNotificationEnvironment?.reason ? (
             <p className="muted-copy" data-role="system-notification-environment-reason">{systemNotificationEnvironment.reason}</p>
           ) : systemNotificationPermission === "unsupported" ? (
-            <p className="muted-copy">Native Orchestra system notifications are currently only available in macOS desktop builds.</p>
+            <p className="supporting-copy">Available in macOS desktop builds only.</p>
           ) : (
-            <p className="muted-copy">If Orchestra does not appear in macOS Notification Center yet, request permission here and then send a test notification from this panel.</p>
+            <p className="supporting-copy">If Orchestra is missing from Notification Center, request permission and send a test notification.</p>
           )}
         </section>
         ) : null}
@@ -216,7 +216,7 @@ export function GeneralPanel({
           <div>
             <p className="eyebrow">General</p>
             <h3>Bridge diagnostics</h3>
-            <p className="muted-copy">Inspect Orchestra bridge health, active clients, recent requests, and stale-bridge cleanup activity.</p>
+            <p className="supporting-copy">See bridge health, active clients, recent requests, and cleanup activity.</p>
           </div>
 
           <div className="action-cluster action-cluster--wrap">

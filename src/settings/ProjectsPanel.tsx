@@ -359,7 +359,7 @@ export function ProjectsPanel() {
           <div>
             <p className="eyebrow">Project catalog</p>
             <h3>Projects</h3>
-            <p className="muted-copy">New installs start with a seeded Orchestra workspace. It is an ordinary project: you can rename it, add repositories, replace it, or delete it.</p>
+            <p className="supporting-copy">Built-in projects are editable like any other project.</p>
           </div>
           <button className="primary-button" type="button" onClick={() => {
             setSelectedProjectId(null);
@@ -458,8 +458,7 @@ export function ProjectsPanel() {
                   setProjectDraft((current) => ({ ...current, taskPrefix: event.target.value }));
                 }}
               />
-              <span className="muted-copy">Used for new task numbers such as {normalizeTaskPrefix(projectDraft.taskPrefix) || "APP"}-42.</span>
-              <span className="muted-copy">Changing the prefix only affects tasks created after this change.</span>
+              <span className="supporting-copy">Used for new task numbers such as {normalizeTaskPrefix(projectDraft.taskPrefix) || "APP"}-42. Existing task numbers stay the same.</span>
               {projectTaskPrefixError ? <span className="error-copy">{projectTaskPrefixError}</span> : null}
             </label>
             <label className="field-group task-editor-grid__full">
@@ -474,7 +473,7 @@ export function ProjectsPanel() {
                 <div>
                   <p className="eyebrow">Automation</p>
                   <h4>Task dispatch</h4>
-                  <p className="muted-copy">Automatically dispatch tasks when they become work-ready through creation or unblocking, including dependency and subtask blockers.</p>
+                  <p className="supporting-copy">Dispatch tasks automatically when creation or unblocking makes them ready for work.</p>
                 </div>
                 <button
                   className="secondary-button"
@@ -506,7 +505,7 @@ export function ProjectsPanel() {
                 <div>
                   <p className="eyebrow">Source control</p>
                   <h4>Project git identity overrides</h4>
-                  <p className="muted-copy">Overrides apply only to this project. Leave a field blank to inherit the global default from Settings → Source Control.</p>
+                  <p className="supporting-copy">Leave a field blank to inherit the global default from Settings → Source Control.</p>
                 </div>
                 <button
                   className="secondary-button"

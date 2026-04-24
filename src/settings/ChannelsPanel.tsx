@@ -313,10 +313,7 @@ export function ChannelsPanel() {
             <div>
               <p className="eyebrow">Channel detail</p>
               <h3>{creating ? "New channel" : channelDetail?.name ?? "Select a channel"}</h3>
-              <p className="muted-copy">
-                Configure an external transport that asynchronously talks to the single supervisor session.
-                Plain text messages go to the supervisor; Telegram commands control project/model/session behavior.
-              </p>
+              <p className="supporting-copy">Connect Telegram to the supervisor session for chat, commands, and notifications.</p>
             </div>
             <div className="row-actions">
               {selectedChannel?.id && !creating ? (
@@ -335,7 +332,7 @@ export function ChannelsPanel() {
               <div>
                 <p className="eyebrow">Step 1</p>
                 <h4>Choose channel type</h4>
-                <p className="muted-copy">Telegram is the first real transport and talks to the supervisor session.</p>
+                <p className="supporting-copy">Telegram is currently the only available channel type.</p>
               </div>
             </div>
             <div className="filter-chip-row" role="tablist" aria-label="Channel kinds">
@@ -355,7 +352,7 @@ export function ChannelsPanel() {
                   <option key={project.id} value={project.id}>{project.name}</option>
                 ))}
               </select>
-              <p className="muted-copy">Telegram commands like /tasks, /task, /mail, /approve, and /needs-work use this project context.</p>
+              <p className="supporting-copy">Commands like /tasks and /task use this project by default.</p>
             </div>
           </div>
 
@@ -364,7 +361,7 @@ export function ChannelsPanel() {
               <div>
                 <p className="eyebrow">Step 2</p>
                 <h4>Create your Telegram bot</h4>
-                <p className="muted-copy">Open Telegram, message @BotFather, run /newbot, choose a name and a username ending in bot, then paste the bot token here.</p>
+                <p className="supporting-copy">Create a bot with @BotFather, then paste the token here.</p>
               </div>
               <button className="secondary-button" data-role="validate-telegram-bot" type="button" disabled={validating} onClick={() => void handleValidateBot()}>
                 {validating ? "Validating…" : "Validate bot"}
@@ -388,7 +385,7 @@ export function ChannelsPanel() {
               <div>
                 <p className="eyebrow">Step 3</p>
                 <h4>Bind a chat</h4>
-                <p className="muted-copy">Open a chat with your bot, send /start, then return here and detect recent chats.</p>
+                <p className="supporting-copy">Send /start to your bot, then detect recent chats.</p>
               </div>
               <button className="secondary-button" data-role="detect-telegram-chats" type="button" disabled={detectingChats} onClick={() => void handleDetectChats()}>
                 {detectingChats ? "Detecting…" : "Detect chats"}
@@ -424,7 +421,7 @@ export function ChannelsPanel() {
               <div>
                 <p className="eyebrow">Step 4</p>
                 <h4>Enable behavior</h4>
-                <p className="muted-copy">Choose which project notifications Telegram should receive independently from the command project above.</p>
+                <p className="supporting-copy">Choose whether notifications follow all projects or only the command project.</p>
               </div>
             </div>
             <div className="task-editor-grid">
@@ -434,7 +431,7 @@ export function ChannelsPanel() {
                   <option value="all_projects">All projects</option>
                   <option value="active_project">Active project only</option>
                 </select>
-                <span className="muted-copy">Choose All projects to send task-attention notifications for every project. Choose Active project only to limit notifications to the command project selected above.</span>
+                <span className="supporting-copy">Select All projects to send task-attention notifications for every project. Select Active project only to limit them to the selected command project.</span>
               </label>
               <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Turn Telegram supervisor commands on or off for this channel.")}>
                 <input data-role="telegram-commands-enabled" type="checkbox" checked={draft.telegram?.commandsEnabled ?? true} onChange={(event) => updateTelegramDraft({ commandsEnabled: event.target.checked })} />

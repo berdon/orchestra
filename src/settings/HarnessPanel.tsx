@@ -41,7 +41,7 @@ export function HarnessPanel({
             <div>
               <p className="eyebrow">Harness configuration</p>
               <h3>Harness settings</h3>
-              <p className="muted-copy">Add extra runtime extensions to load for newly spawned Orchestra harness sessions. Enter one extension name or path per line. Orchestra still loads its built-in extension, and existing sessions keep their current extension set.</p>
+              <p className="supporting-copy">Extra extensions apply to new harness sessions only. Existing sessions keep their current extension set.</p>
             </div>
             <div className="action-cluster action-cluster--wrap">
               <button

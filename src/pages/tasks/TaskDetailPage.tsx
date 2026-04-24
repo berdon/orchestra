@@ -939,7 +939,7 @@ export function TaskDetailPage({
                       <strong>Send mail to active worker</strong>
                       <span className="status-badge status-badge--neutral">Mailbox</span>
                     </div>
-                    <p className="muted-copy">This sends a mailbox message to the currently active assignment session and shows up in the worker's unread mail checks.</p>
+                    <p className="supporting-copy">Send a mailbox message to the active worker for this lane.</p>
                     <label className="field-group" {...getTooltipProps("Write a mailbox message for the worker currently assigned to this lane.")}>
                       <span className="field-group__label">Message</span>
                       <textarea className="text-area" data-role="task-runtime-mail-body" rows={4} value={mailDraft} onChange={(event) => setMailDraft(event.target.value)} />
@@ -965,7 +965,7 @@ export function TaskDetailPage({
               </div>
             ) : (
               <div className="task-section-list">
-                <p className="muted-copy">No active runtime assignment for this task.</p>
+                <p className="supporting-copy">No active worker right now.</p>
               </div>
             )}
 
@@ -1003,7 +1003,7 @@ export function TaskDetailPage({
                 {task.parent ? <span className="task-lineage__current">Parent: {task.parent.number}</span> : null}
               </div>
             ) : (
-              <p className="muted-copy">No parent task. This task is currently a top-level item.</p>
+              <p className="supporting-copy">No parent task.</p>
             )}
 
             {task.childCount ? (
@@ -1081,7 +1081,7 @@ export function TaskDetailPage({
                       </article>
                     ))}
                   </div>
-                ) : <p className="muted-copy">No blockers. This task can proceed unless workflow state says otherwise.</p>}
+                ) : <p className="supporting-copy">No blockers linked.</p>}
               </div>
               <div className="task-dependency-column">
                 <p className="eyebrow">Blocking</p>
@@ -1093,11 +1093,11 @@ export function TaskDetailPage({
                           <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
                           <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
                         </div>
-                        <p className="muted-copy">This task will stay blocked until the current task is resolved.</p>
+                        <p className="supporting-copy">Blocked until this task is resolved.</p>
                       </article>
                     ))}
                   </div>
-                ) : <p className="muted-copy">No downstream blocked tasks yet.</p>}
+                ) : <p className="supporting-copy">No downstream blocked tasks.</p>}
               </div>
             </div>
           </section>
@@ -1108,8 +1108,8 @@ export function TaskDetailPage({
             <div className="task-section__header">
               <div>
                 <p className="eyebrow">Repo files</p>
-                <h4>Tracked repository file changes and references</h4>
-                <p className="muted-copy">Use this panel for important repository artifacts that should stay visible on the task, such as design docs, diagrams, plans, ADRs, and other central non-source files.</p>
+                <h4>Tracked repo files</h4>
+                <p className="supporting-copy">Track important non-source files here when they should stay visible on the task.</p>
               </div>
             </div>
 
@@ -1131,7 +1131,7 @@ export function TaskDetailPage({
                 ))}
               </div>
             ) : (
-              <p className="muted-copy">No repositories are currently associated with this task.</p>
+              <p className="supporting-copy">No repositories linked to this task.</p>
             )}
 
             <div className="task-editor-grid">
@@ -1271,15 +1271,14 @@ export function TaskDetailPage({
                         <span className="field-group__label">File not available</span>
                         <span className="muted-copy">{reference.relativePath}</span>
                       </div>
-                      <p className="muted-copy">
-                        This file cannot be found at {reference.relativePath} in the resolved worktree or repository.
-                        It may have been moved, deleted, or the task worktree has not been materialized yet.
+                      <p className="supporting-copy">
+                        This file is missing from the resolved repository or task worktree. It may have moved, been deleted, or the worktree may not be materialized yet.
                       </p>
                     </div>
                   );
                 })()}
               </div>
-            ) : <p className="muted-copy">No repo files tracked yet. Add an important repository file here to keep it visible on the task for workers and reviewers.</p>}
+            ) : <p className="supporting-copy">No tracked repo files yet.</p>}
           </section>
         );
       case "todos":
@@ -1372,7 +1371,7 @@ export function TaskDetailPage({
                   </article>
                 ))}
               </div>
-            ) : <p className="muted-copy">No todos yet. Add lane-scoped checklist items here for follow-up work that should stay visible on the task.</p>}
+            ) : <p className="supporting-copy">No todos yet.</p>}
           </section>
         );
       case "attachments":
@@ -1403,7 +1402,7 @@ export function TaskDetailPage({
                   </article>
                 ))}
               </div>
-            ) : <p className="muted-copy">No attachments yet. Upload text or image files to give agents richer task context.</p>}
+            ) : <p className="supporting-copy">No attachments yet.</p>}
           </section>
         );
       case "comments":

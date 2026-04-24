@@ -735,6 +735,17 @@ strong {
   color: var(--text-muted);
 }
 
+.supporting-copy {
+  display: block;
+  max-width: 68ch;
+  margin: 6px 0 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
 .project-switcher__button,
 .nav-item,
 .secondary-button,

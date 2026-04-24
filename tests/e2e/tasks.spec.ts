@@ -1730,7 +1730,16 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await page.locator('[data-role="save-task"]').click();
 
   await page.locator('[data-role="task-detail-tab-repo-files"]').click();
+  await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toContainText("No tracked repo files yet.");
   await expect(page.locator('[data-role="task-file-reference-repository"]')).toHaveValue(/repo-/);
+
+  await page.locator('[data-role="task-detail-tab-todos"]').click();
+  await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toContainText("No todos yet.");
+
+  await page.locator('[data-role="task-detail-tab-attachments"]').click();
+  await expect(page.locator('[data-role="task-detail-tabpanel-attachments"]')).toContainText("No attachments yet.");
+
+  await page.locator('[data-role="task-detail-tab-repo-files"]').click();
   await page.locator('[data-role="task-file-reference-path"]').fill("docs/design.md");
   await page.locator('[data-role="add-task-file-reference"]').click();
   await expect(page.locator('[data-role="task-file-references"]')).toContainText("docs/design.md");
