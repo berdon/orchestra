@@ -1,3 +1,5 @@
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import type { TaskSummary } from "../../types";
 import { TaskTagList } from "./TaskTagList";
@@ -7,16 +9,27 @@ interface TaskCompactCardProps {
   task: TaskSummary;
   assigneeLabel: string;
   onOpen: (taskId: string) => void;
+  onOpenTag?: (tag: string) => void;
 }
 
-export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCardProps) {
+export function TaskCompactCard({ task, assigneeLabel, onOpen, onOpenTag }: TaskCompactCardProps) {
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpen(task.id);
+    }
+  }
+
   return (
-    <button
+    <div
+      aria-label={`Open task ${task.number}: ${task.title}`}
       className="task-compact-card task-overview-card"
       data-role="task-card"
       data-task-id={task.id}
-      type="button"
+      role="button"
+      tabIndex={0}
       onClick={() => onOpen(task.id)}
+      onKeyDown={handleKeyDown}
     >
       <div className="task-compact-card__header">
         <span className="task-compact-card__number">{task.number}</span>
@@ -25,7 +38,7 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCard
       <strong className="task-compact-card__title" title={task.title}>
         {task.title}
       </strong>
-      <TaskTagList className="task-compact-card__tags" maxVisible={2} task={task} />
+      <TaskTagList className="task-compact-card__tags" maxVisible={2} onTagClick={onOpenTag} task={task} />
       <div className="task-compact-card__meta">
         <span title={assigneeLabel}>{assigneeLabel}</span>
         {shouldShowUnreadCommentAttention(task) ? (
@@ -38,6 +51,6 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen }: TaskCompactCard
           </span>
         ) : null}
       </div>
-    </button>
+    </div>
   );
 }

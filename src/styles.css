@@ -2256,6 +2256,35 @@ strong {
   padding: 6px 10px;
 }
 
+.task-tag-chip--interactive,
+.task-tag-list__chip--interactive {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.task-tag-chip--interactive:hover,
+.task-tag-chip--interactive:focus-visible,
+.task-tag-list__chip--interactive:hover,
+.task-tag-list__chip--interactive:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 92%, transparent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.task-tag-chip--interactive:focus-visible,
+.task-tag-list__chip--interactive:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-focus-ring) 36%, transparent);
+  outline-offset: 1px;
+}
+
+.task-tag-chip--interactive:active,
+.task-tag-list__chip--interactive:active {
+  transform: translateY(1px);
+}
+
 .task-tag-chip__action,
 .task-tag-chip__remove {
   border: 0;
@@ -3044,6 +3073,7 @@ strong {
   border-radius: 10px;
   background: var(--color-card-background);
   box-shadow: var(--color-card-shadow);
+  cursor: pointer;
   transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
@@ -3053,6 +3083,11 @@ strong {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--color-card-border));
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
   transform: translateY(-1px);
+}
+
+.task-overview-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-focus-ring) 34%, transparent);
+  outline-offset: 2px;
 }
 
 .task-overview-card--schedule {
@@ -3128,6 +3163,10 @@ strong {
   font-size: 0.76rem;
   line-height: 1.4;
   white-space: nowrap;
+}
+
+.task-tag-list__chip--interactive {
+  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
 }
 
 .task-tag-list__chip--overflow {

@@ -70,6 +70,7 @@ interface TaskDetailPageProps {
   onClose: (reason?: string) => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
+  onOpenTag: (tag: string) => void;
   onOpenSession: (sessionId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -293,6 +294,7 @@ export function TaskDetailPage({
   onClose,
   onDelete,
   onOpenTask,
+  onOpenTag,
   onOpenSession,
   onOpenAgent,
   onOpenRole,
@@ -1626,7 +1628,17 @@ export function TaskDetailPage({
             {taskTags.length ? (
               <div className="task-detail-primary-header__tags task-tag-list task-tag-list--readonly" data-role="task-title-tags" aria-label="Task tags">
                 {taskTags.map((tag) => (
-                  <span className="task-tag-chip task-tag-chip--readonly" data-role="task-tag-chip" data-tag-value={tag} key={tag}>{tag}</span>
+                  <button
+                    aria-label={`Show tasks tagged ${tag}`}
+                    className="task-tag-chip task-tag-chip--readonly task-tag-chip--interactive"
+                    data-role="task-tag-chip"
+                    data-tag-value={tag}
+                    key={tag}
+                    type="button"
+                    onClick={() => onOpenTag(tag)}
+                  >
+                    {tag}
+                  </button>
                 ))}
               </div>
             ) : null}

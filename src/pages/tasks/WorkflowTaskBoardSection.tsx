@@ -14,6 +14,7 @@ interface WorkflowTaskBoardSectionProps {
   displayMode: TaskBoardViewMode;
   showDoneTasks: boolean;
   onOpenTask: (taskId: string) => void;
+  onOpenTag?: (tag: string) => void;
 }
 
 function getPriorityLabel(priority: string) {
@@ -35,6 +36,7 @@ export function WorkflowTaskBoardSection({
   displayMode,
   showDoneTasks,
   onOpenTask,
+  onOpenTag,
 }: WorkflowTaskBoardSectionProps) {
   const visibleLanes = section.lanes.filter((lane) => lane.tasks.length > 0);
   const visibleTasks = showDoneTasks
@@ -101,7 +103,7 @@ export function WorkflowTaskBoardSection({
                     <TaskSummaryStatusBadges task={task} />
                   </td>
                   <td>
-                    <TaskTagList className="task-table__tags" emptyPlaceholder="—" maxVisible={3} task={task} />
+                    <TaskTagList className="task-table__tags" emptyPlaceholder="—" maxVisible={3} onTagClick={onOpenTag} task={task} />
                   </td>
                   <td>{resolveLaneLabel(task, section)}</td>
                   <td>{resolveTaskAssigneeLabel(task, agents, roles)}</td>
@@ -132,6 +134,7 @@ export function WorkflowTaskBoardSection({
               key={task.id}
               task={task}
               onOpen={onOpenTask}
+              onOpenTag={onOpenTag}
             />
           ))}
         </div>
@@ -151,6 +154,7 @@ export function WorkflowTaskBoardSection({
                       key={task.id}
                       task={task}
                       onOpen={onOpenTask}
+                      onOpenTag={onOpenTag}
                     />
                   ))}
                 </div>

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 
 import {
   LEGACY_TASK_BOARD_VIEW_MODE_STORAGE_KEY,
+  buildTaskOverviewStateForTagNavigation,
   buildTaskOverviewStorageKey,
   loadStoredTaskOverviewState,
   normalizeTaskOverviewState,
@@ -134,6 +135,24 @@ describe("taskOverviewState", () => {
       tags: ["backend", "design"],
       tagMatch: "any",
       filtersExpanded: false,
+    });
+  });
+
+  test("builds a tag-navigation state that preserves sort and view mode while focusing the clicked tag", () => {
+    expect(buildTaskOverviewStateForTagNavigation({
+      boardFilter: "blocked",
+      viewMode: "table",
+      sort: { field: "title", direction: "asc" },
+      tags: ["frontend", "ops"],
+      tagMatch: "all",
+      filtersExpanded: false,
+    }, "#backend")).toEqual({
+      boardFilter: "all",
+      viewMode: "table",
+      sort: { field: "title", direction: "asc" },
+      tags: ["backend"],
+      tagMatch: "any",
+      filtersExpanded: true,
     });
   });
 });

@@ -147,6 +147,7 @@ interface TasksPageProps {
   tasksOverviewToken?: number;
   onTaskOverviewStateChange?: (nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) => void;
   onSelectedTaskIdChange?: (taskId: string | null) => void;
+  onOpenTaskTag?: (tag: string) => void;
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
   onOpenSession?: (sessionId: string, projectId?: string | null) => void;
@@ -165,6 +166,7 @@ export function TasksPage({
   tasksOverviewToken = 0,
   onTaskOverviewStateChange,
   onSelectedTaskIdChange,
+  onOpenTaskTag,
   onOpenAgent,
   onOpenRole,
   onOpenSession,
@@ -1223,6 +1225,7 @@ export function TasksPage({
           board={boardModel}
           onOpenTask={openTaskDetail}
           onOpenSchedule={openTaskScheduleDetail}
+          onOpenTag={onOpenTaskTag ?? (() => {})}
           onOverviewStateChange={updateTaskOverviewState}
           overviewState={taskOverviewState}
           roles={roles}
@@ -1306,6 +1309,7 @@ export function TasksPage({
           }}
           onFileReferenceDraftChange={setFileReferenceDraft}
           onOpenTask={openTaskDetail}
+          onOpenTag={onOpenTaskTag ?? (() => {})}
           onOpenSession={onOpenSession ?? (() => {})}
           onOpenAgent={onOpenAgent ?? (() => {})}
           onOpenRole={onOpenRole ?? (() => {})}

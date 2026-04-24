@@ -107,6 +107,19 @@ export function normalizeTaskOverviewState(value: unknown, fallback?: Partial<Ta
   };
 }
 
+export function buildTaskOverviewStateForTagNavigation(currentState: TaskOverviewState, tag: string): TaskOverviewState {
+  const normalizedTag = tag.trim().replace(/^#/, "");
+  const normalizedCurrentState = normalizeTaskOverviewState(currentState);
+
+  return normalizeTaskOverviewState({
+    ...normalizedCurrentState,
+    boardFilter: "all",
+    tags: normalizedTag ? [normalizedTag] : [],
+    tagMatch: "any",
+    filtersExpanded: true,
+  });
+}
+
 export function buildTaskOverviewStorageKey(projectId?: string | null) {
   return `${TASK_OVERVIEW_STORAGE_KEY_PREFIX}.${projectId ?? DEFAULT_PROJECT_STORAGE_KEY}`;
 }

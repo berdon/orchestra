@@ -22,6 +22,7 @@ interface TasksOverviewPageProps {
   roles: RoleSummary[];
   onOpenTask: (taskId: string) => void;
   onOpenSchedule: (scheduleId: string) => void;
+  onOpenTag: (tag: string) => void;
 }
 
 function formatScheduleTrigger(schedule: TaskScheduleSummary) {
@@ -71,6 +72,7 @@ export function TasksOverviewPage({
   roles,
   onOpenTask,
   onOpenSchedule,
+  onOpenTag,
 }: TasksOverviewPageProps) {
   const filterCounts = {
     all: tagScopedTasks.length,
@@ -347,6 +349,7 @@ export function TasksOverviewPage({
                   key={task.id}
                   task={task}
                   onOpen={onOpenTask}
+                  onOpenTag={onOpenTag}
                 />
               ))}
             </div>
@@ -368,6 +371,7 @@ export function TasksOverviewPage({
                   key={task.id}
                   task={task}
                   onOpen={onOpenTask}
+                  onOpenTag={onOpenTag}
                 />
               ))}
             </div>
@@ -380,6 +384,7 @@ export function TasksOverviewPage({
             displayMode={overviewState.viewMode}
             key={section.workflowId}
             onOpenTask={onOpenTask}
+            onOpenTag={onOpenTag}
             roles={roles}
             section={section}
             showDoneTasks={overviewState.boardFilter === "done"}

@@ -46,6 +46,7 @@ import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TasksPage } from "./pages/TasksPage";
 import {
+  buildTaskOverviewStateForTagNavigation,
   loadStoredTaskOverviewState,
   storeTaskOverviewState,
   type TaskOverviewState,
@@ -2785,9 +2786,12 @@ export function App() {
     setPendingSessionOpenRequest((current) => ({ sessionId, token: (current?.token ?? 0) + 1, projectId: targetProjectId }));
   }
 
-  function navigateToTasksOverview() {
+  function navigateToTasksOverview(tag?: string) {
     setActivePage("tasks");
     setSelectedTaskId(null);
+    if (tag) {
+      setTaskOverviewState((current) => buildTaskOverviewStateForTagNavigation(current, tag));
+    }
     setTasksOverviewToken((current) => current + 1);
   }
 
@@ -4058,6 +4062,7 @@ export function App() {
             tasksOverviewToken={tasksOverviewToken}
             onTaskOverviewStateChange={setTaskOverviewState}
             onSelectedTaskIdChange={setSelectedTaskId}
+            onOpenTaskTag={navigateToTasksOverview}
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onOpenSession={navigateToSession}

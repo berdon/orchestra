@@ -17,6 +17,181 @@ async function getElementHeight(locator: Locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
 }
 
+async function seedClickableTagNavigationData(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-tag-navigation",
+          slug: "tag-navigation",
+          name: "Tag Navigation Flow",
+          description: "Flow used to verify clickable task-tag navigation.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-tag-source",
+          projectId: "orchestra",
+          number: "ORC-30",
+          title: "Backend source task",
+          description: "Open me from detail or overview and click the backend tag.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: "workflow-tag-navigation",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["backend", "ux"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-22T10:00:00.000Z",
+        },
+        {
+          id: "task-tag-backend-match",
+          projectId: "orchestra",
+          number: "ORC-31",
+          title: "Second backend task",
+          description: "Should remain visible when backend is selected.",
+          type: "task",
+          status: "in_progress",
+          priority: "P2",
+          workflowId: "workflow-tag-navigation",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["backend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-22T11:00:00.000Z",
+        },
+        {
+          id: "task-tag-frontend-other",
+          projectId: "orchestra",
+          number: "ORC-32",
+          title: "Frontend only task",
+          description: "Should disappear when backend is selected.",
+          type: "task",
+          status: "ready",
+          priority: "P3",
+          workflowId: "workflow-tag-navigation",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["frontend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-22T12:00:00.000Z",
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.task-schedules", JSON.stringify([]));
+  });
+}
+
 test("tasks overview creates a draft task and opens dedicated detail/create pages", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -346,6 +521,61 @@ test("tasks overview keeps collapsed filters compact while showing active filter
   await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Sort: Title · Ascending");
   await expect(page.locator('[data-role="task-overview-filters-active-count"]')).toHaveText("2 active");
   expect(await getElementHeight(page.locator('[data-role="task-overview-filters-card"]'))).toBeLessThan(100);
+});
+
+test("clicking a task detail tag chip returns to tasks overview filtered by that tag", async ({ page }) => {
+  await seedClickableTagNavigationData(page);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"][data-task-id="task-tag-source"]').click();
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveAttribute("data-task-id", "task-tag-source");
+
+  await page.locator('[data-role="task-title-tags"] [data-role="task-tag-chip"][data-tag-value="backend"]').click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Tags: #backend");
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]')).toHaveClass(/filter-chip--active/);
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Backend source task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Second backend task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).not.toContainText("Frontend only task");
+  await expect.poll(async () => page.evaluate(() => window.location.search.includes("selectedTaskId="))).toBe(false);
+  await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("orchestra.preferences.task-overview.v1.orchestra") ?? "")).toContain('"tags":["backend"]');
+});
+
+test("clicking a task card tag chip filters the tasks overview instead of opening task detail", async ({ page }) => {
+  await seedClickableTagNavigationData(page);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"][data-task-id="task-tag-source"] [data-role="task-tag-chip"][data-tag-value="backend"]').click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Tags: #backend");
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]')).toHaveClass(/filter-chip--active/);
+  await expect(page.locator('[data-role="task-card"][data-task-id="task-tag-source"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-card"][data-task-id="task-tag-backend-match"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-card"][data-task-id="task-tag-frontend-other"]')).toHaveCount(0);
+});
+
+test("clicking a task table tag chip filters the tasks overview instead of opening task detail", async ({ page }) => {
+  await seedClickableTagNavigationData(page);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-view-table"]').click();
+  await page.locator('[data-role="task-table-row"][data-task-id="task-tag-source"] [data-role="task-tag-chip"][data-tag-value="backend"]').click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-table"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-overview-filters-toggle"]')).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Tags: #backend");
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]')).toHaveClass(/filter-chip--active/);
+  await expect(page.locator('[data-role="task-table-row"][data-task-id="task-tag-source"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-table-row"][data-task-id="task-tag-backend-match"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-table-row"][data-task-id="task-tag-frontend-other"]')).toHaveCount(0);
 });
 
 test("tasks overview shows populated draft and scheduled sections", async ({ page }) => {
