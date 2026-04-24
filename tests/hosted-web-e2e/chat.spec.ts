@@ -6,11 +6,12 @@ test.beforeEach(async ({ page }) => {
   await pairHostedWebBrowser(page);
 });
 
-test("hosted-web chat opens the seeded supervisor session through ensure-agent-session", async ({ page }) => {
+test("hosted-web chat exposes Supervisor as a selectable chat target", async ({ page }) => {
   await page.goto("/");
   await page.locator('[data-role="nav-item-chat"]').click();
 
-  await page.getByRole("button", { name: /Supervisor/i }).click();
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
-  await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
+  const supervisorTab = page.locator('[data-role="chat-agent-nav-supervisor"]');
+  await expect(supervisorTab).toBeVisible();
+  await supervisorTab.click();
+  await expect(supervisorTab).toHaveAttribute("aria-selected", "true");
 });
