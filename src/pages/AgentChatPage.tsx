@@ -132,8 +132,8 @@ export function AgentChatPage({
   }
 
   const panelStackClassName = error
-    ? "panel-stack panel-stack--sessions panel-stack--sessions-layout panel-stack--sessions-layout--with-error"
-    : "panel-stack panel-stack--sessions panel-stack--sessions-layout";
+    ? "panel-stack panel-stack--sessions panel-stack--sessions-layout panel-stack--sessions-layout--with-error agent-chat-page"
+    : "panel-stack panel-stack--sessions panel-stack--sessions-layout agent-chat-page";
 
   return (
     <section className={panelStackClassName}>
@@ -146,7 +146,6 @@ export function AgentChatPage({
         dataRolePrefix="agent-chat-status"
       />
       <div className="page-mobile-switcher page-mobile-switcher--chat" data-role="chat-mobile-agent-switcher">
-        <p className="eyebrow">Chat</p>
         <button
           className="page-mobile-switcher__trigger"
           type="button"
@@ -226,6 +225,7 @@ export function AgentChatPage({
           emptyStateEyebrow="Chat"
           emptyStateTitle={emptyStateTitle}
           emptyStateDescription={emptyStateDescription}
+          surface="chat-page"
         />
       </div>
     </section>

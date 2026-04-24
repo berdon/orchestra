@@ -152,6 +152,25 @@ test("mobile navigation closes after destination changes and keeps settings sub-
   await expect(page.locator('[data-role="new-task"]')).toBeVisible();
 });
 
+
+test("mobile overview topbar exposes the project switcher without opening the full navigation sheet", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/");
+
+  const trigger = page.locator('[data-role="mobile-topbar-project-switcher"] [data-role="project-switcher-trigger"]');
+  await expect(page.locator('[data-role="mobile-topbar-brand"]')).toContainText('Orchestra');
+  await expect(trigger).toBeVisible();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+
+  await trigger.click();
+  await expect(page.locator('[data-role="project-switcher-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+});
+
 test("tasks page exposes the create flow through a bottom-right floating action button", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

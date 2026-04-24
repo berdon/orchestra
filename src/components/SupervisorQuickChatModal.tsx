@@ -192,7 +192,7 @@ export function SupervisorQuickChatModal({
               type="submit"
               aria-label="Send message to supervisor"
               title="Send message to supervisor"
-              disabled={pending || draftMessage.trim().length === 0}
+              disabled={pending}
             >
               ↗
             </button>

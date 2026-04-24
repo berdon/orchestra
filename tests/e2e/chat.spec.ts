@@ -15,8 +15,12 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
     const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
     const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
+    const composerFooter = document.querySelector('.composer__footer') as HTMLDivElement | null;
+    const modelSelect = document.querySelector('.session-model-field--composer .select-input') as HTMLSelectElement | null;
+    const panelHeader = panel.querySelector('.panel__header') as HTMLElement | null;
+    const mobileAgentPicker = document.querySelector('[data-role="chat-mobile-agent-switcher"]') as HTMLElement | null;
 
-    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
+    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !modelSelect) {
       return null;
     }
 
@@ -24,6 +28,8 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const panelRect = panel.getBoundingClientRect();
     const transcriptRect = transcript.getBoundingClientRect();
     const composerRect = composerInput.getBoundingClientRect();
+    const composerFooterRect = composerFooter.getBoundingClientRect();
+    const modelRect = modelSelect.getBoundingClientRect();
 
     return {
       viewportHeight: window.innerHeight,
@@ -36,7 +42,12 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
       transcriptHeight: transcriptRect.height,
       transcriptTop: transcriptRect.top,
       composerInputHeight: composerRect.height,
+      composerInputWidth: composerRect.width,
       composerBottom: composerRect.bottom,
+      composerFooterWidth: composerFooterRect.width,
+      modelWidth: modelRect.width,
+      panelHeaderVisible: panelHeader ? window.getComputedStyle(panelHeader).display !== 'none' : false,
+      mobileAgentPickerTop: mobileAgentPicker?.getBoundingClientRect().top ?? null,
       panelResize: window.getComputedStyle(panel).resize,
       composerResize: window.getComputedStyle(composerInput).resize,
     };
@@ -290,7 +301,8 @@ test("chat page hides shared header controls on mobile while keeping chat usable
   await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
   await page.locator('[data-role="chat-agent-nav-data"]').click();
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Data");
+  await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
 
@@ -358,7 +370,8 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toBeVisible();
   await page.locator('[data-role="chat-mobile-agent-option-data"]').click();
 
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Data");
+  await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await page.locator('[data-role="composer-input"]').fill("Mobile chat message");
   await page.locator('[data-role="send-message"]').click();
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Mobile chat message", { timeout: 10_000 });
@@ -366,13 +379,17 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   const mobileLayout = await measureChatLayout(page);
   expect(mobileLayout).not.toBeNull();
   expect(mobileLayout?.panelTop ?? 999).toBeLessThan(340);
+  expect(mobileLayout?.mobileAgentPickerTop ?? 999).toBeLessThan(mobileLayout?.panelTop ?? 999);
+  expect(mobileLayout?.panelHeaderVisible).toBe(false);
   expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(160);
   expect(mobileLayout?.transcriptTop ?? 999).toBeLessThan((mobileLayout?.viewportHeight ?? 0) - 180);
   expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+  expect(Math.abs((mobileLayout?.composerFooterWidth ?? 0) - (mobileLayout?.composerInputWidth ?? 0))).toBeLessThanOrEqual(2);
+  expect(mobileLayout?.modelWidth ?? 999).toBeLessThan((mobileLayout?.composerInputWidth ?? 0) * 0.6);
 
   await page.locator('[data-role="chat-mobile-agent-picker-trigger"]').click();
   await page.locator('[data-role="chat-mobile-agent-option-supervisor"]').click();
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Supervisor");
   await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toHaveCount(0);
 });
 

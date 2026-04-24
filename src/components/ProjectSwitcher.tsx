@@ -10,6 +10,7 @@ interface ProjectSwitcherProps {
   hasUnreadOutsideActiveProject: boolean;
   collapsed: boolean;
   onSelectProject: (projectId: string) => void;
+  variant?: "sidebar" | "mobile-topbar";
 }
 
 function getProjectMonogram(name: string | null | undefined) {
@@ -37,6 +38,7 @@ export function ProjectSwitcher({
   hasUnreadOutsideActiveProject,
   collapsed,
   onSelectProject,
+  variant = "sidebar",
 }: ProjectSwitcherProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -88,8 +90,12 @@ export function ProjectSwitcher({
   }, [open]);
 
   return (
-    <div className="project-switcher" ref={rootRef} data-collapsed={collapsed ? "true" : "false"}>
-      {!collapsed ? <span className="project-switcher__label">Project</span> : null}
+    <div
+      className={variant === "mobile-topbar" ? "project-switcher project-switcher--mobile-topbar" : "project-switcher"}
+      ref={rootRef}
+      data-collapsed={collapsed ? "true" : "false"}
+    >
+      {!collapsed && variant !== "mobile-topbar" ? <span className="project-switcher__label">Project</span> : null}
       <select
         className="project-switcher__native-select"
         data-role="project-switcher"

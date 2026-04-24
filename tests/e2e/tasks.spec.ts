@@ -3920,3 +3920,32 @@ test("task detail refreshes from backend task-change events without waiting on p
 
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Updated from backend event");
 });
+
+test("task detail on mobile swaps the brand for back and actions while hiding the create fab", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  await page.locator('[data-role="new-task"]').click();
+  await page.locator('[data-role="task-title"]').fill("Mobile header detail task");
+  await page.locator('[data-role="save-task"]').click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toBeVisible();
+  await expect(page.locator('[data-role="mobile-topbar-brand"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-subpage-back"]')).toBeVisible();
+  await expect(page.locator('[data-role="mobile-topbar-actions"]')).toBeVisible();
+  await expect(page.locator('[data-role="tasks-create-fab"]')).toHaveCount(0);
+
+  await page.locator('[data-role="mobile-topbar-actions"]').getByRole('button', { name: 'Task actions' }).click();
+  await expect(page.locator('.task-action-menu__dropdown')).toBeVisible();
+
+  await page.locator('[data-role="mobile-subpage-back"]').click();
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
+  await expect(page.locator('[data-role="mobile-topbar-brand"]')).toBeVisible();
+});

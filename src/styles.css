@@ -781,6 +781,25 @@ strong {
   background: color-mix(in srgb, var(--bg-elevated) 92%, var(--color-sidebar-background));
 }
 
+.project-switcher--mobile-topbar {
+  gap: 0;
+}
+
+.project-switcher--mobile-topbar .project-switcher__button {
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.project-switcher--mobile-topbar .project-switcher__avatar,
+.project-switcher--mobile-topbar .project-switcher__label {
+  display: none;
+}
+
+.project-switcher--mobile-topbar .project-switcher__trigger-label {
+  font-size: 0.88rem;
+}
+
 .project-switcher__native-select {
   position: absolute;
   inset: auto;
@@ -870,6 +889,12 @@ strong {
   right: auto;
   width: clamp(220px, 28vw, 320px);
   max-width: min(320px, calc(100vw - 24px));
+}
+
+.project-switcher--mobile-topbar .project-switcher__menu {
+  right: 0;
+  left: auto;
+  width: min(320px, calc(100vw - 32px));
 }
 
 .project-switcher__item {
@@ -1063,14 +1088,18 @@ strong {
   position: sticky;
   top: 0;
   z-index: 16;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--color-sidebar-background) 94%, transparent);
   backdrop-filter: blur(16px);
+}
+
+.mobile-topbar--subpage {
+  gap: 10px;
 }
 
 .mobile-topbar__brand,
@@ -1085,6 +1114,12 @@ strong {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
   align-items: center;
+  min-width: 0;
+}
+
+.mobile-topbar__project-switcher,
+.mobile-topbar__title-slot {
+  width: 100%;
   min-width: 0;
 }
 
@@ -1107,6 +1142,7 @@ strong {
   text-overflow: ellipsis;
 }
 
+.mobile-topbar__back,
 .mobile-topbar__toggle {
   width: 44px;
   height: 44px;
@@ -1117,6 +1153,40 @@ strong {
   color: var(--text);
 }
 
+.mobile-topbar__back {
+  display: inline-grid;
+  place-items: center;
+}
+
+.mobile-topbar__back-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.mobile-topbar__title-slot {
+  display: grid;
+  justify-items: start;
+}
+
+.mobile-topbar__title-actions,
+.mobile-topbar__title-actions .task-action-menu,
+.mobile-topbar__title-actions .task-action-menu__mobile {
+  display: grid;
+  width: 100%;
+}
+
+.mobile-topbar__title-actions .task-action-menu__trigger {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.mobile-topbar__title-actions .task-action-menu__dropdown {
+  left: 0;
+  right: auto;
+}
+
+.mobile-topbar__back:hover,
+.mobile-topbar__back:focus-visible,
 .mobile-topbar__toggle:hover,
 .mobile-topbar__toggle:focus-visible {
   border-color: var(--border-strong);
@@ -5015,6 +5085,13 @@ strong {
     margin-right: 14px;
   }
 
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] > .panel__header,
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .session-stats-strip,
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .composer {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
   .session-detail-actions-row {
     display: none;
   }
@@ -5023,8 +5100,16 @@ strong {
     padding-top: 14px;
   }
 
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] > .panel__header {
+    display: none;
+  }
+
   .session-chat-panel .session-transcript {
     padding: 64px 14px 14px;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .session-transcript {
+    padding-top: 56px;
   }
 
   .session-transcript-controls {
@@ -5057,6 +5142,20 @@ strong {
     gap: 8px;
   }
 
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .composer {
+    padding: 0 14px 14px;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .composer__footer {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .composer__actions {
+    width: 100%;
+    grid-template-columns: 42px minmax(0, 112px) 56px 56px;
+  }
+
   .field-group--composer {
     gap: 6px;
   }
@@ -5081,6 +5180,15 @@ strong {
     min-width: 0;
     width: auto;
     flex: none;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .session-model-field--composer {
+    width: 112px;
+    flex: 0 0 112px;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .session-model-field--composer .select-input {
+    width: 100%;
   }
 
   .session-model-field--composer .select-input,

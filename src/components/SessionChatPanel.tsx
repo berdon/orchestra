@@ -177,6 +177,7 @@ interface SessionChatPanelProps {
   emptyStateEyebrow?: string;
   emptyStateTitle?: string;
   emptyStateDescription?: string;
+  surface?: "default" | "chat-page";
 }
 
 interface SessionComposerProps {
@@ -684,6 +685,7 @@ export function SessionChatPanel({
   emptyStateEyebrow = "No session selected",
   emptyStateTitle = "Create or select a session",
   emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
+  surface = "default",
 }: SessionChatPanelProps) {
   const projectMentionLookup = useMemo(
     () => buildProjectMentionLookup({ tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
@@ -709,6 +711,7 @@ export function SessionChatPanel({
       data-session-id={session?.id ?? ""}
       data-terminal-attached={sessionReadOnly ? "true" : "false"}
       data-messageable={sessionMessageable ? "true" : "false"}
+      data-surface={surface}
     >
       {session ? (
         <>

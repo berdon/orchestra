@@ -41,12 +41,13 @@ import { CommandPalette } from "./components/CommandPalette";
 import { ProjectSwitcher } from "./components/ProjectSwitcher";
 import { RuntimeLogPanel } from "./components/RuntimeLogPanel";
 import { SupervisorQuickChatModal } from "./components/SupervisorQuickChatModal";
+import { TaskActionMenu } from "./components/TaskActionMenu";
 import { InboxPage } from "./pages/InboxPage";
 import { AgentChatPage } from "./pages/AgentChatPage";
 import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
 import { shouldApplyChatAgentLoad } from "./pages/chat/chatAgentLoadGuards";
 import { SessionsPage } from "./pages/SessionsPage";
-import { TasksPage } from "./pages/TasksPage";
+import { TasksPage, type TasksMobileHeaderContext } from "./pages/TasksPage";
 import {
   buildTaskOverviewStateForTagNavigation,
   loadStoredTaskOverviewState,
@@ -876,12 +877,15 @@ export function App() {
   const [supervisorQuickChatOpen, setSupervisorQuickChatOpen] = useState(false);
   const [supervisorSessionId, setSupervisorSessionId] = useState<string | null>(null);
   const [supervisorQuickChatStorageReadyProjectKey, setSupervisorQuickChatStorageReadyProjectKey] = useState<string | null>(null);
+  const [, setTasksMobileHeaderVersion] = useState(0);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const settingsSubnavRef = useRef<HTMLDivElement | null>(null);
   const mobileNavigationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const mobileNavigationDialogRef = useRef<HTMLDivElement | null>(null);
   const mobileNavigationCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const tasksMobileHeaderContextRef = useRef<TasksMobileHeaderContext | null>(null);
+  const tasksMobileHeaderSignatureRef = useRef<string | null>(null);
   const shouldRestoreMobileNavigationFocusRef = useRef(false);
   const viewedSessionIdRef = useRef<string | null>(null);
   const chatSessionAgentIdRef = useRef<string | null>(null);
@@ -2853,15 +2857,12 @@ export function App() {
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
   const mobileNavItems = useMemo(() => NAV_ITEMS, []);
-  const activePageLabel = useMemo(
-    () => NAV_ITEMS.find((item) => item.id === activePage)?.label ?? "Orchestra",
-    [activePage],
-  );
   const navBadgeByPage: Partial<Record<PrimaryPage, string>> = useMemo(() => ({
     tasks: formatNavigationBadgeCount(activeProjectTaskCommentUnreadCount),
     inbox: formatNavigationBadgeCount(activeProjectUnreadCount),
     sessions: formatNavigationBadgeCount(activeSessionCount),
   }), [activeProjectTaskCommentUnreadCount, activeProjectUnreadCount, activeSessionCount]);
+  const activeTasksMobileHeaderContext = activePage === "tasks" ? tasksMobileHeaderContextRef.current : null;
 
   const handleThemeChange = useCallback((nextThemeId: OrchestraThemeId) => {
     setThemeId(nextThemeId);
@@ -2874,6 +2875,15 @@ export function App() {
   const closeMobileNavigation = useCallback((options?: { restoreFocus?: boolean }) => {
     shouldRestoreMobileNavigationFocusRef.current = options?.restoreFocus ?? true;
     setIsMobileNavigationOpen(false);
+  }, []);
+  const handleTasksMobileHeaderContextChange = useCallback((context: TasksMobileHeaderContext | null) => {
+    tasksMobileHeaderContextRef.current = context;
+    const nextSignature = context?.signature ?? null;
+    if (tasksMobileHeaderSignatureRef.current === nextSignature) {
+      return;
+    }
+    tasksMobileHeaderSignatureRef.current = nextSignature;
+    setTasksMobileHeaderVersion((current) => current + 1);
   }, []);
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
@@ -3546,14 +3556,57 @@ export function App() {
       >
         {isMobileNavigation ? (
           <>
-            <div className="mobile-topbar" data-role="mobile-topbar">
-              <div className="mobile-topbar__brand">
-                <div className="sidebar__brand-mark" aria-hidden="true">O</div>
-                <div className="mobile-topbar__copy">
-                  <strong>Orchestra</strong>
-                  <span>{activeProject?.name ?? activePageLabel}</span>
-                </div>
-              </div>
+            <div className={activeTasksMobileHeaderContext ? "mobile-topbar mobile-topbar--subpage" : "mobile-topbar"} data-role="mobile-topbar">
+              {activeTasksMobileHeaderContext ? (
+                <>
+                  <button
+                    className="mobile-topbar__back"
+                    data-role="mobile-subpage-back"
+                    type="button"
+                    aria-label={activeTasksMobileHeaderContext.backLabel}
+                    onClick={() => tasksMobileHeaderContextRef.current?.onBack()}
+                  >
+                    <span className="mobile-topbar__back-icon" aria-hidden="true">←</span>
+                  </button>
+                  <div className="mobile-topbar__title-slot" data-role="mobile-topbar-title-slot" aria-label={activeTasksMobileHeaderContext.title}>
+                    {activeTasksMobileHeaderContext.actions?.length ? (
+                      <div className="mobile-topbar__title-actions" data-role="mobile-topbar-actions">
+                        <TaskActionMenu
+                          actions={activeTasksMobileHeaderContext.actions.map((action) => ({
+                            ...action,
+                            onClick: () => tasksMobileHeaderContextRef.current?.onAction?.(action.id),
+                          }))}
+                          menuLabel={activeTasksMobileHeaderContext.actionMenuLabel ?? "Actions"}
+                        />
+                      </div>
+                    ) : (
+                      <div className="mobile-topbar__copy">
+                        <strong>{activeTasksMobileHeaderContext.title}</strong>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mobile-topbar__brand" data-role="mobile-topbar-brand">
+                    <div className="sidebar__brand-mark" aria-hidden="true">O</div>
+                    <div className="mobile-topbar__copy">
+                      <strong>Orchestra</strong>
+                    </div>
+                  </div>
+                  <div className="mobile-topbar__project-switcher" data-role="mobile-topbar-project-switcher">
+                    <ProjectSwitcher
+                      projects={projects}
+                      activeProjectId={activeProject?.id ?? null}
+                      unreadCountsByProject={projectUnreadCounts}
+                      hasUnreadOutsideActiveProject={hasUnreadOutsideActiveProject && activeProjectUnreadCount === 0}
+                      collapsed={false}
+                      onSelectProject={handleProjectSelection}
+                      variant="mobile-topbar"
+                    />
+                  </div>
+                </>
+              )}
               <button
                 ref={mobileNavigationTriggerRef}
                 className="mobile-topbar__toggle"
@@ -4166,6 +4219,7 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onOpenSession={navigateToSession}
+            onMobileHeaderContextChange={handleTasksMobileHeaderContextChange}
           />
         )}
         </div>

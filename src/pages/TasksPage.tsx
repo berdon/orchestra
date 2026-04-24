@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { TaskActionMenuAction } from "../components/TaskActionMenu";
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { retryOrchestraRead, useOrchestraClient } from "../lib/orchestraClient";
 import { useOrchestraConnection } from "../lib/orchestraData/connection";
@@ -26,6 +27,8 @@ import type {
 import { TaskCreatePage } from "./tasks/TaskCreatePage";
 import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
+import { getEffectiveTaskDetailAssignmentStatus } from "./tasks/taskDetailActionState";
+import { buildTaskDetailHeaderActions } from "./tasks/taskDetailHeaderActions";
 import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetailRouteState } from "./tasks/taskDetailLoadGuards";
 import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
 import { TasksOverviewPage } from "./tasks/TasksOverviewPage";
@@ -139,6 +142,18 @@ interface TaskTimelineItem {
   tone: "neutral" | "warning" | "success" | "error";
 }
 
+export type TasksMobileHeaderAction = Omit<TaskActionMenuAction, "onClick">;
+
+export interface TasksMobileHeaderContext {
+  signature: string;
+  title: string;
+  backLabel: string;
+  onBack: () => void;
+  actionMenuLabel?: string;
+  actions?: TasksMobileHeaderAction[];
+  onAction?: (actionId: string) => void;
+}
+
 interface TasksPageProps {
   projectId?: string | null;
   createTaskToken?: number;
@@ -152,10 +167,15 @@ interface TasksPageProps {
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
   onOpenSession?: (sessionId: string, projectId?: string | null) => void;
+  onMobileHeaderContextChange?: (context: TasksMobileHeaderContext | null) => void;
 }
 
 function sameData<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next);
+}
+
+function stripMobileHeaderActionData(actions: TaskActionMenuAction[]): TasksMobileHeaderAction[] {
+  return actions.map(({ onClick: _onClick, dataRole: _dataRole, ...action }) => action);
 }
 
 export function TasksPage({
@@ -171,6 +191,7 @@ export function TasksPage({
   onOpenAgent,
   onOpenRole,
   onOpenSession,
+  onMobileHeaderContextChange,
 }: TasksPageProps) {
   const orchestraClient = useOrchestraClient();
   const connection = useOrchestraConnection();
@@ -204,6 +225,8 @@ export function TasksPage({
   const [sendingTaskMail, setSendingTaskMail] = useState(false);
   const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
+  const [taskDetailEditing, setTaskDetailEditing] = useState(false);
+  const [taskScheduleEditing, setTaskScheduleEditing] = useState(false);
   const createTaskTokenRef = useRef(0);
   const openTaskTokenRef = useRef(0);
   const tasksOverviewTokenRef = useRef(0);
@@ -462,6 +485,15 @@ export function TasksPage({
       void loadTaskScheduleDetail(route.scheduleId, { preserveDraft: taskScheduleDraftDirty });
     }
   }, [route.kind === "detail" ? route.taskId : null, route.kind === "schedule" ? route.scheduleId : null]);
+
+  useEffect(() => {
+    if (route.kind !== "detail") {
+      setTaskDetailEditing(false);
+    }
+    if (route.kind !== "schedule") {
+      setTaskScheduleEditing(false);
+    }
+  }, [route]);
 
   useEffect(() => {
     onSelectedTaskIdChange?.(route.kind === "detail" ? route.taskId : null);
@@ -1198,6 +1230,129 @@ export function TasksPage({
     void loadTasksData();
   }, [loadTaskDetail, loadTaskScheduleDetail, loadTasksData, route]);
 
+  const detailHeaderActions = taskDetail
+    ? buildTaskDetailHeaderActions({
+        task: taskDetail,
+        canPublish: taskDetail.status === "draft" && Boolean(taskDraft.workflowId && taskDraft.title.trim()) && !publishingTask && !savingTask && !loadingTaskDetail,
+        effectiveActiveLaneAssignmentStatus: getEffectiveTaskDetailAssignmentStatus(taskDetail),
+        onPublish: () => void handlePublishDetailTask(),
+        onDispatch: () => void handleDispatchTaskLane(),
+        onApproveCompletion: () => void handleApproveLaneCompletion(),
+        onSendBackForWork: () => void handleSendLaneBackForWork(),
+        onResetTask: () => void handleResetTaskRuntime(),
+        onComplete: (outcome) => void handleCompleteLane(outcome),
+        onPauseRuntime: () => void handlePauseTaskRuntime(),
+        onWhipTask: () => void handleWhipTask(),
+      })
+    : [];
+
+  const mobileHeaderContextBase = (() => {
+    switch (route.kind) {
+      case "create": {
+        const canSave = creatingScheduledTask ? Boolean(taskScheduleDraft.task.title.trim()) : Boolean(taskDraft.title.trim());
+        const canPublish = creatingScheduledTask ? canSave : Boolean(taskDraft.workflowId && taskDraft.title.trim());
+        return {
+          title: creatingScheduledTask ? "New scheduled task" : "New task",
+          backLabel: "Back to tasks",
+          onBack: () => setRoute({ kind: "overview" as const }),
+          actionMenuLabel: creatingScheduledTask ? "Create schedule" : "Create task",
+          actions: [
+            {
+              id: "publish",
+              label: (savingTask || publishingTask) ? (creatingScheduledTask ? "Creating…" : "Publishing…") : (creatingScheduledTask ? "Create schedule" : "Publish"),
+              disabled: savingTask || publishingTask || !canPublish,
+              variant: "secondary" as const,
+            },
+            {
+              id: "save",
+              label: (savingTask || publishingTask) ? "Saving…" : (creatingScheduledTask ? "Save schedule" : "Save changes"),
+              disabled: savingTask || publishingTask || !canSave,
+              variant: "primary" as const,
+            },
+          ],
+          onAction: (actionId: string) => {
+            if (actionId === "publish") {
+              void handlePublishCreateTask();
+              return;
+            }
+            if (actionId === "save") {
+              void handleSaveCreateTask();
+            }
+          },
+        };
+      }
+      case "schedule": {
+        if (!taskScheduleDetail) {
+          return {
+            title: "Task schedule",
+            backLabel: "Back to tasks",
+            onBack: () => setRoute({ kind: "overview" as const }),
+          };
+        }
+        return {
+          title: taskScheduleEditing ? "Edit schedule" : (taskScheduleDraft.task.title.trim() || taskScheduleDetail.title),
+          backLabel: "Back to tasks",
+          onBack: () => setRoute({ kind: "overview" as const }),
+        };
+      }
+      case "detail": {
+        if (!taskDetail) {
+          return {
+            title: "Task detail",
+            backLabel: "Back to tasks",
+            onBack: () => setRoute({ kind: "overview" as const }),
+          };
+        }
+        if (taskDetailEditing || detailHeaderActions.length === 0) {
+          return {
+            title: taskDetailEditing ? "Edit task" : (taskDraft.title.trim() || taskDetail.title),
+            backLabel: "Back to tasks",
+            onBack: () => setRoute({ kind: "overview" as const }),
+          };
+        }
+        return {
+          title: taskDraft.title.trim() || taskDetail.title,
+          backLabel: "Back to tasks",
+          onBack: () => setRoute({ kind: "overview" as const }),
+          actionMenuLabel: "Task actions",
+          actions: stripMobileHeaderActionData(detailHeaderActions),
+          onAction: (actionId: string) => {
+            detailHeaderActions.find((action) => action.id === actionId)?.onClick();
+          },
+        };
+      }
+      default:
+        return null;
+    }
+  })();
+
+  const mobileHeaderSignature = mobileHeaderContextBase
+    ? JSON.stringify({
+        title: mobileHeaderContextBase.title,
+        backLabel: mobileHeaderContextBase.backLabel,
+        actionMenuLabel: mobileHeaderContextBase.actionMenuLabel ?? null,
+        actions: mobileHeaderContextBase.actions ?? [],
+      })
+    : null;
+
+  useEffect(() => {
+    if (!onMobileHeaderContextChange) {
+      return;
+    }
+    if (!mobileHeaderContextBase || !mobileHeaderSignature) {
+      onMobileHeaderContextChange(null);
+      return;
+    }
+    onMobileHeaderContextChange({
+      ...mobileHeaderContextBase,
+      signature: mobileHeaderSignature,
+    });
+  }, [mobileHeaderContextBase, mobileHeaderSignature, onMobileHeaderContextChange]);
+
+  useEffect(() => () => {
+    onMobileHeaderContextChange?.(null);
+  }, [onMobileHeaderContextChange]);
+
   if (typeof window !== "undefined") {
     const testWindow = window as typeof window & {
       __orchestraTestOpenTaskDetail?: (taskId: string) => void;
@@ -1274,6 +1429,7 @@ export function TasksPage({
           }}
           onOpenTask={openTaskDetail}
           onSave={() => void handleSaveTaskScheduleDetail()}
+          onEditingStateChange={setTaskScheduleEditing}
           repositories={repositories}
           roles={roles}
           saving={savingTask}
@@ -1344,6 +1500,7 @@ export function TasksPage({
           workflows={workflowSummaries}
           workflowLanes={taskWorkflowLanes}
           onSendMail={(body, interrupt) => handleSendTaskMail(body, interrupt)}
+          onEditingStateChange={setTaskDetailEditing}
         />
       ) : route.kind === "detail" ? (
         <section className="panel empty-state">
@@ -1364,11 +1521,8 @@ export function TasksPage({
         </section>
       )}
 
-      {route.kind !== "create" ? (
-        <div
-          className={route.kind === "detail" ? "page-fab page-fab--tasks page-fab--lifted" : "page-fab page-fab--tasks"}
-          data-role="tasks-create-fab"
-        >
+      {route.kind !== "create" && route.kind !== "detail" ? (
+        <div className="page-fab page-fab--tasks" data-role="tasks-create-fab">
           <button
             className="primary-button page-fab__button"
             data-role="new-task"

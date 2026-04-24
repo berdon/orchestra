@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskScheduleDetail, TaskScheduleUpsertInput, WorkflowSummary } from "../../types";
 import { TaskActionMenu } from "../../components/TaskActionMenu";
@@ -18,6 +18,7 @@ interface TaskScheduleDetailPageProps {
   onSave: () => void;
   onDelete: () => void;
   onOpenTask: (taskId: string) => void;
+  onEditingStateChange?: (editing: boolean) => void;
 }
 
 function formatTriggerLabel(schedule: TaskScheduleDetail) {
@@ -55,11 +56,16 @@ export function TaskScheduleDetailPage({
   onSave,
   onDelete,
   onOpenTask,
+  onEditingStateChange,
 }: TaskScheduleDetailPageProps) {
   const [isEditing, setIsEditing] = useState(false);
 
   const triggerLabel = useMemo(() => formatTriggerLabel(schedule), [schedule]);
   const isSingleFire = schedule.oneShot || (schedule.trigger.type === "time" && schedule.trigger.kind === "once");
+
+  useEffect(() => {
+    onEditingStateChange?.(isEditing);
+  }, [isEditing, onEditingStateChange]);
 
   return (
     <section className="task-page task-detail-page panel">

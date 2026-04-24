@@ -2149,6 +2149,7 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   await triggerShortcut(page, "t");
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
   await expect(page.locator('[data-role="supervisor-send-message"]')).not.toContainText("Send");
+  await expect(page.locator('[data-role="supervisor-send-message"]')).toBeEnabled();
 
   await page.locator('[data-role="supervisor-composer-input"]').fill("Check the current project status");
   await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");
