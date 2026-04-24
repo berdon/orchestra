@@ -14,7 +14,7 @@ import {
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
 describe("desktop remote access", () => {
-  it.skipIf(!isDesktopE2E)("enables remote access and creates a pairing code", async () => {
+  it.skipIf(!isDesktopE2E)("shows the hosted Orchestra browser endpoint and generates pairing codes from the desktop host", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
@@ -33,13 +33,20 @@ describe("desktop remote access", () => {
         await clickSelector(sessionId, '[data-role="remote-enabled"]');
       }
       await clickSelector(sessionId, '[data-role="save-remote-settings"]');
-      await waitForSelector(sessionId, '[data-role="remote-endpoint-local-api"]');
+      await waitForSelector(sessionId, '[data-role="remote-endpoint-browser-app"]');
+      await waitForText(sessionId, "Hosted Orchestra web app URL");
 
-      const localUrl = await executeScript<string>(sessionId, `
-        const card = document.querySelector('[data-role="remote-endpoint-local-api"]');
-        return card ? card.textContent || '' : '';
+      const endpoints = await executeScript<{ browserUrl: string; localApiUrl: string }>(sessionId, `
+        const browserElement = document.querySelector('[data-role="remote-endpoint-browser-app"] code');
+        const localApiElement = document.querySelector('[data-role="remote-endpoint-local-api"] code');
+        return {
+          browserUrl: browserElement ? (browserElement.textContent || '').trim() : '',
+          localApiUrl: localApiElement ? (localApiElement.textContent || '').trim() : '',
+        };
       `);
-      expect(localUrl).toContain("http://127.0.0.1:");
+      expect(endpoints.browserUrl).toMatch(/^http:\/\/.+:[0-9]+$/);
+      expect(endpoints.localApiUrl).toContain("http://127.0.0.1:");
+      expect(new URL(endpoints.browserUrl).port).toBe(new URL(endpoints.localApiUrl).port);
 
       await clickSelector(sessionId, '[data-role="create-remote-pairing-code"]');
       await waitForSelector(sessionId, '[data-role="latest-remote-pairing-code"]');

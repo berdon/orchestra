@@ -14,8 +14,8 @@ use axum::{
         Path, Query, State as AxumState, WebSocketUpgrade,
     },
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
-    routing::{delete, get, get_service, patch, post},
+    response::{Html, IntoResponse, Response},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -25,7 +25,7 @@ use tauri::{path::BaseDirectory, AppHandle, Manager, Runtime};
 use tokio::sync::oneshot;
 use tower_http::{
     cors::{Any, CorsLayer},
-    services::{ServeDir, ServeFile},
+    services::ServeDir,
 };
 
 use crate::{
@@ -63,7 +63,7 @@ use crate::{
         agent_dispatch, app_events, database, messages,
         orchestra_paths::discover_dev_checkout_root, pi_sessions, projects, remote_access, tasks,
     },
-    state::{generate_id, now_iso, AppState, RemoteApiServerHandle, RemoteWebServerHandle},
+    state::{generate_id, now_iso, AppState, RemoteApiServerHandle},
 };
 
 #[derive(Clone)]
@@ -301,9 +301,6 @@ struct WsAuthQuery {
     token: Option<String>,
 }
 
-const REMOTE_WEB_BIND_HOST: &str = "127.0.0.1";
-const REMOTE_WEB_PORT: u16 = 8788;
-const REMOTE_WEB_TAILSCALE_PORT: u16 = 9443;
 const ORCHESTRA_CLIENT_CONTRACT_VERSION: &str = "2026-04-23";
 const REMOTE_AUTH_COOKIE_NAME: &str = "orchestra_remote_device_token";
 
@@ -398,10 +395,6 @@ fn split_tag_filters(raw: Option<&str>) -> Option<Vec<String>> {
 
 fn remote_api_target_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
-}
-
-fn remote_web_target_url(port: u16) -> String {
-    format!("http://{REMOTE_WEB_BIND_HOST}:{port}")
 }
 
 fn command_output_message(stderr: &[u8], stdout: &[u8], fallback: impl Into<String>) -> String {
@@ -762,7 +755,7 @@ mod tests {
             ))
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .map_err(|error| format!("failed to build remote API parity app: {error}"))?;
-        let auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?);
+        let auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?.auth_token);
 
         Ok(RemoteApiParityFixture { app, auth_header })
     }
@@ -1022,6 +1015,15 @@ mod tests {
             )],
         )
         .expect("session message production route probe should pass");
+    }
+
+    #[test]
+    fn hosted_web_entrypoint_serves_the_main_frontend_shell() {
+        let _probe_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("hosted_web_entrypoint", &[])
+            .expect("hosted-web entrypoint production route probe should pass");
     }
 
     #[test]
@@ -1557,7 +1559,22 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
         ))
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .map_err(|error| format!("failed to build remote API probe app: {error}"))?;
-    let router = build_remote_api_context(app.handle().clone());
+    let router = if case == "hosted_web_entrypoint" {
+        let root = std::env::temp_dir().join(format!(
+            "orchestra-hosted-web-route-probe-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("failed to create hosted-web route probe root: {error}"))?;
+        fs::write(
+            root.join("index.html"),
+            "<!doctype html><html><body><div data-route-probe=\"hosted-web-shell\">Hosted Orchestra web app</div></body></html>",
+        )
+        .map_err(|error| format!("failed to write hosted-web route probe index: {error}"))?;
+        build_remote_hosted_web_context(app.handle().clone(), root)
+    } else {
+        build_remote_api_context(app.handle().clone())
+    };
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1695,6 +1712,56 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                     }
                     Ok(())
                 }
+                "hosted_web_entrypoint" => {
+                    let entrypoint = client
+                        .get(format!("{base_url}/"))
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!("hosted-web entrypoint probe request failed: {error}")
+                        })?;
+                    if entrypoint.status() != StatusCode::OK {
+                        return Err(format!(
+                            "hosted-web entrypoint probe returned {}",
+                            entrypoint.status()
+                        ));
+                    }
+                    let html = entrypoint.text().await.map_err(|error| {
+                        format!("hosted-web entrypoint probe body failed to read: {error}")
+                    })?;
+                    if !html.contains("Hosted Orchestra web app")
+                        || !html.contains("hosted-web-shell")
+                    {
+                        return Err(format!(
+                            "hosted-web entrypoint probe returned unexpected HTML: {}",
+                            html
+                        ));
+                    }
+
+                    let frontend_route = client
+                        .get(format!("{base_url}/tasks"))
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!("hosted-web frontend-route probe request failed: {error}")
+                        })?;
+                    if frontend_route.status() != StatusCode::OK {
+                        return Err(format!(
+                            "hosted-web frontend-route probe returned {}",
+                            frontend_route.status()
+                        ));
+                    }
+                    let frontend_html = frontend_route.text().await.map_err(|error| {
+                        format!("hosted-web frontend-route probe body failed to read: {error}")
+                    })?;
+                    if !frontend_html.contains("Hosted Orchestra web app") {
+                        return Err(format!(
+                            "hosted-web frontend-route probe returned unexpected HTML: {}",
+                            frontend_html
+                        ));
+                    }
+                    Ok(())
+                }
                 "task_list_parity" => {
                     let parity_suffix = uuid::Uuid::new_v4().simple().to_string();
                     let parity_tag = format!("orc65-{}", &parity_suffix[..12]);
@@ -1776,7 +1843,8 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                     Ok(())
                 }
                 "inbox_parity" => {
-                    let seeded_auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?);
+                    let seeded_auth_header =
+                        format!("Bearer {}", seed_hosted_web_e2e_fixture()?.auth_token);
                     let expected = crate::commands::messages::list_inbox_messages(None, Some(true))
                         .map_err(|error| {
                             format!("inbox parity probe could not list inbox via command: {error}")
@@ -1804,7 +1872,8 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                     Ok(())
                 }
                 "sessions_parity" => {
-                    let seeded_auth_header = format!("Bearer {}", seed_hosted_web_e2e_fixture()?);
+                    let seeded_auth_header =
+                        format!("Bearer {}", seed_hosted_web_e2e_fixture()?.auth_token);
                     let state = app.state::<AppState>();
                     let listed_sessions = list_remote_sessions(state.inner(), None).map_err(|error| {
                         format!("sessions parity probe could not list sessions directly: {error}")
@@ -1903,12 +1972,16 @@ fn resolve_hosted_web_e2e_root() -> Result<PathBuf, String> {
     }
 
     Err(format!(
-        "Hosted-web E2E frontend assets were missing at {}. Run `VITE_ORCHESTRA_HOST_MODE=hosted_web npm run build` first.",
+        "Hosted-web E2E frontend assets were missing at {}. Run `npm run build:hosted-web` first.",
         root.display()
     ))
 }
 
-fn seed_hosted_web_e2e_fixture() -> Result<String, String> {
+struct HostedWebE2eFixture {
+    auth_token: String,
+}
+
+fn seed_hosted_web_e2e_fixture() -> Result<HostedWebE2eFixture, String> {
     let mut connection = database::open_connection()
         .map_err(|error| format!("failed to open hosted-web E2E database: {error}"))?;
     let project_id = projects::require_requested_or_default_project_id(
@@ -2036,27 +2109,30 @@ fn seed_hosted_web_e2e_fixture() -> Result<String, String> {
         .flush()
         .map_err(|error| format!("Unable to flush hosted-web E2E session fixture: {error}"))?;
 
-    let pairing = remote_access::create_pairing_code(
+    let authenticated_pairing = remote_access::create_pairing_code(
         &connection,
         crate::models::RemotePairingCodeInput {
-            label: Some("Hosted Web Browser".into()),
+            label: Some("Hosted Web Seeded Browser".into()),
             platform: Some("browser".into()),
         },
     )?;
+    let authenticated_code = authenticated_pairing
+        .code
+        .clone()
+        .ok_or_else(|| "Hosted-web E2E authenticated pairing code was missing.".to_string())?;
     let auth = remote_access::consume_pairing_code(
         &connection,
         RemotePairingCompleteInput {
-            code: pairing
-                .code
-                .clone()
-                .ok_or_else(|| "Hosted-web E2E pairing code was missing.".to_string())?,
-            label: Some("Hosted Web Browser".into()),
+            code: authenticated_code,
+            label: Some("Hosted Web Seeded Browser".into()),
             platform: Some("browser".into()),
             push_token: None,
         },
     )?;
 
-    Ok(auth.token)
+    Ok(HostedWebE2eFixture {
+        auth_token: auth.token,
+    })
 }
 
 pub fn run_hosted_web_e2e_server() -> Result<(), String> {
@@ -2065,9 +2141,7 @@ pub fn run_hosted_web_e2e_server() -> Result<(), String> {
         .manage(AppState::new(backend.tool_bridge.clone()))
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .map_err(|error| format!("failed to build hosted-web E2E app: {error}"))?;
-    let auth_token = seed_hosted_web_e2e_fixture()?;
-    let auth_cookie = build_remote_auth_cookie(&auth_token, false)
-        .map_err(|error| format!("failed to build hosted-web E2E auth cookie: {error}"))?;
+    let _fixture = seed_hosted_web_e2e_fixture()?;
     let root = resolve_hosted_web_e2e_root()?;
     let index_file = root.join("index.html");
     if !index_file.exists() {
@@ -2077,38 +2151,60 @@ pub fn run_hosted_web_e2e_server() -> Result<(), String> {
         ));
     }
 
+    let index_html = load_hosted_web_index_html(&index_file)?;
     let app_handle = app.handle().clone();
-    let router = build_remote_api_context(app_handle)
+    let router = build_remote_api_context(app_handle.clone())
         .route(
-            "/",
+            "/__e2e/pairing-code",
             get({
-                let auth_cookie = auth_cookie.clone();
-                let index_file = index_file.clone();
+                let app = app_handle.clone();
                 move || {
-                    let auth_cookie = auth_cookie.clone();
-                    let index_file = index_file.clone();
+                    let app = app.clone();
                     async move {
-                        let html = fs::read_to_string(&index_file).map_err(|error| {
+                        let connection = database::open_connection().map_err(|error| {
                             api_error(
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                format!(
-                                    "Unable to read hosted-web E2E frontend {}: {error}",
-                                    index_file.display()
-                                ),
+                                format!("Unable to open hosted-web E2E pairing database: {error}"),
                             )
                         })?;
-                        let mut response = axum::response::Html(html).into_response();
-                        response
-                            .headers_mut()
-                            .insert(header::SET_COOKIE, auth_cookie.clone());
-                        Ok::<_, (StatusCode, Json<ApiError>)>(response)
+                        let pairing = remote_access::create_pairing_code(
+                            &connection,
+                            crate::models::RemotePairingCodeInput {
+                                label: Some("Hosted Web Browser".into()),
+                                platform: Some("browser".into()),
+                            },
+                        )
+                        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+                        let code = pairing.code.ok_or_else(|| {
+                            api_error(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Hosted-web E2E pairing code was missing.",
+                            )
+                        })?;
+                        let _ = app;
+                        Ok::<_, (StatusCode, Json<ApiError>)>(Json(json!({ "code": code })))
                     }
                 }
             }),
         )
-        .fallback_service(get_service(
-            ServeDir::new(root).not_found_service(ServeFile::new(index_file)),
-        ));
+        .nest_service("/assets", ServeDir::new(root.join("assets")))
+        .route(
+            "/index.html",
+            get({
+                let index_html = index_html.clone();
+                move || {
+                    let index_html = index_html.clone();
+                    async move { Html(index_html) }
+                }
+            }),
+        )
+        .fallback({
+            let index_html = index_html.clone();
+            move || {
+                let index_html = index_html.clone();
+                async move { Html(index_html) }
+            }
+        });
 
     let port = env::var("ORCHESTRA_HOSTED_WEB_E2E_PORT")
         .ok()
@@ -2137,17 +2233,20 @@ pub fn run_hosted_web_e2e_server() -> Result<(), String> {
         })
 }
 
-fn resolve_mobile_web_root(app: &AppHandle) -> Result<PathBuf, String> {
+fn resolve_hosted_web_root(app: &AppHandle) -> Result<PathBuf, String> {
     let bundled = app
         .path()
-        .resolve("mobile-web", BaseDirectory::Resource)
-        .map_err(|error| format!("Unable to resolve packaged mobile web assets: {error}"))?;
-    if bundled.exists() {
+        .resolve("hosted-web", BaseDirectory::Resource)
+        .map_err(|error| format!("Unable to resolve packaged hosted-web assets: {error}"))?;
+    if bundled.join("index.html").exists() {
         return Ok(bundled);
     }
 
-    let repo = discover_dev_checkout_root().map(|root| root.join("mobile/dist-web"));
-    if let Some(repo_path) = repo.as_ref().filter(|path| path.exists()) {
+    let repo = discover_dev_checkout_root().map(|root| root.join("dist"));
+    if let Some(repo_path) = repo
+        .as_ref()
+        .filter(|path| path.join("index.html").exists())
+    {
         return Ok(repo_path.to_path_buf());
     }
 
@@ -2157,97 +2256,48 @@ fn resolve_mobile_web_root(app: &AppHandle) -> Result<PathBuf, String> {
         .unwrap_or_else(|| "<no development checkout detected>".into());
 
     Err(format!(
-        "Unable to locate Orchestra web driver assets. Expected {} or {}. Run `cd mobile && npm install && npm run web:build` before enabling Tailscale support.",
+        "Unable to locate Orchestra hosted-web assets. Expected {} or {}. Run `npm run build:hosted-web` before enabling remote browser access.",
         bundled.display(),
         repo_display
     ))
 }
 
-fn build_remote_web_context(root: PathBuf) -> Router {
-    let index_file = root.join("index.html");
-    Router::new().fallback_service(get_service(
-        ServeDir::new(root).not_found_service(ServeFile::new(index_file)),
+fn load_hosted_web_index_html(index_file: &std::path::Path) -> Result<String, String> {
+    let raw_html = fs::read_to_string(index_file).map_err(|error| {
+        format!(
+            "Unable to read hosted-web frontend {}: {error}",
+            index_file.display()
+        )
+    })?;
+    Ok(raw_html.replace(
+        "</head>",
+        r#"<script>window.__ORCHESTRA_HOST_MODE__ = "hosted_web";</script></head>"#,
     ))
 }
 
-pub fn stop_remote_web_server(state: &AppState) -> Result<(), String> {
-    if let Some(mut current) = state.take_remote_web_server()? {
-        if let Some(shutdown) = current.shutdown.take() {
-            let _ = shutdown.send(());
-        }
-    }
-    state.clear_remote_web_server()?;
-    Ok(())
-}
-
-fn start_remote_web_server(app: AppHandle, state: &AppState) -> Result<(), String> {
-    stop_remote_web_server(state)?;
-
-    let root = resolve_mobile_web_root(&app)?;
-    let bind_address = format!("{REMOTE_WEB_BIND_HOST}:{REMOTE_WEB_PORT}");
-    let listener = TcpListener::bind(&bind_address).map_err(|error| {
-        format!("Unable to bind Orchestra web driver server on {bind_address}: {error}")
-    })?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| format!("Unable to configure Orchestra web driver listener: {error}"))?;
-    let router = build_remote_web_context(root.clone());
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let app_for_task = app.clone();
-
-    std::thread::spawn(move || {
-        let state = app_for_task.state::<AppState>();
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                let message =
-                    format!("Unable to create Orchestra web driver Tokio runtime: {error}");
-                let _ = state.clear_remote_web_server();
-                let _ = state.set_remote_server_error(message.clone());
-                state.log("error", "remote.web.server", &message);
-                return;
+fn build_remote_hosted_web_context(app: AppHandle, root: PathBuf) -> Router {
+    let index_file = root.join("index.html");
+    let index_html = load_hosted_web_index_html(&index_file)
+        .expect("hosted-web index.html should be readable when building the remote browser router");
+    build_remote_api_context(app)
+        .nest_service("/assets", ServeDir::new(root.join("assets")))
+        .route(
+            "/index.html",
+            get({
+                let index_html = index_html.clone();
+                move || {
+                    let index_html = index_html.clone();
+                    async move { Html(index_html) }
+                }
+            }),
+        )
+        .fallback({
+            let index_html = index_html.clone();
+            move || {
+                let index_html = index_html.clone();
+                async move { Html(index_html) }
             }
-        };
-
-        let result = runtime.block_on(async move {
-            let tokio_listener = tokio::net::TcpListener::from_std(listener).map_err(|error| {
-                format!("Unable to create async Orchestra web driver listener: {error}")
-            })?;
-            axum::serve(tokio_listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .map_err(|error| {
-                    format!("Orchestra web driver server stopped unexpectedly: {error}")
-                })
-        });
-        if let Err(message) = result {
-            let _ = state.clear_remote_web_server();
-            let _ = state.set_remote_server_error(message.clone());
-            state.log("error", "remote.web.server", &message);
-        }
-    });
-
-    state.set_remote_web_server(RemoteWebServerHandle {
-        bind_host: REMOTE_WEB_BIND_HOST.to_string(),
-        port: REMOTE_WEB_PORT,
-        base_url: remote_web_target_url(REMOTE_WEB_PORT),
-        started_at: now_iso(),
-        shutdown: Some(shutdown_tx),
-    })?;
-    state.log(
-        "info",
-        "remote.web.server",
-        &format!(
-            "Orchestra web driver server listening on {bind_address} from {}",
-            root.display()
-        ),
-    );
-    Ok(())
+        })
 }
 
 pub fn disable_remote_tailscale_api_route(api_port: u16) -> Result<(), String> {
@@ -2257,29 +2307,19 @@ pub fn disable_remote_tailscale_api_route(api_port: u16) -> Result<(), String> {
     disable_matching_tailscale_serve(&remote_api_target_url(api_port), api_port)
 }
 
-fn sync_tailscale_routes(settings: &RemoteAccessSettings, state: &AppState) -> Result<(), String> {
+fn sync_tailscale_routes(settings: &RemoteAccessSettings) -> Result<(), String> {
     let api_target = remote_api_target_url(settings.port);
     if !tailscale_cli_available() {
         if settings.use_tailscale {
             return ensure_tailscale_cli_available();
         }
-        stop_remote_web_server(state)?;
         return Ok(());
     }
 
     if settings.use_tailscale {
         ensure_tailscale_serve(&api_target, settings.port)?;
-        ensure_tailscale_serve(
-            &remote_web_target_url(REMOTE_WEB_PORT),
-            REMOTE_WEB_TAILSCALE_PORT,
-        )?;
     } else {
         disable_matching_tailscale_serve(&api_target, settings.port)?;
-        disable_matching_tailscale_serve(
-            &remote_web_target_url(REMOTE_WEB_PORT),
-            REMOTE_WEB_TAILSCALE_PORT,
-        )?;
-        stop_remote_web_server(state)?;
     }
     Ok(())
 }
@@ -2303,12 +2343,7 @@ pub fn ensure_remote_api_server(app: AppHandle, state: &AppState) -> Result<(), 
         let api_target = remote_api_target_url(settings.port);
         if tailscale_cli_available() {
             let _ = disable_matching_tailscale_serve(&api_target, settings.port);
-            let _ = disable_matching_tailscale_serve(
-                &remote_web_target_url(REMOTE_WEB_PORT),
-                REMOTE_WEB_TAILSCALE_PORT,
-            );
         }
-        stop_remote_web_server(state)?;
         stop_remote_api_server(state)?;
         state.clear_remote_server_error()?;
         return Ok(());
@@ -2316,19 +2351,6 @@ pub fn ensure_remote_api_server(app: AppHandle, state: &AppState) -> Result<(), 
 
     let mut runtime_settings = settings.clone();
     runtime_settings.bind_host = remote_access::effective_bind_host(&settings);
-
-    if settings.use_tailscale && runtime_settings.port == REMOTE_WEB_PORT {
-        return Err(format!(
-            "Remote API port {} conflicts with the internal web driver port {} used for Tailscale Serve.",
-            runtime_settings.port, REMOTE_WEB_PORT
-        ));
-    }
-    if settings.use_tailscale && runtime_settings.port == REMOTE_WEB_TAILSCALE_PORT {
-        return Err(format!(
-            "Remote API port {} conflicts with the fixed Tailscale web driver HTTPS port {}.",
-            runtime_settings.port, REMOTE_WEB_TAILSCALE_PORT
-        ));
-    }
 
     let api_matches =
         state
@@ -2340,19 +2362,7 @@ pub fn ensure_remote_api_server(app: AppHandle, state: &AppState) -> Result<(), 
         start_remote_api_server(app.clone(), state, &runtime_settings)?;
     }
 
-    if settings.use_tailscale {
-        let web_matches =
-            state
-                .remote_web_server_snapshot()?
-                .is_some_and(|(bind_host, port, _, _)| {
-                    bind_host == REMOTE_WEB_BIND_HOST && port == REMOTE_WEB_PORT
-                });
-        if !web_matches {
-            start_remote_web_server(app, state)?;
-        }
-    }
-
-    sync_tailscale_routes(&runtime_settings, state)?;
+    sync_tailscale_routes(&runtime_settings)?;
     state.clear_remote_server_error()?;
     Ok(())
 }
@@ -2367,16 +2377,12 @@ pub fn build_remote_access_status(state: &AppState) -> Result<RemoteAccessStatus
         settings.base_url = Some(base_url);
         settings.websocket_url = Some(websocket_url);
         settings.lan_base_url = lan_base_url;
+        settings.web_url = settings.lan_base_url.clone().or(settings.base_url.clone());
         settings.started_at = Some(started_at);
-    }
-    if let Some((_, _, web_url, _)) = state.remote_web_server_snapshot()? {
-        settings.web_url = Some(web_url);
     }
     if settings.use_tailscale {
         settings.tailscale_url = tailscale_url_for_port(settings.port).ok().flatten();
-        settings.tailscale_web_url = tailscale_url_for_port(REMOTE_WEB_TAILSCALE_PORT)
-            .ok()
-            .flatten();
+        settings.tailscale_web_url = settings.tailscale_url.clone();
     }
     settings.last_error = state.remote_server_error()?;
     let pairing_codes = remote_access::list_pairing_codes(&connection)?;
@@ -2416,7 +2422,8 @@ pub fn start_remote_api_server(
     let base_url = format!("http://{}:{}", local_host, port);
     let websocket_url = format!("ws://{}:{}/api/v1/ws", local_host, port);
     let lan_base_url = detect_lan_base_url(port);
-    let router = build_remote_api_context(app.clone());
+    let hosted_web_root = resolve_hosted_web_root(&app)?;
+    let router = build_remote_hosted_web_context(app.clone(), hosted_web_root.clone());
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let app_for_task = app.clone();
 
@@ -2466,7 +2473,11 @@ pub fn start_remote_api_server(
     state.log(
         "info",
         "remote.api.server",
-        &format!("Remote API server listening on {}", bind_address),
+        &format!(
+            "Remote API server listening on {} with hosted-web assets from {}",
+            bind_address,
+            hosted_web_root.display()
+        ),
     );
     Ok(())
 }

@@ -1,3 +1,4 @@
+import type { RemoteAuthResponse, RemotePairingCompleteInput } from "../../types";
 import type { OrchestraClientBinding } from "./client";
 import type { OrchestraClientBootstrap } from "./bootstrap";
 import { createDefaultOrchestraClientBinding } from "./defaultClient";
@@ -8,6 +9,7 @@ import { isTauriAvailable } from "../tauri";
 export type OrchestraClientHostMode = "tauri" | "hosted_web" | "mock";
 
 export const HOSTED_WEB_BOOTSTRAP_PATH = "/api/v1/frontend/bootstrap";
+export const HOSTED_WEB_PAIR_COMPLETE_PATH = "/api/v1/pair/complete";
 
 const HOST_MODE_VALUES = new Set<OrchestraClientHostMode>(["tauri", "hosted_web", "mock"]);
 
@@ -58,6 +60,34 @@ export async function fetchHostedWebBootstrap(fetchImpl: typeof fetch = fetch): 
   }
 
   return response.json() as Promise<OrchestraClientBootstrap>;
+}
+
+export async function completeHostedWebPairing(
+  input: RemotePairingCompleteInput,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RemoteAuthResponse> {
+  const response = await fetchImpl(HOSTED_WEB_PAIR_COMPLETE_PATH, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    let message = `Unable to complete Orchestra browser pairing (${response.status} ${response.statusText}).`;
+    try {
+      const body = await response.json() as { error?: string; message?: string };
+      message = body.error || body.message || message;
+    } catch {
+      // ignore response parsing failures and keep the generic message
+    }
+    throw new Error(message);
+  }
+
+  return response.json() as Promise<RemoteAuthResponse>;
 }
 
 export function createHostedWebBootstrapBinding(

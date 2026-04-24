@@ -87,10 +87,10 @@ ensure_preview_assets() {
     return
   fi
 
-  echo "[desktop-e2e-suite] frontend dist missing; running npm run build" | tee -a "${SCRIPT_LOG}"
+  echo "[desktop-e2e-suite] frontend dist missing; running npm run build:hosted-web" | tee -a "${SCRIPT_LOG}"
   (
     cd "${ROOT_DIR}"
-    npm run build
+    npm run build:hosted-web
   ) >>"${SCRIPT_LOG}" 2>&1
 }
 

@@ -204,7 +204,7 @@
     {
       "id": "remote-access-and-pairing",
       "surface": "Remote",
-      "journey": "Configure remote access, exercise the desktop remote flow, and verify driver pairing",
+      "journey": "Configure remote access, exercise the desktop hosted-web flow, and verify paired-client browser/mobile pairing",
       "requiredHarnesses": ["browser", "desktop", "web-driver"],
       "status": "covered",
       "specs": [

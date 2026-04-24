@@ -39,6 +39,10 @@ if [[ -d /src/mobile/dist-web ]]; then
 else
   mkdir -p "${WORKSPACE_DIR}/mobile/dist-web"
 fi
+if [[ ! -f "${WORKSPACE_DIR}/dist/index.html" ]]; then
+  echo "[desktop-e2e] building hosted-web dist for remote browser coverage"
+  npm run build:hosted-web
+fi
 cp -a /src/src-tauri/Cargo.toml /src/src-tauri/Cargo.lock /src/src-tauri/build.rs /src/src-tauri/tauri.conf.json "${WORKSPACE_DIR}/src-tauri/"
 cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
 cp -a /src/src-tauri/scripts "${WORKSPACE_DIR}/src-tauri/scripts"

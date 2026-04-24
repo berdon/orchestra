@@ -63,18 +63,20 @@ export function RemotePanel() {
         key: "pairing",
         label: "Pairing API URL",
         hint: settings.useTailscale
-          ? "Enter this in the mobile or shared web driver pairing screen."
-          : "Use this when pairing from the mobile app on your LAN.",
+          ? "Enter this in the mobile app or the hosted Orchestra browser sign-in screen."
+          : "Use this when pairing from the mobile app or a browser on your LAN.",
         url: settings.useTailscale ? settings.tailscaleUrl : (settings.lanBaseUrl ?? settings.baseUrl),
         recommended: true,
       },
       {
-        key: "web-driver",
-        label: "Shared web driver URL",
+        key: "browser-app",
+        label: "Hosted Orchestra web app URL",
         hint: settings.useTailscale
-          ? "Open this in a browser, then pair against the API URL above."
-          : "Available locally when the shared web driver is running.",
-        url: settings.useTailscale ? settings.tailscaleWebUrl : settings.webUrl,
+          ? "Open this in a browser to load the main shared Orchestra app on the same origin as the API."
+          : "Open this in a browser on your LAN to load the hosted Orchestra web app.",
+        url: settings.useTailscale
+          ? (settings.tailscaleWebUrl ?? settings.tailscaleUrl)
+          : (settings.lanBaseUrl ?? settings.webUrl ?? settings.baseUrl),
         recommended: true,
       },
       {
@@ -202,8 +204,8 @@ export function RemotePanel() {
         <div className="panel__header panel__header--stacked">
           <div>
             <p className="eyebrow">Remote access</p>
-            <h3>Mobile driver</h3>
-            <p className="muted-copy">Enable Orchestra's host-side remote driver API, generate pairing codes, and manage trusted mobile devices.</p>
+            <h3>Hosted Orchestra web app + mobile pairing</h3>
+            <p className="muted-copy">Enable Orchestra's host-side remote API, expose the hosted browser app, generate pairing codes, and manage trusted remote devices.</p>
           </div>
           <div className="action-cluster action-cluster--wrap">
             <button className="secondary-button" type="button" onClick={() => void loadStatus()}>
@@ -231,14 +233,14 @@ export function RemotePanel() {
               <span className="field-group__label">Remote access enabled</span>
               <label className="checkbox-row">
                 <input type="checkbox" data-role="remote-enabled" checked={enabledDraft} onChange={(event) => setEnabledDraft(event.target.checked)} />
-                <span>Start the Orchestra remote driver API so Android/iOS devices can pair and connect.</span>
+                <span>Start the Orchestra remote API so browsers and Android/iOS devices can pair and connect.</span>
               </label>
             </label>
             <label className="field-group" {...getTooltipProps("Use Tailscale Serve to expose Orchestra through a managed HTTPS endpoint.")}>
               <span className="field-group__label">Use Tailscale Serve</span>
               <label className="checkbox-row">
                 <input type="checkbox" data-role="remote-use-tailscale" checked={useTailscaleDraft} onChange={(event) => setUseTailscaleDraft(event.target.checked)} />
-                <span>Automatically expose the backend on HTTPS port {portDraft || "49500"} and the web driver on HTTPS port 9443 via Tailscale Serve.</span>
+                <span>Automatically expose the hosted Orchestra web app and API together on HTTPS port {portDraft || "49500"} via Tailscale Serve.</span>
               </label>
             </label>
             <label className="field-group" {...getTooltipProps("Choose which network interface the remote API listens on.")}>
@@ -403,15 +405,15 @@ export function RemotePanel() {
           <div className="panel__header panel__header--stacked">
             <div>
               <p className="eyebrow">How to connect</p>
-              <h3>Android / iOS pairing flow</h3>
+              <h3>Browser + mobile pairing flow</h3>
             </div>
           </div>
           <ol className="muted-copy remote-panel__steps">
             <li>Enable remote access and save the server settings.</li>
-            <li>Optional: turn on Tailscale Serve to expose the backend and shared web driver automatically.</li>
+            <li>Optional: turn on Tailscale Serve to expose the hosted Orchestra web app and API on the same HTTPS origin.</li>
             <li>Create a pairing code.</li>
-            <li>Open the shared web driver URL in a browser when you want the browser-based remote.</li>
-            <li>On the mobile app or shared web driver pairing screen, paste the Pairing API URL shown above.</li>
+            <li>For browser access, open the Hosted Orchestra web app URL and enter the pairing code on the sign-in screen.</li>
+            <li>For Android/iOS pairing, paste the Pairing API URL into the mobile app and enter the same code there.</li>
           </ol>
         </section>
       </section>

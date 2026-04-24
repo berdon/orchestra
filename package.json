@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:hosted-web": "VITE_ORCHESTRA_HOST_MODE=hosted_web tsc --noEmit && vite build",
     "prepare:bundled-pi-runtime": "node ./scripts/prepare-bundled-pi-runtime.mjs",
     "validate:packaged-runtime": "./scripts/run-packaged-runtime-validation.sh",
     "verify:bundled-pi-release": "./scripts/verify-bundled-pi-release.sh release",

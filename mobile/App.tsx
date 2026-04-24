@@ -438,12 +438,12 @@ export default function App() {
         <StatusBar style="dark" />
         <ScrollView contentContainerStyle={styles.connectContainer}>
           <Text style={styles.title}>Connect to Orchestra</Text>
-          <Text style={styles.subtitle}>Pair this Android/iOS client with an Orchestra host using the remote driver API.</Text>
+          <Text style={styles.subtitle}>Pair this Android/iOS client with an Orchestra host using the remote API.</Text>
           {Platform.OS === "web" ? (
             <View style={styles.helperCard} testID="web-driver-helper-card">
-              <Text style={styles.helperTitle}>Shared web driver</Text>
-              <Text style={styles.helperText}>Keep this page open on the web driver URL, then pair against the API URL below. The page URL and API URL use the same host but different ports.</Text>
-              {webDriverUrl ? <Text style={styles.helperText} testID="web-driver-current-url">Current web driver URL: {webDriverUrl}</Text> : null}
+              <Text style={styles.helperTitle}>Paired web client (dev harness)</Text>
+              <Text style={styles.helperText}>This browser build is for the paired mobile client, not the main hosted Orchestra web app. Keep this page open on the paired-client URL, then pair against the API URL below. The page URL and API URL may share a host while staying intentionally separate from the hosted Orchestra browser app.</Text>
+              {webDriverUrl ? <Text style={styles.helperText} testID="web-driver-current-url">Current paired-client URL: {webDriverUrl}</Text> : null}
               <Text style={styles.helperText} testID="web-driver-suggested-api-url">Suggested API URL: {suggestedApiUrl}</Text>
               <Pressable style={styles.secondaryButton} onPress={() => setHostUrlDraft(suggestedApiUrl)} testID="web-driver-use-current-host">
                 <Text style={styles.secondaryButtonText}>Use current page host</Text>

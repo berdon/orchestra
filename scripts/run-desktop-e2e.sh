@@ -119,8 +119,8 @@ ensure_preview_assets() {
     return
   fi
 
-  echo "[desktop-e2e-runner] frontend dist missing; running npm run build"
-  npm run build
+  echo "[desktop-e2e-runner] frontend dist missing; running npm run build:hosted-web"
+  npm run build:hosted-web
 }
 
 run_inner() {

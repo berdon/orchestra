@@ -57,7 +57,7 @@ describe("remote access helpers", () => {
     expect(updated.settings.enabled).toBe(true);
     expect(updated.settings.useTailscale).toBe(true);
     expect(updated.settings.baseUrl).toContain("127.0.0.1:49500");
-    expect(updated.settings.tailscaleWebUrl).toContain(":9443");
+    expect(updated.settings.tailscaleWebUrl).toContain(":49500");
 
     const pairingCode = await createRemotePairingCode();
     expect(pairingCode.displayCode).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);

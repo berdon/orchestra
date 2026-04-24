@@ -150,7 +150,7 @@ podman machine set --memory 8192 podman-machine-default
 podman machine start
 ```
 
-The shared web driver now has its own browser E2E coverage:
+The paired mobile-client web harness still has its own browser E2E coverage:
 
 ```bash
 npm run test:web-driver:e2e
@@ -223,9 +223,9 @@ See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adho
 
 Until then, the frontend can be exercised in browser mode with the built-in mock session adapter.
 
-### Mobile and web remote client
+### Mobile remote client + paired web harness
 
-The shared cross-platform remote client lives under `mobile/` and can run as Android, iOS, or web.
+The shared cross-platform paired client lives under `mobile/` and can run as Android, iOS, or as an explicit browser harness for paired-client development/QA.
 
 ```bash
 cd mobile
@@ -236,16 +236,13 @@ npm run web     # shared web frontend
 
 ### Remote access + Tailscale Serve
 
-In **Settings → Remote**, Orchestra can now optionally manage Tailscale Serve for the remote driver:
+In **Settings → Remote**, Orchestra can now optionally manage Tailscale Serve for the hosted Orchestra web app:
 
-- backend/API served on the configured remote API HTTPS port (default `49500`)
-- shared web driver served on Tailscale HTTPS port `9443`
-- when **Use Tailscale Serve** is enabled, Orchestra binds the backend to `127.0.0.1` and keeps both Serve routes pointed at the local backend/web driver automatically
+- the browser app, `/api/v1/frontend/bootstrap`, `/api/v1/*`, and `/api/v1/ws` all share the configured remote API HTTPS port (default `49500`)
+- when **Use Tailscale Serve** is enabled, Orchestra binds the backend to `127.0.0.1` and keeps one HTTPS Serve route pointed at that same-origin hosted-web/API surface automatically
 
-For packaged builds, the Tauri bundle now includes the exported `mobile/dist-web` assets. During local development, build them once with:
+For packaged builds, the Tauri bundle now includes the hosted-web `dist/` assets built from the main shared frontend:
 
 ```bash
-cd mobile
-npm install
-npm run web:build
+npm run build:hosted-web
 ```

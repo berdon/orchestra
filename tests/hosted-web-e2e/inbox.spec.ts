@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+import { pairHostedWebBrowser } from "./helpers";
+
+test.beforeEach(async ({ page }) => {
+  await pairHostedWebBrowser(page);
+});
+
 test("hosted-web inbox reads and archives seeded Remote API mail", async ({ page }) => {
   await page.goto("/");
   await page.locator('[data-role="nav-item-inbox"]').click();

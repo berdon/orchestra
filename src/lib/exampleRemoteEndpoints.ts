@@ -12,5 +12,3 @@ export function buildExampleRemoteLanWebSocketUrl(port: number) {
 export function buildExampleRemoteSecureBaseUrl(port: number) {
   return `https://${EXAMPLE_REMOTE_SECURE_HOST}:${port}`;
 }
-
-export const EXAMPLE_REMOTE_SECURE_WEB_URL = `https://${EXAMPLE_REMOTE_SECURE_HOST}:9443`;

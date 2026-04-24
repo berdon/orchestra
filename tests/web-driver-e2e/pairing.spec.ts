@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("shared web driver shows pairing guidance and can reset the API host to the current page host", async ({ page }) => {
+test("paired web client dev harness shows pairing guidance and can reset the API host to the current page host", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByText("Connect to Orchestra")).toBeVisible();
@@ -27,7 +27,7 @@ test("shared web driver shows pairing guidance and can reset the API host to the
   await expect(hostInput).toHaveValue("http://127.0.0.1:49500");
 });
 
-test("shared web driver preserves the entered API URL after pairing on the web", async ({ page }) => {
+test("paired web client dev harness preserves the entered API URL after pairing on the web", async ({ page }) => {
   await page.route("**/api/v1/pair/complete", async (route) => {
     await route.fulfill({
       contentType: "application/json",

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { OrchestraClientBootstrap } from "../src/lib/orchestraClient";
 import {
   HOSTED_WEB_BOOTSTRAP_PATH,
+  HOSTED_WEB_PAIR_COMPLETE_PATH,
+  completeHostedWebPairing,
   createHostedWebBootstrapBinding,
   fetchHostedWebBootstrap,
   resolveOrchestraClientHostMode,
@@ -155,6 +157,41 @@ describe("hosted web orchestra client helpers", () => {
     });
 
     await expect(fetchHostedWebBootstrap(fetchImpl)).resolves.toEqual(bootstrapFixture);
+  });
+
+  test("posts hosted-web pairing completion with same-origin credentials", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(input).toBe(HOSTED_WEB_PAIR_COMPLETE_PATH);
+      expect(init).toMatchObject({
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          code: "ABCD-EFGH",
+          label: "QA Browser",
+          platform: "browser",
+          pushToken: null,
+        }),
+      });
+      return {
+        ok: true,
+        json: async () => ({
+          token: "token-123",
+          baseUrl: "https://orchestra.example.test",
+          websocketUrl: "wss://orchestra.example.test/api/v1/ws",
+        }),
+      } satisfies Partial<Response> as Response;
+    });
+
+    await expect(completeHostedWebPairing({
+      code: "ABCD-EFGH",
+      label: "QA Browser",
+      platform: "browser",
+      pushToken: null,
+    }, fetchImpl)).resolves.toMatchObject({ token: "token-123" });
   });
 
   test("creates a hosted-web binding that preserves the fetched bootstrap and uses the remote transport", async () => {

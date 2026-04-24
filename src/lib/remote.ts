@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   buildExampleRemoteLanBaseUrl,
   buildExampleRemoteSecureBaseUrl,
-  EXAMPLE_REMOTE_SECURE_WEB_URL,
 } from "./exampleRemoteEndpoints";
 import { isTauriAvailable } from "./tauri";
 import type {
@@ -78,9 +77,9 @@ export async function updateRemoteAccessSettings(input: RemoteAccessSettingsInpu
         baseUrl: input.enabled ? `http://127.0.0.1:${input.port ?? current.settings.port}` : null,
         websocketUrl: input.enabled ? `ws://127.0.0.1:${input.port ?? current.settings.port}/api/v1/ws` : null,
         lanBaseUrl: input.enabled && !input.useTailscale ? buildExampleRemoteLanBaseUrl(input.port ?? current.settings.port) : null,
-        webUrl: input.enabled && input.useTailscale ? "http://127.0.0.1:8788" : null,
+        webUrl: input.enabled ? `http://127.0.0.1:${input.port ?? current.settings.port}` : null,
         tailscaleUrl: input.enabled && input.useTailscale ? buildExampleRemoteSecureBaseUrl(input.port ?? current.settings.port) : null,
-        tailscaleWebUrl: input.enabled && input.useTailscale ? EXAMPLE_REMOTE_SECURE_WEB_URL : null,
+        tailscaleWebUrl: input.enabled && input.useTailscale ? buildExampleRemoteSecureBaseUrl(input.port ?? current.settings.port) : null,
         startedAt: input.enabled ? nowIso() : null,
         lastError: null,
       },

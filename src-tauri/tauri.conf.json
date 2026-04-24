@@ -5,7 +5,7 @@
   "identifier": "dev.guppy.orchestra",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run prepare:bundled-pi-runtime && npm run build && cd mobile && npm run web:build",
+    "beforeBuildCommand": "npm run prepare:bundled-pi-runtime && npm run build:hosted-web",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
@@ -34,7 +34,7 @@
     ],
     "resources": {
       "../extensions/orchestra-tools.ts": "extensions/orchestra-tools.ts",
-      "../mobile/dist-web": "mobile-web",
+      "../dist": "hosted-web",
       "gen/pi-runtime": "pi-runtime",
       "icons/icon.png": "icon.png"
     },

@@ -19,5 +19,5 @@ fi
 rm -rf "$ORCHESTRA_STORAGE_ROOT"
 mkdir -p "$ORCHESTRA_STORAGE_ROOT"
 
-VITE_ORCHESTRA_HOST_MODE=hosted_web npm run build
+npm run build:hosted-web
 cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin hosted_web_e2e_server

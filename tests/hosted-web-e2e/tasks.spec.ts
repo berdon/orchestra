@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+import { pairHostedWebBrowser } from "./helpers";
+
+test.beforeEach(async ({ page }) => {
+  await pairHostedWebBrowser(page);
+});
+
 test("hosted-web tasks browse the seeded Remote API task list and open detail", async ({ page }) => {
   await page.goto("/");
   await page.locator('[data-role="nav-item-tasks"]').click();

@@ -1,10 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+
 import { App } from "./App";
+import { HostedWebAuthGate } from "./hostedWeb/HostedWebAuthGate";
 import {
+  completeHostedWebPairing,
+  createHostedWebBootstrapBinding,
+  fetchHostedWebBootstrap,
   OrchestraClientProvider,
   resolveInitialOrchestraClientBinding,
+  resolveOrchestraClientHostMode,
   type OrchestraClientBinding,
+  type OrchestraClientBootstrap,
 } from "./lib/orchestraClient";
 import "./styles.css";
 
@@ -56,8 +63,52 @@ function renderBootstrapFailure(error: unknown) {
   );
 }
 
+function renderHostedWebAuthGate(bootstrap: OrchestraClientBootstrap, options?: { pending?: boolean; error?: string | null }) {
+  root.render(
+    <React.StrictMode>
+      <HostedWebAuthGate
+        bootstrap={bootstrap}
+        pending={options?.pending ?? false}
+        error={options?.error ?? null}
+        onPair={async (input) => {
+          renderHostedWebAuthGate(bootstrap, { pending: true });
+          try {
+            await completeHostedWebPairing(input);
+            const nextBootstrap = await fetchHostedWebBootstrap();
+            if (nextBootstrap.authMode === "none") {
+              throw new Error("The hosted Orchestra web app did not receive its browser session cookie after pairing.");
+            }
+            renderApp(createHostedWebBootstrapBinding(nextBootstrap));
+          } catch (error) {
+            console.error("[orchestra-client.bootstrap] Unable to complete hosted-web pairing.", error);
+            renderHostedWebAuthGate(bootstrap, {
+              pending: false,
+              error: error instanceof Error ? error.message : "Unable to pair this browser with Orchestra.",
+            });
+          }
+        }}
+      />
+    </React.StrictMode>,
+  );
+}
+
+async function bootstrapHostedWeb() {
+  const bootstrap = await fetchHostedWebBootstrap();
+  if (bootstrap.authMode === "none") {
+    renderHostedWebAuthGate(bootstrap);
+    return;
+  }
+
+  renderApp(createHostedWebBootstrapBinding(bootstrap));
+}
+
 async function bootstrap() {
   try {
+    if (resolveOrchestraClientHostMode() === "hosted_web") {
+      await bootstrapHostedWeb();
+      return;
+    }
+
     renderApp(await resolveInitialOrchestraClientBinding());
   } catch (error) {
     console.error("[orchestra-client.bootstrap] Unable to initialize Orchestra frontend.", error);

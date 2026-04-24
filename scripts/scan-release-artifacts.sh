@@ -23,8 +23,7 @@ TARGETS=()
 for candidate in \
   "${ROOT_DIR}/src-tauri/target/${PROFILE}/bundle/macos/Orchestra.app" \
   "${ROOT_DIR}/src-tauri/target/${PROFILE}/bundle/dmg" \
-  "${ROOT_DIR}/dist" \
-  "${ROOT_DIR}/mobile/dist-web"
+  "${ROOT_DIR}/dist"
 do
   if [[ -e "${candidate}" ]]; then
     TARGETS+=("${candidate}")
@@ -32,7 +31,7 @@ do
 done
 
 if [[ "${#TARGETS[@]}" -eq 0 ]]; then
-  echo "No release artifacts found for profile ${PROFILE}. Expected build outputs under src-tauri/target/${PROFILE}, dist/, or mobile/dist-web/." >&2
+  echo "No release artifacts found for profile ${PROFILE}. Expected build outputs under src-tauri/target/${PROFILE} or dist/." >&2
   exit 1
 fi
 

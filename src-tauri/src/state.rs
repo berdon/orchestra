@@ -32,15 +32,6 @@ pub struct RemoteApiServerHandle {
     pub shutdown: Option<oneshot::Sender<()>>,
 }
 
-#[derive(Debug)]
-pub struct RemoteWebServerHandle {
-    pub bind_host: String,
-    pub port: u16,
-    pub base_url: String,
-    pub started_at: String,
-    pub shutdown: Option<oneshot::Sender<()>>,
-}
-
 #[derive(Debug, Clone)]
 struct RemoteClientState {
     client_id: String,
@@ -66,7 +57,6 @@ pub struct AppState {
     pub tool_bridge: Arc<ToolBridgeConfig>,
     remote_clients: Mutex<HashMap<String, RemoteClientState>>,
     remote_server: Mutex<Option<RemoteApiServerHandle>>,
-    remote_web_server: Mutex<Option<RemoteWebServerHandle>>,
     remote_server_last_error: Mutex<Option<String>>,
     remote_event_tx: broadcast::Sender<RemoteEventEnvelope>,
     next_remote_event_sequence: AtomicU64,
@@ -121,7 +111,6 @@ impl AppState {
             tool_bridge,
             remote_clients: Mutex::new(HashMap::new()),
             remote_server: Mutex::new(None),
-            remote_web_server: Mutex::new(None),
             remote_server_last_error: Mutex::new(None),
             remote_event_tx,
             next_remote_event_sequence: AtomicU64::new(1),
@@ -284,49 +273,6 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access remote server error state".to_string())
             .map(|current| current.clone())
-    }
-
-    pub fn set_remote_web_server(&self, server: RemoteWebServerHandle) -> Result<(), String> {
-        let mut current = self
-            .remote_web_server
-            .lock()
-            .map_err(|_| "Unable to access remote web server state".to_string())?;
-        *current = Some(server);
-        Ok(())
-    }
-
-    pub fn clear_remote_web_server(&self) -> Result<(), String> {
-        let mut current = self
-            .remote_web_server
-            .lock()
-            .map_err(|_| "Unable to access remote web server state".to_string())?;
-        *current = None;
-        Ok(())
-    }
-
-    pub fn take_remote_web_server(&self) -> Result<Option<RemoteWebServerHandle>, String> {
-        self.remote_web_server
-            .lock()
-            .map_err(|_| "Unable to access remote web server state".to_string())
-            .map(|mut current| current.take())
-    }
-
-    pub fn remote_web_server_snapshot(
-        &self,
-    ) -> Result<Option<(String, u16, String, String)>, String> {
-        self.remote_web_server
-            .lock()
-            .map_err(|_| "Unable to access remote web server state".to_string())
-            .map(|current| {
-                current.as_ref().map(|server| {
-                    (
-                        server.bind_host.clone(),
-                        server.port,
-                        server.base_url.clone(),
-                        server.started_at.clone(),
-                    )
-                })
-            })
     }
 
     pub fn register_remote_client(
