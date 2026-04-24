@@ -973,6 +973,37 @@ export interface RoleValidationResult {
   errors: RoleValidationError[];
 }
 
+export type SkillSourceKind = "local" | "external";
+export type SkillStatus = "active" | "shadowed" | "missing" | "invalid" | "unloadable";
+
+export interface SkillSummary {
+  id: string;
+  slug?: string | null;
+  name: string;
+  description?: string | null;
+  sourceKind: SkillSourceKind;
+  sourcePath: string;
+  contentPath: string;
+  relativeSourcePath?: string | null;
+  archived: boolean;
+  status: SkillStatus;
+  statusReason?: string | null;
+  shadowedBySkillId?: string | null;
+  lastSeenAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillDetail extends SkillSummary {
+  markdownBody?: string | null;
+}
+
+export interface LocalSkillUpsertInput {
+  name: string;
+  slug?: string | null;
+  markdownBody: string;
+}
+
 export interface RoleQueueEntry {
   id: string;
   roleId: string;
