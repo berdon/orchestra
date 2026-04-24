@@ -3481,6 +3481,7 @@ export function App() {
         className="app-shell"
         data-theme={themeId}
         data-theme-kind={activeTheme.kind}
+        data-active-page={activePage}
         data-mobile-navigation={isMobileNavigation ? "true" : "false"}
         data-sidebar-collapsed={!isMobileNavigation && isSidebarCollapsed ? "true" : "false"}
       >
@@ -3718,7 +3719,7 @@ export function App() {
                       </button>
 
                       {activePage === "chat" && !isSidebarCollapsed ? (
-                        <div className="settings-subnav" role="tablist" aria-label="Chat agents">
+                        <div className="settings-subnav" data-role="chat-agent-sidebar-nav" role="tablist" aria-label="Chat agents">
                           {loadingChatAgents ? <span className="settings-subnav__hint">Loading agents…</span> : null}
                           {!loadingChatAgents && chatAgents.length === 0 ? <span className="settings-subnav__hint">No agents yet.</span> : null}
                           {chatAgents.map((agentSnapshot) => (
@@ -4024,6 +4025,8 @@ export function App() {
         ) : activePage === "chat" ? (
           <AgentChatPage
             agent={selectedChatAgent}
+            chatAgents={chatAgents.map((agentSnapshot) => agentSnapshot.agent)}
+            selectedAgentId={selectedChatAgentId}
             session={chatSession}
             referenceTasks={referenceTasks}
             referenceAgents={referenceAgents}
@@ -4039,6 +4042,7 @@ export function App() {
             loadingSession={Boolean(selectedChatAgent && loadingChatSessionAgentId === selectedChatAgent.id && !chatSession)}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
+            onSelectAgent={navigateToChatAgent}
             draftMessage={chatSessionDraftMessage}
             piSetupState={piSetupState}
             connection={connection}

@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { SessionChatPanel } from "../components/SessionChatPanel";
@@ -20,6 +20,8 @@ import type {
 
 interface AgentChatPageProps {
   agent: AgentDefinition | null;
+  chatAgents: Array<Pick<AgentDefinition, "id" | "name" | "slug">>;
+  selectedAgentId: string | null;
   session: SessionRecord | null;
   referenceTasks: TaskSummary[];
   referenceAgents: AgentSummary[];
@@ -35,6 +37,7 @@ interface AgentChatPageProps {
   loadingSession: boolean;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
+  onSelectAgent: (agentId: string) => void;
   draftMessage: string;
   piSetupState?: PiSetupState | null;
   connection: OrchestraConnectionSnapshot;
@@ -63,6 +66,8 @@ interface AgentChatPageProps {
 
 export function AgentChatPage({
   agent,
+  chatAgents,
+  selectedAgentId,
   session,
   referenceTasks,
   referenceAgents,
@@ -78,6 +83,7 @@ export function AgentChatPage({
   loadingSession,
   loadingModelSessionId,
   changingModelSessionId,
+  onSelectAgent,
   draftMessage,
   piSetupState,
   connection,
@@ -103,8 +109,14 @@ export function AgentChatPage({
   onCompactSession,
   onReloadSession,
 }: AgentChatPageProps) {
+  const [mobileAgentPickerOpen, setMobileAgentPickerOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileAgentPickerOpen(false);
+  }, [selectedAgentId]);
+
   let emptyStateTitle = "Choose an agent chat";
-  let emptyStateDescription = "Select a named agent from the Chat sidebar to open or resume its main session.";
+  let emptyStateDescription = "Select a named agent from the page picker or the desktop Chat sidebar to open or resume its main session.";
 
   if (loadingAgents) {
     emptyStateTitle = "Loading agents";
@@ -131,6 +143,46 @@ export function AgentChatPage({
         retryLabel="Retry chat"
         dataRolePrefix="agent-chat-status"
       />
+      <div className="page-mobile-switcher page-mobile-switcher--chat" data-role="chat-mobile-agent-switcher">
+        <p className="eyebrow">Agent chat</p>
+        <button
+          className="page-mobile-switcher__trigger"
+          type="button"
+          data-role="chat-mobile-agent-picker-trigger"
+          aria-haspopup="listbox"
+          aria-expanded={mobileAgentPickerOpen}
+          onClick={() => setMobileAgentPickerOpen((current) => !current)}
+        >
+          <span className="page-mobile-switcher__current">
+            {agent?.name ?? (loadingAgents ? "Loading agents…" : "Choose an agent")}
+          </span>
+          <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
+        </button>
+        {mobileAgentPickerOpen ? (
+          <div className="page-mobile-switcher__sheet" data-role="chat-mobile-agent-picker">
+            <div className="page-mobile-switcher__list" role="listbox" aria-label="Chat agents">
+              {loadingAgents ? <p className="page-mobile-switcher__hint">Loading agents…</p> : null}
+              {!loadingAgents && chatAgents.length === 0 ? <p className="page-mobile-switcher__hint">No agents available yet.</p> : null}
+              {chatAgents.map((chatAgent) => (
+                <button
+                  key={chatAgent.id}
+                  className={selectedAgentId === chatAgent.id ? "page-mobile-switcher__item page-mobile-switcher__item--active" : "page-mobile-switcher__item"}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedAgentId === chatAgent.id}
+                  data-role={`chat-mobile-agent-option-${chatAgent.slug}`}
+                  onClick={() => {
+                    setMobileAgentPickerOpen(false);
+                    onSelectAgent(chatAgent.id);
+                  }}
+                >
+                  {chatAgent.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div className="session-detail-column session-detail-column--standalone">
         <SessionChatPanel
           session={session}

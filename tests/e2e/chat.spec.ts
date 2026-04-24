@@ -20,13 +20,23 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
       return null;
     }
 
+    const detailRect = detailColumn.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const transcriptRect = transcript.getBoundingClientRect();
+    const composerRect = composerInput.getBoundingClientRect();
+
     return {
+      viewportHeight: window.innerHeight,
       contentBodyHeight: contentBody.getBoundingClientRect().height,
       stackHeight: stack.getBoundingClientRect().height,
-      detailHeight: detailColumn.getBoundingClientRect().height,
-      panelHeight: panel.getBoundingClientRect().height,
-      transcriptHeight: transcript.getBoundingClientRect().height,
-      composerInputHeight: composerInput.getBoundingClientRect().height,
+      detailHeight: detailRect.height,
+      detailTop: detailRect.top,
+      panelHeight: panelRect.height,
+      panelTop: panelRect.top,
+      transcriptHeight: transcriptRect.height,
+      transcriptTop: transcriptRect.top,
+      composerInputHeight: composerRect.height,
+      composerBottom: composerRect.bottom,
       panelResize: window.getComputedStyle(panel).resize,
       composerResize: window.getComputedStyle(composerInput).resize,
     };
@@ -210,6 +220,41 @@ test("chat page fills the available height while keeping the composer resizable"
   expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((initialLayout?.composerInputHeight ?? 0) + 100);
   expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((initialLayout?.transcriptHeight ?? 0) - 100);
   expect(Math.abs((afterResize?.panelHeight ?? 0) - (initialLayout?.panelHeight ?? 0))).toBeLessThan(8);
+});
+
+test("chat mobile keeps a page-local agent picker and usable transcript/composer layout", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await page.getByRole("button", { name: "Chat" }).click();
+
+  await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toBeVisible();
+  await expect(page.locator('[data-role="chat-agent-sidebar-nav"]')).toBeHidden();
+
+  await page.locator('[data-role="chat-mobile-agent-picker-trigger"]').click();
+  await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toBeVisible();
+  await page.locator('[data-role="chat-mobile-agent-option-data"]').click();
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await page.locator('[data-role="composer-input"]').fill("Mobile chat message");
+  await page.locator('[data-role="send-message"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Mobile chat message", { timeout: 10_000 });
+
+  const mobileLayout = await measureChatLayout(page);
+  expect(mobileLayout).not.toBeNull();
+  expect(mobileLayout?.panelTop ?? 999).toBeLessThan(340);
+  expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(160);
+  expect(mobileLayout?.transcriptTop ?? 999).toBeLessThan((mobileLayout?.viewportHeight ?? 0) - 180);
+  expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+
+  await page.locator('[data-role="chat-mobile-agent-picker-trigger"]').click();
+  await page.locator('[data-role="chat-mobile-agent-option-supervisor"]').click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toHaveCount(0);
 });
 
 test("chat page session actions can reload the current agent chat and rotate a new session in place", async ({ page }) => {

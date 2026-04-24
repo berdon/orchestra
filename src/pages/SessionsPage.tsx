@@ -158,6 +158,12 @@ export function SessionsPage({
   const [runtimeDetails, setRuntimeDetails] = useState<SessionRuntimeDetails | null>(null);
   const [runtimeDetailsError, setRuntimeDetailsError] = useState<string | null>(null);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
+  const [mobileSessionPickerOpen, setMobileSessionPickerOpen] = useState(false);
+  const [touchFriendlySessionListActions, setTouchFriendlySessionListActions] = useState(
+    () => (typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 1100px), (hover: none), (pointer: coarse)").matches
+      : false),
+  );
   const revealTimerRef = useRef<number | null>(null);
   const canShowDebugInfo = (import.meta.env.DEV || navigator.webdriver) && Boolean(selectedSession?.debugInfo);
   const getTooltipProps = useExplanatoryTooltipProps();
@@ -174,7 +180,32 @@ export function SessionsPage({
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 1100px), (hover: none), (pointer: coarse)");
+    const updateTouchFriendlySessionListActions = () => {
+      setTouchFriendlySessionListActions(mediaQuery.matches);
+    };
+
+    updateTouchFriendlySessionListActions();
+    mediaQuery.addEventListener("change", updateTouchFriendlySessionListActions);
+    return () => {
+      mediaQuery.removeEventListener("change", updateTouchFriendlySessionListActions);
+    };
+  }, []);
+
+  useEffect(() => {
+    setMobileSessionPickerOpen(false);
+  }, [selectedSession?.id, sessionFilter]);
+
   function scheduleDeleteReveal(sessionId: string) {
+    if (touchFriendlySessionListActions) {
+      setRevealedDeleteSessionId(sessionId);
+      return;
+    }
     if (revealTimerRef.current !== null) {
       window.clearTimeout(revealTimerRef.current);
     }
@@ -186,11 +217,125 @@ export function SessionsPage({
   }
 
   function hideDeleteReveal() {
+    if (touchFriendlySessionListActions) {
+      return;
+    }
     if (revealTimerRef.current !== null) {
       window.clearTimeout(revealTimerRef.current);
       revealTimerRef.current = null;
     }
     setRevealedDeleteSessionId(null);
+  }
+
+  function renderSessionNavigationPanel({ mobile = false }: { mobile?: boolean } = {}) {
+    return (
+      <>
+        <ResourceStatusBanner
+          connection={connection}
+          error={sessionActionError}
+          hasData={sessions.length > 0}
+          refreshing={refreshingSessions}
+          onRetry={onRetrySessions}
+          retryLabel="Retry sessions"
+          refreshingLabel="Refreshing sessions…"
+          dataRolePrefix="sessions-status"
+        />
+        {loadingSessions && sessions.length === 0 ? <p className="muted-copy">Loading sessions…</p> : null}
+
+        <div className="filter-chip-row" role="tablist" aria-label="Session filters">
+          <button
+            type="button"
+            role="tab"
+            data-role="session-filter-active"
+            aria-selected={sessionFilter === "active"}
+            className={sessionFilter === "active" ? "filter-chip filter-chip--active" : "filter-chip"}
+            onClick={() => onSessionFilterChange("active")}
+          >
+            Active
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-role="session-filter-closed"
+            aria-selected={sessionFilter === "closed"}
+            className={sessionFilter === "closed" ? "filter-chip filter-chip--active" : "filter-chip"}
+            onClick={() => onSessionFilterChange("closed")}
+          >
+            Closed
+          </button>
+        </div>
+
+        <div className="session-list-scroll">
+          <nav className="session-list" aria-label="Sessions">
+            {sessions.length === 0 ? <p className="muted-copy">No {sessionFilter} sessions.</p> : null}
+            {sessions.map((session) => {
+              const isActive = session.id === selectedSession?.id;
+              const showDeleteAction = touchFriendlySessionListActions || revealedDeleteSessionId === session.id;
+              return (
+                <div
+                  key={session.id}
+                  className={[
+                    "session-list-row",
+                    isActive ? "session-list-row--active" : "",
+                    showDeleteAction ? "session-list-row--actions-visible" : "",
+                  ].filter(Boolean).join(" ")}
+                  onMouseEnter={() => scheduleDeleteReveal(session.id)}
+                  onMouseLeave={hideDeleteReveal}
+                  onFocusCapture={() => setRevealedDeleteSessionId(session.id)}
+                  onBlurCapture={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      hideDeleteReveal();
+                    }
+                  }}
+                >
+                  <a
+                    data-role="session-link"
+                    data-session-id={session.id}
+                    className={isActive ? "session-list-link session-list-link--active" : "session-list-link"}
+                    href="#"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onSelectSession(session.id);
+                      if (mobile) {
+                        setMobileSessionPickerOpen(false);
+                      }
+                    }}
+                  >
+                    <div className="session-list-link__header">
+                      <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
+                      <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : formatListControlLabel(session) ? "accent" : getActivityTone(session.activityState)}`}>
+                        {session.terminalAttached
+                          ? "Terminal attached"
+                          : formatListControlLabel(session) ?? formatActivityLabel(session.activityState, session.activeToolName)}
+                      </span>
+                    </div>
+                    <span className="session-list-link__title">{getSessionListTitle(session)}</span>
+                  </a>
+                  <button
+                    className="session-delete-button"
+                    type="button"
+                    tabIndex={showDeleteAction ? 0 : -1}
+                    aria-label={`Dismiss ${getSessionListTitle(session)}`}
+                    {...getTooltipProps("Hide this session from the list without deleting its stored history.")}
+                    onClick={() => onDeleteSession(session.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </nav>
+        </div>
+
+        {sessionFilter === "closed" ? (
+          <div className="session-list-footer">
+            <button className="secondary-button secondary-button--danger" data-role="delete-closed-sessions" type="button" onClick={onDeleteClosedSessions}>
+              Dismiss closed
+            </button>
+          </div>
+        ) : null}
+      </>
+    );
   }
 
   async function handleOpenRuntimeDetails() {
@@ -213,116 +358,35 @@ export function SessionsPage({
 
   return (
     <section className="panel-stack panel-stack--sessions panel-stack--sessions-layout">
+      <div className="page-mobile-switcher page-mobile-switcher--sessions" data-role="sessions-mobile-switcher">
+        <p className="eyebrow">Sessions</p>
+        <button
+          className="page-mobile-switcher__trigger"
+          type="button"
+          data-role="sessions-mobile-picker-trigger"
+          aria-haspopup="dialog"
+          aria-expanded={mobileSessionPickerOpen}
+          onClick={() => setMobileSessionPickerOpen((current) => !current)}
+        >
+          <span className="page-mobile-switcher__current">
+            {selectedSession ? getSessionListTitle(selectedSession) : `Choose ${sessionFilter} session`}
+          </span>
+          <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
+        </button>
+        {mobileSessionPickerOpen ? (
+          <div className="page-mobile-switcher__sheet" data-role="sessions-mobile-picker">
+            <div className="session-list-panel session-list-panel--mobile">
+              {renderSessionNavigationPanel({ mobile: true })}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <ResizableSidebarLayout
         className="session-shell"
         storageKey="orchestra.layout.sessions.secondary-nav-width"
-        navigationClassName="session-list-panel"
+        navigationClassName="session-list-panel session-list-panel--desktop"
         detailClassName="session-detail-column"
-        navigation={(
-        <>
-          <ResourceStatusBanner
-            connection={connection}
-            error={sessionActionError}
-            hasData={sessions.length > 0}
-            refreshing={refreshingSessions}
-            onRetry={onRetrySessions}
-            retryLabel="Retry sessions"
-            refreshingLabel="Refreshing sessions…"
-            dataRolePrefix="sessions-status"
-          />
-          {loadingSessions && sessions.length === 0 ? <p className="muted-copy">Loading sessions…</p> : null}
-
-          <div className="filter-chip-row" role="tablist" aria-label="Session filters">
-            <button
-              type="button"
-              role="tab"
-              data-role="session-filter-active"
-              aria-selected={sessionFilter === "active"}
-              className={sessionFilter === "active" ? "filter-chip filter-chip--active" : "filter-chip"}
-              onClick={() => onSessionFilterChange("active")}
-            >
-              Active
-            </button>
-            <button
-              type="button"
-              role="tab"
-              data-role="session-filter-closed"
-              aria-selected={sessionFilter === "closed"}
-              className={sessionFilter === "closed" ? "filter-chip filter-chip--active" : "filter-chip"}
-              onClick={() => onSessionFilterChange("closed")}
-            >
-              Closed
-            </button>
-          </div>
-
-          <div className="session-list-scroll">
-            <nav className="session-list" aria-label="Sessions">
-              {sessions.length === 0 ? <p className="muted-copy">No {sessionFilter} sessions.</p> : null}
-              {sessions.map((session) => {
-                const isActive = session.id === selectedSession?.id;
-                const showDeleteAction = revealedDeleteSessionId === session.id;
-                return (
-                  <div
-                    key={session.id}
-                    className={[
-                      "session-list-row",
-                      isActive ? "session-list-row--active" : "",
-                      showDeleteAction ? "session-list-row--actions-visible" : "",
-                    ].filter(Boolean).join(" ")}
-                    onMouseEnter={() => scheduleDeleteReveal(session.id)}
-                    onMouseLeave={hideDeleteReveal}
-                    onFocusCapture={() => setRevealedDeleteSessionId(session.id)}
-                    onBlurCapture={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                        hideDeleteReveal();
-                      }
-                    }}
-                  >
-                    <a
-                      data-role="session-link"
-                      data-session-id={session.id}
-                      className={isActive ? "session-list-link session-list-link--active" : "session-list-link"}
-                      href="#"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        onSelectSession(session.id);
-                      }}
-                    >
-                      <div className="session-list-link__header">
-                        <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
-                        <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : formatListControlLabel(session) ? "accent" : getActivityTone(session.activityState)}`}>
-                          {session.terminalAttached
-                            ? "Terminal attached"
-                            : formatListControlLabel(session) ?? formatActivityLabel(session.activityState, session.activeToolName)}
-                        </span>
-                      </div>
-                      <span className="session-list-link__title">{getSessionListTitle(session)}</span>
-                    </a>
-                    <button
-                      className="session-delete-button"
-                      type="button"
-                      tabIndex={showDeleteAction ? 0 : -1}
-                      aria-label={`Dismiss ${getSessionListTitle(session)}`}
-                      {...getTooltipProps("Hide this session from the list without deleting its stored history.")}
-                      onClick={() => onDeleteSession(session.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </nav>
-          </div>
-
-          {sessionFilter === "closed" ? (
-            <div className="session-list-footer">
-              <button className="secondary-button secondary-button--danger" data-role="delete-closed-sessions" type="button" onClick={onDeleteClosedSessions}>
-                Dismiss closed
-              </button>
-            </div>
-          ) : null}
-        </>
-        )}
+        navigation={renderSessionNavigationPanel()}
         detail={(
         <>
           <SessionChatPanel

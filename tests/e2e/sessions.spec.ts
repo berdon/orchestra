@@ -11,6 +11,8 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const contentBody = document.querySelector('.content__body') as HTMLDivElement | null;
     const stack = document.querySelector('.panel-stack--sessions') as HTMLElement | null;
+    const shell = document.querySelector('.session-shell') as HTMLElement | null;
+    const listPanel = document.querySelector('.session-list-panel--desktop') as HTMLElement | null;
     const detailColumn = document.querySelector('.session-detail-column') as HTMLElement | null;
     const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
     const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
@@ -20,15 +22,27 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       return null;
     }
 
+    const detailRect = detailColumn.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const transcriptRect = transcript.getBoundingClientRect();
+    const composerRect = composerInput.getBoundingClientRect();
+
     return {
+      viewportHeight: window.innerHeight,
       contentBodyHeight: contentBody.getBoundingClientRect().height,
       stackHeight: stack.getBoundingClientRect().height,
-      detailHeight: detailColumn.getBoundingClientRect().height,
-      panelHeight: panel.getBoundingClientRect().height,
-      transcriptHeight: transcript.getBoundingClientRect().height,
+      shellGridColumns: shell ? window.getComputedStyle(shell).gridTemplateColumns : null,
+      listPanelWidth: listPanel ? listPanel.getBoundingClientRect().width : 0,
+      detailHeight: detailRect.height,
+      detailTop: detailRect.top,
+      panelHeight: panelRect.height,
+      panelTop: panelRect.top,
+      transcriptHeight: transcriptRect.height,
+      transcriptTop: transcriptRect.top,
       transcriptClientHeight: transcript.clientHeight,
       transcriptScrollHeight: transcript.scrollHeight,
-      composerInputHeight: composerInput.getBoundingClientRect().height,
+      composerInputHeight: composerRect.height,
+      composerBottom: composerRect.bottom,
       panelResize: window.getComputedStyle(panel).resize,
       composerResize: window.getComputedStyle(composerInput).resize,
     };
@@ -165,6 +179,24 @@ test("sessions transcript fills the available page height while the composer rem
   await expect(transcript).toHaveAttribute("data-scroll-locked", "false");
 });
 
+test("sessions switches to the page-local picker mode at 1024px so the detail pane stays usable", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toBeVisible();
+  await expect(page.locator('.session-list-panel--desktop')).toBeHidden();
+
+  const layout = await measureSessionLayout(page);
+  expect(layout).not.toBeNull();
+  expect(layout?.detailTop ?? 999).toBeLessThan(180);
+  expect(layout?.transcriptHeight ?? 0).toBeGreaterThan(180);
+});
+
 test("sessions list uses deterministic task ordering and delays the dismiss affordance until hover settles", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -215,6 +247,79 @@ test("sessions list uses deterministic task ordering and delays the dismiss affo
   await page.waitForTimeout(2100);
   await expect(firstRow).toHaveClass(/session-list-row--actions-visible/);
   await expect(dismissButton).toHaveJSProperty('tabIndex', 0);
+});
+
+test("sessions mobile keeps the detail pane primary and exposes a touch-friendly session picker", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+  await page.addInitScript(({ nextTimestamp }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-mobile-1",
+          title: "Mobile planning session",
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: new Date(new Date(nextTimestamp).getTime() + 1_000).toISOString(),
+          subscribed: false,
+          events: [
+            {
+              id: "mobile-session-event-1",
+              kind: "assistant",
+              message: "First mobile transcript entry.",
+              timestamp: nextTimestamp,
+            },
+          ],
+        },
+        {
+          id: "session-mobile-2",
+          title: "Mobile follow-up session",
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: new Date(new Date(nextTimestamp).getTime() + 2_000).toISOString(),
+          subscribed: false,
+          events: [
+            {
+              id: "mobile-session-event-2",
+              kind: "assistant",
+              message: "Second mobile transcript entry.",
+              timestamp: new Date(new Date(nextTimestamp).getTime() + 2_000).toISOString(),
+            },
+          ],
+        },
+      ]),
+    );
+  }, { nextTimestamp: timestamp });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toBeVisible();
+  await expect(page.locator('.session-list-panel--desktop')).toBeHidden();
+
+  await page.locator('[data-role="sessions-mobile-picker-trigger"]').click();
+  await expect(page.locator('[data-role="sessions-mobile-picker"]')).toBeVisible();
+  await expect(page.locator('[data-role="sessions-mobile-picker"] .session-delete-button').first()).toHaveJSProperty('tabIndex', 0);
+
+  await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-1"]').click();
+  await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Mobile planning session");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("First mobile transcript entry.");
+
+  await page.locator('[data-role="composer-input"]').fill("Reply from mobile sessions test");
+  await page.locator('[data-role="send-message"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Reply from mobile sessions test", { timeout: 10_000 });
+
+  const mobileLayout = await measureSessionLayout(page);
+  expect(mobileLayout).not.toBeNull();
+  expect(mobileLayout?.panelTop ?? 999).toBeLessThan(330);
+  expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(140);
+  expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+
+  await page.locator('[data-role="sessions-mobile-picker-trigger"]').click();
+  await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-2"]').click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Mobile follow-up session");
 });
 
 test("sessions secondary nav width is resizable and persists", async ({ page }) => {
@@ -866,6 +971,13 @@ test("sessions composer keeps focus while the viewed session refreshes", async (
           },
         ]),
       );
+      window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+        detail: {
+          sessionIds: ["session-focus-refresh"],
+          reason: "test.session_focus_refresh",
+        },
+      }));
+      window.dispatchEvent(new Event("focus"));
     }, 150);
   });
 
@@ -934,6 +1046,13 @@ test("sessions UI refreshes an active session after opening even without a local
           },
         ]),
       );
+      window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+        detail: {
+          sessionIds: ["session-active-refresh"],
+          reason: "test.session_active_refresh",
+        },
+      }));
+      window.dispatchEvent(new Event("focus"));
     }, 150);
   });
 
