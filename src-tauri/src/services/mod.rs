@@ -34,6 +34,7 @@ pub mod remote_api;
 pub mod role_dispatch;
 pub mod role_runtime;
 pub mod roles;
+pub mod runtime_skills;
 pub mod session_attachments;
 pub mod session_compaction;
 pub mod session_list;

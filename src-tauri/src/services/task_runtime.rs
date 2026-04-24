@@ -10,9 +10,9 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications,
-        pi_sessions, project_settings, projects, role_dispatch,
-        role_runtime, roles, session_list, task_repositories, tasks, workflows,
+        agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications, pi_sessions,
+        project_settings, projects, role_dispatch, role_runtime, roles, session_list,
+        task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };

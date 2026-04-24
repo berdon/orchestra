@@ -3,9 +3,8 @@ use rusqlite::{params, Connection, OptionalExtension, Params};
 use uuid::Uuid;
 
 use crate::models::{
-    AgentSkillLinks, RoleSkillLinks, SkillBindingInput, SkillBindingRecord,
-    SkillBindingScopeCount, SkillBindingSummary, SkillLinkSummary, WorkflowLaneSkillLinks,
-    WorkflowSkillLinks,
+    AgentSkillLinks, RoleSkillLinks, SkillBindingInput, SkillBindingRecord, SkillBindingScopeCount,
+    SkillBindingSummary, SkillLinkSummary, WorkflowLaneSkillLinks, WorkflowSkillLinks,
 };
 
 const SCOPE_GLOBAL: &str = "global";
@@ -47,7 +46,9 @@ pub fn load_skill_binding_summary(
             END ASC
             "#,
         )
-        .map_err(|error| format!("Unable to prepare binding summary query for skill {skill_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to prepare binding summary query for skill {skill_id}: {error}")
+        })?;
 
     let scope_counts = statement
         .query_map([skill_id], |row| {
@@ -119,7 +120,9 @@ pub fn load_skill_bindings(
                 b.id ASC
             "#,
         )
-        .map_err(|error| format!("Unable to prepare binding detail query for skill {skill_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to prepare binding detail query for skill {skill_id}: {error}")
+        })?;
 
     let rows = statement
         .query_map([skill_id], |row| {
@@ -146,7 +149,9 @@ pub fn load_skill_bindings(
                 updated_at: row.get(19)?,
             })
         })
-        .map_err(|error| format!("Unable to query binding details for skill {skill_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to query binding details for skill {skill_id}: {error}")
+        })?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to read binding details for skill {skill_id}: {error}"))
@@ -162,9 +167,9 @@ pub fn set_skill_bindings(
     validate_requested_bindings(connection, &normalized)?;
 
     let now = now_iso();
-    let tx = connection
-        .transaction()
-        .map_err(|error| format!("Unable to start skill binding transaction for {skill_id}: {error}"))?;
+    let tx = connection.transaction().map_err(|error| {
+        format!("Unable to start skill binding transaction for {skill_id}: {error}")
+    })?;
 
     tx.execute(
         "DELETE FROM skill_scope_bindings WHERE skill_id = ?1",
@@ -208,7 +213,10 @@ pub fn set_skill_bindings(
         .map_err(|error| format!("Unable to commit bindings for skill {skill_id}: {error}"))
 }
 
-pub fn get_role_skill_links(connection: &Connection, role_id: &str) -> Result<RoleSkillLinks, String> {
+pub fn get_role_skill_links(
+    connection: &Connection,
+    role_id: &str,
+) -> Result<RoleSkillLinks, String> {
     ensure_target_exists(connection, "roles", role_id, "Role")?;
     Ok(RoleSkillLinks {
         role_id: role_id.to_string(),
@@ -399,7 +407,9 @@ pub fn get_workflow_skill_links(
             ORDER BY lane_order ASC, name COLLATE NOCASE ASC
             "#,
         )
-        .map_err(|error| format!("Unable to prepare workflow lane list for {workflow_id}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to prepare workflow lane list for {workflow_id}: {error}")
+        })?;
 
     let lane_rows = lane_statement
         .query_map([workflow_id], |row| {
@@ -606,7 +616,10 @@ fn normalize_requested_bindings(
                     || role_id.is_some()
                     || agent_id.is_some()
                 {
-                    return Err("Workflow-lane bindings must include both a workflow and lane target only.".into());
+                    return Err(
+                        "Workflow-lane bindings must include both a workflow and lane target only."
+                            .into(),
+                    );
                 }
                 NormalizedSkillBindingInput {
                     scope_kind,
@@ -617,7 +630,11 @@ fn normalize_requested_bindings(
                     workflow_lane_id,
                 }
             }
-            _ => return Err(format!("Unsupported skill binding scope kind: {scope_kind}")),
+            _ => {
+                return Err(format!(
+                    "Unsupported skill binding scope kind: {scope_kind}"
+                ))
+            }
         };
 
         if !normalized.contains(&normalized_binding) {
@@ -635,8 +652,15 @@ fn normalize_requested_bindings(
             .then_with(|| left.workflow_lane_id.cmp(&right.workflow_lane_id))
     });
 
-    if normalized.iter().any(|binding| binding.scope_kind == SCOPE_GLOBAL) && normalized.len() > 1 {
-        return Err("A global binding is mutually exclusive with every narrower skill binding scope.".into());
+    if normalized
+        .iter()
+        .any(|binding| binding.scope_kind == SCOPE_GLOBAL)
+        && normalized.len() > 1
+    {
+        return Err(
+            "A global binding is mutually exclusive with every narrower skill binding scope."
+                .into(),
+        );
     }
 
     Ok(normalized)
@@ -695,7 +719,12 @@ fn validate_requested_bindings(
                 }
             }
             SCOPE_GLOBAL => {}
-            _ => return Err(format!("Unsupported skill binding scope kind: {}", binding.scope_kind)),
+            _ => {
+                return Err(format!(
+                    "Unsupported skill binding scope kind: {}",
+                    binding.scope_kind
+                ))
+            }
         }
     }
 
@@ -893,8 +922,19 @@ mod tests {
         let skill_id = create_skill(&mut connection, &root, "Scoped Skill");
         seed_project(&connection, "project-1", "Alpha Project", "alpha-project");
         seed_role(&connection, "role-1", "Reviewer", "reviewer");
-        seed_agent(&connection, "agent-1", "QA Helper", "qa-helper", Some("role-1"));
-        seed_workflow(&connection, "workflow-1", "Delivery Workflow", "delivery-workflow");
+        seed_agent(
+            &connection,
+            "agent-1",
+            "QA Helper",
+            "qa-helper",
+            Some("role-1"),
+        );
+        seed_workflow(
+            &connection,
+            "workflow-1",
+            "Delivery Workflow",
+            "delivery-workflow",
+        );
         seed_workflow_lane(&connection, "workflow-1", "lane-1", "review", "Review", 0);
 
         set_skill_bindings(
@@ -945,7 +985,8 @@ mod tests {
         )
         .expect("bindings should save");
 
-        let summary = load_skill_binding_summary(&connection, &skill_id).expect("summary should load");
+        let summary =
+            load_skill_binding_summary(&connection, &skill_id).expect("summary should load");
         assert_eq!(summary.total_count, 5);
 
         let bindings = load_skill_bindings(&connection, &skill_id).expect("bindings should load");
@@ -953,7 +994,10 @@ mod tests {
         assert_eq!(bindings[0].project_name.as_deref(), Some("Alpha Project"));
         assert_eq!(bindings[1].role_name.as_deref(), Some("Reviewer"));
         assert_eq!(bindings[2].agent_name.as_deref(), Some("QA Helper"));
-        assert_eq!(bindings[3].workflow_name.as_deref(), Some("Delivery Workflow"));
+        assert_eq!(
+            bindings[3].workflow_name.as_deref(),
+            Some("Delivery Workflow")
+        );
         assert_eq!(bindings[4].workflow_lane_name.as_deref(), Some("Review"));
 
         set_skill_bindings(
@@ -970,7 +1014,8 @@ mod tests {
         )
         .expect("global replacement should save");
 
-        let rebound = load_skill_bindings(&connection, &skill_id).expect("replaced bindings should load");
+        let rebound =
+            load_skill_bindings(&connection, &skill_id).expect("replaced bindings should load");
         assert_eq!(rebound.len(), 1);
         assert_eq!(rebound[0].scope_kind, SCOPE_GLOBAL);
     }
@@ -1016,8 +1061,18 @@ mod tests {
         fs::create_dir_all(&root).expect("root should create");
         let mut connection = test_connection();
         let skill_id = create_skill(&mut connection, &root, "Lane Skill");
-        seed_workflow(&connection, "workflow-1", "Delivery Workflow", "delivery-workflow");
-        seed_workflow(&connection, "workflow-2", "Other Workflow", "other-workflow");
+        seed_workflow(
+            &connection,
+            "workflow-1",
+            "Delivery Workflow",
+            "delivery-workflow",
+        );
+        seed_workflow(
+            &connection,
+            "workflow-2",
+            "Other Workflow",
+            "other-workflow",
+        );
         seed_workflow_lane(&connection, "workflow-2", "lane-1", "review", "Review", 0);
 
         let error = set_skill_bindings(
@@ -1045,7 +1100,13 @@ mod tests {
         let direct_skill_id = create_skill(&mut connection, &root, "Direct Agent Skill");
         let inherited_skill_id = create_skill(&mut connection, &root, "Inherited Role Skill");
         seed_role(&connection, "role-1", "Reviewer", "reviewer");
-        seed_agent(&connection, "agent-1", "QA Helper", "qa-helper", Some("role-1"));
+        seed_agent(
+            &connection,
+            "agent-1",
+            "QA Helper",
+            "qa-helper",
+            Some("role-1"),
+        );
 
         set_skill_bindings(
             &mut connection,
@@ -1092,7 +1153,12 @@ mod tests {
         let workflow_skill_id = create_skill(&mut connection, &root, "Workflow Skill");
         let lane_skill_id = create_skill(&mut connection, &root, "Lane Skill");
         seed_role(&connection, "role-1", "Reviewer", "reviewer");
-        seed_workflow(&connection, "workflow-1", "Delivery Workflow", "delivery-workflow");
+        seed_workflow(
+            &connection,
+            "workflow-1",
+            "Delivery Workflow",
+            "delivery-workflow",
+        );
         seed_workflow_lane(&connection, "workflow-1", "lane-1", "review", "Review", 0);
         seed_workflow_lane(&connection, "workflow-1", "lane-2", "ship", "Ship", 1);
 
@@ -1136,17 +1202,27 @@ mod tests {
         )
         .expect("lane binding should save");
 
-        let role_links = get_role_skill_links(&connection, "role-1").expect("role links should load");
+        let role_links =
+            get_role_skill_links(&connection, "role-1").expect("role links should load");
         assert_eq!(role_links.skills.len(), 1);
         assert_eq!(role_links.skills[0].skill_id, role_skill_id);
 
         let workflow_links = get_workflow_skill_links(&connection, "workflow-1")
             .expect("workflow links should load");
         assert_eq!(workflow_links.workflow_skills.len(), 1);
-        assert_eq!(workflow_links.workflow_skills[0].skill_id, workflow_skill_id);
+        assert_eq!(
+            workflow_links.workflow_skills[0].skill_id,
+            workflow_skill_id
+        );
         assert_eq!(workflow_links.workflow_lane_skills.len(), 1);
-        assert_eq!(workflow_links.workflow_lane_skills[0].workflow_lane_id, "lane-1");
+        assert_eq!(
+            workflow_links.workflow_lane_skills[0].workflow_lane_id,
+            "lane-1"
+        );
         assert_eq!(workflow_links.workflow_lane_skills[0].skills.len(), 1);
-        assert_eq!(workflow_links.workflow_lane_skills[0].skills[0].skill_id, lane_skill_id);
+        assert_eq!(
+            workflow_links.workflow_lane_skills[0].skills[0].skill_id,
+            lane_skill_id
+        );
     }
 }

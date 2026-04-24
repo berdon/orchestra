@@ -23,6 +23,7 @@ use crate::{
     services::{
         app_events, database, harness_settings,
         pi_sessions::get_session_path,
+        runtime_skills,
         session_compaction::{
             parse_compaction_window_spec, resolve_session_compaction_policy, CompactionWindowSpec,
         },
@@ -86,6 +87,7 @@ fn build_runtime_pi_args(
     session_dir: &Path,
     orchestra_extension_path: &Path,
     extra_extensions: &[String],
+    skill_launch_plan: &runtime_skills::ManagedPiSkillLaunchPlan,
 ) -> Vec<String> {
     let mut args = vec![
         "--offline".to_string(),
@@ -95,14 +97,13 @@ fn build_runtime_pi_args(
         session_path.display().to_string(),
         "--session-dir".to_string(),
         session_dir.display().to_string(),
-        "--no-extensions".to_string(),
-        "--extension".to_string(),
-        orchestra_extension_path.display().to_string(),
     ];
-    for extension in extra_extensions {
-        args.push("--extension".to_string());
-        args.push(extension.clone());
-    }
+    runtime_skills::append_managed_pi_extension_and_skill_args(
+        &mut args,
+        orchestra_extension_path,
+        extra_extensions,
+        skill_launch_plan,
+    );
     args
 }
 
@@ -133,6 +134,7 @@ pub struct SessionRuntime {
     shell_path: Option<String>,
     orchestra_extension_path: PathBuf,
     extra_extensions: Vec<String>,
+    skill_context_hash: String,
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Option<Child>>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
@@ -155,6 +157,7 @@ impl SessionRuntime {
         session_dir: PathBuf,
         session_id: String,
         session_path: PathBuf,
+        skill_launch_plan: runtime_skills::ManagedPiSkillLaunchPlan,
     ) -> Result<Arc<Self>, String> {
         let bridge_config = app.state::<crate::state::AppState>().tool_bridge.clone();
         let authorization_context = runtime_authorization_context(&session_id)?;
@@ -175,6 +178,7 @@ impl SessionRuntime {
             &session_dir,
             &extension_path,
             &extra_extensions,
+            &skill_launch_plan,
         );
         let requested_project_root = project_root.clone();
         let requested_project_root_diagnostic = format_path_diagnostic(&requested_project_root);
@@ -187,13 +191,23 @@ impl SessionRuntime {
         } else {
             extra_extensions.join(", ")
         };
+        let scoped_skill_diagnostics = if skill_launch_plan.skill_paths.is_empty() {
+            "<none>".to_string()
+        } else {
+            skill_launch_plan
+                .skill_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
 
         app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.spawn.request",
             &format!(
-                "Session {} spawn request: pi={} runtime_source={} runtime_mode={} runtime_version={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} shell_path={}",
+                "Session {} spawn request: pi={} runtime_source={} runtime_mode={} runtime_version={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} scoped_skills={} skill_context_hash={} shell_path={}",
                 session_id,
                 pi_executable_diagnostic,
                 pi_runtime_health.source,
@@ -204,6 +218,8 @@ impl SessionRuntime {
                 session_path_diagnostic,
                 extension_path_diagnostic,
                 &extra_extension_diagnostics,
+                &scoped_skill_diagnostics,
+                skill_launch_plan.context_hash,
                 shell_path.as_deref().unwrap_or("<unavailable>"),
             ),
         );
@@ -288,6 +304,7 @@ impl SessionRuntime {
             shell_path,
             orchestra_extension_path: extension_path,
             extra_extensions,
+            skill_context_hash: skill_launch_plan.context_hash,
             stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(Some(child)),
             pending: Mutex::new(HashMap::new()),
@@ -1239,32 +1256,82 @@ pub fn ensure_runtime(
     session_dir: PathBuf,
     session_id: &str,
 ) -> Result<Arc<SessionRuntime>, String> {
+    let desired_skill_launch_plan =
+        runtime_skills::resolve_managed_pi_skill_launch_plan(session_id)?;
+    let desired_skill_context_hash = desired_skill_launch_plan.context_hash.clone();
+
     let existing_runtime = if let Ok(mut runtimes_guard) = runtimes.lock() {
         if let Some(existing) = runtimes_guard.get(session_id).cloned() {
             if !existing.is_closed() {
-                let same_project_root = existing
+                let current_project_root = existing
                     .project_root
                     .lock()
-                    .map(|current| *current == project_root)
-                    .unwrap_or(false);
-                if same_project_root || existing.has_active_prompt() {
-                    app.state::<crate::state::AppState>().log(
-                        "info",
-                        "sessions.runtime.reuse",
-                        &format!("Reusing live pi RPC runtime for session {}", session_id),
-                    );
-                    return Ok(existing);
+                    .map(|current| current.clone())
+                    .unwrap_or_else(|_| project_root.clone());
+                match runtime_skills::decide_runtime_reuse(
+                    &current_project_root,
+                    &project_root,
+                    &existing.skill_context_hash,
+                    &desired_skill_context_hash,
+                    existing.has_active_prompt(),
+                ) {
+                    runtime_skills::RuntimeReuseDecision::Reuse => {
+                        app.state::<crate::state::AppState>().log(
+                            "info",
+                            "sessions.runtime.reuse",
+                            &format!("Reusing live pi RPC runtime for session {}", session_id),
+                        );
+                        return Ok(existing);
+                    }
+                    runtime_skills::RuntimeReuseDecision::ReuseUntilIdle {
+                        cwd_changed,
+                        skills_changed,
+                    } => {
+                        app.state::<crate::state::AppState>().log(
+                            "info",
+                            "sessions.runtime.reuse.busy",
+                            &format!(
+                                "Reusing busy live pi RPC runtime for session {} until idle (cwd_changed={} skills_changed={} desired_skill_context_hash={})",
+                                session_id,
+                                cwd_changed,
+                                skills_changed,
+                                desired_skill_context_hash,
+                            ),
+                        );
+                        return Ok(existing);
+                    }
+                    runtime_skills::RuntimeReuseDecision::Respawn {
+                        cwd_changed,
+                        skills_changed,
+                    } => {
+                        let reason = match (cwd_changed, skills_changed) {
+                            (true, true) => format!(
+                                "switch cwd to {} and apply new skill context {}",
+                                project_root.display(),
+                                desired_skill_context_hash
+                            ),
+                            (true, false) => {
+                                format!("switch cwd to {}", project_root.display())
+                            }
+                            (false, true) => {
+                                format!("apply new skill context {}", desired_skill_context_hash)
+                            }
+                            (false, false) => "refresh runtime".into(),
+                        };
+                        app.state::<crate::state::AppState>().log(
+                            "info",
+                            if skills_changed {
+                                "sessions.runtime.respawn.skills_changed"
+                            } else {
+                                "sessions.runtime.respawn"
+                            },
+                            &format!(
+                                "Respawning live pi RPC runtime for session {} to {}",
+                                session_id, reason
+                            ),
+                        );
+                    }
                 }
-
-                app.state::<crate::state::AppState>().log(
-                    "info",
-                    "sessions.runtime.respawn",
-                    &format!(
-                        "Respawning live pi RPC runtime for session {} to switch cwd to {}",
-                        session_id,
-                        project_root.display()
-                    ),
-                );
             }
             runtimes_guard.remove(session_id);
             Some(existing)
@@ -1274,6 +1341,11 @@ pub fn ensure_runtime(
     } else {
         return Err("Unable to access live session runtime state".into());
     };
+
+    let preserved_subscription = existing_runtime
+        .as_ref()
+        .map(|runtime| runtime.is_subscribed())
+        .unwrap_or(false);
 
     if let Some(existing) = existing_runtime {
         if !existing.is_closed() {
@@ -1288,7 +1360,12 @@ pub fn ensure_runtime(
         session_dir,
         session_id.to_string(),
         session_path,
+        desired_skill_launch_plan,
     )?;
+
+    if preserved_subscription {
+        runtime.set_subscribed(true);
+    }
 
     match runtime.set_auto_compaction_enabled(false) {
         Ok(_) => runtime.set_control_capability("auto_compact", supported_control_capability()),
@@ -1480,9 +1557,76 @@ pub fn perform_session_compaction(
     }
 }
 
-pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Result<(), String> {
-    if runtime.has_active_control_operation() {
-        return Err("Wait for the current session control operation to finish".into());
+fn busy_skill_context_reload_error() -> String {
+    "Wait for the current response to finish before reloading this session so the updated skill context can be applied".into()
+}
+
+fn perform_session_reload_with_launch_plan(
+    runtime: Arc<SessionRuntime>,
+    trigger: &str,
+    desired_skill_launch_plan: runtime_skills::ManagedPiSkillLaunchPlan,
+) -> Result<(), String> {
+    if desired_skill_launch_plan.context_hash != runtime.skill_context_hash {
+        let project_root = runtime
+            .project_root
+            .lock()
+            .map(|path| path.clone())
+            .unwrap_or_else(|_| PathBuf::from("."));
+
+        if matches!(
+            runtime_skills::decide_runtime_reuse(
+                &project_root,
+                &project_root,
+                &runtime.skill_context_hash,
+                &desired_skill_launch_plan.context_hash,
+                runtime.has_active_prompt(),
+            ),
+            runtime_skills::RuntimeReuseDecision::ReuseUntilIdle { .. }
+        ) {
+            runtime.app.state::<crate::state::AppState>().log(
+                "info",
+                "sessions.reload.deferred.skills_changed",
+                &format!(
+                    "Rejecting reload for busy session {} until idle because the desired skill context changed from {} to {}",
+                    runtime.session_id,
+                    runtime.skill_context_hash,
+                    desired_skill_launch_plan.context_hash,
+                ),
+            );
+            return Err(busy_skill_context_reload_error());
+        }
+
+        let replacement = ensure_runtime(
+            &runtime
+                .app
+                .state::<crate::state::AppState>()
+                .session_runtimes,
+            runtime.app.clone(),
+            project_root,
+            runtime.session_dir.clone(),
+            &runtime.session_id,
+        )?;
+        if Arc::ptr_eq(&replacement, &runtime) {
+            runtime.app.state::<crate::state::AppState>().log(
+                "warn",
+                "sessions.reload.deferred.skills_changed",
+                &format!(
+                    "Reload for session {} did not respawn immediately even though the skill context changed from {} to {}",
+                    runtime.session_id,
+                    runtime.skill_context_hash,
+                    desired_skill_launch_plan.context_hash,
+                ),
+            );
+            return Err(busy_skill_context_reload_error());
+        }
+        replacement.set_subscribed(runtime.is_subscribed());
+        replacement.mark_control_operation_success("reload", trigger, "Session reloaded.");
+        let _ = app_events::emit_session_change(
+            &replacement.app,
+            "sessions.reload",
+            [replacement.session_id.clone()],
+        );
+        return Ok(());
     }
 
     let (operation_id, started_at) = runtime.start_control_operation("reload", trigger);
@@ -1532,6 +1676,16 @@ pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Re
             Err(error)
         }
     }
+}
+
+pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Result<(), String> {
+    if runtime.has_active_control_operation() {
+        return Err("Wait for the current session control operation to finish".into());
+    }
+
+    let desired_skill_launch_plan =
+        runtime_skills::resolve_managed_pi_skill_launch_plan(&runtime.session_id)?;
+    perform_session_reload_with_launch_plan(runtime, trigger, desired_skill_launch_plan)
 }
 
 fn should_auto_compact_for_usage(
@@ -1918,6 +2072,98 @@ mod tests {
 
     use crate::services::database;
 
+    static LIVE_SESSIONS_TEST_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> =
+        std::sync::OnceLock::new();
+
+    #[ctor::ctor]
+    fn initialize_live_sessions_test_app_handle() {
+        let tool_bridge = crate::services::tool_bridge::dummy_tool_bridge_config(
+            "live-sessions-tests-main-thread",
+        );
+        let app = tauri::Builder::default()
+            .manage(crate::state::AppState::new(tool_bridge.clone()))
+            .build(crate::tauri_context())
+            .expect("main-thread test app should build");
+        let leaked_app = Box::leak(Box::new(app));
+        let app_handle = leaked_app.handle().clone();
+        tool_bridge.attach_app_handle(app_handle.clone());
+        let _ = LIVE_SESSIONS_TEST_APP_HANDLE.set(app_handle);
+    }
+
+    fn test_app_handle() -> tauri::AppHandle {
+        LIVE_SESSIONS_TEST_APP_HANDLE
+            .get()
+            .expect("main-thread live sessions test app should exist")
+            .clone()
+    }
+
+    fn test_skill_launch_plan(context_hash: &str) -> runtime_skills::ManagedPiSkillLaunchPlan {
+        runtime_skills::ManagedPiSkillLaunchPlan {
+            context: runtime_skills::ManagedSkillRuntimeContext {
+                session_id: Some("session-1".into()),
+                project_id: "project-1".into(),
+                role_id: None,
+                agent_id: None,
+                workflow_id: None,
+                workflow_lane_id: None,
+                context_source: "project_session".into(),
+            },
+            context_hash: context_hash.into(),
+            global_publication_manifest_path: PathBuf::from("/tmp/manifest.json"),
+            snapshot: None,
+            skill_paths: Vec::new(),
+            global_skill_slugs: Vec::new(),
+            scoped_skill_slugs: Vec::new(),
+        }
+    }
+
+    fn test_runtime(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+        skill_context_hash: &str,
+        active_prompt: bool,
+    ) -> Arc<SessionRuntime> {
+        Arc::new(SessionRuntime {
+            session_id: session_id.into(),
+            project_root: Mutex::new(PathBuf::from("/tmp/project")),
+            session_dir: PathBuf::from("/tmp/sessions"),
+            session_path: PathBuf::from(format!("/tmp/sessions/{session_id}.jsonl")),
+            pi_runtime_health: PiRuntimeHealth {
+                source: "test".into(),
+                mode: "rpc".into(),
+                status: "healthy".into(),
+                resolved_path: None,
+                package_dir: None,
+                agent_dir: None,
+                version: None,
+                built_at: None,
+                manifest_path: None,
+                error_kind: None,
+                error_message: None,
+            },
+            pi_executable_path: PathBuf::from("/tmp/pi"),
+            pi_runtime_source: "test".into(),
+            pi_agent_dir: PathBuf::from("/tmp/agent"),
+            shell_path: None,
+            orchestra_extension_path: PathBuf::from("/tmp/orchestra-tools.ts"),
+            extra_extensions: Vec::new(),
+            skill_context_hash: skill_context_hash.into(),
+            stdin: Mutex::new(None),
+            child: Mutex::new(None),
+            pending: Mutex::new(HashMap::new()),
+            subscribed: Mutex::new(false),
+            current_run_id: Mutex::new(active_prompt.then(|| "run-1".into())),
+            closed: Mutex::new(false),
+            last_non_prompt_delivery_at: Mutex::new(None),
+            reload_capability: Mutex::new(unknown_control_capability()),
+            compact_capability: Mutex::new(supported_control_capability()),
+            auto_compact_capability: Mutex::new(unknown_control_capability()),
+            control_operation: Mutex::new(None),
+            last_auto_compaction_context_tokens: Mutex::new(None),
+            app: app_handle.clone(),
+        })
+    }
+
     fn in_memory_connection() -> Connection {
         let connection = Connection::open_in_memory().expect("open in-memory db");
         database::apply_migrations(&connection).expect("apply migrations");
@@ -2052,6 +2298,23 @@ mod tests {
 
     #[test]
     fn build_runtime_pi_args_appends_configured_extensions_after_orchestra_extension() {
+        let launch_plan = runtime_skills::ManagedPiSkillLaunchPlan {
+            context: runtime_skills::ManagedSkillRuntimeContext {
+                session_id: Some("session-1".into()),
+                project_id: "orchestra".into(),
+                role_id: None,
+                agent_id: None,
+                workflow_id: None,
+                workflow_lane_id: None,
+                context_source: "project_session".into(),
+            },
+            context_hash: "hash-1".into(),
+            global_publication_manifest_path: PathBuf::from("/tmp/manifest.json"),
+            snapshot: None,
+            skill_paths: vec![PathBuf::from("/tmp/skills/000-project-skill")],
+            global_skill_slugs: vec!["global-skill".into()],
+            scoped_skill_slugs: vec!["project-skill".into()],
+        };
         let args = build_runtime_pi_args(
             Path::new("/tmp/session.jsonl"),
             Path::new("/tmp/sessions"),
@@ -2060,6 +2323,7 @@ mod tests {
                 "npm:pi-example".to_string(),
                 "./extensions/local-extra.ts".to_string(),
             ],
+            &launch_plan,
         );
 
         assert_eq!(
@@ -2079,8 +2343,27 @@ mod tests {
                 "npm:pi-example".to_string(),
                 "--extension".to_string(),
                 "./extensions/local-extra.ts".to_string(),
+                "--skill".to_string(),
+                "/tmp/skills/000-project-skill".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn reload_rejects_busy_skill_context_change_without_reporting_success() {
+        let app_handle = test_app_handle();
+        let runtime = test_runtime(&app_handle, "session-1", "old-hash", true);
+
+        let error = perform_session_reload_with_launch_plan(
+            Arc::clone(&runtime),
+            "manual",
+            test_skill_launch_plan("new-hash"),
+        )
+        .expect_err("busy reload should be rejected until idle");
+
+        assert_eq!(error, busy_skill_context_reload_error());
+        assert!(runtime.control_operation().is_none());
+        assert_eq!(runtime.control_capability("reload").status, "unknown");
     }
 
     #[test]

@@ -52,6 +52,8 @@ impl AgentTerminalSession {
         let extra_extensions = crate::services::harness_settings::resolve_spawn_extra_extensions(
             crate::services::harness_settings::get_pi_runtime_settings()?.extra_extensions,
         )?;
+        let skill_launch_plan =
+            crate::services::runtime_skills::resolve_managed_pi_skill_launch_plan(session_id)?;
 
         let mut command = CommandBuilder::new(&pi_executable);
         command.cwd(runtime_cwd);
@@ -59,12 +61,15 @@ impl AgentTerminalSession {
         command.arg(session_path.to_string_lossy().to_string());
         command.arg("--session-dir");
         command.arg(session_dir.to_string_lossy().to_string());
-        command.arg("--no-extensions");
-        command.arg("--extension");
-        command.arg(orchestra_extension_path.to_string_lossy().to_string());
-        for extension in &extra_extensions {
-            command.arg("--extension");
-            command.arg(extension);
+        let mut launch_args = Vec::new();
+        crate::services::runtime_skills::append_managed_pi_extension_and_skill_args(
+            &mut launch_args,
+            &orchestra_extension_path,
+            &extra_extensions,
+            &skill_launch_plan,
+        );
+        for arg in &launch_args {
+            command.arg(arg);
         }
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");

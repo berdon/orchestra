@@ -1633,11 +1633,8 @@ fn telegram_mail_task_text(
     if let Some(task_id) = sent.task_id.clone() {
         let _ = crate::services::app_events::emit_task_change(app, "mailbox.sent", [task_id]);
     }
-    let _ = crate::services::notifications::publish_mailbox_notification(
-        Some(app),
-        &connection,
-        &sent,
-    );
+    let _ =
+        crate::services::notifications::publish_mailbox_notification(Some(app), &connection, &sent);
     Ok(format!(
         "Sent mail about {} to {}.",
         task.number, sent.recipient_label,

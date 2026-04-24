@@ -43,7 +43,10 @@ fn truncate_notification_text(value: &str, max_length: usize) -> String {
 }
 
 fn build_mailbox_notification_body(message: &MailboxMessage, project_label: &str) -> String {
-    let task_label = match (message.task_number.as_deref(), message.task_title.as_deref()) {
+    let task_label = match (
+        message.task_number.as_deref(),
+        message.task_title.as_deref(),
+    ) {
         (Some(number), Some(title)) => Some(format!("{number} · {title}")),
         (Some(number), None) => Some(number.to_string()),
         _ => None,
@@ -89,7 +92,9 @@ fn build_task_attention_notification_body(
         NotificationEventType::TaskAwaitingUserIntervention => {
             "Open Orchestra to review the blocker and decide how to proceed."
         }
-        NotificationEventType::MailboxMessageReceived => "Open Orchestra to review the latest update.",
+        NotificationEventType::MailboxMessageReceived => {
+            "Open Orchestra to review the latest update."
+        }
     };
     [Some(headline), notes, Some(action.to_string())]
         .into_iter()
@@ -459,6 +464,8 @@ mod tests {
             |_| Ok(false),
         );
 
-        assert!(outcomes.iter().all(|outcome| outcome.status == NotificationDeliveryStatus::Suppressed));
+        assert!(outcomes
+            .iter()
+            .all(|outcome| outcome.status == NotificationDeliveryStatus::Suppressed));
     }
 }
