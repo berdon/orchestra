@@ -185,6 +185,37 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
 const APP_ROUTE_PAGES = new Set<PrimaryPage>(["tasks", "inbox", "agents", "chat", "sessions", "settings"]);
 const APP_ROUTE_SETTINGS_TABS = new Set<SettingsTab>(SETTINGS_TABS.map((tab) => tab.id));
+const MOBILE_NAVIGATION_BREAKPOINT_PX = 900;
+const MOBILE_NAVIGATION_MEDIA_QUERY = `(max-width: ${MOBILE_NAVIGATION_BREAKPOINT_PX}px)`;
+const MOBILE_NAVIGATION_DIALOG_ID = "mobile-navigation-sheet";
+
+function isMobileNavigationViewport() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+
+  return window.matchMedia(MOBILE_NAVIGATION_MEDIA_QUERY).matches;
+}
+
+function getFocusableElements(container: HTMLElement | null) {
+  if (!container) {
+    return [] as HTMLElement[];
+  }
+
+  return Array.from(container.querySelectorAll<HTMLElement>([
+    'button:not([disabled])',
+    '[href]',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(','))).filter((element) => {
+    if (element.getAttribute("aria-hidden") === "true") {
+      return false;
+    }
+    return element.offsetParent !== null || document.activeElement === element;
+  });
+}
 
 type AppSelectionRouteState = {
   page: PrimaryPage;
@@ -795,6 +826,8 @@ export function App() {
   const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
   const [explanatoryTooltipsEnabled, setExplanatoryTooltipsEnabled] = useState(() => loadStoredExplanatoryTooltips());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => loadStoredSidebarCollapsed());
+  const [isMobileNavigation, setIsMobileNavigation] = useState(() => isMobileNavigationViewport());
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [loadingChatAgents, setLoadingChatAgents] = useState(false);
   const [loadingChatSessionAgentId, setLoadingChatSessionAgentId] = useState<string | null>(null);
@@ -838,6 +871,10 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const settingsSubnavRef = useRef<HTMLDivElement | null>(null);
+  const mobileNavigationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mobileNavigationDialogRef = useRef<HTMLDivElement | null>(null);
+  const mobileNavigationCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const shouldRestoreMobileNavigationFocusRef = useRef(false);
   const viewedSessionIdRef = useRef<string | null>(null);
   const chatSessionAgentIdRef = useRef<string | null>(null);
   const chatSessionRecoveryMissRef = useRef<{ sessionId: string; startedAt: number } | null>(null);
@@ -875,6 +912,118 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(MOBILE_NAVIGATION_MEDIA_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileNavigation(event.matches);
+    };
+
+    setIsMobileNavigation(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (isMobileNavigation) {
+      return;
+    }
+
+    shouldRestoreMobileNavigationFocusRef.current = false;
+    setIsMobileNavigationOpen(false);
+  }, [isMobileNavigation]);
+
+  useEffect(() => {
+    if (!isMobileNavigation || !isMobileNavigationOpen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const focusTarget = mobileNavigationCloseButtonRef.current
+      ?? getFocusableElements(mobileNavigationDialogRef.current)[0]
+      ?? mobileNavigationDialogRef.current;
+    const frameId = window.requestAnimationFrame(() => {
+      focusTarget?.focus();
+    });
+
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileNavigation, isMobileNavigationOpen]);
+
+  useEffect(() => {
+    if (isMobileNavigationOpen) {
+      return;
+    }
+
+    if (!shouldRestoreMobileNavigationFocusRef.current) {
+      return;
+    }
+
+    shouldRestoreMobileNavigationFocusRef.current = false;
+    const frameId = window.requestAnimationFrame(() => {
+      mobileNavigationTriggerRef.current?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isMobileNavigationOpen]);
+
+  useEffect(() => {
+    if (!isMobileNavigation || !isMobileNavigationOpen) {
+      return;
+    }
+
+    const dialog = mobileNavigationDialogRef.current;
+    if (!dialog) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        shouldRestoreMobileNavigationFocusRef.current = true;
+        setIsMobileNavigationOpen(false);
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusableElements = getFocusableElements(dialog);
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (activeElement === firstElement || activeElement === dialog) {
+          event.preventDefault();
+          lastElement?.focus();
+        }
+        return;
+      }
+
+      if (activeElement === lastElement) {
+        event.preventDefault();
+        firstElement?.focus();
+      }
+    };
+
+    dialog.addEventListener("keydown", handleKeyDown);
+    return () => dialog.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileNavigation, isMobileNavigationOpen]);
 
   const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
   const { projectUnreadCounts, projectTaskCommentUnreadCounts } = useProjectUnreadCounts(
@@ -2656,6 +2805,11 @@ export function App() {
 
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
   const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
+  const mobileNavItems = useMemo(() => NAV_ITEMS, []);
+  const activePageLabel = useMemo(
+    () => NAV_ITEMS.find((item) => item.id === activePage)?.label ?? "Orchestra",
+    [activePage],
+  );
   const navBadgeByPage: Partial<Record<PrimaryPage, string>> = useMemo(() => ({
     tasks: formatNavigationBadgeCount(activeProjectTaskCommentUnreadCount),
     inbox: formatNavigationBadgeCount(activeProjectUnreadCount),
@@ -2669,6 +2823,10 @@ export function App() {
   const handleExplanatoryTooltipsToggle = useCallback((nextEnabled: boolean) => {
     setExplanatoryTooltipsEnabled(nextEnabled);
     storeExplanatoryTooltips(nextEnabled);
+  }, []);
+  const closeMobileNavigation = useCallback((options?: { restoreFocus?: boolean }) => {
+    shouldRestoreMobileNavigationFocusRef.current = options?.restoreFocus ?? true;
+    setIsMobileNavigationOpen(false);
   }, []);
   const selectedSessionPendingRun = selectedSession ? pendingRuns[selectedSession.id] : undefined;
   const selectedModelState = selectedSession ? modelStates[selectedSession.id] : undefined;
@@ -2762,6 +2920,31 @@ export function App() {
     setActivePage("settings");
     setSettingsTab("workflows");
     setWorkflowsSelectionRequest((current) => ({ workflowId, token: (current?.token ?? 0) + 1 }));
+  }
+
+  function handleProjectSelection(projectId: string) {
+    setActiveProjectIdState(projectId);
+    closeMobileNavigation({ restoreFocus: false });
+  }
+
+  function handlePrimaryNavigationSelection(page: PrimaryPage) {
+    if (page === "tasks") {
+      navigateToTasksOverview();
+    } else {
+      setActivePage(page);
+    }
+    closeMobileNavigation({ restoreFocus: false });
+  }
+
+  function handleSettingsTabSelection(tabId: SettingsTab) {
+    setActivePage("settings");
+    setSettingsTab(tabId);
+    closeMobileNavigation({ restoreFocus: false });
+  }
+
+  function handleChatAgentSelection(agentId: string) {
+    navigateToChatAgent(agentId);
+    closeMobileNavigation({ restoreFocus: false });
   }
 
   async function handleOpenAgentSession(agentId: string, options?: { openQuickChat?: boolean }) {
@@ -3294,175 +3477,340 @@ export function App() {
 
   return (
     <ExplanatoryTooltipsProvider enabled={explanatoryTooltipsEnabled}>
-      <div className="app-shell" data-theme={themeId} data-theme-kind={activeTheme.kind} data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}>
-      <aside className="sidebar">
-        <div className="sidebar__top">
-          {isSidebarCollapsed ? (
-            <div className="sidebar__collapsed-header" data-role="sidebar-collapsed-header">
-              <button
-                className="sidebar__collapse-toggle"
-                data-role="toggle-sidebar-collapse"
-                type="button"
-                aria-label="Expand navigation"
-                aria-expanded={false}
-                {...getExplanatoryTooltipProps(
-                  "Expand the sidebar so labels and navigation details are visible again.",
-                  explanatoryTooltipsEnabled,
-                )}
-                title={explanatoryTooltipsEnabled ? "Expand navigation" : undefined}
-                onClick={() => setIsSidebarCollapsed((current) => !current)}
-              >
-                »
-              </button>
-            </div>
-          ) : (
-            <div className="sidebar__brand" data-role="app-brand">
-              <div className="sidebar__brand-mark" aria-hidden="true">O</div>
-              <div className="sidebar__brand-copy">
-                <strong>Orchestra</strong>
-                <span>Operator workbench</span>
+      <div
+        className="app-shell"
+        data-theme={themeId}
+        data-theme-kind={activeTheme.kind}
+        data-mobile-navigation={isMobileNavigation ? "true" : "false"}
+        data-sidebar-collapsed={!isMobileNavigation && isSidebarCollapsed ? "true" : "false"}
+      >
+        {isMobileNavigation ? (
+          <>
+            <div className="mobile-topbar" data-role="mobile-topbar">
+              <div className="mobile-topbar__brand">
+                <div className="sidebar__brand-mark" aria-hidden="true">O</div>
+                <div className="mobile-topbar__copy">
+                  <strong>Orchestra</strong>
+                  <span>{activeProject?.name ?? activePageLabel}</span>
+                </div>
               </div>
               <button
-                className="sidebar__collapse-toggle"
-                data-role="toggle-sidebar-collapse"
+                ref={mobileNavigationTriggerRef}
+                className="mobile-topbar__toggle"
+                data-role="toggle-mobile-navigation"
                 type="button"
-                aria-label="Collapse navigation"
-                aria-expanded={true}
-                {...getExplanatoryTooltipProps(
-                  "Collapse the sidebar to make more room for your work.",
-                  explanatoryTooltipsEnabled,
-                )}
-                title={explanatoryTooltipsEnabled ? "Collapse navigation" : undefined}
-                onClick={() => setIsSidebarCollapsed((current) => !current)}
+                aria-label={isMobileNavigationOpen ? "Close navigation" : "Open navigation"}
+                aria-expanded={isMobileNavigationOpen}
+                aria-controls={MOBILE_NAVIGATION_DIALOG_ID}
+                onClick={() => {
+                  if (isMobileNavigationOpen) {
+                    closeMobileNavigation({ restoreFocus: true });
+                    return;
+                  }
+                  setIsMobileNavigationOpen(true);
+                }}
               >
-                «
+                <span className="mobile-topbar__toggle-icon" aria-hidden="true">{isMobileNavigationOpen ? "✕" : "☰"}</span>
               </button>
             </div>
-          )}
 
-          <ProjectSwitcher
-            projects={projects}
-            activeProjectId={activeProject?.id ?? null}
-            unreadCountsByProject={projectUnreadCounts}
-            hasUnreadOutsideActiveProject={hasUnreadOutsideActiveProject && activeProjectUnreadCount === 0}
-            collapsed={isSidebarCollapsed}
-            onSelectProject={(projectId) => setActiveProjectIdState(projectId)}
-          />
-
-          <nav className="primary-nav" aria-label="Primary">
-            {activeNavItems.map((item) => {
-              const badgeText = navBadgeByPage[item.id];
-              return item.id === "chat" ? (
-                <div className="settings-nav" key={item.id}>
-                  <button
-                    className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
-                    type="button"
-                    data-role={`nav-item-${item.id}`}
-                    aria-label={item.label}
-                    aria-current={item.id === activePage ? "page" : undefined}
-                    title={item.label}
-                    onClick={() => setActivePage(item.id)}
-                  >
-                    <span className="nav-item__icon" aria-hidden="true">
-                      <NavIcon pageId={item.id} className="nav-item__icon-svg" />
-                    </span>
-                    <span className="nav-item__label">{item.label}</span>
-                    {badgeText ? <span className={isSidebarCollapsed ? "status-badge status-badge--warning status-badge--compact status-badge--rail nav-item__badge" : "status-badge status-badge--warning status-badge--compact nav-item__badge"} data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
-                  </button>
-
-                  {activePage === "chat" && !isSidebarCollapsed ? (
-                    <div className="settings-subnav" role="tablist" aria-label="Chat agents">
-                      {loadingChatAgents ? <span className="settings-subnav__hint">Loading agents…</span> : null}
-                      {!loadingChatAgents && chatAgents.length === 0 ? <span className="settings-subnav__hint">No agents yet.</span> : null}
-                      {chatAgents.map((agentSnapshot) => (
-                        <button
-                          key={agentSnapshot.agent.id}
-                          className={selectedChatAgentId === agentSnapshot.agent.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
-                          type="button"
-                          role="tab"
-                          aria-selected={selectedChatAgentId === agentSnapshot.agent.id}
-                          data-role={`chat-agent-nav-${agentSnapshot.agent.slug}`}
-                          onClick={() => navigateToChatAgent(agentSnapshot.agent.id)}
-                        >
-                          {agentSnapshot.agent.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
+            {isMobileNavigationOpen ? (
+              <div className="mobile-navigation" data-role="mobile-navigation-overlay">
                 <button
-                  key={item.id}
-                  className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
+                  className="mobile-navigation__backdrop"
+                  data-role="mobile-navigation-backdrop"
                   type="button"
-                  data-role={`nav-item-${item.id}`}
-                  aria-label={item.label}
-                  aria-current={item.id === activePage ? "page" : undefined}
-                  title={item.label}
-                  onClick={() => {
-                    if (item.id === "tasks") {
-                      navigateToTasksOverview();
-                      return;
-                    }
-                    setActivePage(item.id);
-                  }}
+                  aria-label="Close navigation"
+                  onClick={() => closeMobileNavigation({ restoreFocus: true })}
+                />
+                <div
+                  ref={mobileNavigationDialogRef}
+                  className="mobile-navigation__sheet"
+                  data-role="mobile-navigation-sheet"
+                  id={MOBILE_NAVIGATION_DIALOG_ID}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="mobile-navigation-title"
+                  tabIndex={-1}
                 >
-                  <span className="nav-item__icon" aria-hidden="true">
-                    <NavIcon pageId={item.id} className="nav-item__icon-svg" />
-                  </span>
-                  <span className="nav-item__label">{item.label}</span>
-                  {badgeText ? <span className={isSidebarCollapsed ? "status-badge status-badge--warning status-badge--compact status-badge--rail nav-item__badge" : "status-badge status-badge--warning status-badge--compact nav-item__badge"} data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
+                  <div className="mobile-navigation__header">
+                    <div>
+                      <p className="eyebrow">Navigation</p>
+                      <h2 id="mobile-navigation-title">Orchestra menu</h2>
+                    </div>
+                    <button
+                      ref={mobileNavigationCloseButtonRef}
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => closeMobileNavigation({ restoreFocus: true })}
+                    >
+                      Close
+                    </button>
+                  </div>
 
-        <div className="sidebar__bottom">
-          <div className="settings-nav">
-            <button
-              className={activePage === "settings" ? "nav-item nav-item--active" : "nav-item"}
-              type="button"
-              data-role="nav-item-settings"
-              aria-label="Settings"
-              aria-current={activePage === "settings" ? "page" : undefined}
-              title="Settings"
-              onClick={() => setActivePage("settings")}
-            >
-              <span className="nav-item__icon" aria-hidden="true">
-                <NavIcon pageId="settings" className="nav-item__icon-svg" />
-              </span>
-              <span className="nav-item__label">Settings</span>
-            </button>
+                  <div className="mobile-navigation__body">
+                    <section className="mobile-navigation__section">
+                      <span className="mobile-navigation__section-label">Project</span>
+                      <ProjectSwitcher
+                        projects={projects}
+                        activeProjectId={activeProject?.id ?? null}
+                        unreadCountsByProject={projectUnreadCounts}
+                        hasUnreadOutsideActiveProject={hasUnreadOutsideActiveProject && activeProjectUnreadCount === 0}
+                        collapsed={false}
+                        onSelectProject={handleProjectSelection}
+                      />
+                    </section>
 
-            {activePage === "settings" && !isSidebarCollapsed ? (
-              <div
-                ref={settingsSubnavRef}
-                className="settings-subnav settings-subnav--settings"
-                data-role="settings-sections-subnav"
-                role="tablist"
-                aria-label="Settings sections"
-              >
-                {visibleSettingsTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    className={activeSettingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
-                    data-role={`settings-tab-${tab.id}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeSettingsTab === tab.id}
-                    onClick={() => setSettingsTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+                    <section className="mobile-navigation__section">
+                      <span className="mobile-navigation__section-label">Navigate</span>
+                      <nav className="primary-nav mobile-navigation__primary" aria-label="Mobile primary">
+                        {mobileNavItems.map((item) => {
+                          const badgeText = navBadgeByPage[item.id];
+                          return (
+                            <button
+                              key={item.id}
+                              className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
+                              type="button"
+                              data-role={`nav-item-${item.id}`}
+                              aria-label={item.label}
+                              aria-current={item.id === activePage ? "page" : undefined}
+                              title={item.label}
+                              onClick={() => handlePrimaryNavigationSelection(item.id)}
+                            >
+                              <span className="nav-item__icon" aria-hidden="true">
+                                <NavIcon pageId={item.id} className="nav-item__icon-svg" />
+                              </span>
+                              <span className="nav-item__label">{item.label}</span>
+                              {badgeText ? <span className="status-badge status-badge--warning status-badge--compact nav-item__badge" data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
+                            </button>
+                          );
+                        })}
+                      </nav>
+                    </section>
+
+                    {activePage === "chat" ? (
+                      <section className="mobile-navigation__section">
+                        <span className="mobile-navigation__section-label">Chat agents</span>
+                        <div className="settings-subnav settings-subnav--mobile" role="tablist" aria-label="Chat agents">
+                          {loadingChatAgents ? <span className="settings-subnav__hint">Loading agents…</span> : null}
+                          {!loadingChatAgents && chatAgents.length === 0 ? <span className="settings-subnav__hint">No agents yet.</span> : null}
+                          {chatAgents.map((agentSnapshot) => (
+                            <button
+                              key={agentSnapshot.agent.id}
+                              className={selectedChatAgentId === agentSnapshot.agent.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                              type="button"
+                              role="tab"
+                              aria-selected={selectedChatAgentId === agentSnapshot.agent.id}
+                              data-role={`chat-agent-nav-${agentSnapshot.agent.slug}`}
+                              onClick={() => handleChatAgentSelection(agentSnapshot.agent.id)}
+                            >
+                              {agentSnapshot.agent.name}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {activePage === "settings" ? (
+                      <section className="mobile-navigation__section">
+                        <span className="mobile-navigation__section-label">Settings sections</span>
+                        <div
+                          className="settings-subnav settings-subnav--settings settings-subnav--mobile"
+                          data-role="settings-sections-subnav"
+                          role="tablist"
+                          aria-label="Settings sections"
+                        >
+                          {visibleSettingsTabs.map((tab) => (
+                            <button
+                              key={tab.id}
+                              className={activeSettingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                              data-role={`settings-tab-${tab.id}`}
+                              type="button"
+                              role="tab"
+                              aria-selected={activeSettingsTab === tab.id}
+                              onClick={() => handleSettingsTabSelection(tab.id)}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             ) : null}
-          </div>
-        </div>
-      </aside>
+          </>
+        ) : (
+          <aside className="sidebar">
+            <div className="sidebar__top">
+              {isSidebarCollapsed ? (
+                <div className="sidebar__collapsed-header" data-role="sidebar-collapsed-header">
+                  <button
+                    className="sidebar__collapse-toggle"
+                    data-role="toggle-sidebar-collapse"
+                    type="button"
+                    aria-label="Expand navigation"
+                    aria-expanded={false}
+                    {...getExplanatoryTooltipProps(
+                      "Expand the sidebar so labels and navigation details are visible again.",
+                      explanatoryTooltipsEnabled,
+                    )}
+                    title={explanatoryTooltipsEnabled ? "Expand navigation" : undefined}
+                    onClick={() => setIsSidebarCollapsed((current) => !current)}
+                  >
+                    »
+                  </button>
+                </div>
+              ) : (
+                <div className="sidebar__brand" data-role="app-brand">
+                  <div className="sidebar__brand-mark" aria-hidden="true">O</div>
+                  <div className="sidebar__brand-copy">
+                    <strong>Orchestra</strong>
+                    <span>Operator workbench</span>
+                  </div>
+                  <button
+                    className="sidebar__collapse-toggle"
+                    data-role="toggle-sidebar-collapse"
+                    type="button"
+                    aria-label="Collapse navigation"
+                    aria-expanded={true}
+                    {...getExplanatoryTooltipProps(
+                      "Collapse the sidebar to make more room for your work.",
+                      explanatoryTooltipsEnabled,
+                    )}
+                    title={explanatoryTooltipsEnabled ? "Collapse navigation" : undefined}
+                    onClick={() => setIsSidebarCollapsed((current) => !current)}
+                  >
+                    «
+                  </button>
+                </div>
+              )}
 
-      <main className={activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}>
+              <ProjectSwitcher
+                projects={projects}
+                activeProjectId={activeProject?.id ?? null}
+                unreadCountsByProject={projectUnreadCounts}
+                hasUnreadOutsideActiveProject={hasUnreadOutsideActiveProject && activeProjectUnreadCount === 0}
+                collapsed={isSidebarCollapsed}
+                onSelectProject={handleProjectSelection}
+              />
+
+              <nav className="primary-nav" aria-label="Primary">
+                {activeNavItems.map((item) => {
+                  const badgeText = navBadgeByPage[item.id];
+                  return item.id === "chat" ? (
+                    <div className="settings-nav" key={item.id}>
+                      <button
+                        className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
+                        type="button"
+                        data-role={`nav-item-${item.id}`}
+                        aria-label={item.label}
+                        aria-current={item.id === activePage ? "page" : undefined}
+                        title={item.label}
+                        onClick={() => setActivePage(item.id)}
+                      >
+                        <span className="nav-item__icon" aria-hidden="true">
+                          <NavIcon pageId={item.id} className="nav-item__icon-svg" />
+                        </span>
+                        <span className="nav-item__label">{item.label}</span>
+                        {badgeText ? <span className={isSidebarCollapsed ? "status-badge status-badge--warning status-badge--compact status-badge--rail nav-item__badge" : "status-badge status-badge--warning status-badge--compact nav-item__badge"} data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
+                      </button>
+
+                      {activePage === "chat" && !isSidebarCollapsed ? (
+                        <div className="settings-subnav" role="tablist" aria-label="Chat agents">
+                          {loadingChatAgents ? <span className="settings-subnav__hint">Loading agents…</span> : null}
+                          {!loadingChatAgents && chatAgents.length === 0 ? <span className="settings-subnav__hint">No agents yet.</span> : null}
+                          {chatAgents.map((agentSnapshot) => (
+                            <button
+                              key={agentSnapshot.agent.id}
+                              className={selectedChatAgentId === agentSnapshot.agent.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                              type="button"
+                              role="tab"
+                              aria-selected={selectedChatAgentId === agentSnapshot.agent.id}
+                              data-role={`chat-agent-nav-${agentSnapshot.agent.slug}`}
+                              onClick={() => navigateToChatAgent(agentSnapshot.agent.id)}
+                            >
+                              {agentSnapshot.agent.name}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <button
+                      key={item.id}
+                      className={item.id === activePage ? "nav-item nav-item--active" : "nav-item"}
+                      type="button"
+                      data-role={`nav-item-${item.id}`}
+                      aria-label={item.label}
+                      aria-current={item.id === activePage ? "page" : undefined}
+                      title={item.label}
+                      onClick={() => {
+                        if (item.id === "tasks") {
+                          navigateToTasksOverview();
+                          return;
+                        }
+                        setActivePage(item.id);
+                      }}
+                    >
+                      <span className="nav-item__icon" aria-hidden="true">
+                        <NavIcon pageId={item.id} className="nav-item__icon-svg" />
+                      </span>
+                      <span className="nav-item__label">{item.label}</span>
+                      {badgeText ? <span className={isSidebarCollapsed ? "status-badge status-badge--warning status-badge--compact status-badge--rail nav-item__badge" : "status-badge status-badge--warning status-badge--compact nav-item__badge"} data-role={`nav-badge-${item.id}`}>{badgeText}</span> : null}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="sidebar__bottom">
+              <div className="settings-nav">
+                <button
+                  className={activePage === "settings" ? "nav-item nav-item--active" : "nav-item"}
+                  type="button"
+                  data-role="nav-item-settings"
+                  aria-label="Settings"
+                  aria-current={activePage === "settings" ? "page" : undefined}
+                  title="Settings"
+                  onClick={() => setActivePage("settings")}
+                >
+                  <span className="nav-item__icon" aria-hidden="true">
+                    <NavIcon pageId="settings" className="nav-item__icon-svg" />
+                  </span>
+                  <span className="nav-item__label">Settings</span>
+                </button>
+
+                {activePage === "settings" && !isSidebarCollapsed ? (
+                  <div
+                    ref={settingsSubnavRef}
+                    className="settings-subnav settings-subnav--settings"
+                    data-role="settings-sections-subnav"
+                    role="tablist"
+                    aria-label="Settings sections"
+                  >
+                    {visibleSettingsTabs.map((tab) => (
+                      <button
+                        key={tab.id}
+                        className={activeSettingsTab === tab.id ? "settings-subnav__item settings-subnav__item--active" : "settings-subnav__item"}
+                        data-role={`settings-tab-${tab.id}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeSettingsTab === tab.id}
+                        onClick={() => setSettingsTab(tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </aside>
+        )}
+
+        <main className={activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}>
         <header className="page-header page-header--compact">
           <div className="page-header__leading">
             <p className="page-version-label muted-copy" data-role="app-version-label">

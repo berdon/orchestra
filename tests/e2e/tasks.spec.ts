@@ -333,6 +333,7 @@ test("tasks overview keeps collapsed filters compact while showing active filter
   });
 
   await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await page.getByRole("button", { name: "Tasks" }).click();
 
   await setTaskOverviewFiltersExpanded(page, true);

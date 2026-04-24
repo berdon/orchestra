@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("app header shows version with short hash and the Orchestra brand", async ({ page }) => {
   await page.addInitScript(() => {
@@ -81,15 +81,72 @@ test("left navigation can collapse into an icon rail and persists across reloads
   await expect(page.getByRole('button', { name: 'Tasks' })).toBeVisible();
 });
 
-test("mobile layout stays single-column even when the sidebar is collapsed", async ({ page }) => {
+async function openMobileNavigation(page: Page) {
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+}
+
+test("mobile navigation uses a hamburger dialog, ignores desktop collapse state, and closes cleanly", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem('orchestra.preferences.sidebar-collapsed', 'true');
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/");
+
+  const shell = page.locator('.app-shell');
+  await expect(shell).toHaveAttribute('data-mobile-navigation', 'true');
+  await expect(shell).toHaveAttribute('data-sidebar-collapsed', 'false');
+  await expect(page.locator('[data-role="toggle-sidebar-collapse"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="nav-item-tasks"]')).toHaveCount(0);
+
+  const gridTemplateColumns = await shell.evaluate((element) => getComputedStyle(element).gridTemplateColumns);
+  expect(gridTemplateColumns.split(' ').filter(Boolean)).toHaveLength(1);
+
+  const trigger = page.locator('[data-role="toggle-mobile-navigation"]');
+  await expect(trigger).toHaveAttribute('aria-label', 'Open navigation');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+  await openMobileNavigation(page);
+  await expect(trigger).toHaveAttribute('aria-label', 'Close navigation');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+  const sheet = page.locator('[data-role="mobile-navigation-sheet"]');
+  for (const name of ['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings'] as const) {
+    await expect(sheet.getByRole('button', { name })).toBeVisible();
+  }
+
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  await openMobileNavigation(page);
+  await page.locator('[data-role="mobile-navigation-backdrop"]').click({ position: { x: 2, y: 2 } });
+  await expect(sheet).toHaveCount(0);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+});
+
+test("mobile navigation closes after destination changes and keeps settings sub-navigation reachable", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
-  await page.setViewportSize({ width: 840, height: 900 });
+  await page.setViewportSize({ width: 390, height: 844 });
 
   await page.goto("/");
-  await page.locator('[data-role="toggle-sidebar-collapse"]').click();
 
-  const gridTemplateColumns = await page.locator('.app-shell').evaluate((element) => getComputedStyle(element).gridTemplateColumns);
-  expect(gridTemplateColumns.split(' ').filter(Boolean)).toHaveLength(1);
+  await openMobileNavigation(page);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+
+  await openMobileNavigation(page);
+  await page.getByRole('tab', { name: 'General' }).click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Theme' })).toBeVisible();
+
+  await openMobileNavigation(page);
+  await page.getByRole('button', { name: 'Tasks' }).click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
 });
