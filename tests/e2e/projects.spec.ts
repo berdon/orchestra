@@ -166,7 +166,8 @@ test("deleting the seeded default project does not resurrect or write browser-mo
   await page.locator('[data-role="task-title"]').fill("Should not be created without a project");
   await page.locator('[data-role="save-task"]').click();
 
-  await expect(page.locator(".error-copy")).toContainText("Create a project before creating a task.");
+  await expect(page.locator('[data-role="tasks-status-error"]')).toContainText("Something went wrong.");
+  await expect(page.locator('[data-role="tasks-status-error"]')).toContainText("Create a project before creating a task.");
 
   const storedState = await page.evaluate(() => ({
     activeProjectId: window.localStorage.getItem("orchestra.mock.active-project-id"),

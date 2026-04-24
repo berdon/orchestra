@@ -1,6 +1,9 @@
 import type { RefObject } from "react";
 
+import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { SessionChatPanel } from "../components/SessionChatPanel";
+import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
+import type { UiErrorState } from "../lib/orchestraData/errors";
 import type {
   AgentDefinition,
   AgentSummary,
@@ -34,7 +37,9 @@ interface AgentChatPageProps {
   changingModelSessionId: string | null;
   draftMessage: string;
   piSetupState?: PiSetupState | null;
-  error: string | null;
+  connection: OrchestraConnectionSnapshot;
+  error: UiErrorState | null;
+  onRetrySessionLoad: () => void;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
   onScrollLockChange: (lockedToBottom: boolean) => void;
@@ -75,7 +80,9 @@ export function AgentChatPage({
   changingModelSessionId,
   draftMessage,
   piSetupState,
+  connection,
   error,
+  onRetrySessionLoad,
   transcriptRef,
   scrollState,
   onScrollLockChange,
@@ -116,7 +123,14 @@ export function AgentChatPage({
 
   return (
     <section className={panelStackClassName}>
-      {error ? <p className="error-copy">{error}</p> : null}
+      <ResourceStatusBanner
+        connection={connection}
+        error={error}
+        hasData={Boolean(session)}
+        onRetry={onRetrySessionLoad}
+        retryLabel="Retry chat"
+        dataRolePrefix="agent-chat-status"
+      />
       <div className="session-detail-column session-detail-column--standalone">
         <SessionChatPanel
           session={session}

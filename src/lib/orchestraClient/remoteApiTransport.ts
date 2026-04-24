@@ -8,6 +8,7 @@ import {
   type OrchestraCapabilityDescriptor,
   type OrchestraClientBootstrap,
 } from "./bootstrap";
+import type { OrchestraConnectionController } from "./connection";
 import {
   OrchestraClientError,
   normalizeOrchestraClientError,
@@ -208,6 +209,7 @@ export function validateRemoteApiBootstrap(
 export function createRemoteApiTransport(
   bootstrap: OrchestraClientBootstrap,
   clientOptions?: RemoteApiOrchestraClientOptions,
+  connectionController?: OrchestraConnectionController,
 ): RemoteApiTransport {
   validateRemoteApiBootstrap(bootstrap);
   const fetchImpl = resolveFetchImpl(clientOptions);
@@ -360,12 +362,14 @@ export function createRemoteApiTransport(
     let response: Response;
     try {
       response = await fetchImpl(url, init);
+      connectionController?.markHostOnline();
     } catch (error) {
       if (error instanceof OrchestraClientError) {
+        connectionController?.markHostOffline(error);
         throw error;
       }
       if (isAbortError(error)) {
-        throw normalizeOrchestraClientError(error, {
+        const normalized = normalizeOrchestraClientError(error, {
           operation,
           source: "remote_api",
           fallbackMessage: `Remote request for ${operation} was cancelled.`,
@@ -376,17 +380,20 @@ export function createRemoteApiTransport(
             method: init.method ?? "GET",
           }),
         });
+        throw normalized;
       }
-      throw normalizeOrchestraClientError(error, {
+      const normalized = normalizeOrchestraClientError(error, {
         operation,
         source: "remote_api",
         fallbackMessage: `Remote request for ${operation} failed before the server responded.`,
-        code: "network",
+        code: "offline",
         details: createBootstrapDetails(bootstrap, {
           url,
           method: init.method ?? "GET",
         }),
       });
+      connectionController?.markHostOffline(normalized);
+      throw normalized;
     }
 
     if (!response.ok) {

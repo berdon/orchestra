@@ -1489,7 +1489,8 @@ test("sessions page surfaces unsupported reload failures and runtime capability 
     });
   }, "session-runtime-control-failure");
 
-  await expect(page.locator('.error-copy').first()).toContainText('runtime_control_unsupported');
+  await expect(page.locator('[data-role="sessions-status-error"]')).toContainText('Unsupported in this host.');
+  await expect(page.locator('[data-role="sessions-status-error"]')).toContainText('runtime_control_unsupported');
   await expect(page.locator('[data-role="session-chat-panel"]')).toContainText('Reload failed');
   await expect(page.locator('[data-role="session-transcript"]')).toContainText('runtime_control_unsupported');
   await expect(page.locator('[data-role="session-transcript"]')).not.toContainText('/reload');

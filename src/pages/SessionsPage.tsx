@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
+import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
+import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
+import type { UiErrorState } from "../lib/orchestraData/errors";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
@@ -67,13 +70,16 @@ interface SessionsPageProps {
   selectedSessionStats?: SessionStats;
   selectedSessionReadOnly?: boolean;
   loadingSessions: boolean;
+  refreshingSessions: boolean;
   loadingStatsSessionId: string | null;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   loadingRuntimeDetailsSessionId: string | null;
   draftMessage: string;
   piSetupState?: PiSetupState | null;
-  sessionActionError: string | null;
+  connection: OrchestraConnectionSnapshot;
+  sessionActionError: UiErrorState | null;
+  onRetrySessions: () => void;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
   onScrollLockChange: (lockedToBottom: boolean) => void;
@@ -114,13 +120,16 @@ export function SessionsPage({
   selectedSessionStats,
   selectedSessionReadOnly = false,
   loadingSessions,
+  refreshingSessions,
   loadingStatsSessionId,
   loadingModelSessionId,
   changingModelSessionId,
   loadingRuntimeDetailsSessionId,
   draftMessage,
   piSetupState,
+  connection,
   sessionActionError,
+  onRetrySessions,
   transcriptRef,
   scrollState,
   onScrollLockChange,
@@ -211,8 +220,17 @@ export function SessionsPage({
         detailClassName="session-detail-column"
         navigation={(
         <>
-          {loadingSessions ? <p className="muted-copy">Loading sessions…</p> : null}
-          {sessionActionError ? <p className="error-copy">{sessionActionError}</p> : null}
+          <ResourceStatusBanner
+            connection={connection}
+            error={sessionActionError}
+            hasData={sessions.length > 0}
+            refreshing={refreshingSessions}
+            onRetry={onRetrySessions}
+            retryLabel="Retry sessions"
+            refreshingLabel="Refreshing sessions…"
+            dataRolePrefix="sessions-status"
+          />
+          {loadingSessions && sessions.length === 0 ? <p className="muted-copy">Loading sessions…</p> : null}
 
           <div className="filter-chip-row" role="tablist" aria-label="Session filters">
             <button

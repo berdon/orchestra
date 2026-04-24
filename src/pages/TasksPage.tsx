@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useOrchestraClient } from "../lib/orchestraClient";
+import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
+import { retryOrchestraRead, useOrchestraClient } from "../lib/orchestraClient";
+import { useOrchestraConnection } from "../lib/orchestraData/connection";
+import { reportUiError, toUiErrorState, type UiErrorState } from "../lib/orchestraData/errors";
 import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
 import { applyTaskListQuery, getTaskTags } from "../lib/taskListQuery";
 import type {
@@ -167,6 +170,7 @@ export function TasksPage({
   onOpenSession,
 }: TasksPageProps) {
   const orchestraClient = useOrchestraClient();
+  const connection = useOrchestraConnection();
   const [route, setRoute] = useState<TasksRoute>({ kind: "overview" });
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [taskSchedules, setTaskSchedules] = useState<TaskScheduleSummary[]>([]);
@@ -186,8 +190,9 @@ export function TasksPage({
   const [fileReferenceDraft, setFileReferenceDraft] = useState<TaskFileReferenceInput>(createBlankFileReferenceDraft);
   const [taskMessages, setTaskMessages] = useState<MailboxMessage[]>([]);
   const [taskDraftDirty, setTaskDraftDirty] = useState(false);
-  const [taskActionError, setTaskActionError] = useState<string | null>(null);
+  const [taskActionError, setTaskActionError] = useState<UiErrorState | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [refreshingTasks, setRefreshingTasks] = useState(false);
   const [loadingTaskDetail, setLoadingTaskDetail] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [publishingTask, setPublishingTask] = useState(false);
@@ -246,7 +251,7 @@ export function TasksPage({
     try {
       await operation();
     } catch (error) {
-      setTaskActionError(await orchestraClient.app.reportError(`ui.tasks.detail_action.${actionId}`, error, fallbackMessage));
+      setTaskActionError(await reportUiError(orchestraClient, `ui.tasks.detail_action.${actionId}`, error, fallbackMessage));
     } finally {
       setDetailActionPending(null);
     }
@@ -334,17 +339,19 @@ export function TasksPage({
   const loadTasksData = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setLoadingTasks(true);
-      setTaskActionError(null);
+    } else {
+      setRefreshingTasks(true);
     }
+    setTaskActionError(null);
     try {
-      const [nextTasks, nextSchedules, nextWorkflows, nextAgents, nextRoles, nextProject] = await Promise.all([
+      const [nextTasks, nextSchedules, nextWorkflows, nextAgents, nextRoles, nextProject] = await retryOrchestraRead(() => Promise.all([
         orchestraClient.tasks.list({ includeArchived: false, projectId }),
         orchestraClient.tasks.listSchedules(projectId),
         orchestraClient.catalog.listWorkflows(false),
         orchestraClient.catalog.listAgents(false, projectId),
         orchestraClient.catalog.listRoles(false),
         projectId ? orchestraClient.catalog.getProject(projectId) : Promise.resolve(null),
-      ]);
+      ]));
       setTasks((current) => (sameData(current, nextTasks) ? current : nextTasks));
       setTaskSchedules((current) => (sameData(current, nextSchedules) ? current : nextSchedules));
       setWorkflowSummaries((current) => (sameData(current, nextWorkflows) ? current : nextWorkflows));
@@ -360,15 +367,14 @@ export function TasksPage({
             .map((task: TaskSummary) => task.workflowId as string),
         ),
       );
-      const definitions = await Promise.all(workflowIds.map((workflowId) => orchestraClient.catalog.getWorkflow(workflowId)));
+      const definitions = await retryOrchestraRead(() => Promise.all(workflowIds.map((workflowId) => orchestraClient.catalog.getWorkflow(workflowId))));
       const nextDefinitions = Object.fromEntries(definitions.map((definition) => [definition.id, definition]));
       setWorkflowDefinitions((current) => (sameData(current, nextDefinitions) ? current : nextDefinitions));
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to load tasks.");
+      setTaskActionError(await reportUiError(orchestraClient, "ui.tasks.load", error, "Unable to load tasks."));
     } finally {
-      if (!options?.silent) {
-        setLoadingTasks(false);
-      }
+      setLoadingTasks(false);
+      setRefreshingTasks(false);
     }
   }, [orchestraClient, projectId]);
 
@@ -379,7 +385,7 @@ export function TasksPage({
       setTaskActionError(null);
     }
     try {
-      const [task, messages] = await Promise.all([orchestraClient.tasks.get(taskId), orchestraClient.tasks.listMessages(taskId)]);
+      const [task, messages] = await retryOrchestraRead(() => Promise.all([orchestraClient.tasks.get(taskId), orchestraClient.tasks.listMessages(taskId)]));
       if (!shouldApplyTaskDetailLoad(routeRef.current, taskId, requestId, taskDetailLoadRequestRef.current)) {
         return;
       }
@@ -399,7 +405,7 @@ export function TasksPage({
       }
     } catch (error) {
       if (taskDetailLoadRequestRef.current === requestId) {
-        setTaskActionError(error instanceof Error ? error.message : "Unable to load task.");
+        setTaskActionError(await reportUiError(orchestraClient, "ui.tasks.detail.load", error, "Unable to load task."));
       }
     } finally {
       if (!options?.silent && taskDetailLoadRequestRef.current === requestId) {
@@ -415,7 +421,7 @@ export function TasksPage({
       setTaskActionError(null);
     }
     try {
-      const schedule = await orchestraClient.tasks.getSchedule(scheduleId);
+      const schedule = await retryOrchestraRead(() => orchestraClient.tasks.getSchedule(scheduleId));
       if (!shouldApplyTaskScheduleLoad(routeRef.current, scheduleId, requestId, taskScheduleLoadRequestRef.current)) {
         return;
       }
@@ -427,7 +433,7 @@ export function TasksPage({
       }
     } catch (error) {
       if (taskScheduleLoadRequestRef.current === requestId) {
-        setTaskActionError(error instanceof Error ? error.message : "Unable to load task schedule.");
+        setTaskActionError(await reportUiError(orchestraClient, "ui.tasks.schedule.load", error, "Unable to load task schedule."));
       }
     } finally {
       if (!options?.silent && taskScheduleLoadRequestRef.current === requestId) {
@@ -628,7 +634,8 @@ export function TasksPage({
       }
     } catch (error) {
       setTaskActionError(
-        await orchestraClient.app.reportError(
+        await reportUiError(
+          orchestraClient,
           creatingScheduledTask ? "ui.task_schedule.create.save.failed" : "ui.task.create.save.failed",
           error,
           creatingScheduledTask ? "Unable to save task schedule." : "Unable to create task.",
@@ -660,7 +667,8 @@ export function TasksPage({
       }
     } catch (error) {
       setTaskActionError(
-        await orchestraClient.app.reportError(
+        await reportUiError(
+          orchestraClient,
           creatingScheduledTask ? "ui.task_schedule.create.publish.failed" : "ui.task.create.publish.failed",
           error,
           creatingScheduledTask ? "Unable to create task schedule." : "Unable to publish task.",
@@ -791,7 +799,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to add dependency.");
+      setTaskActionError(toUiErrorState(error, "Unable to add dependency."));
     }
   }
 
@@ -805,7 +813,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to remove dependency.");
+      setTaskActionError(toUiErrorState(error, "Unable to remove dependency."));
     }
   }
 
@@ -837,7 +845,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to add attachment.");
+      setTaskActionError(toUiErrorState(error, "Unable to add attachment."));
     }
   }
 
@@ -851,7 +859,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to remove attachment.");
+      setTaskActionError(toUiErrorState(error, "Unable to remove attachment."));
     }
   }
 
@@ -866,7 +874,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : String(error));
+      setTaskActionError(toUiErrorState(error, "Unable to add file reference."));
     }
   }
 
@@ -880,7 +888,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to remove file reference.");
+      setTaskActionError(toUiErrorState(error, "Unable to remove file reference."));
     }
   }
 
@@ -894,7 +902,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to set default file reference.");
+      setTaskActionError(toUiErrorState(error, "Unable to set default file reference."));
     }
   }
 
@@ -908,7 +916,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to add task todo.");
+      setTaskActionError(toUiErrorState(error, "Unable to add task todo."));
     }
   }
 
@@ -955,7 +963,7 @@ export function TasksPage({
       await loadTasksData();
       await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to mark task comments read.");
+      setTaskActionError(toUiErrorState(error, "Unable to mark task comments read."));
     }
   }
 
@@ -973,7 +981,7 @@ export function TasksPage({
       await loadTaskDetail(route.taskId);
       return true;
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to add comment.");
+      setTaskActionError(toUiErrorState(error, "Unable to add comment."));
       return false;
     }
   }
@@ -989,7 +997,7 @@ export function TasksPage({
       await loadTaskDetail(route.taskId);
       return true;
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to update comment.");
+      setTaskActionError(toUiErrorState(error, "Unable to update comment."));
       return false;
     }
   }
@@ -1005,7 +1013,7 @@ export function TasksPage({
       await loadTaskDetail(route.taskId);
       return true;
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to delete comment.");
+      setTaskActionError(toUiErrorState(error, "Unable to delete comment."));
       return false;
     }
   }
@@ -1026,7 +1034,7 @@ export function TasksPage({
       });
       await loadTaskDetail(route.taskId);
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to send task mail.");
+      setTaskActionError(toUiErrorState(error, "Unable to send task mail."));
       throw error;
     } finally {
       setSendingTaskMail(false);
@@ -1170,9 +1178,21 @@ export function TasksPage({
 
       throw new Error("This task is not currently dispatchable for retry.");
     } catch (error) {
-      setTaskActionError(error instanceof Error ? error.message : "Unable to retry task lane.");
+      setTaskActionError(toUiErrorState(error, "Unable to retry task lane."));
     }
   }
+
+  const retryCurrentRouteLoad = useCallback(() => {
+    if (route.kind === "detail") {
+      void loadTaskDetail(route.taskId);
+      return;
+    }
+    if (route.kind === "schedule") {
+      void loadTaskScheduleDetail(route.scheduleId);
+      return;
+    }
+    void loadTasksData();
+  }, [loadTaskDetail, loadTaskScheduleDetail, loadTasksData, route]);
 
   if (typeof window !== "undefined") {
     const testWindow = window as typeof window & {
@@ -1183,8 +1203,17 @@ export function TasksPage({
 
   return (
     <section className="panel-stack task-page-stack">
-      {taskActionError ? <p className="error-copy">{taskActionError}</p> : null}
-      {loadingTasks ? <p className="muted-copy">Loading tasks…</p> : null}
+      <ResourceStatusBanner
+        connection={connection}
+        error={taskActionError}
+        hasData={tasks.length > 0 || taskSchedules.length > 0}
+        refreshing={refreshingTasks}
+        onRetry={retryCurrentRouteLoad}
+        retryLabel="Retry tasks"
+        refreshingLabel="Refreshing task data…"
+        dataRolePrefix="tasks-status"
+      />
+      {loadingTasks && tasks.length === 0 && taskSchedules.length === 0 ? <p className="muted-copy">Loading tasks…</p> : null}
 
       {route.kind === "overview" ? (
         <TasksOverviewPage

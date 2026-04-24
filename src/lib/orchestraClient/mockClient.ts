@@ -3,11 +3,12 @@ import {
   buildOrchestraClientBootstrap,
   createOptimisticOrchestraClientBootstrap,
 } from "./bootstrapFactory";
+import { createOptimisticConnectionSnapshot, createStaticConnectionService } from "./connection";
 import type { OrchestraClient, OrchestraClientBinding } from "./client";
 import { createMockHostAdminExtension } from "./mockHostAdminExtension";
 import { mockOrchestraClientServiceBindings } from "./mockBindings";
 import { createMockShellExtension } from "./mockShellExtension";
-import type { OrchestraClientServiceBindings } from "./serviceBindings";
+import { withNormalizedBindingErrors, type OrchestraClientServiceBindings } from "./serviceBindings";
 
 export function createOptimisticMockOrchestraClientBootstrap() {
   return createOptimisticOrchestraClientBootstrap("mock");
@@ -16,16 +17,19 @@ export function createOptimisticMockOrchestraClientBootstrap() {
 export async function buildMockOrchestraClientBootstrap(
   services: OrchestraClientServiceBindings = mockOrchestraClientServiceBindings,
 ) {
-  return buildOrchestraClientBootstrap("mock", services.app.getInfo);
+  return buildOrchestraClientBootstrap("mock", withNormalizedBindingErrors(services, "mock").app.getInfo);
 }
 
 export function createMockOrchestraClient(
   services: OrchestraClientServiceBindings = mockOrchestraClientServiceBindings,
 ): OrchestraClient {
+  const normalizedServices = withNormalizedBindingErrors(services, "mock");
+  const optimisticBootstrap = createOptimisticMockOrchestraClientBootstrap();
   return createOrchestraClient(
-    () => buildMockOrchestraClientBootstrap(services),
-    services,
+    () => buildMockOrchestraClientBootstrap(normalizedServices),
+    normalizedServices,
     {
+      connection: createStaticConnectionService(createOptimisticConnectionSnapshot(optimisticBootstrap)),
       shell: createMockShellExtension(),
       hostAdmin: createMockHostAdminExtension(),
     },
@@ -35,8 +39,9 @@ export function createMockOrchestraClient(
 export function createMockOrchestraClientBinding(
   services: OrchestraClientServiceBindings = mockOrchestraClientServiceBindings,
 ): OrchestraClientBinding {
+  const bootstrap = createOptimisticMockOrchestraClientBootstrap();
   return {
     client: createMockOrchestraClient(services),
-    bootstrap: createOptimisticMockOrchestraClientBootstrap(),
+    bootstrap,
   };
 }

@@ -69,6 +69,10 @@ const bootstrapFixture: OrchestraClientBootstrap = {
       logsWindow: { availability: "unavailable", reason: "Desktop only" },
       agentTerminal: { availability: "unavailable", reason: "Desktop only" },
       systemNotifications: { availability: "unavailable", reason: "Desktop only" },
+      bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
+      runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
+      harnessSettings: { availability: "unavailable", reason: "Desktop only" },
+      remoteAccess: { availability: "unavailable", reason: "Desktop only" },
     },
   },
   appInfo: {

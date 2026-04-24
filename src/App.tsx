@@ -16,8 +16,11 @@ import {
   loadStoredExplanatoryTooltips,
   storeExplanatoryTooltips,
 } from "./lib/tooltips";
+import { ConnectionStatusBanner } from "./components/ConnectionStatusBanner";
 import { useProjectReferenceData, useProjectUnreadCounts } from "./lib/orchestraData/appShell";
+import { useOrchestraConnection } from "./lib/orchestraData/connection";
 import { useOrchestraEventSubscription } from "./lib/orchestraData/events";
+import { reportUiError, toUiErrorState, type UiErrorState } from "./lib/orchestraData/errors";
 import { useSessionEventRefresh, useSessionPollingRefresh } from "./lib/orchestraData/sessions";
 import {
   defaultOrchestraShellWindowState,
@@ -28,6 +31,7 @@ import {
   supportsRemoteAccess,
   supportsRuntimeLogs,
   supportsSystemNotifications,
+  retryOrchestraRead,
   useOrchestraBootstrap,
   useOrchestraClient,
 } from "./lib/orchestraClient";
@@ -737,6 +741,7 @@ export function App() {
 
   const orchestraClient = useOrchestraClient();
   const orchestraBootstrap = useOrchestraBootstrap();
+  const connection = useOrchestraConnection();
   const shellExtension = orchestraClient.shell;
   const hostAdminExtension = orchestraClient.hostAdmin;
   const initialShellWindowState = shellExtension?.getInitialWindowState() ?? defaultOrchestraShellWindowState();
@@ -790,7 +795,8 @@ export function App() {
   const [loadingChatAgents, setLoadingChatAgents] = useState(false);
   const [loadingChatSessionAgentId, setLoadingChatSessionAgentId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
-  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const [refreshingSessions, setRefreshingSessions] = useState(false);
+  const [sessionActionError, setSessionActionError] = useState<UiErrorState | null>(null);
   const [draftMessages, setDraftMessages] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingRuns, setPendingRuns] = useState<Record<string, PendingSessionRun>>({});
@@ -1083,7 +1089,7 @@ export function App() {
         })
         .catch((error) => {
           if (!cancelled) {
-            setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load session stats."));
+            setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load session stats."));
           }
         })
         .finally(() => {
@@ -1427,7 +1433,7 @@ export function App() {
     try {
       setAppInfo(await orchestraClient.app.getInfo());
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.app.info", error, "Unable to load app info."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.app.info", error, "Unable to load app info."));
     }
   }
 
@@ -1447,7 +1453,7 @@ export function App() {
     try {
       setPiRuntimeSettings(await hostAdminExtension.harness.getRuntimeSettings());
     } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load PI runtime settings."));
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load PI runtime settings."));
     }
   }
 
@@ -1461,7 +1467,7 @@ export function App() {
     try {
       setPiSetupState(await hostAdminExtension.harness.getSetupState());
     } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load Pi setup state."));
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load Pi setup state."));
     } finally {
       setLoadingPiSetup(false);
     }
@@ -1475,7 +1481,7 @@ export function App() {
     try {
       setPiOAuthFlowState(await hostAdminExtension.harness.getOAuthFlowState());
     } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load Pi OAuth flow state."));
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load Pi OAuth flow state."));
     }
   }
 
@@ -1488,7 +1494,7 @@ export function App() {
     try {
       setPiModelsJson(await hostAdminExtension.harness.getModelsJson());
     } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load models.json."));
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load models.json."));
     } finally {
       setLoadingPiModelsJson(false);
     }
@@ -1517,7 +1523,7 @@ export function App() {
       setSystemNotificationEnvironment(environment);
       setSystemNotificationPermission(permission);
     } catch (error) {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load system notification status."));
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load system notification status."));
     }
   }
 
@@ -1542,7 +1548,7 @@ export function App() {
       setSystemNotificationPermission(await hostAdminExtension.notifications.requestPermission());
       await loadSystemNotificationPermission();
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.notifications.permission.request", error, "Unable to request system notification permission."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.notifications.permission.request", error, "Unable to request system notification permission."));
     } finally {
       setRequestingSystemNotificationPermission(false);
     }
@@ -1557,7 +1563,7 @@ export function App() {
       await hostAdminExtension.notifications.sendTest();
       await loadSystemNotificationPermission();
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.notifications.test", error, "Unable to send the test system notification."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.notifications.test", error, "Unable to send the test system notification."));
     } finally {
       setSendingTestSystemNotification(false);
     }
@@ -1578,7 +1584,7 @@ export function App() {
       setPiRuntimeSettings(await hostAdminExtension.harness.updateRuntimeSettings(input));
       await loadAppInfo();
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to save PI runtime settings.");
+      setSessionActionError(toUiErrorState(error, "Unable to save PI runtime settings."));
     }
   }
 
@@ -1590,7 +1596,7 @@ export function App() {
       await hostAdminExtension.harness.importLegacyConfiguration(input);
       await Promise.all([loadAppInfo(), loadPiRuntimeSettings(), refreshPiSetupState({ includeModelsJson: true })]);
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to import legacy PI configuration.");
+      setSessionActionError(toUiErrorState(error, "Unable to import legacy PI configuration."));
     }
   }
 
@@ -1669,11 +1675,12 @@ export function App() {
       setLoadingSessions(true);
     } else {
       backgroundSessionRefreshInFlightRef.current = true;
+      setRefreshingSessions(true);
     }
     setSessionActionError(null);
 
     try {
-      const listedSessions = sortSessionRecords((await orchestraClient.sessions.list(activeProjectId)).map(normalizeSessionRecord));
+      const listedSessions = sortSessionRecords((await retryOrchestraRead(() => orchestraClient.sessions.list(activeProjectId))).map(normalizeSessionRecord));
       const nextSessions = sortSessionRecords(
         reconcileListedSessions(sessionsRef.current, listedSessions, {
           preserveDetailedSessionIds: [
@@ -1708,13 +1715,11 @@ export function App() {
         chatSessionAgentIdRef.current = null;
       }
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.load", error, "Unable to load sessions."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.load", error, "Unable to load sessions."));
     } finally {
-      if (!options?.background) {
-        setLoadingSessions(false);
-      } else {
-        backgroundSessionRefreshInFlightRef.current = false;
-      }
+      setLoadingSessions(false);
+      setRefreshingSessions(false);
+      backgroundSessionRefreshInFlightRef.current = false;
     }
   }, [activeProjectId, chatSessionId, orchestraClient, pendingRuns, pendingSessionOpenRequest, selectedSessionId, supervisorSessionId]);
 
@@ -1733,7 +1738,7 @@ export function App() {
         return nextAgents[0]?.agent.id ?? null;
       });
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to load chat agents.");
+      setSessionActionError(toUiErrorState(error, "Unable to load chat agents."));
     } finally {
       if (!options?.background) {
         setLoadingChatAgents(false);
@@ -1758,7 +1763,7 @@ export function App() {
       const updatedSession = await action();
       applySessionUpdate(updatedSession);
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.action", error, "Session action failed."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.action", error, "Session action failed."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1793,7 +1798,7 @@ export function App() {
       });
       await loadSessions({ background: true });
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.dismiss", error, "Unable to dismiss session."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.dismiss", error, "Unable to dismiss session."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1837,7 +1842,7 @@ export function App() {
       });
       await loadSessions({ background: true });
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.dismiss_closed", error, "Unable to dismiss closed sessions."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.dismiss_closed", error, "Unable to dismiss closed sessions."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1870,7 +1875,7 @@ export function App() {
       }
 
       if (reduction.sessionActionError) {
-        setSessionActionError(reduction.sessionActionError);
+        setSessionActionError(toUiErrorState(reduction.sessionActionError, "Session action failed."));
       }
 
       if (reduction.refreshFromBackend) {
@@ -1883,7 +1888,7 @@ export function App() {
           })
           .catch((error) => {
             removePendingRun(payload.sessionId, runId);
-            setSessionActionError(error instanceof Error ? error.message : "Unable to refresh session.");
+            setSessionActionError(toUiErrorState(error, "Unable to refresh session."));
           });
       }
     },
@@ -1987,7 +1992,7 @@ export function App() {
     }
 
     void refreshProjectReferenceData().catch((error) => {
-      setSessionActionError((current) => current ?? (error instanceof Error ? error.message : "Unable to load project references."));
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load project references."));
     });
   }, [activePage, activeSettingsTab, isDetachedWindow, refreshProjectReferenceData]);
 
@@ -2301,7 +2306,7 @@ export function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setSessionActionError(error instanceof Error ? error.message : "Unable to open agent chat session.");
+          setSessionActionError(toUiErrorState(error, "Unable to open agent chat session."));
         }
       })
       .finally(() => {
@@ -2378,7 +2383,7 @@ export function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setSessionActionError(error instanceof Error ? error.message : "Unable to open supervisor quick chat.");
+          setSessionActionError(toUiErrorState(error, "Unable to open supervisor quick chat."));
         }
       });
 
@@ -2484,7 +2489,7 @@ export function App() {
         })
         .catch(async (error) => {
           if (!cancelled) {
-            setSessionActionError(await orchestraClient.app.reportError("ui.sessions.subscribe", error, "Unable to subscribe to session."));
+            setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.subscribe", error, "Unable to subscribe to session."));
           }
         });
 
@@ -2508,7 +2513,7 @@ export function App() {
       })
       .catch(async (error) => {
         if (!cancelled) {
-          setSessionActionError(await orchestraClient.app.reportError("ui.sessions.model_state.load", error, "Unable to load session model."));
+          setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.model_state.load", error, "Unable to load session model."));
         }
       })
       .finally(() => {
@@ -2538,7 +2543,7 @@ export function App() {
       })
       .catch(async (error) => {
         if (!cancelled) {
-          setSessionActionError(await orchestraClient.app.reportError("ui.sessions.record.load", error, "Unable to load session."));
+          setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.record.load", error, "Unable to load session."));
         }
       });
 
@@ -2684,7 +2689,7 @@ export function App() {
         [state.sessionId]: state,
       }));
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to change models.");
+      setSessionActionError(toUiErrorState(error, "Unable to change models."));
     } finally {
       setChangingModelSessionId((current) => (current === session.id ? null : current));
     }
@@ -2761,7 +2766,7 @@ export function App() {
         setSelectedSessionId(session.id);
       }
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to open agent session.");
+      setSessionActionError(toUiErrorState(error, "Unable to open agent session."));
     }
   }
 
@@ -2777,7 +2782,7 @@ export function App() {
       setPendingSessionOpenRequest(null);
       setSelectedSessionId(session.id);
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to open agent terminal window.");
+      setSessionActionError(toUiErrorState(error, "Unable to open agent terminal window."));
     }
   }
 
@@ -2810,7 +2815,7 @@ export function App() {
         }),
       );
     } catch (error) {
-      setSessionActionError(error instanceof Error ? error.message : "Unable to load command palette items.");
+      setSessionActionError(toUiErrorState(error, "Unable to load command palette items."));
     } finally {
       setCommandPaletteLoading(false);
     }
@@ -2940,7 +2945,7 @@ export function App() {
         });
       })
       .catch(async (error: unknown) => {
-        setSessionActionError(await orchestraClient.app.reportError("ui.sessions.stop", error, "Unable to stop session runtime."));
+        setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.stop", error, "Unable to stop session runtime."));
       });
   }, [mergeSessionRecord, removePendingRun, sessions]);
 
@@ -2981,7 +2986,7 @@ export function App() {
       if (clearDraft) {
         updateDraftMessage(sessionId, previousDraft);
       }
-      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.message.queue", error, "Unable to queue message."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.message.queue", error, "Unable to queue message."));
     });
   }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
 
@@ -3014,7 +3019,7 @@ export function App() {
         void loadChatAgents({ background: true });
       }
     } catch (error) {
-      setSessionActionError(await orchestraClient.app.reportError("ui.sessions.create_contextual", error, "Unable to create a new session."));
+      setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.create_contextual", error, "Unable to create a new session."));
     } finally {
       setIsSubmitting(false);
     }
@@ -3377,6 +3382,14 @@ export function App() {
         </header>
 
         <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
+          <ConnectionStatusBanner
+            connection={connection}
+            onRetry={() => {
+              void loadSessions({ background: activePage === "sessions" || activePage === "chat" });
+            }}
+            retryLabel="Retry connection"
+            dataRole="app-connection-banner"
+          />
           {appInfo?.dispatchBlockedReason ? (
           <div className="session-readonly-banner app-status-banner" data-role="dispatch-blocked-banner">
             <div>
@@ -3538,7 +3551,11 @@ export function App() {
             changingModelSessionId={changingModelSessionId}
             draftMessage={chatSessionDraftMessage}
             piSetupState={piSetupState}
+            connection={connection}
             error={sessionActionError}
+            onRetrySessionLoad={() => {
+              void loadSessions();
+            }}
             transcriptRef={transcriptRef}
             scrollState={sessionScrollState}
             onScrollLockChange={handleSessionScrollLockChange}
@@ -3594,13 +3611,18 @@ export function App() {
             selectedSessionStats={viewedSession?.id === selectedSession?.id ? viewedSessionStats : undefined}
             selectedSessionReadOnly={Boolean(selectedSession?.terminalAttached)}
             loadingSessions={loadingSessions}
+            refreshingSessions={refreshingSessions}
             loadingStatsSessionId={loadingStatsSessionId}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             loadingRuntimeDetailsSessionId={loadingRuntimeDetailsSessionId}
             draftMessage={selectedSessionDraftMessage}
             piSetupState={piSetupState}
+            connection={connection}
             sessionActionError={sessionActionError}
+            onRetrySessions={() => {
+              void loadSessions();
+            }}
             transcriptRef={transcriptRef}
             scrollState={sessionScrollState}
             onScrollLockChange={handleSessionScrollLockChange}
@@ -3656,7 +3678,7 @@ export function App() {
       />
       <SupervisorQuickChatModal
         draftMessage={supervisorSessionDraftMessage}
-        error={sessionActionError}
+        error={sessionActionError?.message ?? null}
         events={supervisorSession?.events ?? []}
         referenceTasks={referenceTasks}
         referenceAgents={referenceAgents}

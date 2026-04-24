@@ -1,5 +1,6 @@
 export * from "./bootstrap";
 export * from "./client";
+export * from "./connection";
 export * from "./defaultClient";
 export * from "./errors";
 export * from "./events";
@@ -9,3 +10,4 @@ export * from "./provider";
 export * from "./remoteApiClient";
 export * from "./remoteApiEvents";
 export * from "./remoteApiTransport";
+export * from "./retry";

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
+import { reportUiError } from "../lib/orchestraData/errors";
 import { useInboxData } from "../lib/orchestraData/inbox";
 import { useOrchestraClient } from "../lib/orchestraClient";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
@@ -30,10 +32,13 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
   const getTooltipProps = useExplanatoryTooltipProps();
   const {
     agents,
+    connection,
     error,
     loading,
     messages,
     refresh,
+    refreshing,
+    retry,
     setError,
     tasks,
   } = useInboxData(projectId);
@@ -91,7 +96,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
       setComposeOpen(false);
       await refresh({ silent: true });
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to send message.");
+      setError(await reportUiError(orchestraClient, "ui.inbox.send", nextError, "Unable to send message."));
     } finally {
       setSending(false);
     }
@@ -104,7 +109,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
       await orchestraClient.inbox.markRead({ deliveryIds: deliveryId ? [deliveryId] : undefined });
       await refresh({ silent: true });
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to mark messages read.");
+      setError(await reportUiError(orchestraClient, "ui.inbox.mark_read", nextError, "Unable to mark messages read."));
     } finally {
       setMarkingRead(null);
     }
@@ -117,7 +122,7 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
       await orchestraClient.inbox.archive({ deliveryIds: [deliveryId] });
       await refresh({ silent: true });
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to archive message.");
+      setError(await reportUiError(orchestraClient, "ui.inbox.archive", nextError, "Unable to archive message."));
     } finally {
       setArchiving(null);
     }
@@ -158,8 +163,17 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
             </div>
           </div>
 
-          {error ? <p className="error-copy">{error}</p> : null}
-          {loading ? <p className="muted-copy">Loading Inbox…</p> : null}
+          <ResourceStatusBanner
+            connection={connection}
+            error={error}
+            hasData={messages.length > 0 || tasks.length > 0}
+            refreshing={refreshing}
+            onRetry={() => void retry()}
+            retryLabel="Retry Inbox"
+            refreshingLabel="Refreshing Inbox…"
+            dataRolePrefix="inbox-status"
+          />
+          {loading && messages.length === 0 && tasks.length === 0 ? <p className="muted-copy">Loading Inbox…</p> : null}
 
           <div className="filter-chip-row" role="tablist" aria-label="Inbox mail filters">
             {([
