@@ -412,7 +412,10 @@ mod tests {
         ));
         std::env::set_var("ORCHESTRA_STORAGE_ROOT", &explicit_root);
 
-        assert_eq!(default_orchestra_root().expect("storage root should resolve"), explicit_root);
+        assert_eq!(
+            default_orchestra_root().expect("storage root should resolve"),
+            explicit_root
+        );
 
         std::env::remove_var("ORCHESTRA_STORAGE_ROOT");
     }

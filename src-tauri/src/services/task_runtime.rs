@@ -11,8 +11,8 @@ use crate::{
     },
     services::{
         agent_dispatch, agent_runtime, agents, channels, live_sessions, messages, pi_sessions,
-        project_settings, projects, role_dispatch, role_runtime, roles, task_repositories, tasks,
-        workflows,
+        project_settings, projects, role_dispatch, role_runtime, roles, session_list,
+        task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -3086,6 +3086,13 @@ fn complete_lane(
 
     transition_task_after_completion(connection, &task, &lane, outcome, &now)?;
     let updated = tasks::get_task_context(connection, task_id)?;
+    if let Some(assignment) = active_assignment.as_ref() {
+        let _ = session_list::auto_archive_session_for_task_status(
+            connection,
+            assignment,
+            &updated.status,
+        )?;
+    }
     if outcome == "needs_user" {
         let _ = channels::notify_task_user_attention_channels(
             connection,
@@ -3140,7 +3147,13 @@ pub fn approve_task_review(
         &now,
     )?;
     transition_task_after_completion(connection, &task, &lane, "success", &now)?;
-    tasks::get_task_context(connection, task_id)
+    let updated = tasks::get_task_context(connection, task_id)?;
+    let _ = session_list::auto_archive_session_for_task_status(
+        connection,
+        &assignment,
+        &updated.status,
+    )?;
+    Ok(updated)
 }
 
 pub fn approve_pending_lane_completion(
@@ -5016,7 +5029,9 @@ mod tests {
             AgentUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput,
             WorkflowUpsertInput,
         },
-        services::{agents, database, pi_sessions, projects, roles, tasks, workflows},
+        services::{
+            agents, database, pi_sessions, projects, roles, session_list, tasks, workflows,
+        },
     };
 
     fn in_memory_connection() -> Connection {
@@ -8278,6 +8293,227 @@ mod tests {
                 .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
+        assert_eq!(
+            session_list::load_hidden_session_reason(
+                &connection,
+                assignment
+                    .session_id
+                    .as_deref()
+                    .expect("agent session should exist"),
+            )
+            .expect("hidden reason should load")
+            .as_deref(),
+            Some(session_list::SESSION_HIDDEN_REASON_TASK_COMPLETED)
+        );
+    }
+
+    #[test]
+    fn completing_role_lane_auto_archives_session_list_entry() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Role Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-role-complete".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = init_test_repo("task-runtime-role-complete-archive");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-role-complete', 'orchestra', 'runtime-role-complete', 'Runtime Role Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Role runtime task".into(),
+                description: Some("Run through a role-owned lane to completion.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-role-complete".into()),
+                assignee_type: "role".into(),
+                assignee_id: Some(role.id.clone()),
+                repository_id: Some("repo-role-complete".into()),
+                repository_ids: vec!["repo-role-complete".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-role-complete', ?1, 'Developer 1', 'running', NULL, 'session-role-complete', ?2, NULL, NULL, ?3, ?3)",
+                params![role.id.as_str(), root.display().to_string(), now.as_str()],
+            )
+            .expect("role instance should insert");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-role-complete', ?1, ?2, 'lane-role-complete', 'role', ?3, 'active', 'session-role-complete', ?4, NULL, 'instance-role-complete', 'Prompt', 0, NULL, ?5, NULL, ?5, ?5)",
+                params![task.id.as_str(), workflow.id.as_str(), role.id.as_str(), root.display().to_string(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        let updated =
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+                .expect("role lane should complete");
+        assert_eq!(updated.status, "completed");
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, "session-role-complete")
+                .expect("hidden reason should load")
+                .as_deref(),
+            Some(session_list::SESSION_HIDDEN_REASON_TASK_COMPLETED)
+        );
+    }
+
+    #[test]
+    fn completing_agent_lane_auto_archives_session_list_entry() {
+        let mut connection = in_memory_connection();
+        ensure_default_project(&connection);
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("project".into()),
+                project_id: Some("orchestra".into()),
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Agent Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-agent-complete".into()),
+                    key: "agent".into(),
+                    name: "Agent".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some("Do the work.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = init_test_repo("task-runtime-agent-complete-archive");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-agent-complete', 'orchestra', 'runtime-agent-complete', 'Runtime Agent Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Agent runtime task".into(),
+                description: Some("Run through an agent-owned lane to completion.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-agent-complete".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.id.clone()),
+                repository_id: Some("repo-agent-complete".into()),
+                repository_ids: vec!["repo-agent-complete".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', ?1, 'running', 'session-agent-complete', ?2, NULL, NULL, NULL, ?3, ?3)",
+                params![agent.id.as_str(), root.display().to_string(), now.as_str()],
+            )
+            .expect("agent runtime should insert");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-agent-complete', ?1, ?2, 'lane-agent-complete', 'agent', ?3, 'active', 'session-agent-complete', ?4, NULL, NULL, 'Prompt', 0, NULL, ?5, NULL, ?5, ?5)",
+                params![task.id.as_str(), workflow.id.as_str(), agent.id.as_str(), root.display().to_string(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        let updated =
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+                .expect("agent lane should complete");
+        assert_eq!(updated.status, "completed");
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, "session-agent-complete")
+                .expect("hidden reason should load")
+                .as_deref(),
+            Some(session_list::SESSION_HIDDEN_REASON_TASK_COMPLETED)
+        );
     }
 
     #[test]

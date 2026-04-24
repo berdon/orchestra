@@ -2003,7 +2003,8 @@ mod tests {
                 .expect("move task should allocate a target-lane session");
             drop(connection);
             assert!(move_events.iter().any(|event| {
-                event.topic == "task.updated" && event.task_id.as_deref() == Some(move_task.id.as_str())
+                event.topic == "task.updated"
+                    && event.task_id.as_deref() == Some(move_task.id.as_str())
             }));
             assert!(move_events.iter().any(|event| {
                 event.topic == "session.updated"

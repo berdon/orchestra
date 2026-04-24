@@ -2214,12 +2214,19 @@ fn invoke_bridge_command(
         "get_workflow_delete_impact" => {
             let workflow_id = require_string(&payload, "workflowId")?;
             command_authorization::require_permission(connection, authorization, "workflows.read")?;
-            serde_json::to_value(workflows::get_workflow_delete_impact(connection, &workflow_id)?)
-                .map_err(|error| format!("Unable to serialize workflow delete impact: {error}"))
+            serde_json::to_value(workflows::get_workflow_delete_impact(
+                connection,
+                &workflow_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize workflow delete impact: {error}"))
         }
         "delete_workflow" => {
             let workflow_id = require_string(&payload, "workflowId")?;
-            command_authorization::require_permission(connection, authorization, "workflows.delete")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "workflows.delete",
+            )?;
             let mut writable = database::open_connection()?;
             serde_json::to_value(workflows::delete_workflow(&mut writable, &workflow_id)?)
                 .map_err(|error| format!("Unable to serialize workflow delete result: {error}"))

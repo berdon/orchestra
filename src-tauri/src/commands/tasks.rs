@@ -1129,6 +1129,16 @@ pub async fn approve_task_review(
         );
     }
 
+    let archived_session_id = previous_assignment.as_ref().and_then(|assignment| {
+        if matches!(assignment.worker_type.as_str(), "agent" | "role")
+            && matches!(task.status.as_str(), "completed" | "canceled")
+        {
+            assignment.session_id.clone()
+        } else {
+            None
+        }
+    });
+
     record_task_domain_event(
         &connection,
         "task.review_approved",
@@ -1149,6 +1159,9 @@ pub async fn approve_task_review(
         &format!("Approved task review for task {}", task_id),
     );
     emit_task_change(&app, "task.review.approved", changed_task_ids);
+    if let Some(session_id) = archived_session_id {
+        emit_session_change(&app, "task.review.approved.archive", [session_id]);
+    }
     if let Some(session_id) =
         task_runtime::transitioned_assignment_session_to_retire(previous_assignment.as_ref(), &task)
     {
@@ -1716,16 +1729,27 @@ async fn complete_lane_command(
             .filter(|task_id| seen.insert(task_id.clone()))
             .collect::<Vec<_>>();
 
-        Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
+        let archived_session_id = previous_assignment.as_ref().and_then(|assignment| {
+            if matches!(assignment.worker_type.as_str(), "agent" | "role")
+                && matches!(task.status.as_str(), "completed" | "canceled")
+            {
+                assignment.session_id.clone()
+            } else {
+                None
+            }
+        });
+
+        Ok::<(TaskDetail, Vec<String>, Option<String>, Option<String>), String>((
             task,
             changed_task_ids,
             retired_session_id,
+            archived_session_id,
         ))
     }
     .await;
 
     match result {
-        Ok((task, changed_task_ids, retired_session_id)) => {
+        Ok((task, changed_task_ids, retired_session_id, archived_session_id)) => {
             state.log(
                 "info",
                 "task.transition",
@@ -1736,6 +1760,13 @@ async fn complete_lane_command(
                 task_runtime::task_transition_event_reason(outcome, &task),
                 changed_task_ids,
             );
+            if let Some(session_id) = archived_session_id {
+                emit_session_change(
+                    &app,
+                    &format!("task.transition.{outcome}.archive"),
+                    [session_id],
+                );
+            }
             if let Some(session_id) = retired_session_id {
                 crate::services::live_sessions::schedule_session_retirement(
                     app.clone(),
