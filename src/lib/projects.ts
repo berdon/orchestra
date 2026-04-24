@@ -278,6 +278,12 @@ function emitProjectsChanged() {
   window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
 }
 
+async function runProjectMutation<T>(mutation: () => Promise<T>) {
+  const result = await mutation();
+  emitProjectsChanged();
+  return result;
+}
+
 export async function listRepositories(projectId?: string | null): Promise<RepositoryRecord[]> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
@@ -312,7 +318,7 @@ export async function getRepository(repositoryId: string): Promise<RepositoryRec
 export async function createProject(input: ProjectUpsertInput): Promise<ProjectDetail> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.createProject(input);
+    return runProjectMutation(() => hostedWebClient.projects.createProject(input));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -334,15 +340,13 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectD
     return project;
   }
 
-  const project = await invoke<ProjectDetail>("create_project", { input });
-  emitProjectsChanged();
-  return project;
+  return runProjectMutation(() => invoke<ProjectDetail>("create_project", { input }));
 }
 
 export async function updateProject(projectId: string, input: ProjectUpsertInput): Promise<ProjectDetail> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.updateProject(projectId, input);
+    return runProjectMutation(() => hostedWebClient.projects.updateProject(projectId, input));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -363,15 +367,13 @@ export async function updateProject(projectId: string, input: ProjectUpsertInput
     return updated;
   }
 
-  const project = await invoke<ProjectDetail>("update_project", { projectId, input });
-  emitProjectsChanged();
-  return project;
+  return runProjectMutation(() => invoke<ProjectDetail>("update_project", { projectId, input }));
 }
 
 export async function deleteProject(projectId: string): Promise<ProjectDetail> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.deleteProject(projectId);
+    return runProjectMutation(() => hostedWebClient.projects.deleteProject(projectId));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -391,15 +393,13 @@ export async function deleteProject(projectId: string): Promise<ProjectDetail> {
     return existing;
   }
 
-  const project = await invoke<ProjectDetail>("delete_project", { projectId });
-  emitProjectsChanged();
-  return project;
+  return runProjectMutation(() => invoke<ProjectDetail>("delete_project", { projectId }));
 }
 
 export async function createRepository(projectId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.createRepository(projectId, input);
+    return runProjectMutation(() => hostedWebClient.projects.createRepository(projectId, input));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -438,15 +438,13 @@ export async function createRepository(projectId: string, input: RepositoryUpser
     return repository;
   }
 
-  const repository = await invoke<RepositoryRecord>("create_repository", { projectId, input });
-  emitProjectsChanged();
-  return repository;
+  return runProjectMutation(() => invoke<RepositoryRecord>("create_repository", { projectId, input }));
 }
 
 export async function updateRepository(repositoryId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.updateRepository(repositoryId, input);
+    return runProjectMutation(() => hostedWebClient.projects.updateRepository(repositoryId, input));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -481,15 +479,13 @@ export async function updateRepository(repositoryId: string, input: RepositoryUp
     return updatedRepository;
   }
 
-  const repository = await invoke<RepositoryRecord>("update_repository", { repositoryId, input });
-  emitProjectsChanged();
-  return repository;
+  return runProjectMutation(() => invoke<RepositoryRecord>("update_repository", { repositoryId, input }));
 }
 
 export async function deleteRepository(repositoryId: string): Promise<RepositoryRecord> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.deleteRepository(repositoryId);
+    return runProjectMutation(() => hostedWebClient.projects.deleteRepository(repositoryId));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -516,15 +512,13 @@ export async function deleteRepository(repositoryId: string): Promise<Repository
     return deletedRepository;
   }
 
-  const repository = await invoke<RepositoryRecord>("delete_repository", { repositoryId });
-  emitProjectsChanged();
-  return repository;
+  return runProjectMutation(() => invoke<RepositoryRecord>("delete_repository", { repositoryId }));
 }
 
 export async function attachRepositoryRemote(repositoryId: string, input: RepositoryRemoteInput): Promise<RepositoryRecord> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.attachRepositoryRemote(repositoryId, input);
+    return runProjectMutation(() => hostedWebClient.projects.attachRepositoryRemote(repositoryId, input));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -552,15 +546,13 @@ export async function attachRepositoryRemote(repositoryId: string, input: Reposi
     return updatedRepository;
   }
 
-  const repository = await invoke<RepositoryRecord>("attach_repository_remote", { repositoryId, input });
-  emitProjectsChanged();
-  return repository;
+  return runProjectMutation(() => invoke<RepositoryRecord>("attach_repository_remote", { repositoryId, input }));
 }
 
 export async function setProjectDefaultRepository(projectId: string, repositoryId: string | null): Promise<ProjectDetail> {
   const hostedWebClient = getHostedWebClient();
   if (hostedWebClient) {
-    return hostedWebClient.projects.setProjectDefaultRepository(projectId, repositoryId);
+    return runProjectMutation(() => hostedWebClient.projects.setProjectDefaultRepository(projectId, repositoryId));
   }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
@@ -584,7 +576,5 @@ export async function setProjectDefaultRepository(projectId: string, repositoryI
     return updatedProject;
   }
 
-  const project = await invoke<ProjectDetail>("set_project_default_repository", { projectId, repositoryId });
-  emitProjectsChanged();
-  return project;
+  return runProjectMutation(() => invoke<ProjectDetail>("set_project_default_repository", { projectId, repositoryId }));
 }
