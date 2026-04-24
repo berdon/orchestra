@@ -1625,14 +1625,43 @@ export function TaskDetailPage({
         right: `${floatingChromeLayout.right}px`,
       }
     : undefined;
+  const headerActionMenuActions = buildHeaderActions();
+  const compactHeaderActionMenuActions = headerActionMenuActions.map((action) => ({ ...action, dataRole: undefined }));
+
+  function renderHeaderActions(compact = false) {
+    return (
+      <div className="task-detail-header-actions">
+        {!compact && activeSessionId ? (
+          <button
+            className="secondary-button"
+            data-role="task-open-session"
+            type="button"
+            onClick={() => onOpenSession(activeSessionId, task.projectId)}
+          >
+            Open session
+          </button>
+        ) : null}
+        <div
+          className="action-cluster action-cluster--wrap task-detail-header-action-row"
+          data-role={compact ? "task-detail-compact-actions" : "task-detail-primary-actions"}
+        >
+          {canRelane ? <TaskRelaneMenu lanes={availableRelaneTargets} disabled={Boolean(pendingActionId)} onChoose={openRelaneConfirm} /> : null}
+          <TaskActionMenu
+            actions={compact ? compactHeaderActionMenuActions : headerActionMenuActions}
+            menuLabel={compact ? "Sticky task actions" : undefined}
+            pendingActionId={pendingActionId}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
       <div className="task-detail-shell" ref={detailPageRef}>
       <section className="task-page task-detail-page panel" data-role="task-detail-panel" data-task-id={task.id}>
-        <div className="panel__header panel__header--session-detail task-detail-primary-header" ref={primaryHeaderRef}>
+        <div className="panel__header panel__header--session-detail task-detail-primary-header" data-role="task-detail-primary-header" ref={primaryHeaderRef}>
           <div className="task-detail-primary-header__copy">
-            <p className="eyebrow">Task detail</p>
             <h2 data-role="task-title-heading">{taskHeading}</h2>
             {taskTags.length ? (
               <div className="task-detail-primary-header__tags task-tag-list task-tag-list--readonly" data-role="task-title-tags" aria-label="Task tags">
@@ -1658,20 +1687,7 @@ export function TaskDetailPage({
             </div>
           </div>
 
-          <div className="action-cluster action-cluster--wrap">
-            {activeSessionId ? (
-              <button
-                className="secondary-button"
-                data-role="task-open-session"
-                type="button"
-                onClick={() => onOpenSession(activeSessionId, task.projectId)}
-              >
-                Open session
-              </button>
-            ) : null}
-            {canRelane ? <TaskRelaneMenu lanes={availableRelaneTargets} disabled={Boolean(pendingActionId)} onChoose={openRelaneConfirm} /> : null}
-            <TaskActionMenu actions={buildHeaderActions()} pendingActionId={pendingActionId} />
-          </div>
+          {renderHeaderActions()}
         </div>
         <div className="task-detail-primary-header-sentinel" ref={compactHeaderSentinelRef} aria-hidden="true" />
 
@@ -2020,14 +2036,7 @@ export function TaskDetailPage({
               ) : null}
             </div>
           </div>
-          <div className="action-cluster action-cluster--wrap">
-            {canRelane ? <TaskRelaneMenu lanes={availableRelaneTargets} disabled={Boolean(pendingActionId)} onChoose={openRelaneConfirm} /> : null}
-            <TaskActionMenu
-              actions={buildHeaderActions().map((action) => ({ ...action, dataRole: undefined }))}
-              menuLabel="Sticky task actions"
-              pendingActionId={pendingActionId}
-            />
-          </div>
+          {renderHeaderActions(true)}
         </div>
       ) : null}
 

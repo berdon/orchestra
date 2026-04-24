@@ -3341,6 +3341,7 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
     );
   });
 
+  await page.setViewportSize({ width: 1180, height: 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.getByRole("button", { name: "New task" }).click();
@@ -3375,7 +3376,55 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
     }));
   });
 
+  const readHeaderActionLayout = async (selector: string) => page.locator(selector).evaluate((node) => {
+    const relane = node.querySelector('[data-role="toggle-task-relane"]');
+    const session = node.querySelector('[data-role="task-open-session"]');
+    const actionMenu = node.querySelector('.task-action-menu');
+    if (!(relane instanceof HTMLElement)) {
+      throw new Error('Expected Re-lane button in the header action row');
+    }
+    if (!(actionMenu instanceof HTMLElement)) {
+      throw new Error('Expected the task action menu in the header action row');
+    }
+    const relaneRect = relane.getBoundingClientRect();
+    const actionMenuRect = actionMenu.getBoundingClientRect();
+    const sessionRect = session instanceof HTMLElement ? session.getBoundingClientRect() : null;
+    return {
+      relaneLeftOfAction: relaneRect.left < actionMenuRect.left,
+      relaneSharesRowWithAction: Math.abs(relaneRect.top - actionMenuRect.top) < 8,
+      relaneLeftOfSession: sessionRect ? relaneRect.left < sessionRect.left : true,
+    };
+  });
+
+  await expect(page.getByText('Task detail', { exact: true })).toHaveCount(0);
   await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
+
+  const widePrimaryHeaderLayout = await readHeaderActionLayout('[data-role="task-detail-primary-actions"]');
+  expect(widePrimaryHeaderLayout.relaneLeftOfAction).toBe(true);
+  expect(widePrimaryHeaderLayout.relaneSharesRowWithAction).toBe(true);
+  expect(widePrimaryHeaderLayout.relaneLeftOfSession).toBe(true);
+
+  await page.setViewportSize({ width: 820, height: 900 });
+  const narrowPrimaryHeaderLayout = await readHeaderActionLayout('[data-role="task-detail-primary-actions"]');
+  expect(narrowPrimaryHeaderLayout.relaneLeftOfAction).toBe(true);
+  expect(narrowPrimaryHeaderLayout.relaneSharesRowWithAction).toBe(true);
+
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = 1200;
+      content.dispatchEvent(new Event('scroll'));
+      return;
+    }
+    window.scrollTo({ top: 1200, behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(page.locator('[data-role="task-detail-compact-header"]')).toBeVisible();
+
+  const compactHeaderLayout = await readHeaderActionLayout('[data-role="task-detail-compact-actions"]');
+  expect(compactHeaderLayout.relaneLeftOfAction).toBe(true);
+  expect(compactHeaderLayout.relaneSharesRowWithAction).toBe(true);
+
   await page.locator('[data-role="toggle-task-relane"]').first().click();
   await expect(page.locator('[data-role="task-relane-menu"]').first()).toBeVisible();
   await page.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]').first().click();

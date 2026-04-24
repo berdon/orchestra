@@ -459,7 +459,7 @@ export async function addTaskFileReferenceViaUi(
   makeDefault = false,
 ) {
   await clickByText(sessionId, '[role="tab"]', 'Repo files');
-  await waitForText(sessionId, 'Tracked repository file changes and references');
+  await waitForText(sessionId, 'Tracked repo files');
   await selectByLabel(sessionId, '[data-role="task-file-reference-repository"]', repositoryName);
   await waitForSelectedLabel(sessionId, '[data-role="task-file-reference-repository"]', repositoryName);
   await setInputValue(sessionId, '[data-role="task-file-reference-path"]', relativePath);

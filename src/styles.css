@@ -3746,6 +3746,25 @@ strong {
   position: relative;
 }
 
+.task-detail-header-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.task-detail-header-action-row {
+  width: max-content;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.task-detail-header-action-row .task-action-menu__desktop {
+  flex-wrap: nowrap;
+}
+
 .task-detail-primary-header__copy {
   display: grid;
   gap: 8px;

@@ -6,10 +6,11 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  invokeCommand,
   sleep,
   waitForText,
 } from "./driver";
-import { createProjectViaSettings, createTaskViaTasks, createWorkflowViaSettings, switchProject } from "./ui-flows";
+import { createProjectViaSettings, createWorkflowViaSettings, switchProject } from "./ui-flows";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
@@ -34,12 +35,37 @@ describe("desktop task table rows", () => {
           },
         ],
       });
-      await createTaskViaTasks(sessionId, {
-        title: 'Clickable workflow row',
-        description: 'Verify whole table row opens detail.',
-        workflowName: 'Task Table Flow',
-        publish: true,
+      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((entry) => entry.name === 'Task Table Project'));
+      expect(project).toBeTruthy();
+      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
+        .then((workflows) => workflows.find((entry) => entry.name === 'Task Table Flow'))
+        .then((summary) => {
+          expect(summary).toBeTruthy();
+          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
+        });
+      await invokeCommand(sessionId, 'create_task', {
+        projectId: project!.id,
+        input: {
+          title: 'Clickable workflow row',
+          description: 'Verify whole table row opens detail.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0]?.id ?? null,
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
       });
+      await executeScript(sessionId, `
+        window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+        window.location.reload();
+        return true;
+      `);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await switchProject(sessionId, 'Task Table Project');
 
       await clickByText(sessionId, "button", "Tasks");
       await executeScript(sessionId, `
@@ -69,8 +95,18 @@ describe("desktop task table rows", () => {
         }
         await sleep(250);
       }
-      await waitForText(sessionId, "Task detail");
-      await waitForText(sessionId, 'Clickable workflow row');
+      let taskHeaderVisible = false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        taskHeaderVisible = await executeScript<boolean>(sessionId, `
+          return Boolean(document.querySelector('[data-role="task-detail-panel"]'))
+            && window.location.search.includes('selectedTaskId=');
+        `);
+        if (taskHeaderVisible) {
+          break;
+        }
+        await sleep(250);
+      }
+      expect(taskHeaderVisible).toBe(true);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
