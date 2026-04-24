@@ -170,12 +170,28 @@ pub fn orchestra_runtime_dir(root: &Path) -> PathBuf {
     orchestra_runtime_root(root)
 }
 
+pub fn orchestra_skills_dir(root: &Path) -> PathBuf {
+    root.join("skills")
+}
+
+pub fn orchestra_local_skill_path(root: &Path, slug: &str) -> PathBuf {
+    orchestra_skills_dir(root).join(format!("{}.md", sanitize_slug(slug)))
+}
+
 pub fn pi_runtime_root(root: &Path) -> PathBuf {
     orchestra_runtime_root(root).join("pi")
 }
 
 pub fn pi_agent_dir(root: &Path) -> PathBuf {
     pi_runtime_root(root).join("agent")
+}
+
+pub fn orchestra_pi_agent_skills_dir(root: &Path) -> PathBuf {
+    orchestra_pi_agent_dir(root).join("skills")
+}
+
+pub fn orchestra_pi_skill_snapshots_dir(root: &Path) -> PathBuf {
+    orchestra_pi_root(root).join("skill-snapshots")
 }
 
 pub fn orchestra_pi_root(root: &Path) -> PathBuf {
@@ -276,6 +292,14 @@ mod tests {
             PathBuf::from("/tmp/home/.orchestra/runtime")
         );
         assert_eq!(
+            orchestra_skills_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/skills")
+        );
+        assert_eq!(
+            orchestra_local_skill_path(&root, "My New Skill"),
+            PathBuf::from("/tmp/home/.orchestra/skills/my-new-skill.md")
+        );
+        assert_eq!(
             orchestra_pi_root(&root),
             PathBuf::from("/tmp/home/.orchestra/runtime/pi")
         );
@@ -302,6 +326,14 @@ mod tests {
         assert_eq!(
             orchestra_pi_settings_path(&root),
             PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent/settings.json")
+        );
+        assert_eq!(
+            orchestra_pi_agent_skills_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/agent/skills")
+        );
+        assert_eq!(
+            orchestra_pi_skill_snapshots_dir(&root),
+            PathBuf::from("/tmp/home/.orchestra/runtime/pi/skill-snapshots")
         );
         assert_eq!(
             project_session_dir(&root, "Orchestra App"),

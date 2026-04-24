@@ -1380,6 +1380,42 @@ pub struct RoleValidationError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSummary {
+    pub id: String,
+    pub slug: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub source_kind: String,
+    pub source_path: String,
+    pub content_path: String,
+    pub relative_source_path: Option<String>,
+    pub archived: bool,
+    pub status: String,
+    pub status_reason: Option<String>,
+    pub shadowed_by_skill_id: Option<String>,
+    pub last_seen_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDetail {
+    #[serde(flatten)]
+    pub summary: SkillSummary,
+    pub markdown_body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSkillUpsertInput {
+    pub name: String,
+    pub slug: Option<String>,
+    pub markdown_body: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleQueueEntry {

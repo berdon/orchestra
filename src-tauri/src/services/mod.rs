@@ -37,6 +37,7 @@ pub mod roles;
 pub mod session_attachments;
 pub mod session_compaction;
 pub mod session_list;
+pub mod skills;
 pub mod startup_resume;
 pub mod system_notifications;
 pub mod task_attachments;

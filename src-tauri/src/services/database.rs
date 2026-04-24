@@ -173,6 +173,69 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS skills (
+                id TEXT PRIMARY KEY,
+                slug TEXT,
+                name TEXT NOT NULL,
+                description TEXT,
+                source_kind TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                content_path TEXT NOT NULL,
+                relative_source_path TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                status_reason TEXT,
+                shadowed_by_skill_id TEXT,
+                last_seen_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(shadowed_by_skill_id) REFERENCES skills(id) ON DELETE SET NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_local_slug_unique
+                ON skills(slug)
+                WHERE source_kind = 'local';
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_source_kind_source_path
+                ON skills(source_kind, source_path);
+
+            CREATE INDEX IF NOT EXISTS idx_skills_slug_source_kind
+                ON skills(slug, source_kind);
+
+            CREATE INDEX IF NOT EXISTS idx_skills_status_archived
+                ON skills(status, archived, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_skills_shadowed_by_skill_id
+                ON skills(shadowed_by_skill_id);
+
+            CREATE TABLE IF NOT EXISTS skill_scope_bindings (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
+                project_id TEXT,
+                role_id TEXT,
+                agent_id TEXT,
+                workflow_id TEXT,
+                workflow_lane_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_scope_bindings_unique_scope
+                ON skill_scope_bindings(
+                    skill_id,
+                    scope_kind,
+                    IFNULL(project_id, ''),
+                    IFNULL(role_id, ''),
+                    IFNULL(agent_id, ''),
+                    IFNULL(workflow_id, ''),
+                    IFNULL(workflow_lane_id, '')
+                );
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_skill_id
+                ON skill_scope_bindings(skill_id, scope_kind);
+
             CREATE TABLE IF NOT EXISTS policies (
                 id TEXT PRIMARY KEY,
                 slug TEXT NOT NULL UNIQUE,
@@ -899,6 +962,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_roles_table_columns(connection)?;
     backfill_missing_role_slugs(connection)?;
     ensure_roles_slug_index(connection)?;
+    ensure_skills_tables(connection)?;
     ensure_tasks_table_columns(connection)?;
     ensure_task_tag_tables(connection)?;
     ensure_task_comments_table_columns(connection)?;
@@ -1467,6 +1531,78 @@ fn ensure_roles_slug_index(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Unable to create unique roles slug index: {error}"))?;
+    Ok(())
+}
+
+fn ensure_skills_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS skills (
+                id TEXT PRIMARY KEY,
+                slug TEXT,
+                name TEXT NOT NULL,
+                description TEXT,
+                source_kind TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                content_path TEXT NOT NULL,
+                relative_source_path TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                status_reason TEXT,
+                shadowed_by_skill_id TEXT,
+                last_seen_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(shadowed_by_skill_id) REFERENCES skills(id) ON DELETE SET NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_local_slug_unique
+                ON skills(slug)
+                WHERE source_kind = 'local';
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_source_kind_source_path
+                ON skills(source_kind, source_path);
+
+            CREATE INDEX IF NOT EXISTS idx_skills_slug_source_kind
+                ON skills(slug, source_kind);
+
+            CREATE INDEX IF NOT EXISTS idx_skills_status_archived
+                ON skills(status, archived, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_skills_shadowed_by_skill_id
+                ON skills(shadowed_by_skill_id);
+
+            CREATE TABLE IF NOT EXISTS skill_scope_bindings (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
+                project_id TEXT,
+                role_id TEXT,
+                agent_id TEXT,
+                workflow_id TEXT,
+                workflow_lane_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_scope_bindings_unique_scope
+                ON skill_scope_bindings(
+                    skill_id,
+                    scope_kind,
+                    IFNULL(project_id, ''),
+                    IFNULL(role_id, ''),
+                    IFNULL(agent_id, ''),
+                    IFNULL(workflow_id, ''),
+                    IFNULL(workflow_lane_id, '')
+                );
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_skill_id
+                ON skill_scope_bindings(skill_id, scope_kind);
+            "#,
+        )
+        .map_err(|error| format!("Unable to ensure skills tables: {error}"))?;
     Ok(())
 }
 
@@ -2363,6 +2499,89 @@ mod tests {
                 columns.contains(expected),
                 "missing expected roles column: {expected}"
             );
+        }
+    }
+
+    #[test]
+    fn initializes_skill_catalog_tables_and_indexes() {
+        let path = unique_temp_db("skills-schema");
+        initialize_database_at(&path).expect("database should initialize");
+        let connection = Connection::open(&path).expect("database should open");
+
+        let skill_columns =
+            table_columns(&connection, "skills").expect("skills columns should load");
+        for expected in [
+            "id",
+            "slug",
+            "name",
+            "description",
+            "source_kind",
+            "source_path",
+            "content_path",
+            "relative_source_path",
+            "archived",
+            "status",
+            "status_reason",
+            "shadowed_by_skill_id",
+            "last_seen_at",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                skill_columns.contains(expected),
+                "missing expected skills column: {expected}"
+            );
+        }
+
+        let binding_columns = table_columns(&connection, "skill_scope_bindings")
+            .expect("skill_scope_bindings columns should load");
+        for expected in [
+            "id",
+            "skill_id",
+            "scope_kind",
+            "project_id",
+            "role_id",
+            "agent_id",
+            "workflow_id",
+            "workflow_lane_id",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                binding_columns.contains(expected),
+                "missing expected skill_scope_bindings column: {expected}"
+            );
+        }
+
+        let skill_indexes = connection
+            .prepare("PRAGMA index_list('skills')")
+            .expect("skill index query should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("skill index query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("skill indexes should collect");
+        for expected in [
+            "idx_skills_local_slug_unique",
+            "idx_skills_source_kind_source_path",
+            "idx_skills_slug_source_kind",
+            "idx_skills_status_archived",
+            "idx_skills_shadowed_by_skill_id",
+        ] {
+            assert!(skill_indexes.iter().any(|name| name == expected));
+        }
+
+        let binding_indexes = connection
+            .prepare("PRAGMA index_list('skill_scope_bindings')")
+            .expect("binding index query should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("binding index query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("binding indexes should collect");
+        for expected in [
+            "idx_skill_scope_bindings_unique_scope",
+            "idx_skill_scope_bindings_skill_id",
+        ] {
+            assert!(binding_indexes.iter().any(|name| name == expected));
         }
     }
 
