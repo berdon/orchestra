@@ -1928,6 +1928,10 @@ export function App() {
     }
   }
 
+  async function handleCreateSession() {
+    await runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null));
+  }
+
   async function handleDeleteSession(sessionId: string) {
     setSessionActionError(null);
     setIsSubmitting(true);
@@ -2467,7 +2471,7 @@ export function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setSessionActionError(toUiErrorState(error, "Unable to open agent chat session."));
+          setSessionActionError(toUiErrorState(error, "Unable to open chat session."));
         }
       })
       .finally(() => {
@@ -3223,7 +3227,7 @@ export function App() {
         return;
       case "create-session":
         setActivePage("sessions");
-        await runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null));
+        await handleCreateSession();
         return;
       case "open-logs":
         await handleOpenLogsWindow();
@@ -3474,6 +3478,8 @@ export function App() {
   if (isAgentTerminalWindow && agentTerminalSessionId) {
     return <AgentTerminalWindowPage sessionId={agentTerminalSessionId} />;
   }
+
+  const shouldHidePageHeader = isMobileNavigation && (activePage === "chat" || activePage === "sessions");
 
   return (
     <ExplanatoryTooltipsProvider enabled={explanatoryTooltipsEnabled}>
@@ -3812,6 +3818,7 @@ export function App() {
         )}
 
         <main className={activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}>
+        {shouldHidePageHeader ? null : (
         <header className="page-header page-header--compact">
           <div className="page-header__leading">
             <p className="page-version-label muted-copy" data-role="app-version-label">
@@ -3824,9 +3831,7 @@ export function App() {
                 type="button"
                 disabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
                 {...getExplanatoryTooltipProps("Start a new session in the active project.", explanatoryTooltipsEnabled)}
-                onClick={() =>
-                  void runSessionAction(async () => orchestraClient.sessions.create(undefined, activeProject?.slug ?? null))
-                }
+                onClick={() => void handleCreateSession()}
               >
                 Create session
               </button>
@@ -3871,6 +3876,7 @@ export function App() {
             ) : null}
           </div>
         </header>
+        )}
 
         <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
           <ConnectionStatusBanner
@@ -4139,6 +4145,9 @@ export function App() {
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
+            onCreateSession={() => void handleCreateSession()}
+            showCreateSessionAction={isMobileNavigation}
+            createSessionDisabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
             onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined}
             onCompactSession={handleSelectedSessionCompact}
             onReloadSession={handleSelectedSessionReload}

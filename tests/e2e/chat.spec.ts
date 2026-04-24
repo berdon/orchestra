@@ -115,9 +115,22 @@ test("chat page opens an agent main session with focused chat controls while Ses
 
   await expect(page.getByRole("button", { name: "Chat" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Chat" }).click();
+  await expect(page.locator('.page-header')).toBeVisible();
+  await expect(page.locator('[data-role="open-command-palette"]')).toBeVisible();
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/agent chat/i);
+
+  await page.locator('[data-role="open-command-palette"]').click();
+  await page.locator('[data-role="command-palette-input"]').fill("chat");
+  await expect(page.locator('[data-role="command-palette-results"]')).toContainText("Go to Chat");
+  await expect(page.locator('[data-role="command-palette-results"]')).not.toContainText(/agent chat/i);
+  await page.keyboard.press("Escape");
+
   await page.locator('[data-role="chat-agent-nav-data"]').click();
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
   await expect(page.locator('[data-role="session-filter-active"]')).toHaveCount(0);
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Session model" })).toBeVisible();
@@ -183,6 +196,40 @@ test("chat page opens an agent main session with focused chat controls while Ses
   const secondSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
 
   expect(secondSessionId).toBe(firstSessionId);
+});
+
+test("chat page hides shared header controls on mobile while keeping chat usable", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  await page.getByRole("button", { name: "Chat" }).click();
+
+  await expect(page.locator('.page-header')).toHaveCount(0);
+  await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
+
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
+  await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
+
+  await page.locator('[data-role="composer-input"]').fill("Hello from mobile chat");
+  await page.locator('[data-role="composer-input"]').press("Control+Enter");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from mobile chat", { timeout: 10_000 });
+
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
 });
 
 test("chat page fills the available height while keeping the composer resizable", async ({ page }) => {

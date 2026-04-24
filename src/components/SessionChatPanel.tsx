@@ -322,9 +322,9 @@ const SessionComposer = memo(function SessionComposer({
       ) : null}
 
       <form className="composer" onSubmit={handleComposerSubmit}>
-        <label className="field-group field-group--composer">
-          <span className="field-group__label">Send</span>
+        <div className="field-group field-group--composer">
           <AutocompleteTextarea
+            ariaLabel="Message"
             dataRole="composer-input"
             disabled={sessionReadOnly}
             listDataRole="composer-mention-list"
@@ -345,7 +345,7 @@ const SessionComposer = memo(function SessionComposer({
             ]}
             value={draftMessage}
           />
-        </label>
+        </div>
         <div className="composer__footer">
           <div className="composer__meta">
             <p className="muted-copy">
@@ -472,9 +472,11 @@ const SessionComposer = memo(function SessionComposer({
               className="primary-button"
               data-role="send-message"
               type="submit"
+              aria-label="Send message"
+              title="Send message"
               disabled={sessionReadOnly || piSetupState?.status !== "ready" || draftMessage.trim().length === 0}
             >
-              Send
+              ↗
             </button>
           </div>
         </div>

@@ -115,7 +115,7 @@ export function AgentChatPage({
     setMobileAgentPickerOpen(false);
   }, [selectedAgentId]);
 
-  let emptyStateTitle = "Choose an agent chat";
+  let emptyStateTitle = "Choose a chat";
   let emptyStateDescription = "Select a named agent from the page picker or the desktop Chat sidebar to open or resume its main session.";
 
   if (loadingAgents) {
@@ -144,7 +144,7 @@ export function AgentChatPage({
         dataRolePrefix="agent-chat-status"
       />
       <div className="page-mobile-switcher page-mobile-switcher--chat" data-role="chat-mobile-agent-switcher">
-        <p className="eyebrow">Agent chat</p>
+        <p className="eyebrow">Chat</p>
         <button
           className="page-mobile-switcher__trigger"
           type="button"
@@ -220,7 +220,7 @@ export function AgentChatPage({
           onOpenPiSettings={onOpenPiSettings}
           onCompactSession={onCompactSession}
           onReloadSession={onReloadSession}
-          emptyStateEyebrow="Agent chat"
+          emptyStateEyebrow="Chat"
           emptyStateTitle={emptyStateTitle}
           emptyStateDescription={emptyStateDescription}
         />

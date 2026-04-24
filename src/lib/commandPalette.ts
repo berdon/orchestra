@@ -87,7 +87,7 @@ export function buildCommandPaletteItems({
     commandItem({
       id: "page-chat",
       title: "Go to Chat",
-      subtitle: "Focused main-session agent chat",
+      subtitle: "Focused main-session conversation",
       group: "Pages",
       keywords: ["chat", "agents", "conversation", "main session"],
       action: { type: "navigate-page", page: "chat" },

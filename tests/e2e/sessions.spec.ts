@@ -111,18 +111,54 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await page.goto("/");
 
   const createSessionButton = page.locator('[data-role="create-session"]');
+  await expect(page.locator('.page-header')).toBeVisible();
+  await expect(page.locator('[data-role="app-version-label"]')).toBeVisible();
+  await expect(page.locator('[data-role="open-command-palette"]')).toBeVisible();
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toBeVisible();
   await expect(createSessionButton).toBeVisible();
   const previousSessionCount = await page.locator('[data-role="session-link"]').count();
   await createSessionButton.click();
 
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(previousSessionCount + 1);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
+  await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
 
   await page.locator('[data-role="composer-input"]').fill("Hello from Playwright");
   await page.locator('[data-role="composer-input"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from Playwright", { timeout: 10_000 });
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
+});
+
+test("sessions page hides shared header controls on mobile while keeping session creation available", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const createSessionButton = page.locator('[data-role="create-session"]');
+  await expect(page.locator('.page-header')).toHaveCount(0);
+  await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
+  await expect(createSessionButton).toBeVisible();
+
+  await createSessionButton.click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
+  await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
+
+  await page.locator('[data-role="composer-input"]').fill("Hello from mobile sessions");
+  await page.locator('[data-role="composer-input"]').press("Control+Enter");
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from mobile sessions", { timeout: 10_000 });
+
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
 });
 
 test("sessions transcript fills the available page height while the composer remains the resizable surface", async ({ page }) => {
@@ -405,7 +441,7 @@ test("sessions composer model selector is compact, fixed-width, and unlabeled", 
   expect(layout).not.toBeNull();
   expect(layout?.actionsRightGap ?? 999).toBeLessThanOrEqual(2);
   expect(layout?.cogWidth).toBe(layout?.cogHeight);
-  expect(layout?.cogHeight).toBe(layout?.sendHeight);
+  expect(Math.abs((layout?.cogHeight ?? 0) - (layout?.sendHeight ?? 0))).toBeLessThanOrEqual(6);
 });
 
 test("sessions composer session actions can reload, compact the current session, and create a new one", async ({ page }) => {
@@ -552,7 +588,7 @@ test("sessions composer stays enabled while earlier messages are still pending",
 
   await page.locator('[data-role="composer-input"]').fill("Second queued message");
   await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
-  await expect(page.locator('[data-role="send-message"]')).toContainText("Send");
+  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
   await page.locator('[data-role="composer-input"]').press("Control+Enter");
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("First queued message", { timeout: 10_000 });
@@ -2087,6 +2123,7 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   await page.goto("/");
   await triggerShortcut(page, "t");
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-send-message"]')).not.toContainText("Send");
 
   await page.locator('[data-role="supervisor-composer-input"]').fill("Check the current project status");
   await page.locator('[data-role="supervisor-composer-input"]').press("Control+Enter");

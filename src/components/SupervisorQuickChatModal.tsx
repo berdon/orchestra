@@ -186,8 +186,15 @@ export function SupervisorQuickChatModal({
           </label>
           <div className="composer__footer">
             <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
-            <button className="primary-button" data-role="supervisor-send-message" type="submit" disabled={pending || draftMessage.trim().length === 0}>
-              Send
+            <button
+              className="primary-button"
+              data-role="supervisor-send-message"
+              type="submit"
+              aria-label="Send message to supervisor"
+              title="Send message to supervisor"
+              disabled={pending || draftMessage.trim().length === 0}
+            >
+              ↗
             </button>
           </div>
         </form>

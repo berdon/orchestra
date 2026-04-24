@@ -99,6 +99,9 @@ interface SessionsPageProps {
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
+  onCreateSession?: () => void;
+  showCreateSessionAction?: boolean;
+  createSessionDisabled?: boolean;
   onOpenPiSettings?: () => void;
   onCompactSession: () => void;
   onReloadSession: () => void;
@@ -149,6 +152,9 @@ export function SessionsPage({
   onOpenAgent,
   onOpenRole,
   onCreateNewSession,
+  onCreateSession,
+  showCreateSessionAction = false,
+  createSessionDisabled = false,
   onOpenPiSettings,
   onCompactSession,
   onReloadSession,
@@ -373,6 +379,19 @@ export function SessionsPage({
           </span>
           <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
         </button>
+        {showCreateSessionAction && onCreateSession ? (
+          <div className="action-cluster action-cluster--wrap">
+            <button
+              className="primary-button"
+              data-role="create-session"
+              type="button"
+              disabled={createSessionDisabled}
+              onClick={onCreateSession}
+            >
+              Create session
+            </button>
+          </div>
+        ) : null}
         {mobileSessionPickerOpen ? (
           <div className="page-mobile-switcher__sheet" data-role="sessions-mobile-picker">
             <div className="session-list-panel session-list-panel--mobile">

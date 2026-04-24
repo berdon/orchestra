@@ -26,6 +26,7 @@ interface AutocompleteTextareaProps {
   onEscape?: () => void;
   sources: AutocompleteTextareaSource[];
   placeholder?: string;
+  ariaLabel?: string;
   disabled?: boolean;
   textareaRef?: MutableRefObject<HTMLTextAreaElement | null>;
 }
@@ -86,6 +87,7 @@ export function AutocompleteTextarea({
   onEscape,
   sources,
   placeholder,
+  ariaLabel,
   disabled = false,
   textareaRef,
 }: AutocompleteTextareaProps) {
@@ -205,6 +207,7 @@ export function AutocompleteTextarea({
         rows={rows}
         value={value}
         placeholder={placeholder}
+        aria-label={ariaLabel}
         disabled={disabled}
         onChange={(event) => handleChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
         onClick={(event) => syncAutocompleteState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
