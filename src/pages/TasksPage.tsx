@@ -979,8 +979,8 @@ export function TasksPage({
       if (!draft.parentCommentId) {
         setCommentDraft(createBlankCommentDraft());
       }
-      await loadTasksData();
-      await loadTaskDetail(route.taskId);
+      await loadTasksData({ silent: true });
+      await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
       return true;
     } catch (error) {
       setTaskActionError(toUiErrorState(error, "Unable to add comment."));
@@ -995,8 +995,8 @@ export function TasksPage({
     setTaskActionError(null);
     try {
       await orchestraClient.tasks.updateComment(commentId, { message });
-      await loadTasksData();
-      await loadTaskDetail(route.taskId);
+      await loadTasksData({ silent: true });
+      await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
       return true;
     } catch (error) {
       setTaskActionError(toUiErrorState(error, "Unable to update comment."));
@@ -1011,8 +1011,8 @@ export function TasksPage({
     setTaskActionError(null);
     try {
       await orchestraClient.tasks.deleteComment(commentId);
-      await loadTasksData();
-      await loadTaskDetail(route.taskId);
+      await loadTasksData({ silent: true });
+      await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
       return true;
     } catch (error) {
       setTaskActionError(toUiErrorState(error, "Unable to delete comment."));

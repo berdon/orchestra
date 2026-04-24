@@ -108,6 +108,15 @@ describe("desktop default-file anchored task comments", () => {
       `);
       expect(viewerHeaderText).not.toContain('Resizable');
 
+      await clickSelector(sessionId, '[data-role="default-file-scroll-bottom"]');
+      const scrollTopBeforeLineComment = await executeScript<number>(sessionId, `
+        const viewer = document.querySelector('[data-role="default-file-code-viewer"]');
+        if (!(viewer instanceof HTMLElement)) {
+          throw new Error('Default file viewer was not available');
+        }
+        return viewer.scrollTop;
+      `);
+
       await executeScript(sessionId, `
         const openDraft = window.__orchestraOpenFileCommentDraft;
         if (typeof openDraft !== 'function') {
@@ -134,7 +143,29 @@ describe("desktop default-file anchored task comments", () => {
       await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
       await waitForText(sessionId, 'Please revisit this line.');
       await waitForText(sessionId, 'docs/design.md · line 3');
-      await clickSelector(sessionId, '[data-role="default-file-line-comment-button"][data-line-number="3"]');
+      const scrollTopAfterLineComment = await executeScript<number>(sessionId, `
+        const viewer = document.querySelector('[data-role="default-file-code-viewer"]');
+        if (!(viewer instanceof HTMLElement)) {
+          throw new Error('Default file viewer was not available after comment submission');
+        }
+        return viewer.scrollTop;
+      `);
+      expect(scrollTopAfterLineComment).toBeGreaterThan(scrollTopBeforeLineComment - 24);
+      await executeScript(sessionId, `
+        const viewer = document.querySelector('[data-role="default-file-code-viewer"]');
+        if (viewer instanceof HTMLElement) {
+          viewer.scrollTop = 0;
+        }
+        return true;
+      `);
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="3"]');
+        if (!(button instanceof HTMLButtonElement)) {
+          throw new Error('Line 3 comment button was not available');
+        }
+        button.click();
+        return true;
+      `);
       await waitForText(sessionId, 'Comments on line 3');
       await waitForText(sessionId, 'Please revisit this line.');
       await clickSelector(sessionId, '[data-role="default-file-open-reply"]');
@@ -142,9 +173,10 @@ describe("desktop default-file anchored task comments", () => {
       await clickSelector(sessionId, '[data-role="add-default-file-reply"]');
       await waitForText(sessionId, 'Acknowledged on line 3.');
 
-      const selectedText = await executeScript<string>(sessionId, `
+      const selectionState = await executeScript<{ selectedText: string; buttonCountDuringDrag: number }>(sessionId, `
+        const viewer = document.querySelector('[data-role="default-file-code-viewer"]');
         const lineContent = document.querySelector('[data-file-line-row][data-line-number="2"] [data-file-line-content]');
-        if (!(lineContent instanceof HTMLElement)) {
+        if (!(viewer instanceof HTMLElement) || !(lineContent instanceof HTMLElement)) {
           throw new Error('Line 2 content was not available');
         }
 
@@ -176,22 +208,30 @@ describe("desktop default-file anchored task comments", () => {
           return null;
         };
 
-        const start = locate(0);
-        const end = locate('Beta selected text'.length);
+        const start = locate(5);
+        const end = locate(18);
         if (!start || !end) {
           throw new Error('Unable to resolve selection offsets inside line 2');
         }
 
+        viewer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
         const range = document.createRange();
         range.setStart(start.node, start.offset);
         range.setEnd(end.node, end.offset);
         selection.removeAllRanges();
         selection.addRange(range);
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        return selection.toString();
+        document.dispatchEvent(new Event('selectionchange', { bubbles: true }));
+        return {
+          selectedText: selection.toString(),
+          buttonCountDuringDrag: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
+        };
       `);
-      expect(selectedText).toBe('Beta selected text');
-
+      expect(selectionState.selectedText).toBe('selected text');
+      expect(selectionState.buttonCountDuringDrag).toBe(0);
+      await executeScript(sessionId, `
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        return true;
+      `);
       await executeScript(sessionId, `
         const openDraft = window.__orchestraOpenFileCommentDraft;
         if (typeof openDraft !== 'function') {
@@ -204,9 +244,9 @@ describe("desktop default-file anchored task comments", () => {
             absolutePath: ${JSON.stringify(join(repoPath, 'docs', 'design.md'))},
             lineStart: 2,
             lineEnd: 2,
-            columnStart: 1,
+            columnStart: 6,
             columnEnd: 18,
-            selectedText: 'Beta selected text',
+            selectedText: 'selected text',
           },
           top: 132,
           left: 260,
@@ -214,10 +254,11 @@ describe("desktop default-file anchored task comments", () => {
         return true;
       `);
       await waitForText(sessionId, 'Selection');
+      await waitForText(sessionId, 'selected text');
       await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Clarify this selected text.');
       await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
       await waitForText(sessionId, 'Clarify this selected text.');
-      await waitForText(sessionId, 'Beta selected text');
+      await waitForText(sessionId, 'selected text');
 
       const comments = await invokeCommand<Array<{
         message: string;
@@ -262,9 +303,9 @@ describe("desktop default-file anchored task comments", () => {
       expect(selectionComment?.relativePath).toBe('docs/design.md');
       expect(selectionComment?.lineStart).toBe(2);
       expect(selectionComment?.lineEnd).toBe(2);
-      expect(selectionComment?.columnStart).toBe(1);
+      expect(selectionComment?.columnStart).toBe(6);
       expect(selectionComment?.columnEnd).toBe(18);
-      expect(selectionComment?.selectedText).toBe('Beta selected text');
+      expect(selectionComment?.selectedText).toBe('selected text');
       expect(selectionComment?.anchorCommitHash).toBe(commitHash);
       expect(selectionComment?.anchorHasUncommittedChanges).toBe(false);
     } finally {

@@ -5061,6 +5061,15 @@ strong {
   background: var(--accent-soft);
 }
 
+.file-content-viewer__shell--selection-active .file-content-viewer__line-comment-button,
+.file-content-viewer__shell--selection-active .file-content-viewer__selected-comment-anchor {
+  pointer-events: none;
+}
+
+.file-content-viewer__shell--selection-active .file-content-viewer__line-comment-button {
+  opacity: 0;
+}
+
 .file-content-viewer__line-comment-count {
   position: absolute;
   top: -6px;
