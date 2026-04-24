@@ -73,8 +73,9 @@ use commands::{
         set_session_model, stop_session_runtime, subscribe_session, unsubscribe_session,
     },
     skills::{
-        archive_local_skill, create_local_skill, delete_local_skill, get_skill, list_skills,
-        refresh_external_skills, unarchive_local_skill, update_local_skill,
+        archive_local_skill, create_local_skill, delete_local_skill, get_agent_skill_links,
+        get_role_skill_links, get_skill, get_workflow_skill_links, list_skills,
+        refresh_external_skills, set_skill_bindings, unarchive_local_skill, update_local_skill,
     },
     task_schedules::{
         create_task_schedule, delete_task_schedule, get_task_schedule, list_task_schedules,
@@ -333,6 +334,10 @@ pub fn run() {
             unarchive_local_skill,
             delete_local_skill,
             refresh_external_skills,
+            set_skill_bindings,
+            get_role_skill_links,
+            get_agent_skill_links,
+            get_workflow_skill_links,
             comment_on_task,
             update_task_comment,
             delete_task_comment,

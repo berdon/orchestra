@@ -1005,9 +1005,79 @@ export interface SkillBindingSummary {
   scopeCounts: SkillBindingScopeCount[];
 }
 
+export interface SkillBindingInput {
+  scopeKind: SkillBindingScopeKind;
+  projectId?: string | null;
+  roleId?: string | null;
+  agentId?: string | null;
+  workflowId?: string | null;
+  workflowLaneId?: string | null;
+}
+
+export interface SkillBindingDraftLaneRow {
+  workflowId: string;
+  workflowLaneId: string;
+}
+
+export interface SkillBindingRecord extends SkillBindingInput {
+  id: string;
+  skillId: string;
+  projectName?: string | null;
+  projectSlug?: string | null;
+  roleName?: string | null;
+  roleSlug?: string | null;
+  agentName?: string | null;
+  agentSlug?: string | null;
+  workflowName?: string | null;
+  workflowSlug?: string | null;
+  workflowLaneName?: string | null;
+  workflowLaneKey?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillLinkSummary {
+  bindingId: string;
+  scopeKind: SkillBindingScopeKind;
+  skillId: string;
+  skillSlug?: string | null;
+  skillName: string;
+  skillDescription?: string | null;
+  skillSourceKind: SkillSourceKind;
+  skillArchived: boolean;
+  skillStatus: SkillStatus;
+}
+
+export interface RoleSkillLinks {
+  roleId: string;
+  skills: SkillLinkSummary[];
+}
+
+export interface AgentSkillLinks {
+  agentId: string;
+  directSkills: SkillLinkSummary[];
+  inheritedRoleId?: string | null;
+  inheritedRoleName?: string | null;
+  inheritedRoleSkills: SkillLinkSummary[];
+}
+
+export interface WorkflowLaneSkillLinks {
+  workflowLaneId: string;
+  workflowLaneName: string;
+  workflowLaneKey: string;
+  skills: SkillLinkSummary[];
+}
+
+export interface WorkflowSkillLinks {
+  workflowId: string;
+  workflowSkills: SkillLinkSummary[];
+  workflowLaneSkills: WorkflowLaneSkillLinks[];
+}
+
 export interface SkillDetail extends SkillSummary {
   markdownBody?: string | null;
   bindingSummary: SkillBindingSummary;
+  bindings: SkillBindingRecord[];
 }
 
 export interface LocalSkillUpsertInput {

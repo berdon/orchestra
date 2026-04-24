@@ -61,6 +61,7 @@ describe("desktop skills settings", () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
+      await executeScript(sessionId, "window.confirm = () => true;");
 
       await clickByText(sessionId, "button", "Settings");
       await waitForSelector(sessionId, '[data-role="settings-tab-skills"]');
@@ -85,6 +86,72 @@ describe("desktop skills settings", () => {
 
       await expect.poll(() => existsSync(localSkillPath)).toBe(true);
       await waitForText(sessionId, 'Local Catalog Skill');
+
+      await setInputValue(sessionId, '[data-role="skill-project-search"]', 'orchestra');
+      await clickByText(sessionId, 'button', 'Add Orchestra');
+      await setInputValue(sessionId, '[data-role="skill-role-search"]', 'senior developer');
+      await clickByText(sessionId, 'button', 'Add Senior Developer');
+      await setInputValue(sessionId, '[data-role="skill-agent-search"]', 'supervisor');
+      await clickByText(sessionId, 'button', 'Add Supervisor');
+      await setInputValue(sessionId, '[data-role="skill-workflow-search"]', 'development');
+      await clickByText(sessionId, 'button', 'Add Development');
+      await clickSelector(sessionId, '[data-role="add-lane-binding"]');
+      await setInputValue(sessionId, '[data-role="lane-binding-workflow-0"]', 'workflow-development');
+      await setInputValue(sessionId, '[data-role="lane-binding-lane-0"]', 'lane-development-implement');
+      await clickSelector(sessionId, '[data-role="save-skill-bindings"]');
+      await waitForText(sessionId, '5 bindings');
+      await waitForText(sessionId, 'Project · Orchestra');
+      await waitForText(sessionId, 'Role · Senior Developer');
+      await waitForText(sessionId, 'Agent · Supervisor');
+      await waitForText(sessionId, 'Workflow · Development');
+      await waitForText(sessionId, 'Workflow lane · Development → Implement');
+
+      await clickByText(sessionId, '[data-role="skills-list"] button', 'external-readonly');
+      await clickByText(sessionId, '[data-role="skills-list"] button', 'Local Catalog Skill');
+      await waitForText(sessionId, '5 bindings');
+      await waitForText(sessionId, 'Project · Orchestra');
+
+      await clickByText(sessionId, '[role="tab"]', 'Agents');
+      await waitForText(sessionId, 'Agent library');
+      await clickByText(sessionId, '[aria-label="Agents"] a', 'Supervisor');
+      await waitForText(sessionId, 'Linked skills');
+      await waitForText(sessionId, 'Local Catalog Skill');
+      await clickByText(sessionId, 'button', 'Local Catalog Skill');
+      await waitForText(sessionId, 'Scope bindings');
+
+      await clickByText(sessionId, '[role="tab"]', 'Roles');
+      await waitForText(sessionId, 'Role library');
+      await clickByText(sessionId, '[aria-label="Roles"] a', 'Senior Developer');
+      await waitForText(sessionId, 'Linked skills');
+      await waitForText(sessionId, 'Local Catalog Skill');
+      await clickByText(sessionId, 'button', 'Local Catalog Skill');
+      await waitForText(sessionId, 'Scope bindings');
+
+      await clickByText(sessionId, '[role="tab"]', 'Workflows');
+      await waitForText(sessionId, 'Workflow library');
+      await clickByText(sessionId, '[aria-label="Workflows"] a', 'Development');
+      await waitForText(sessionId, 'Workflow-linked skills');
+      await waitForText(sessionId, 'Local Catalog Skill');
+      await clickByText(sessionId, 'button', 'Local Catalog Skill');
+      await waitForText(sessionId, 'Workflow lane · Development → Implement');
+
+      await clickSelector(sessionId, '[data-role="skill-binding-global-toggle"]');
+      await clickSelector(sessionId, '[data-role="save-skill-bindings"]');
+      await waitForText(sessionId, '1 binding');
+      await waitForText(sessionId, 'Global · Global');
+      await waitForText(sessionId, 'Clear all scope bindings before deleting this skill.');
+      await expect.poll(async () => executeScript<boolean>(sessionId, `
+        const button = document.querySelector('[data-role="delete-skill"]');
+        return Boolean(button && button.disabled);
+      `)).toBe(true);
+
+      await clickSelector(sessionId, '[data-role="skill-binding-global-toggle"]');
+      await clickSelector(sessionId, '[data-role="save-skill-bindings"]');
+      await waitForText(sessionId, 'No bindings yet.');
+      await expect.poll(async () => executeScript<boolean>(sessionId, `
+        const button = document.querySelector('[data-role="delete-skill"]');
+        return Boolean(button && !button.disabled);
+      `)).toBe(true);
 
       await setInputValue(sessionId, '[data-role="skill-slug"]', 'local-catalog-skill-renamed');
       await setInputValue(sessionId, '[data-role="skill-markdown-body"]', '# Title\n\nUpdated local catalog skill summary.\n');

@@ -14,12 +14,14 @@ import {
   validateAgent,
 } from "../lib/agents";
 import { getPolicy, listPolicies } from "../lib/policies";
+import { getAgentSkillLinks } from "../lib/skills";
 import { getWorkerOverlay, updateWorkerOverlay } from "../lib/projectSettings";
 import { listRoles } from "../lib/roles";
 import { getPiExecutableDiagnostic, listPiModels, reportClientError } from "../lib/tauri";
 import type {
   AgentDefinition,
   AgentMemoryInfo,
+  AgentSkillLinks,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationError,
@@ -83,7 +85,7 @@ function formatPiRuntimeDiagnostic(diagnostic: PiExecutableDiagnostic | null) {
   return `${diagnostic.source} runtime${version}: ${diagnostic.resolvedPath ?? "Unknown path"}`;
 }
 
-export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpenPiSettings }: { activeProjectId?: string | null; piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void }) {
+export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpenPiSettings, onOpenSkill }: { activeProjectId?: string | null; piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void }) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -106,6 +108,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
   const [overlayDraft, setOverlayDraft] = useState("");
   const [savingOverlay, setSavingOverlay] = useState(false);
   const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
+  const [skillLinks, setSkillLinks] = useState<AgentSkillLinks | null>(null);
 
   const selectedAgentSummary = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
@@ -346,6 +349,31 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
 
     void loadAgentDetail(agentId);
   }, [selectedAgentSummary?.id, isCreatingAgent, loadedAgentId, activeProjectId]);
+
+  useEffect(() => {
+    if (!onOpenSkill || isCreatingAgent || !selectedAgentSummary?.id) {
+      setSkillLinks(null);
+      return;
+    }
+
+    let cancelled = false;
+    void getAgentSkillLinks(selectedAgentSummary.id)
+      .then((links) => {
+        if (!cancelled) {
+          setSkillLinks(links);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAgentActionError(error instanceof Error ? error.message : "Unable to load linked skills.");
+          setSkillLinks(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreatingAgent, onOpenSkill, selectedAgentSummary?.id]);
 
   async function refreshAgentValidation(nextDraft: AgentUpsertInput) {
     try {
@@ -736,6 +764,48 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
               onPolicyIdsChange={(policyIds) => updateAgentDraft((draft) => ({ ...draft, policyIds }))}
               onDirectPermissionsChange={(directPermissions) => updateAgentDraft((draft) => ({ ...draft, directPermissions }))}
             />
+
+            {onOpenSkill ? (
+              <section className="workflow-section">
+                <div>
+                  <p className="eyebrow">Managed skills</p>
+                  <h3>Linked skills</h3>
+                </div>
+                <div className="skills-linked-surface-grid">
+                  <div>
+                    <strong>Direct</strong>
+                    {skillLinks?.directSkills.length ? (
+                      <div className="skills-binding-chip-list">
+                        {skillLinks.directSkills.map((skill) => (
+                          <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                            <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted-copy">No direct agent bindings.</p>
+                    )}
+                  </div>
+                  {skillLinks?.inheritedRoleId ? (
+                    <div>
+                      <strong>Inherited from role{skillLinks.inheritedRoleName ? ` · ${skillLinks.inheritedRoleName}` : ""}</strong>
+                      {skillLinks.inheritedRoleSkills.length ? (
+                        <div className="skills-binding-chip-list">
+                          {skillLinks.inheritedRoleSkills.map((skill) => (
+                            <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted-copy">No inherited role bindings.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+                <p className="muted-copy">Assignments remain editable only in Settings → Skills.</p>
+              </section>
+            ) : null}
 
             {agentMemoryInfo ? (
               <section className="workflow-section">

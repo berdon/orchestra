@@ -5,12 +5,14 @@ import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import { getPolicy, listPolicies } from "../lib/policies";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
+import { getRoleSkillLinks } from "../lib/skills";
 import { getPiExecutableDiagnostic, listPiModels, reportClientError } from "../lib/tauri";
 import type {
   PiExecutableDiagnostic,
   PiSetupState,
   PolicyDefinition,
   RoleDefinition,
+  RoleSkillLinks,
   RoleSummary,
   RoleUpsertInput,
   RoleValidationError,
@@ -69,7 +71,7 @@ interface RolesPanelProps {
   selectionRequest?: { roleId: string; token: number } | null;
 }
 
-export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpenPiSettings }: RolesPanelProps & { piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void }) {
+export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpenPiSettings, onOpenSkill }: RolesPanelProps & { piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void }) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [roleDraft, setRoleDraft] = useState<RoleUpsertInput>(createBlankRoleDraft);
@@ -86,6 +88,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
   const [piExecutableDiagnostic, setPiExecutableDiagnostic] = useState<PiExecutableDiagnostic | null>(null);
   const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
+  const [skillLinks, setSkillLinks] = useState<RoleSkillLinks | null>(null);
   const selectionRequestTokenRef = useRef<number>(0);
 
   const selectedRoleSummary = useMemo(
@@ -242,6 +245,31 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
 
     void loadRoleDetail(roleId);
   }, [selectedRoleSummary?.id, isCreatingRole, loadedRoleId]);
+
+  useEffect(() => {
+    if (!onOpenSkill || isCreatingRole || !selectedRoleSummary?.id) {
+      setSkillLinks(null);
+      return;
+    }
+
+    let cancelled = false;
+    void getRoleSkillLinks(selectedRoleSummary.id)
+      .then((links) => {
+        if (!cancelled) {
+          setSkillLinks(links);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRoleActionError(error instanceof Error ? error.message : "Unable to load linked skills.");
+          setSkillLinks(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreatingRole, onOpenSkill, selectedRoleSummary?.id]);
 
   useEffect(() => {
     if (!selectionRequest || selectionRequest.token === selectionRequestTokenRef.current) {
@@ -583,6 +611,26 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
             />
 
             <p className="muted-copy">Permissions assigned here are inherited by role instances spawned from this role.</p>
+
+            {onOpenSkill ? (
+              <section className="workflow-section">
+                <div>
+                  <p className="eyebrow">Managed skills</p>
+                  <h3>Linked skills</h3>
+                </div>
+                {skillLinks?.skills.length ? (
+                  <div className="skills-binding-chip-list">
+                    {skillLinks.skills.map((skill) => (
+                      <button className="task-tag-chip task-tag-chip--interactive" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                        <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No skills are directly bound to this role. Edit assignments in Settings → Skills.</p>
+                )}
+              </section>
+            ) : null}
 
             {validationSummary.length > 0 ? (
               <section className="workflow-section">

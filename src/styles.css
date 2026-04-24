@@ -4703,6 +4703,49 @@ strong {
   margin: 0;
 }
 
+.skills-binding-editor,
+.skills-binding-grid,
+.skills-binding-card,
+.skills-lane-binding-list,
+.skills-linked-surface-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.skills-binding-grid,
+.skills-linked-surface-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.skills-binding-card {
+  padding: 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--bg-subtle));
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+.skills-binding-card--full {
+  grid-column: 1 / -1;
+}
+
+.skills-binding-global-toggle {
+  align-items: flex-start;
+}
+
+.skills-binding-picker-list,
+.skills-binding-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skills-lane-binding-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
 .empty-state {
   display: grid;
   gap: 10px;
@@ -4726,7 +4769,10 @@ strong {
 }
 
 @media (max-width: 1100px) {
-  .skills-form-grid {
+  .skills-form-grid,
+  .skills-binding-grid,
+  .skills-linked-surface-grid,
+  .skills-lane-binding-row {
     grid-template-columns: minmax(0, 1fr);
   }
 

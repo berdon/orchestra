@@ -236,6 +236,26 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_skill_id
                 ON skill_scope_bindings(skill_id, scope_kind);
 
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_project_id
+                ON skill_scope_bindings(project_id)
+                WHERE project_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_role_id
+                ON skill_scope_bindings(role_id)
+                WHERE role_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_agent_id
+                ON skill_scope_bindings(agent_id)
+                WHERE agent_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_workflow_id
+                ON skill_scope_bindings(workflow_id)
+                WHERE workflow_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_workflow_lane_id
+                ON skill_scope_bindings(workflow_lane_id, workflow_id)
+                WHERE workflow_lane_id IS NOT NULL;
+
             CREATE TABLE IF NOT EXISTS policies (
                 id TEXT PRIMARY KEY,
                 slug TEXT NOT NULL UNIQUE,
@@ -1600,6 +1620,26 @@ fn ensure_skills_tables(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_skill_id
                 ON skill_scope_bindings(skill_id, scope_kind);
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_project_id
+                ON skill_scope_bindings(project_id)
+                WHERE project_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_role_id
+                ON skill_scope_bindings(role_id)
+                WHERE role_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_agent_id
+                ON skill_scope_bindings(agent_id)
+                WHERE agent_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_workflow_id
+                ON skill_scope_bindings(workflow_id)
+                WHERE workflow_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_skill_scope_bindings_workflow_lane_id
+                ON skill_scope_bindings(workflow_lane_id, workflow_id)
+                WHERE workflow_lane_id IS NOT NULL;
             "#,
         )
         .map_err(|error| format!("Unable to ensure skills tables: {error}"))?;
@@ -2580,6 +2620,11 @@ mod tests {
         for expected in [
             "idx_skill_scope_bindings_unique_scope",
             "idx_skill_scope_bindings_skill_id",
+            "idx_skill_scope_bindings_project_id",
+            "idx_skill_scope_bindings_role_id",
+            "idx_skill_scope_bindings_agent_id",
+            "idx_skill_scope_bindings_workflow_id",
+            "idx_skill_scope_bindings_workflow_lane_id",
         ] {
             assert!(binding_indexes.iter().any(|name| name == expected));
         }

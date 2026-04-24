@@ -869,6 +869,7 @@ export function App() {
   const [agentsSelectionRequest, setAgentsSelectionRequest] = useState<{ type: "role" | "agent"; id: string; token: number } | null>(null);
   const [rolesSelectionRequest, setRolesSelectionRequest] = useState<{ roleId: string; token: number } | null>(null);
   const [workflowsSelectionRequest, setWorkflowsSelectionRequest] = useState<{ workflowId: string; token: number } | null>(null);
+  const [skillsSelectionRequest, setSkillsSelectionRequest] = useState<{ skillId: string; token: number } | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteLoading, setCommandPaletteLoading] = useState(false);
   const [commandPaletteItems, setCommandPaletteItems] = useState<CommandPaletteItem[]>([]);
@@ -2971,6 +2972,12 @@ export function App() {
     setWorkflowsSelectionRequest((current) => ({ workflowId, token: (current?.token ?? 0) + 1 }));
   }
 
+  function navigateToSkill(skillId: string) {
+    setActivePage("settings");
+    setSettingsTab("skills");
+    setSkillsSelectionRequest((current) => ({ skillId, token: (current?.token ?? 0) + 1 }));
+  }
+
   function handleProjectSelection(projectId: string) {
     setActiveProjectIdState(projectId);
     closeMobileNavigation({ restoreFocus: false });
@@ -3921,13 +3928,13 @@ export function App() {
           activeSettingsTab === "projects" ? (
             <ProjectsPanel />
           ) : activeSettingsTab === "agents" ? (
-            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} />
+            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} onOpenSkill={canManageSkillsSettings ? navigateToSkill : undefined} />
           ) : activeSettingsTab === "roles" ? (
-            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} />
+            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} onOpenSkill={canManageSkillsSettings ? navigateToSkill : undefined} />
           ) : activeSettingsTab === "workflows" ? (
-            <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} />
+            <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} onOpenSkill={canManageSkillsSettings ? navigateToSkill : undefined} />
           ) : activeSettingsTab === "skills" ? (
-            <SkillsPanel />
+            <SkillsPanel selectionRequest={skillsSelectionRequest} />
           ) : activeSettingsTab === "channels" ? (
             <ChannelsPanel />
           ) : activeSettingsTab === "remote" ? (

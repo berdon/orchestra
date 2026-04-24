@@ -1,4 +1,12 @@
-import type { LocalSkillUpsertInput, SkillDetail, SkillStatus, SkillSummary } from "../types";
+import type {
+  LocalSkillUpsertInput,
+  SkillBindingDraftLaneRow,
+  SkillBindingInput,
+  SkillBindingScopeKind,
+  SkillDetail,
+  SkillStatus,
+  SkillSummary,
+} from "../types";
 
 export type SkillSourceFilter = "all" | "local" | "external";
 export type SkillStatusFilter = "all" | "active" | "archived" | "shadowed" | "missing" | "invalid";
@@ -20,6 +28,15 @@ export interface LocalSkillDraftState {
     slug?: string;
     markdownBody?: string;
   };
+}
+
+export interface SkillBindingDraft {
+  global: boolean;
+  projectIds: string[];
+  roleIds: string[];
+  agentIds: string[];
+  workflowIds: string[];
+  workflowLaneBindings: SkillBindingDraftLaneRow[];
 }
 
 export function createBlankLocalSkillDraft(): LocalSkillUpsertInput {
@@ -190,6 +207,218 @@ export function localSkillDraftHasChanges(draft: LocalSkillUpsertInput, detail: 
 
 export function localSkillDraftHasContent(draft: LocalSkillUpsertInput) {
   return Boolean(draft.name.trim() || draft.slug?.trim() || draft.markdownBody.trim());
+}
+
+function normalizeBindingIdList(ids: string[]) {
+  return Array.from(new Set(ids.map((value) => value.trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeBindingLaneRows(rows: SkillBindingDraftLaneRow[]) {
+  const seen = new Set<string>();
+  const normalized: SkillBindingDraftLaneRow[] = [];
+
+  for (const row of rows) {
+    const workflowId = row.workflowId.trim();
+    const workflowLaneId = row.workflowLaneId.trim();
+    if (!workflowId && !workflowLaneId) {
+      continue;
+    }
+    const key = `${workflowId}::${workflowLaneId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalized.push({ workflowId, workflowLaneId });
+  }
+
+  return normalized.sort((left, right) => (
+    left.workflowId.localeCompare(right.workflowId) || left.workflowLaneId.localeCompare(right.workflowLaneId)
+  ));
+}
+
+function normalizeBindingInputs(bindings: SkillBindingInput[]) {
+  return bindings
+    .map((binding) => ({
+      scopeKind: binding.scopeKind,
+      projectId: binding.projectId?.trim() || null,
+      roleId: binding.roleId?.trim() || null,
+      agentId: binding.agentId?.trim() || null,
+      workflowId: binding.workflowId?.trim() || null,
+      workflowLaneId: binding.workflowLaneId?.trim() || null,
+    }))
+    .sort((left, right) => {
+      const leftRank = bindingScopeOrder(left.scopeKind);
+      const rightRank = bindingScopeOrder(right.scopeKind);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return [left.projectId, left.roleId, left.agentId, left.workflowId, left.workflowLaneId].join("|")
+        .localeCompare([right.projectId, right.roleId, right.agentId, right.workflowId, right.workflowLaneId].join("|"));
+    });
+}
+
+function bindingScopeOrder(scopeKind: SkillBindingScopeKind) {
+  switch (scopeKind) {
+    case "global":
+      return 0;
+    case "project":
+      return 1;
+    case "role":
+      return 2;
+    case "agent":
+      return 3;
+    case "workflow":
+      return 4;
+    case "workflow_lane":
+      return 5;
+    default:
+      return 6;
+  }
+}
+
+export function createBlankSkillBindingDraft(): SkillBindingDraft {
+  return {
+    global: false,
+    projectIds: [],
+    roleIds: [],
+    agentIds: [],
+    workflowIds: [],
+    workflowLaneBindings: [],
+  };
+}
+
+export function setSkillBindingDraftGlobal(draft: SkillBindingDraft, enabled: boolean): SkillBindingDraft {
+  if (!enabled) {
+    return {
+      ...draft,
+      global: false,
+    };
+  }
+
+  return {
+    global: true,
+    projectIds: [],
+    roleIds: [],
+    agentIds: [],
+    workflowIds: [],
+    workflowLaneBindings: [],
+  };
+}
+
+export function buildSkillBindingDraft(detail: SkillDetail | null): SkillBindingDraft {
+  if (!detail) {
+    return createBlankSkillBindingDraft();
+  }
+
+  const draft = createBlankSkillBindingDraft();
+  for (const binding of detail.bindings) {
+    switch (binding.scopeKind) {
+      case "global":
+        return setSkillBindingDraftGlobal(draft, true);
+      case "project":
+        if (binding.projectId) {
+          draft.projectIds.push(binding.projectId);
+        }
+        break;
+      case "role":
+        if (binding.roleId) {
+          draft.roleIds.push(binding.roleId);
+        }
+        break;
+      case "agent":
+        if (binding.agentId) {
+          draft.agentIds.push(binding.agentId);
+        }
+        break;
+      case "workflow":
+        if (binding.workflowId) {
+          draft.workflowIds.push(binding.workflowId);
+        }
+        break;
+      case "workflow_lane":
+        draft.workflowLaneBindings.push({
+          workflowId: binding.workflowId ?? "",
+          workflowLaneId: binding.workflowLaneId ?? "",
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
+  return {
+    global: false,
+    projectIds: normalizeBindingIdList(draft.projectIds),
+    roleIds: normalizeBindingIdList(draft.roleIds),
+    agentIds: normalizeBindingIdList(draft.agentIds),
+    workflowIds: normalizeBindingIdList(draft.workflowIds),
+    workflowLaneBindings: normalizeBindingLaneRows(draft.workflowLaneBindings),
+  };
+}
+
+export function validateSkillBindingDraft(draft: SkillBindingDraft) {
+  if (draft.global) {
+    return [] as string[];
+  }
+
+  const errors: string[] = [];
+  for (const [index, row] of draft.workflowLaneBindings.entries()) {
+    const workflowId = row.workflowId.trim();
+    const workflowLaneId = row.workflowLaneId.trim();
+    if (!workflowId && !workflowLaneId) {
+      continue;
+    }
+    if (!workflowId || !workflowLaneId) {
+      errors.push(`Lane binding ${index + 1} must include both a workflow and lane.`);
+    }
+  }
+
+  return errors;
+}
+
+export function normalizeSkillBindingDraftForSave(draft: SkillBindingDraft): SkillBindingInput[] {
+  if (draft.global) {
+    return [{ scopeKind: "global" }];
+  }
+
+  return normalizeBindingInputs([
+    ...normalizeBindingIdList(draft.projectIds).map((projectId) => ({ scopeKind: "project" as const, projectId })),
+    ...normalizeBindingIdList(draft.roleIds).map((roleId) => ({ scopeKind: "role" as const, roleId })),
+    ...normalizeBindingIdList(draft.agentIds).map((agentId) => ({ scopeKind: "agent" as const, agentId })),
+    ...normalizeBindingIdList(draft.workflowIds).map((workflowId) => ({ scopeKind: "workflow" as const, workflowId })),
+    ...normalizeBindingLaneRows(draft.workflowLaneBindings)
+      .filter((row) => row.workflowId && row.workflowLaneId)
+      .map((row) => ({
+        scopeKind: "workflow_lane" as const,
+        workflowId: row.workflowId,
+        workflowLaneId: row.workflowLaneId,
+      })),
+  ]);
+}
+
+export function skillBindingDraftHasChanges(draft: SkillBindingDraft, detail: SkillDetail | null) {
+  if (!detail) {
+    return false;
+  }
+
+  return JSON.stringify(normalizeSkillBindingDraftForSave(draft))
+    !== JSON.stringify(normalizeBindingInputs(detail.bindings.map((binding) => ({
+      scopeKind: binding.scopeKind,
+      projectId: binding.projectId,
+      roleId: binding.roleId,
+      agentId: binding.agentId,
+      workflowId: binding.workflowId,
+      workflowLaneId: binding.workflowLaneId,
+    }))));
+}
+
+export function filterSkillBindingTargets<T extends { name: string; slug?: string | null }>(entries: T[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return entries;
+  }
+
+  return entries.filter((entry) => `${entry.name}\n${entry.slug ?? ""}`.toLowerCase().includes(normalizedQuery));
 }
 
 function matchesStatusFilter(skill: SkillSummary, statusFilter: SkillStatusFilter) {

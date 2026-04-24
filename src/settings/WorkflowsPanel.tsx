@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
+import { getWorkflowSkillLinks } from "../lib/skills";
 import {
   archiveWorkflow,
   createWorkflow,
@@ -20,6 +21,7 @@ import type {
   WorkflowDefinition,
   WorkflowDeleteImpact,
   WorkflowLaneInput,
+  WorkflowSkillLinks,
   WorkflowSummary,
   WorkflowTransitionType,
   WorkflowUpsertInput,
@@ -147,9 +149,10 @@ function describeOwner(
 interface WorkflowsPanelProps {
   activeProjectId?: string | null;
   selectionRequest?: { workflowId: string; token: number } | null;
+  onOpenSkill?: (skillId: string) => void;
 }
 
-export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null }: WorkflowsPanelProps) {
+export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null, onOpenSkill }: WorkflowsPanelProps) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [selectedLaneId, setSelectedLaneId] = useState<string | null>(null);
@@ -169,6 +172,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [skillLinks, setSkillLinks] = useState<WorkflowSkillLinks | null>(null);
   const selectionRequestTokenRef = useRef<number>(0);
 
   const selectedWorkflowSummary = useMemo(
@@ -189,6 +193,10 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
   );
 
   const selectedLane = selectedLaneIndex >= 0 ? workflowDraft.lanes[selectedLaneIndex] ?? null : workflowDraft.lanes[0] ?? null;
+  const selectedLaneSkillLinks = useMemo(
+    () => skillLinks?.workflowLaneSkills.find((lane) => lane.workflowLaneId === selectedLane?.id) ?? null,
+    [selectedLane?.id, skillLinks?.workflowLaneSkills],
+  );
 
   const validationSummary = useMemo(() => workflowValidation.map((error) => `${error.path}: ${error.message}`), [workflowValidation]);
   const deleteImpactRows = useMemo(() => {
@@ -297,6 +305,31 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
     setIsCreatingWorkflow(false);
     setSelectedWorkflowId(selectionRequest.workflowId);
   }, [selectionRequest]);
+
+  useEffect(() => {
+    if (!onOpenSkill || isCreatingWorkflow || !selectedWorkflowSummary?.id) {
+      setSkillLinks(null);
+      return;
+    }
+
+    let cancelled = false;
+    void getWorkflowSkillLinks(selectedWorkflowSummary.id)
+      .then((links) => {
+        if (!cancelled) {
+          setSkillLinks(links);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setWorkflowActionError(error instanceof Error ? error.message : "Unable to load linked skills.");
+          setSkillLinks(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreatingWorkflow, onOpenSkill, selectedWorkflowSummary?.id]);
 
   async function refreshWorkflowValidation(nextDraft: WorkflowUpsertInput) {
     try {
@@ -638,6 +671,26 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
               </div>
             </section>
 
+            {onOpenSkill ? (
+              <section className="workflow-section workflow-section--compact">
+                <div>
+                  <p className="eyebrow">Managed skills</p>
+                  <h4>Workflow-linked skills</h4>
+                </div>
+                {skillLinks?.workflowSkills.length ? (
+                  <div className="skills-binding-chip-list">
+                    {skillLinks.workflowSkills.map((skill) => (
+                      <button className="task-tag-chip task-tag-chip--interactive" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                        <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">No workflow-scoped skills are linked here. Edit assignments in Settings → Skills.</p>
+                )}
+              </section>
+            ) : null}
+
             {selectedLane ? (
               <section className="workflow-section">
                 <div className="workflow-section__header">
@@ -697,6 +750,20 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                     </button>
                   </div>
                 </div>
+
+                {onOpenSkill ? (
+                  selectedLaneSkillLinks?.skills.length ? (
+                    <div className="skills-binding-chip-list">
+                      {selectedLaneSkillLinks.skills.map((skill) => (
+                        <button className="task-tag-chip task-tag-chip--interactive" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted-copy">No lane-scoped skills are linked to this lane. Edit assignments in Settings → Skills.</p>
+                  )
+                ) : null}
 
                 <div className="workflow-form-grid">
                   <label className="field-group">

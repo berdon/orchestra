@@ -1433,6 +1433,90 @@ pub struct SkillBindingSummary {
     pub scope_counts: Vec<SkillBindingScopeCount>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBindingInput {
+    pub scope_kind: String,
+    pub project_id: Option<String>,
+    pub role_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub workflow_lane_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBindingRecord {
+    pub id: String,
+    pub skill_id: String,
+    pub scope_kind: String,
+    pub project_id: Option<String>,
+    pub role_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub workflow_lane_id: Option<String>,
+    pub project_name: Option<String>,
+    pub project_slug: Option<String>,
+    pub role_name: Option<String>,
+    pub role_slug: Option<String>,
+    pub agent_name: Option<String>,
+    pub agent_slug: Option<String>,
+    pub workflow_name: Option<String>,
+    pub workflow_slug: Option<String>,
+    pub workflow_lane_name: Option<String>,
+    pub workflow_lane_key: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillLinkSummary {
+    pub binding_id: String,
+    pub scope_kind: String,
+    pub skill_id: String,
+    pub skill_slug: Option<String>,
+    pub skill_name: String,
+    pub skill_description: Option<String>,
+    pub skill_source_kind: String,
+    pub skill_archived: bool,
+    pub skill_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleSkillLinks {
+    pub role_id: String,
+    pub skills: Vec<SkillLinkSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSkillLinks {
+    pub agent_id: String,
+    pub direct_skills: Vec<SkillLinkSummary>,
+    pub inherited_role_id: Option<String>,
+    pub inherited_role_name: Option<String>,
+    pub inherited_role_skills: Vec<SkillLinkSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowLaneSkillLinks {
+    pub workflow_lane_id: String,
+    pub workflow_lane_name: String,
+    pub workflow_lane_key: String,
+    pub skills: Vec<SkillLinkSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowSkillLinks {
+    pub workflow_id: String,
+    pub workflow_skills: Vec<SkillLinkSummary>,
+    pub workflow_lane_skills: Vec<WorkflowLaneSkillLinks>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDetail {
@@ -1440,6 +1524,7 @@ pub struct SkillDetail {
     pub summary: SkillSummary,
     pub markdown_body: Option<String>,
     pub binding_summary: SkillBindingSummary,
+    pub bindings: Vec<SkillBindingRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,12 +9,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::{
-    models::{
-        LocalSkillUpsertInput, SkillBindingScopeCount, SkillBindingSummary, SkillDetail,
-        SkillSummary,
-    },
-    services::orchestra_paths::{
-        default_orchestra_root, orchestra_local_skill_path, sanitize_slug,
+    models::{LocalSkillUpsertInput, SkillDetail, SkillSummary},
+    services::{
+        orchestra_paths::{default_orchestra_root, orchestra_local_skill_path, sanitize_slug},
+        skill_bindings,
     },
 };
 
@@ -132,7 +130,8 @@ pub fn get_skill(connection: &Connection, skill_id: &str) -> Result<SkillDetail,
     let row = get_skill_row(connection, skill_id)?;
     Ok(SkillDetail {
         markdown_body: load_skill_markdown_body(&row.summary)?,
-        binding_summary: load_skill_binding_summary(connection, skill_id)?,
+        binding_summary: skill_bindings::load_skill_binding_summary(connection, skill_id)?,
+        bindings: skill_bindings::load_skill_bindings(connection, skill_id)?,
         summary: row.summary,
     })
 }
@@ -604,48 +603,6 @@ fn normalize_local_skill_input(
 
 fn normalize_markdown_body(value: &str) -> String {
     value.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-fn load_skill_binding_summary(
-    connection: &Connection,
-    skill_id: &str,
-) -> Result<SkillBindingSummary, String> {
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT scope_kind, COUNT(1) AS binding_count
-            FROM skill_scope_bindings
-            WHERE skill_id = ?1
-            GROUP BY scope_kind
-            ORDER BY CASE scope_kind
-                WHEN 'global' THEN 0
-                WHEN 'project' THEN 1
-                WHEN 'role' THEN 2
-                WHEN 'agent' THEN 3
-                WHEN 'workflow' THEN 4
-                WHEN 'workflow_lane' THEN 5
-                ELSE 6
-            END ASC
-            "#,
-        )
-        .map_err(|error| format!("Unable to prepare binding summary query for skill {skill_id}: {error}"))?;
-
-    let scope_counts = statement
-        .query_map([skill_id], |row| {
-            Ok(SkillBindingScopeCount {
-                scope_kind: row.get(0)?,
-                count: row.get(1)?,
-            })
-        })
-        .map_err(|error| format!("Unable to query bindings for skill {skill_id}: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read bindings for skill {skill_id}: {error}"))?;
-
-    let total_count = scope_counts.iter().map(|entry| entry.count).sum();
-    Ok(SkillBindingSummary {
-        total_count,
-        scope_counts,
-    })
 }
 
 fn load_skill_markdown_body(summary: &SkillSummary) -> Result<Option<String>, String> {
