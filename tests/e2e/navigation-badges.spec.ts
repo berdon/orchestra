@@ -214,44 +214,44 @@ test("navigation badges reflect unread inbox work and active sessions per projec
   const collapsedMenuGeometry = await page.evaluate(() => {
     const trigger = document.querySelector('[data-role="project-switcher-trigger"]');
     const panel = document.querySelector('[data-role="project-switcher-menu"]');
-    const header = document.querySelector('.page-header');
-    if (!(trigger instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(header instanceof HTMLElement)) {
+    const content = document.querySelector('main.content');
+    if (!(trigger instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(content instanceof HTMLElement)) {
       return null;
     }
     const triggerRect = trigger.getBoundingClientRect();
     const panelRect = panel.getBoundingClientRect();
-    const headerRect = header.getBoundingClientRect();
-    const overlapLeft = Math.max(panelRect.left, headerRect.left);
-    const overlapRight = Math.min(panelRect.right, headerRect.right);
-    const overlapTop = Math.max(panelRect.top, headerRect.top);
-    const overlapBottom = Math.min(panelRect.bottom, headerRect.bottom);
-    const overlapsHeader = overlapRight - overlapLeft >= 4 && overlapBottom - overlapTop >= 4;
-    const probeX = overlapsHeader ? overlapLeft + 4 : null;
-    const probeY = overlapsHeader ? overlapTop + 4 : null;
-    const stack = overlapsHeader && probeX !== null && probeY !== null
+    const contentRect = content.getBoundingClientRect();
+    const overlapLeft = Math.max(panelRect.left, contentRect.left);
+    const overlapRight = Math.min(panelRect.right, contentRect.right);
+    const overlapTop = Math.max(panelRect.top, contentRect.top);
+    const overlapBottom = Math.min(panelRect.bottom, contentRect.bottom);
+    const overlapsContent = overlapRight - overlapLeft >= 4 && overlapBottom - overlapTop >= 4;
+    const probeX = overlapsContent ? overlapLeft + 4 : null;
+    const probeY = overlapsContent ? overlapTop + 4 : null;
+    const stack = overlapsContent && probeX !== null && probeY !== null
       ? document.elementsFromPoint(probeX, probeY)
       : [];
     return {
       width: Math.round(panelRect.width),
       left: Math.round(panelRect.left),
       triggerRight: Math.round(triggerRect.right),
-      overlapsHeader,
-      menuOnTopOfHeader: overlapsHeader
+      overlapsContent,
+      menuOnTopOfContent: overlapsContent
         ? stack.some((element) => element instanceof Element && element.closest('[data-role="project-switcher-menu"]') === panel)
           && stack[0] instanceof Element
           && stack[0].closest('[data-role="project-switcher-menu"]') === panel
         : false,
-      headerInStack: overlapsHeader
-        ? stack.some((element) => element instanceof Element && element.closest('.page-header') === header)
+      contentInStack: overlapsContent
+        ? stack.some((element) => element instanceof Element && element.closest('main.content') === content)
         : false,
     };
   });
   expect(collapsedMenuGeometry).not.toBeNull();
   expect(collapsedMenuGeometry?.width ?? 0).toBeGreaterThanOrEqual(220);
   expect(collapsedMenuGeometry?.left ?? 0).toBeGreaterThanOrEqual((collapsedMenuGeometry?.triggerRight ?? 0) - 1);
-  expect(collapsedMenuGeometry?.overlapsHeader).toBe(true);
-  expect(collapsedMenuGeometry?.headerInStack).toBe(true);
-  expect(collapsedMenuGeometry?.menuOnTopOfHeader).toBe(true);
+  expect(collapsedMenuGeometry?.overlapsContent).toBe(true);
+  expect(collapsedMenuGeometry?.contentInStack).toBe(true);
+  expect(collapsedMenuGeometry?.menuOnTopOfContent).toBe(true);
 
   await expect(page.locator('[data-role="project-switcher-option-alpha"]')).toContainText("Alpha");
   await expect(page.locator('[data-role="project-switcher-option-alpha"]')).toContainText("1");

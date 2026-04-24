@@ -6,6 +6,7 @@ import { useOrchestraConnection } from "../lib/orchestraData/connection";
 import { reportUiError, toUiErrorState, type UiErrorState } from "../lib/orchestraData/errors";
 import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
 import { applyTaskListQuery } from "../lib/taskListQuery";
+import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type {
   AgentSummary,
   MailboxMessage,
@@ -210,6 +211,7 @@ export function TasksPage({
   const routeRef = useRef<TaskDetailRouteState>({ kind: "overview" });
   const taskDetailLoadRequestRef = useRef(0);
   const taskScheduleLoadRequestRef = useRef(0);
+  const getTooltipProps = useExplanatoryTooltipProps();
 
   const tagScopedTasks = useMemo(
     () => applyTaskListQuery(tasks, { tags: taskOverviewState.tags, tagMatch: taskOverviewState.tagMatch, sort: taskOverviewState.sort }),
@@ -1204,7 +1206,7 @@ export function TasksPage({
   }
 
   return (
-    <section className="panel-stack task-page-stack">
+    <section className="panel-stack task-page-stack task-page-stack--with-fab">
       <ResourceStatusBanner
         connection={connection}
         error={taskActionError}
@@ -1362,6 +1364,24 @@ export function TasksPage({
           <p>Return to the board to choose a task or create a new one.</p>
         </section>
       )}
+
+      {route.kind !== "create" ? (
+        <div
+          className={route.kind === "detail" ? "page-fab page-fab--tasks page-fab--lifted" : "page-fab page-fab--tasks"}
+          data-role="tasks-create-fab"
+        >
+          <button
+            className="primary-button page-fab__button"
+            data-role="new-task"
+            type="button"
+            {...getTooltipProps("Create a new task draft in the active project.")}
+            onClick={() => openCreateTask()}
+          >
+            <span className="page-fab__icon" aria-hidden="true">+</span>
+            <span className="page-fab__label">New task</span>
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

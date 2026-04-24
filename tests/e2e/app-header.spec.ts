@@ -1,22 +1,24 @@
 import { expect, test, type Page } from "@playwright/test";
 
-test("app header shows version with short hash and the Orchestra brand", async ({ page }) => {
+test("shared page header is removed while the Orchestra brand remains in navigation", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
 
   await page.goto("/");
-  await expect(page.locator('[data-role="app-version-label"]')).toContainText(/^0\.1\.0-[a-z0-9]{8}$/i);
+  await expect(page.locator('.page-header')).toHaveCount(0);
+  await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
   await expect(page.locator('[data-role="app-brand"]')).toContainText("Orchestra");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-dark");
 });
 
-test("explanatory tooltips appear on key header controls and can be disabled globally", async ({ page }) => {
+test("explanatory tooltips appear on the tasks floating action button and can be disabled globally", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator('[data-role="toggle-sidebar-collapse"]')).toHaveAttribute('data-tooltip', 'Collapse the sidebar to make more room for your work.');
   await page.getByRole('button', { name: 'Tasks' }).click();
   await expect(page.locator('[data-role="new-task"]')).toHaveAttribute('data-tooltip', 'Create a new task draft in the active project.');
-  await expect(page.locator('[data-role="open-command-palette"]')).toHaveAttribute('data-tooltip', 'Search pages and common actions from anywhere in the app.');
 
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('tab', { name: 'General' }).evaluate((element) => { (element as HTMLButtonElement).click(); });
@@ -25,7 +27,6 @@ test("explanatory tooltips appear on key header controls and can be disabled glo
 
   await page.getByRole('button', { name: 'Tasks' }).click();
   await expect(page.locator('[data-role="new-task"]')).not.toHaveAttribute('data-tooltip', /.+/);
-  await expect(page.locator('[data-role="open-command-palette"]')).not.toHaveAttribute('data-tooltip', /.+/);
   await expect(page.locator('[data-role="toggle-sidebar-collapse"]')).not.toHaveAttribute('data-tooltip', /.+/);
 });
 
@@ -149,4 +150,43 @@ test("mobile navigation closes after destination changes and keeps settings sub-
   await page.getByRole('button', { name: 'Tasks' }).click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
   await expect(page.locator('[data-role="new-task"]')).toBeVisible();
+});
+
+test("tasks page exposes the create flow through a bottom-right floating action button", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Tasks' }).click();
+
+  const fab = page.locator('[data-role="tasks-create-fab"]');
+  const button = page.locator('[data-role="new-task"]');
+  await expect(fab).toBeVisible();
+  await expect(button).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const fab = document.querySelector('[data-role="tasks-create-fab"]');
+    const button = document.querySelector('[data-role="new-task"]');
+    if (!(fab instanceof HTMLElement) || !(button instanceof HTMLElement)) {
+      return null;
+    }
+    const fabRect = fab.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    return {
+      fabRightInset: Math.round(window.innerWidth - fabRect.right),
+      fabBottomInset: Math.round(window.innerHeight - fabRect.bottom),
+      buttonWidth: Math.round(buttonRect.width),
+      buttonHeight: Math.round(buttonRect.height),
+    };
+  });
+
+  expect(geometry).not.toBeNull();
+  expect(geometry?.fabRightInset ?? 999).toBeLessThanOrEqual(40);
+  expect(geometry?.fabBottomInset ?? 999).toBeLessThanOrEqual(120);
+  expect(geometry?.buttonWidth ?? 0).toBeGreaterThan(120);
+  expect(geometry?.buttonHeight ?? 0).toBeGreaterThanOrEqual(48);
+
+  await button.click();
+  await expect(page.getByRole('heading', { name: 'New task' })).toBeVisible();
 });

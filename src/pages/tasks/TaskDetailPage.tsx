@@ -488,7 +488,7 @@ export function TaskDetailPage({
       }
       currentAncestor = currentAncestor.parentElement;
     }
-    const pageHeader = detailPage.ownerDocument.querySelector(".page-header") as HTMLElement | null;
+    const contentRoot = detailPage.closest(".content") as HTMLElement | null;
     scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
     window.scrollTo({ top: 0, behavior: "auto" });
     setCompactHeaderVisible(false);
@@ -500,9 +500,8 @@ export function TaskDetailPage({
       }
       frameId = window.requestAnimationFrame(() => {
         const detailRect = detailPage.getBoundingClientRect();
-        const pageHeaderRect = pageHeader?.getBoundingClientRect() ?? null;
-        const pageHeaderBottom = pageHeaderRect?.bottom ?? 0;
-        const pinnedTop = Math.max(pageHeaderBottom, 0) + 10;
+        const contentRect = contentRoot?.getBoundingClientRect() ?? null;
+        const pinnedTop = Math.max(contentRect?.top ?? 0, 0) + 10;
         const nextLayout = detailRect.width > 0 && detailRect.bottom > pinnedTop + 72
           ? {
               left: Math.max(detailRect.left, 12),
@@ -511,7 +510,7 @@ export function TaskDetailPage({
             }
           : null;
         const scrollPosition = Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, detailPage.ownerDocument.documentElement.scrollTop);
-        const nextVisible = scrollPosition > 120 && sentinel.getBoundingClientRect().top <= Math.max(pageHeaderBottom, 0) + 4;
+        const nextVisible = scrollPosition > 120 && sentinel.getBoundingClientRect().top <= pinnedTop + 4;
 
         setFloatingChromeLayout((current) => {
           if (!nextLayout && !current) {

@@ -101,7 +101,6 @@ interface SessionsPageProps {
   onOpenRole: (roleId: string) => void;
   onCreateNewSession: () => void;
   onCreateSession?: () => void;
-  showCreateSessionAction?: boolean;
   createSessionDisabled?: boolean;
   onOpenPiSettings?: () => void;
   onCompactSession: () => void;
@@ -155,7 +154,6 @@ export function SessionsPage({
   onOpenRole,
   onCreateNewSession,
   onCreateSession,
-  showCreateSessionAction = false,
   createSessionDisabled = false,
   onOpenPiSettings,
   onCompactSession,
@@ -381,19 +379,6 @@ export function SessionsPage({
           </span>
           <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
         </button>
-        {showCreateSessionAction && onCreateSession ? (
-          <div className="action-cluster action-cluster--wrap">
-            <button
-              className="primary-button"
-              data-role="create-session"
-              type="button"
-              disabled={createSessionDisabled}
-              onClick={onCreateSession}
-            >
-              Create session
-            </button>
-          </div>
-        ) : null}
         {mobileSessionPickerOpen ? (
           <div className="page-mobile-switcher__sheet" data-role="sessions-mobile-picker">
             <div className="session-list-panel session-list-panel--mobile">
@@ -669,6 +654,22 @@ export function SessionsPage({
         </>
         )}
       />
+
+      {onCreateSession ? (
+        <div className="page-fab page-fab--sessions" data-role="sessions-create-fab">
+          <button
+            className="primary-button page-fab__button"
+            data-role="create-session"
+            type="button"
+            disabled={createSessionDisabled}
+            {...getTooltipProps("Start a new session in the active project.")}
+            onClick={onCreateSession}
+          >
+            <span className="page-fab__icon" aria-hidden="true">+</span>
+            <span className="page-fab__label">Create session</span>
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -3460,8 +3460,6 @@ export function App() {
     return <AgentTerminalWindowPage sessionId={agentTerminalSessionId} />;
   }
 
-  const shouldHidePageHeader = isMobileNavigation && (activePage === "chat" || activePage === "sessions");
-
   return (
     <ExplanatoryTooltipsProvider enabled={explanatoryTooltipsEnabled}>
       <div
@@ -3799,67 +3797,7 @@ export function App() {
         )}
 
         <main className={activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}>
-        {shouldHidePageHeader ? null : (
-        <header className="page-header page-header--compact">
-          <div className="page-header__leading">
-            <p className="page-version-label muted-copy" data-role="app-version-label">
-              {appInfo?.versionDisplay ?? "loading-version"}
-            </p>
-            {activePage === "sessions" ? (
-              <button
-                className="primary-button"
-                data-role="create-session"
-                type="button"
-                disabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
-                {...getExplanatoryTooltipProps("Start a new session in the active project.", explanatoryTooltipsEnabled)}
-                onClick={() => void handleCreateSession()}
-              >
-                Create session
-              </button>
-            ) : activePage === "tasks" ? (
-              <button
-                className="primary-button"
-                data-role="new-task"
-                type="button"
-                {...getExplanatoryTooltipProps("Create a new task draft in the active project.", explanatoryTooltipsEnabled)}
-                onClick={() => {
-                  setTasksCreateProjectId(activeProjectId);
-                  setTasksCreateToken((current) => current + 1);
-                }}
-              >
-                New task
-              </button>
-            ) : null}
-          </div>
-          <div className="status-cluster">
-            <button
-              className="secondary-button"
-              data-role="open-command-palette"
-              type="button"
-              {...getExplanatoryTooltipProps("Search pages and common actions from anywhere in the app.", explanatoryTooltipsEnabled)}
-              onClick={() => handleOpenCommandPalette()}
-            >
-              Search · Ctrl+O
-            </button>
-            <button
-              className="secondary-button"
-              data-role="open-supervisor-quick-chat"
-              type="button"
-              {...getExplanatoryTooltipProps("Open a quick message window for the supervisor session.", explanatoryTooltipsEnabled)}
-              onClick={() => void handleOpenSupervisorQuickChat()}
-            >
-              Supervisor · Ctrl+T
-            </button>
-            {canOpenLogsWindow ? (
-              <button className="secondary-button" type="button" onClick={() => void handleOpenLogsWindow()}>
-                Open logs
-              </button>
-            ) : null}
-          </div>
-        </header>
-        )}
-
-        <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
+          <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
           <ConnectionStatusBanner
             connection={connection}
             onRetry={() => {
@@ -4131,7 +4069,6 @@ export function App() {
             onOpenRole={navigateToRole}
             onCreateNewSession={() => void handleCreateFreshSession(selectedSession?.id)}
             onCreateSession={() => void handleCreateSession()}
-            showCreateSessionAction={isMobileNavigation}
             createSessionDisabled={isSubmitting || Boolean(appInfo?.dispatchBlocked)}
             onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined}
             onCompactSession={handleSelectedSessionCompact}

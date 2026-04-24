@@ -187,12 +187,12 @@ test("chat page opens an agent main session with focused chat controls while Ses
 
   await expect(page.getByRole("button", { name: "Chat" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "Chat" }).click();
-  await expect(page.locator('.page-header')).toBeVisible();
-  await expect(page.locator('[data-role="open-command-palette"]')).toBeVisible();
-  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('.page-header')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText(/agent chat/i);
 
-  await page.locator('[data-role="open-command-palette"]').click();
+  await page.keyboard.press("Control+o");
   await page.locator('[data-role="command-palette-input"]').fill("chat");
   await expect(page.locator('[data-role="command-palette-results"]')).toContainText("Go to Chat");
   await expect(page.locator('[data-role="command-palette-results"]')).not.toContainText(/agent chat/i);

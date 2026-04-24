@@ -111,11 +111,35 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await page.goto("/");
 
   const createSessionButton = page.locator('[data-role="create-session"]');
-  await expect(page.locator('.page-header')).toBeVisible();
-  await expect(page.locator('[data-role="app-version-label"]')).toBeVisible();
-  await expect(page.locator('[data-role="open-command-palette"]')).toBeVisible();
-  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('.page-header')).toHaveCount(0);
+  await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="sessions-create-fab"]')).toBeVisible();
   await expect(createSessionButton).toBeVisible();
+
+  const fabGeometry = await page.evaluate(() => {
+    const fab = document.querySelector('[data-role="sessions-create-fab"]');
+    const button = document.querySelector('[data-role="create-session"]');
+    if (!(fab instanceof HTMLElement) || !(button instanceof HTMLElement)) {
+      return null;
+    }
+    const fabRect = fab.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    return {
+      fabRightInset: Math.round(window.innerWidth - fabRect.right),
+      fabBottomInset: Math.round(window.innerHeight - fabRect.bottom),
+      buttonWidth: Math.round(buttonRect.width),
+      buttonHeight: Math.round(buttonRect.height),
+    };
+  });
+
+  expect(fabGeometry).not.toBeNull();
+  expect(fabGeometry?.fabRightInset ?? 999).toBeLessThanOrEqual(40);
+  expect(fabGeometry?.fabBottomInset ?? 999).toBeLessThanOrEqual(220);
+  expect(fabGeometry?.buttonWidth ?? 0).toBeGreaterThan(140);
+  expect(fabGeometry?.buttonHeight ?? 0).toBeGreaterThanOrEqual(48);
+
   const previousSessionCount = await page.locator('[data-role="session-link"]').count();
   await createSessionButton.click();
 
@@ -144,6 +168,7 @@ test("sessions page hides shared header controls on mobile while keeping session
   await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
   await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
   await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="sessions-create-fab"]')).toBeVisible();
   await expect(createSessionButton).toBeVisible();
 
   await createSessionButton.click();
