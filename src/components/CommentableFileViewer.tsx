@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import hljs from "highlight.js";
 
 import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskFileReference, TaskSummary } from "../types";
@@ -63,9 +63,6 @@ interface CommentableFileViewerProps {
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
 }
-
-const DEFAULT_VIEWPORT_HEIGHT_PX = 720;
-const MINIMIZED_VIEWPORT_HEIGHT_PX = 180;
 
 function escapeHtml(value: string) {
   return value
@@ -262,7 +259,8 @@ export function CommentableFileViewer({
 }: CommentableFileViewerProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const selectionRangeRef = useRef<Range | null>(null);
+  const selectionSyncFrameRef = useRef<number | null>(null);
+  const selectionInteractionModeRef = useRef<"pointer" | "keyboard" | null>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionCommentAction | null>(null);
   const [floatingComment, setFloatingComment] = useState<FloatingCommentState | null>(null);
   const [threadPopover, setThreadPopover] = useState<ThreadPopoverState | null>(null);
@@ -272,6 +270,7 @@ export function CommentableFileViewer({
   const [editingMessage, setEditingMessage] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
   const [wrapLines, setWrapLines] = useState(true);
+  const [selectionInteractionActive, setSelectionInteractionActive] = useState(false);
 
   const lines = useMemo(
     () => content.replace(/\r\n/g, "\n").split("\n").map((line, index) => ({
@@ -284,18 +283,25 @@ export function CommentableFileViewer({
   const commentCountsByLine = useMemo(() => lineCommentCounts(fileCommentThreads), [fileCommentThreads]);
   const commentThreadsByLine = useMemo(() => buildThreadsByLine(fileCommentThreads), [fileCommentThreads]);
 
-  useEffect(() => {
-    setSelectionAction(null);
-    setFloatingComment(null);
-    setThreadPopover(null);
-    setReplyTargetCommentId(null);
-    setReplyMessage("");
-    setEditingCommentId(null);
-    setEditingMessage("");
-  }, [content, reference.absolutePath, reference.id]);
+  const cancelPendingSelectionSync = useCallback(() => {
+    if (selectionSyncFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionSyncFrameRef.current);
+      selectionSyncFrameRef.current = null;
+    }
+  }, []);
 
-  useEffect(() => {
-    function syncSelectionAction() {
+  const setSelectionInteractionMode = useCallback((mode: "pointer" | "keyboard" | null) => {
+    selectionInteractionModeRef.current = mode;
+    setSelectionInteractionActive(mode !== null);
+    if (mode) {
+      setSelectionAction(null);
+    }
+  }, []);
+
+  const scheduleSelectionSync = useCallback((force = false) => {
+    cancelPendingSelectionSync();
+    selectionSyncFrameRef.current = window.requestAnimationFrame(() => {
+      selectionSyncFrameRef.current = null;
       const selection = window.getSelection();
       const overlay = overlayRef.current;
       const viewport = viewportRef.current;
@@ -303,12 +309,26 @@ export function CommentableFileViewer({
         setSelectionAction(null);
         return;
       }
-
+      if (!force && selectionInteractionModeRef.current) {
+        return;
+      }
       setSelectionAction(buildSelectionCommentAction(viewport, overlay, reference, selection));
-    }
+    });
+  }, [cancelPendingSelectionSync, reference]);
 
-    const deferredSync = () => window.requestAnimationFrame(syncSelectionAction);
+  useEffect(() => {
+    setSelectionInteractionMode(null);
+    setSelectionAction(null);
+    setFloatingComment(null);
+    setThreadPopover(null);
+    setReplyTargetCommentId(null);
+    setReplyMessage("");
+    setEditingCommentId(null);
+    setEditingMessage("");
+    cancelPendingSelectionSync();
+  }, [cancelPendingSelectionSync, content, reference.absolutePath, reference.id, setSelectionInteractionMode]);
 
+  useEffect(() => {
     const openSelectionComment = () => {
       window.requestAnimationFrame(() => {
         openSelectionCommentFromCurrentSelection();
@@ -326,13 +346,39 @@ export function CommentableFileViewer({
       openFloatingComment(detail.anchor, position.top, position.left);
     };
 
-    document.addEventListener("selectionchange", syncSelectionAction);
-    document.addEventListener("mouseup", deferredSync);
-    document.addEventListener("keyup", deferredSync);
-    document.addEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
-    document.addEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
-    (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft = (detail) => {
-      openFileCommentDraft(new CustomEvent("orchestra:open-file-comment-draft", { detail }));
+    const syncSelectionAction = () => {
+      scheduleSelectionSync();
+    };
+
+    const finalizeSelectionInteraction = () => {
+      if (selectionInteractionModeRef.current) {
+        setSelectionInteractionMode(null);
+      }
+      scheduleSelectionSync(true);
+    };
+
+    const beginKeyboardSelectionInteraction = (event: KeyboardEvent) => {
+      if (!event.shiftKey) {
+        return;
+      }
+      if (![
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+      ].includes(event.key)) {
+        return;
+      }
+      const viewport = viewportRef.current;
+      const selection = window.getSelection();
+      if (!viewport || !selection?.anchorNode || !viewport.contains(selection.anchorNode)) {
+        return;
+      }
+      setSelectionInteractionMode("keyboard");
     };
 
     const closeOnOutsidePointer = (event: Event) => {
@@ -351,18 +397,32 @@ export function CommentableFileViewer({
       closeOverlays();
     };
 
+    document.addEventListener("selectionchange", syncSelectionAction);
+    document.addEventListener("mouseup", finalizeSelectionInteraction);
+    document.addEventListener("keydown", beginKeyboardSelectionInteraction);
+    document.addEventListener("keyup", finalizeSelectionInteraction);
+    document.addEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
+    document.addEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
     document.addEventListener("pointerdown", closeOnOutsidePointer);
+    (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft = (detail) => {
+      openFileCommentDraft(new CustomEvent("orchestra:open-file-comment-draft", { detail }));
+    };
+
     return () => {
-      document.removeEventListener("mouseup", deferredSync);
-      document.removeEventListener("keyup", deferredSync);
+      cancelPendingSelectionSync();
+      document.removeEventListener("selectionchange", syncSelectionAction);
+      document.removeEventListener("mouseup", finalizeSelectionInteraction);
+      document.removeEventListener("keydown", beginKeyboardSelectionInteraction);
+      document.removeEventListener("keyup", finalizeSelectionInteraction);
       document.removeEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
       document.removeEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
       document.removeEventListener("pointerdown", closeOnOutsidePointer);
       delete (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft;
     };
-  }, [reference]);
+  }, [cancelPendingSelectionSync, reference, scheduleSelectionSync, setSelectionInteractionMode]);
 
   function closeOverlays() {
+    setSelectionInteractionMode(null);
     setSelectionAction(null);
     setFloatingComment(null);
     setThreadPopover(null);
@@ -370,20 +430,13 @@ export function CommentableFileViewer({
     setReplyMessage("");
     setEditingCommentId(null);
     setEditingMessage("");
-    selectionRangeRef.current = null;
   }
 
-  function handleViewportMouseUp() {
-    window.requestAnimationFrame(() => {
-      const overlay = overlayRef.current;
-      const viewport = viewportRef.current;
-      const selection = window.getSelection();
-      if (!overlay || !viewport || !selection) {
-        setSelectionAction(null);
-        return;
-      }
-      setSelectionAction(buildSelectionCommentAction(viewport, overlay, reference, selection));
-    });
+  function handleViewportPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    setSelectionInteractionMode("pointer");
   }
 
   function handleScrollToBottom() {
@@ -673,12 +726,19 @@ export function CommentableFileViewer({
         </div>
       </div>
 
-      <div className={isMinimized ? "file-content-viewer__shell file-content-viewer__shell--minimized" : "file-content-viewer__shell"} ref={overlayRef}>
+      <div
+        className={[
+          "file-content-viewer__shell",
+          isMinimized ? "file-content-viewer__shell--minimized" : null,
+          selectionInteractionActive ? "file-content-viewer__shell--selection-active" : null,
+        ].filter(Boolean).join(" ")}
+        ref={overlayRef}
+      >
         <div
           className={isMinimized ? "file-content-viewer__viewport file-content-viewer__viewport--minimized" : "file-content-viewer__viewport"}
           data-role="default-file-code-viewer"
           data-wrap-mode={wrapLines ? "wrap" : "nowrap"}
-          onMouseUp={handleViewportMouseUp}
+          onPointerDown={handleViewportPointerDown}
           ref={viewportRef}
         >
           {renderedLines}

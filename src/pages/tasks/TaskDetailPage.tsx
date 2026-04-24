@@ -357,6 +357,7 @@ export function TaskDetailPage({
   const compactHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
   const tabBodyRef = useRef<HTMLDivElement | null>(null);
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
+  const loadedFileContentPathRef = useRef<string | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
   const lastMarkedCommentsReadKeyRef = useRef<string | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
@@ -367,6 +368,7 @@ export function TaskDetailPage({
   const taskHeading = draft.title.trim() || task.title;
   const commentThreads = sortTaskCommentThreadsByLatestActivityDesc(buildTaskCommentThreads(task.comments));
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
+  const defaultFileAbsolutePath = defaultFile?.exists ? defaultFile.absolutePath ?? null : null;
   const recentHistory = timelineItems.slice(0, historyLimit);
   const summaryComments = commentThreads.slice(0, 4);
   const taskTags = getTaskTags(task);
@@ -544,13 +546,14 @@ export function TaskDetailPage({
   }, [task.id]);
 
   useEffect(() => {
-    if (!defaultFile?.exists || !defaultFile.absolutePath) {
+    if (!defaultFileAbsolutePath) {
       setDefaultFileContent(null);
+      setLoadingDefaultFileContent(false);
       return;
     }
     let canceled = false;
     setLoadingDefaultFileContent(true);
-    getTaskFileContent(defaultFile.absolutePath)
+    getTaskFileContent(defaultFileAbsolutePath)
       .then((content) => {
         if (!canceled) {
           setDefaultFileContent(content);
@@ -569,19 +572,26 @@ export function TaskDetailPage({
     return () => {
       canceled = true;
     };
-  }, [defaultFile]);
+  }, [defaultFileAbsolutePath, getTaskFileContent]);
 
   async function loadFileContent(reference: TaskFileReference) {
-    if (!reference.exists) {
+    if (!reference.exists || !reference.absolutePath) {
+      loadedFileContentPathRef.current = null;
       setFileContent(null);
+      setLoadingFileContent(false);
+      return;
+    }
+    if (loadedFileContentPathRef.current === reference.absolutePath) {
       return;
     }
     setLoadingFileContent(true);
     try {
-      const content = await getTaskFileContent(reference.absolutePath || "");
+      const content = await getTaskFileContent(reference.absolutePath);
+      loadedFileContentPathRef.current = reference.absolutePath;
       setFileContent(content);
     } catch (error) {
       console.error("Failed to load file content:", error);
+      loadedFileContentPathRef.current = null;
       setFileContent(null);
     } finally {
       setLoadingFileContent(false);

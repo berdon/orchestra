@@ -145,6 +145,14 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await page.locator('[data-role="task-comment-mention-link"]').first().click();
   await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
 
+  await scrollBottom.click();
+  const scrollTopBeforeLineComment = await page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    if (!viewer) {
+      throw new Error("Default file viewer was not available.");
+    }
+    return viewer.scrollTop;
+  });
   await page.evaluate(() => {
     const openDraft = (window as Window & { __orchestraOpenFileCommentDraft?: (detail: unknown) => void }).__orchestraOpenFileCommentDraft;
     if (typeof openDraft !== "function") {
@@ -168,14 +176,118 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toBeVisible();
   await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Please revisit this line.");
   await page.locator('[data-role="add-default-file-comment"]').click();
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    return viewer?.scrollTop ?? null;
+  })).toBeGreaterThan(scrollTopBeforeLineComment - 24);
 
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("docs/design.md · line 3");
   await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
-  await page.locator('[data-role="default-file-line-comment-button"][data-line-number="3"]').click({ force: true });
+  await page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    if (viewer) {
+      viewer.scrollTop = 0;
+    }
+  });
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="3"]') as HTMLButtonElement | null;
+    if (!button) {
+      throw new Error("Line 3 comment button was not available.");
+    }
+    button.click();
+  });
   await expect(page.locator('[data-role="default-file-thread-popover"]')).toContainText("Please revisit this line.");
   await page.locator('[data-role="default-file-open-reply"]').click();
   await page.getByRole("textbox", { name: "Reply" }).fill("Acknowledged on line 3.");
   await page.locator('[data-role="add-default-file-reply"]').click();
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
+
+  const selectionState = await page.evaluate(() => {
+    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
+    const lineContent = document.querySelector('[data-file-line-row][data-line-number="2"] [data-file-line-content]') as HTMLElement | null;
+    if (!viewer || !lineContent) {
+      throw new Error("Viewer line content was not available.");
+    }
+
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(lineContent, NodeFilter.SHOW_TEXT);
+    let current = walker.nextNode();
+    while (current) {
+      if (current.textContent && current.textContent.length > 0) {
+        textNodes.push(current as Text);
+      }
+      current = walker.nextNode();
+    }
+
+    const selection = window.getSelection();
+    if (!selection) {
+      throw new Error("Selection API was not available.");
+    }
+
+    const locate = (targetOffset: number) => {
+      let traversed = 0;
+      for (const node of textNodes) {
+        const value = node.textContent ?? "";
+        const nextTraversed = traversed + value.length;
+        if (targetOffset <= nextTraversed) {
+          return { node, offset: Math.max(0, targetOffset - traversed) };
+        }
+        traversed = nextTraversed;
+      }
+      return null;
+    };
+
+    const start = locate(5);
+    const end = locate(18);
+    if (!start || !end) {
+      throw new Error("Unable to resolve selection offsets inside line 2.");
+    }
+
+    viewer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    return {
+      selectedText: selection.toString(),
+      buttonCountDuringDrag: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
+    };
+  });
+  expect(selectionState.selectedText).toBe("selected text");
+  expect(selectionState.buttonCountDuringDrag).toBe(0);
+  await expect(page.locator('[data-role="default-file-selection-comment-button"]')).toHaveCount(0);
+  await page.evaluate(() => {
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.evaluate(() => {
+    const openDraft = (window as Window & { __orchestraOpenFileCommentDraft?: (detail: unknown) => void }).__orchestraOpenFileCommentDraft;
+    if (typeof openDraft !== "function") {
+      throw new Error("Comment draft helper was not available.");
+    }
+    openDraft({
+      anchor: {
+        repositoryId: "repo-default-file",
+        relativePath: "docs/design.md",
+        absolutePath: "/mock/projects/orchestra/repository/docs/design.md",
+        lineStart: 2,
+        lineEnd: 2,
+        columnStart: 6,
+        columnEnd: 18,
+        selectedText: "selected text",
+      },
+      top: 132,
+      left: 260,
+    });
+  });
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("Selection");
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("selected text");
+  await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Clarify this selected text.");
+  await page.locator('[data-role="add-default-file-comment"]').click();
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Clarify this selected text.");
+  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("selected text");
 
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
   await page.locator('[data-role="default-file-viewer-toggle"]').click();
