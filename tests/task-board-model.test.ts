@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { buildTaskBoardModel, isDraftTask } from "../src/pages/tasks/taskBoardModel";
+import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask } from "../src/pages/tasks/taskBoardModel";
 import type { TaskSummary, WorkflowDefinition } from "../src/types";
 
 function makeTask(overrides: Partial<TaskSummary>): TaskSummary {
@@ -101,5 +101,39 @@ describe("taskBoardModel", () => {
     expect(board.workflowSections[0].lanes[0].tasks.map((task) => task.id)).toEqual(["plan"]);
     expect(board.workflowSections[0].lanes[1].tasks.map((task) => task.id)).toEqual(["impl"]);
     expect(board.workflowSections[0].doneTasks.map((task) => task.id)).toEqual(["done"]);
+  });
+
+  test("derives visible tags from non-done tasks when the done view is hidden", () => {
+    const board = buildTaskBoardModel(
+      [
+        makeTask({ id: "draft", status: "draft", workflowId: null, tags: ["draft"] }),
+        makeTask({ id: "ready", workflowId: "workflow-1", currentLaneId: "lane-plan", status: "ready", tags: ["backend"] }),
+        makeTask({ id: "done", workflowId: "workflow-1", currentLaneId: null, status: "completed", tags: ["archive-only"] }),
+      ],
+      { [workflow.id]: workflow },
+    );
+
+    expect(getVisibleTaskBoardTags(board, false)).toEqual(["backend", "draft"]);
+  });
+
+  test("updates visible tags as the visible task set changes", () => {
+    const allBoard = buildTaskBoardModel(
+      [
+        makeTask({ id: "backend", workflowId: "workflow-1", currentLaneId: "lane-plan", status: "ready", tags: ["backend"] }),
+        makeTask({ id: "frontend", workflowId: "workflow-1", currentLaneId: "lane-implement", status: "in_progress", tags: ["frontend"] }),
+        makeTask({ id: "done", workflowId: "workflow-1", currentLaneId: null, status: "completed", tags: ["archive-only"] }),
+      ],
+      { [workflow.id]: workflow },
+    );
+
+    const doneBoard = buildTaskBoardModel(
+      [
+        makeTask({ id: "done", workflowId: "workflow-1", currentLaneId: null, status: "completed", tags: ["archive-only"] }),
+      ],
+      { [workflow.id]: workflow },
+    );
+
+    expect(getVisibleTaskBoardTags(allBoard, false)).toEqual(["backend", "frontend"]);
+    expect(getVisibleTaskBoardTags(doneBoard, true)).toEqual(["archive-only"]);
   });
 });

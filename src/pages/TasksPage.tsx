@@ -5,7 +5,7 @@ import { retryOrchestraRead, useOrchestraClient } from "../lib/orchestraClient";
 import { useOrchestraConnection } from "../lib/orchestraData/connection";
 import { reportUiError, toUiErrorState, type UiErrorState } from "../lib/orchestraData/errors";
 import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
-import { applyTaskListQuery, getTaskTags } from "../lib/taskListQuery";
+import { applyTaskListQuery } from "../lib/taskListQuery";
 import type {
   AgentSummary,
   MailboxMessage,
@@ -26,7 +26,7 @@ import { TaskCreatePage } from "./tasks/TaskCreatePage";
 import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
 import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetailRouteState } from "./tasks/taskDetailLoadGuards";
-import { buildTaskBoardModel, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
+import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
 import { TasksOverviewPage } from "./tasks/TasksOverviewPage";
 import { DEFAULT_TASK_OVERVIEW_STATE, type TaskOverviewState } from "./tasks/taskOverviewState";
 
@@ -209,11 +209,6 @@ export function TasksPage({
   const taskDetailLoadRequestRef = useRef(0);
   const taskScheduleLoadRequestRef = useRef(0);
 
-  const availableTags = useMemo(
-    () => Array.from(new Set(tasks.flatMap((task) => getTaskTags(task)))).sort((left, right) => left.localeCompare(right)),
-    [tasks],
-  );
-
   const tagScopedTasks = useMemo(
     () => applyTaskListQuery(tasks, { tags: taskOverviewState.tags, tagMatch: taskOverviewState.tagMatch, sort: taskOverviewState.sort }),
     [taskOverviewState.sort, taskOverviewState.tagMatch, taskOverviewState.tags, tasks],
@@ -239,6 +234,11 @@ export function TasksPage({
   }, [tagScopedTasks, taskOverviewState.boardFilter]);
 
   const boardModel: TaskBoardModel = useMemo(() => buildTaskBoardModel(filteredTasks, workflowDefinitions), [filteredTasks, workflowDefinitions]);
+
+  const availableTags = useMemo(
+    () => getVisibleTaskBoardTags(boardModel, taskOverviewState.boardFilter === "done"),
+    [boardModel, taskOverviewState.boardFilter],
+  );
 
   const attentionTasks = useMemo(
     () => tagScopedTasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),

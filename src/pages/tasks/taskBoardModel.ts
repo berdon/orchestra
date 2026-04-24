@@ -1,3 +1,4 @@
+import { getTaskTags } from "../../lib/taskListQuery";
 import type { AgentSummary, RoleSummary, TaskSummary, WorkflowDefinition } from "../../types";
 
 export interface TaskBoardLane {
@@ -16,6 +17,19 @@ export interface TaskWorkflowSection {
 export interface TaskBoardModel {
   draftTasks: TaskSummary[];
   workflowSections: TaskWorkflowSection[];
+}
+
+export function getVisibleTaskBoardTasks(board: TaskBoardModel, showDoneTasks: boolean) {
+  const workflowTasks = showDoneTasks
+    ? board.workflowSections.flatMap((section) => section.doneTasks)
+    : board.workflowSections.flatMap((section) => section.lanes.flatMap((lane) => lane.tasks));
+
+  return [...board.draftTasks, ...workflowTasks];
+}
+
+export function getVisibleTaskBoardTags(board: TaskBoardModel, showDoneTasks: boolean) {
+  return Array.from(new Set(getVisibleTaskBoardTasks(board, showDoneTasks).flatMap((task) => getTaskTags(task))))
+    .sort((left, right) => left.localeCompare(right));
 }
 
 export function isDraftTask(task: TaskSummary) {

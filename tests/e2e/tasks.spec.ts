@@ -1155,6 +1155,202 @@ test("tasks overview filters and sorts by tags and renders compact tags across c
   await secondPage.close();
 });
 
+test("tasks overview limits tag filter chips to tags from currently visible tasks", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-visible-tags",
+          slug: "visible-tags",
+          name: "Visible Tag Flow",
+          description: "Flow used to verify tag filter derivation.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-backend-ready",
+          projectId: "orchestra",
+          number: "ORC-20",
+          title: "Backend ready task",
+          description: null,
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: "workflow-visible-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["backend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: true,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T10:00:00.000Z",
+        },
+        {
+          id: "task-frontend-blocked",
+          projectId: "orchestra",
+          number: "ORC-21",
+          title: "Frontend blocked task",
+          description: null,
+          type: "task",
+          status: "blocked",
+          priority: "P2",
+          workflowId: "workflow-visible-tags",
+          currentLaneId: "lane-implement",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["frontend"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T11:00:00.000Z",
+        },
+        {
+          id: "task-completed-hidden",
+          projectId: "orchestra",
+          number: "ORC-22",
+          title: "Completed hidden task",
+          description: null,
+          type: "task",
+          status: "completed",
+          priority: "P3",
+          workflowId: "workflow-visible-tags",
+          currentLaneId: null,
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: ["done-only"],
+          commentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: "2026-04-21T12:00:00.000Z",
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await setTaskOverviewFiltersExpanded(page, true);
+
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="frontend"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="done-only"]')).toHaveCount(0);
+
+  await page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]').click();
+  await expect(page.locator('[data-role="workflow-task-section"]')).toContainText("Backend ready task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).not.toContainText("Frontend blocked task");
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="frontend"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="done-only"]')).toHaveCount(0);
+
+  await page.locator('[data-role="task-clear-tags"]').click();
+  await page.locator('[data-role="task-filter-done"]').click();
+  await expect(page.locator('[data-role="workflow-done-grid"]')).toContainText("Completed hidden task");
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="done-only"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="backend"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="task-tag-filter-chip"][data-tag="frontend"]')).toHaveCount(0);
+});
+
 test("tasks overview keeps stale persisted tag filters clearable when current tasks have no tags", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
