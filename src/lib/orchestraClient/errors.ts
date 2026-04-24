@@ -11,6 +11,7 @@ export type OrchestraClientErrorCode =
   | "unavailable"
   | "timeout"
   | "cancelled"
+  | "offline"
   | "network"
   | "transport"
   | "unsupported";
@@ -98,6 +99,15 @@ export function mapHttpStatusToOrchestraClientErrorCode(
   }
 }
 
+export function isRetryableOrchestraClientErrorCode(code: OrchestraClientErrorCode) {
+  return code === "offline"
+    || code === "rate_limited"
+    || code === "timeout"
+    || code === "unavailable"
+    || code === "network"
+    || code === "transport";
+}
+
 function getErrorMessage(error: unknown, fallbackMessage: string) {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -108,18 +118,59 @@ function getErrorMessage(error: unknown, fallbackMessage: string) {
   return fallbackMessage;
 }
 
+export function inferOrchestraClientErrorCode(
+  error: unknown,
+  fallback: OrchestraClientErrorCode = "unknown",
+): OrchestraClientErrorCode {
+  const message = getErrorMessage(error, "").toLowerCase();
+  if (!message) {
+    return fallback;
+  }
+  if (message.includes("offline") || message.includes("network is unreachable") || message.includes("failed to fetch") || message.includes("internet connection")) {
+    return "offline";
+  }
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "timeout";
+  }
+  if (message.includes("unauthorized") || message.includes("authentication") || message.includes("not authenticated") || message.includes("login required") || message.includes("bearer token")) {
+    return "unauthorized";
+  }
+  if (message.includes("forbidden") || message.includes("permission denied") || message.includes("access denied")) {
+    return "forbidden";
+  }
+  if (message.includes("unsupported") || message.includes("not implemented") || message.includes("unavailable in this host")) {
+    return "unsupported";
+  }
+  if (message.includes("validation") || message.includes("invalid ") || message.includes("must be ")) {
+    return "validation";
+  }
+  if (message.includes("conflict") || message.includes("already exists")) {
+    return "conflict";
+  }
+  if (message.includes("not found") || message.includes("missing")) {
+    return "not_found";
+  }
+  if (message.includes("rate limit") || message.includes("too many requests")) {
+    return "rate_limited";
+  }
+  if (message.includes("cancel") || message.includes("aborted")) {
+    return "cancelled";
+  }
+  if (message.includes("unavailable") || message.includes("temporarily unavailable") || message.includes("service unavailable")) {
+    return "unavailable";
+  }
+  if (message.includes("network") || message.includes("socket") || message.includes("websocket") || message.includes("transport")) {
+    return "transport";
+  }
+  return fallback;
+}
+
 export function normalizeOrchestraClientError(
   error: unknown,
   options: NormalizeOrchestraClientErrorOptions,
 ): OrchestraClientError {
-  const code = options.code ?? mapHttpStatusToOrchestraClientErrorCode(options.status);
-  const retryable = options.retryable ?? (
-    code === "rate_limited"
-    || code === "timeout"
-    || code === "unavailable"
-    || code === "network"
-    || code === "transport"
-  );
+  const code = options.code ?? inferOrchestraClientErrorCode(error, mapHttpStatusToOrchestraClientErrorCode(options.status));
+  const retryable = options.retryable ?? isRetryableOrchestraClientErrorCode(code);
 
   return new OrchestraClientError({
     name: "OrchestraClientError",
@@ -132,4 +183,13 @@ export function normalizeOrchestraClientError(
     operation: options.operation,
     details: options.details ?? null,
   });
+}
+
+export function toOrchestraClientError(
+  error: unknown,
+  options: NormalizeOrchestraClientErrorOptions,
+): OrchestraClientError {
+  return error instanceof OrchestraClientError
+    ? error
+    : normalizeOrchestraClientError(error, options);
 }

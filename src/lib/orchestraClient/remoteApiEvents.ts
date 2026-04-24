@@ -6,8 +6,10 @@ import type {
   TaskChangeEvent,
 } from "../../types";
 import type { OrchestraClientBootstrap } from "./bootstrap";
+import type { OrchestraConnectionController } from "./connection";
 import {
   normalizeOrchestraClientError,
+  type OrchestraClientError,
   type OrchestraClientErrorCode,
 } from "./errors";
 import type { OrchestraClientEventHandler, OrchestraUnsubscribe } from "./events";
@@ -77,6 +79,12 @@ function normalizeRemoteTopic(topic: string) {
 
 function classifySocketErrorCode(message: string): OrchestraClientErrorCode {
   const normalized = message.toLowerCase();
+  if (normalized.includes("offline") || normalized.includes("failed to fetch") || normalized.includes("network")) {
+    return "offline";
+  }
+  if (normalized.includes("timeout") || normalized.includes("timed out")) {
+    return "timeout";
+  }
   if (normalized.includes("forbidden")) {
     return "forbidden";
   }
@@ -90,13 +98,21 @@ function isSessionConfirmationKey(sessionId: string, subscribed: boolean) {
   return `${sessionId}:${subscribed ? "subscribed" : "unsubscribed"}`;
 }
 
+function getReconnectDelayMs(retryAttempt: number) {
+  const boundedAttempt = Math.max(1, retryAttempt);
+  return Math.min(250 * (2 ** (boundedAttempt - 1)), 5_000);
+}
+
 export class RemoteApiEventManager {
   private readonly bootstrap: OrchestraClientBootstrap;
   private readonly transport: RemoteApiTransport;
+  private readonly connectionController: OrchestraConnectionController;
   private readonly webSocketFactory: (url: string) => WebSocket;
   private readonly handlers = new Set<OrchestraClientEventHandler>();
   private readonly activeSessionSubscriptions = new Set<string>();
   private readonly pendingSessionConfirmations = new Map<string, PendingSessionConfirmation[]>();
+  private readonly browserOnlineListener?: () => void;
+  private readonly browserOfflineListener?: () => void;
   private socket: WebSocket | null = null;
   private pendingConnection: PendingConnection | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -106,11 +122,40 @@ export class RemoteApiEventManager {
   constructor(
     transport: RemoteApiTransport,
     bootstrap: OrchestraClientBootstrap,
+    connectionController: OrchestraConnectionController,
     options?: RemoteApiOrchestraClientOptions,
   ) {
     this.transport = transport;
     this.bootstrap = bootstrap;
+    this.connectionController = connectionController;
     this.webSocketFactory = options?.webSocketFactory ?? ((url) => new WebSocket(url));
+
+    if (typeof window !== "undefined") {
+      this.browserOnlineListener = () => {
+        this.connectionController.markHostOnline();
+        if (this.shouldKeepSocketAlive() && !this.socket) {
+          this.scheduleReconnect(undefined, true);
+        }
+      };
+      this.browserOfflineListener = () => {
+        const error = this.createSocketError("events.subscribe", "Browser network connectivity is offline.", "offline");
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        this.intentionallyClosed = true;
+        this.pendingConnection?.reject(error);
+        this.rejectAllPendingSessionConfirmations(error);
+        if (this.socket) {
+          this.socket.close();
+        }
+        this.socket = null;
+        this.sawConnectedFrame = false;
+        this.connectionController.markHostOffline(error);
+      };
+      window.addEventListener("online", this.browserOnlineListener);
+      window.addEventListener("offline", this.browserOfflineListener);
+    }
   }
 
   async subscribe(handler: OrchestraClientEventHandler): Promise<OrchestraUnsubscribe> {
@@ -151,7 +196,7 @@ export class RemoteApiEventManager {
           return;
         }
         const timeoutId = setTimeout(() => {
-          reject(this.createSocketError(operation, "Timed out while waiting for the remote WebSocket connection."));
+          reject(this.createSocketError(operation, "Timed out while waiting for the remote WebSocket connection.", "timeout"));
         }, 5_000);
         const originalResolve = current.resolve;
         const originalReject = current.reject;
@@ -173,7 +218,9 @@ export class RemoteApiEventManager {
     try {
       socket = this.webSocketFactory(websocketUrl);
     } catch (error) {
-      throw this.createSocketError(operation, error);
+      const normalized = this.createSocketError(operation, error);
+      this.connectionController.markLiveState("disconnected", { retrying: false, lastError: normalized });
+      throw normalized;
     }
 
     this.intentionallyClosed = false;
@@ -183,7 +230,9 @@ export class RemoteApiEventManager {
     await new Promise<void>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pendingConnection = null;
-        reject(this.createSocketError(operation, "Timed out while waiting for the remote WebSocket connection."));
+        const timeoutError = this.createSocketError(operation, "Timed out while waiting for the remote WebSocket connection.", "timeout");
+        this.connectionController.markLiveState("disconnected", { retrying: false, lastError: timeoutError });
+        reject(timeoutError);
       }, 5_000);
       this.pendingConnection = {
         resolve: () => {
@@ -200,14 +249,16 @@ export class RemoteApiEventManager {
       };
 
       socket.onopen = () => {
-        // Wait for the explicit connected frame before resolving.
+        this.connectionController.markHostOnline();
       };
       socket.onmessage = (event) => {
         void this.handleSocketMessage(event.data, operation);
       };
       socket.onerror = () => {
         if (this.pendingConnection) {
-          this.pendingConnection.reject(this.createSocketError(operation, "Remote WebSocket connection failed."));
+          const normalized = this.createSocketError(operation, "Remote WebSocket connection failed.");
+          this.connectionController.markLiveState("disconnected", { retrying: false, lastError: normalized });
+          this.pendingConnection.reject(normalized);
         }
       };
       socket.onclose = () => {
@@ -217,6 +268,7 @@ export class RemoteApiEventManager {
   }
 
   private handleSocketClosed(operation: string) {
+    const wasIntentional = this.intentionallyClosed;
     this.socket = null;
     this.sawConnectedFrame = false;
     const error = this.createSocketError(operation, "Remote WebSocket connection closed.");
@@ -224,21 +276,40 @@ export class RemoteApiEventManager {
       this.pendingConnection.reject(error);
     }
     this.rejectAllPendingSessionConfirmations(error);
-    if (!this.intentionallyClosed && this.shouldKeepSocketAlive()) {
-      this.scheduleReconnect();
+
+    if (wasIntentional && !this.shouldKeepSocketAlive()) {
+      this.connectionController.markConnected();
+      return;
+    }
+
+    if (!wasIntentional && this.shouldKeepSocketAlive() && this.connectionController.getSnapshot().hostState === "online") {
+      this.scheduleReconnect(error);
+      return;
+    }
+
+    if (!wasIntentional) {
+      this.connectionController.markLiveState("disconnected", { retrying: false, lastError: error });
     }
   }
 
-  private scheduleReconnect() {
+  private scheduleReconnect(lastError?: OrchestraClientError, immediate = false) {
     if (this.reconnectTimer) {
       return;
     }
+    const nextAttempt = (this.connectionController.getSnapshot().retryAttempt || 0) + 1;
+    const delayMs = immediate ? 0 : getReconnectDelayMs(nextAttempt);
+    this.connectionController.markReconnecting(nextAttempt, lastError ?? null);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.ensureConnected("events.subscribe").catch(() => {
-        // ORC-63 owns richer reconnect/offline UX. For now, a future subscriber or session action can retry.
+      void this.ensureConnected("events.subscribe").catch((error) => {
+        const normalized = this.createSocketError("events.subscribe", error, classifySocketErrorCode(error instanceof Error ? error.message : String(error)));
+        if (this.connectionController.getSnapshot().hostState === "online" && this.shouldKeepSocketAlive()) {
+          this.scheduleReconnect(normalized);
+        } else {
+          this.connectionController.markLiveState("disconnected", { retrying: false, lastError: normalized });
+        }
       });
-    }, 250);
+    }, delayMs);
   }
 
   private shouldKeepSocketAlive() {
@@ -254,19 +325,21 @@ export class RemoteApiEventManager {
       this.reconnectTimer = null;
     }
     if (!this.socket) {
+      this.connectionController.markConnected();
       return;
     }
     this.intentionallyClosed = true;
     this.socket.close();
     this.socket = null;
     this.sawConnectedFrame = false;
+    this.connectionController.markConnected();
   }
 
   private async handleSocketMessage(rawData: unknown, operation: string) {
     if (typeof rawData !== "string") {
-      this.rejectAllPendingSessionConfirmations(
-        this.createSocketError(operation, "Remote WebSocket delivered a non-text frame."),
-      );
+      const error = this.createSocketError(operation, "Remote WebSocket delivered a non-text frame.");
+      this.connectionController.markLiveState("disconnected", { retrying: false, lastError: error });
+      this.rejectAllPendingSessionConfirmations(error);
       return;
     }
 
@@ -274,10 +347,12 @@ export class RemoteApiEventManager {
     try {
       message = JSON.parse(rawData) as RemoteSocketIncomingMessage;
     } catch (error) {
+      const normalized = this.createSocketError(operation, error);
       if (this.pendingConnection) {
-        this.pendingConnection.reject(this.createSocketError(operation, error));
+        this.pendingConnection.reject(normalized);
       }
-      this.rejectAllPendingSessionConfirmations(this.createSocketError(operation, error));
+      this.connectionController.markLiveState("disconnected", { retrying: false, lastError: normalized });
+      this.rejectAllPendingSessionConfirmations(normalized);
       return;
     }
 
@@ -292,12 +367,15 @@ export class RemoteApiEventManager {
           if (this.pendingConnection) {
             this.pendingConnection.reject(error);
           }
+          this.connectionController.markLiveState("disconnected", { retrying: false, lastError: error });
           this.rejectAllPendingSessionConfirmations(error);
           this.intentionallyClosed = true;
           this.socket?.close();
           return;
         }
         this.sawConnectedFrame = true;
+        this.connectionController.markHostOnline();
+        this.connectionController.markConnected();
         if (this.pendingConnection) {
           this.pendingConnection.resolve();
         }
@@ -333,6 +411,7 @@ export class RemoteApiEventManager {
         if (this.pendingConnection) {
           this.pendingConnection.reject(error);
         }
+        this.connectionController.markLiveState("disconnected", { retrying: false, lastError: error });
         this.rejectAllPendingSessionConfirmations(error);
         return;
       }
@@ -459,5 +538,14 @@ export class RemoteApiEventManager {
         websocketUrl: this.bootstrap.urls.websocketUrl,
       },
     });
+  }
+
+  destroy() {
+    if (this.browserOnlineListener) {
+      window.removeEventListener("online", this.browserOnlineListener);
+    }
+    if (this.browserOfflineListener) {
+      window.removeEventListener("offline", this.browserOfflineListener);
+    }
   }
 }

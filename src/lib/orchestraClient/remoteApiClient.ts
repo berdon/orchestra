@@ -35,6 +35,10 @@ import type {
   WorkflowSummary,
 } from "../../types";
 import { ORCHESTRA_CLIENT_CONTRACT_VERSION, type OrchestraClientBootstrap } from "./bootstrap";
+import {
+  createOptimisticConnectionSnapshot,
+  OrchestraConnectionController,
+} from "./connection";
 import type {
   OrchestraClient,
   OrchestraClientBinding,
@@ -61,8 +65,9 @@ export function createRemoteApiOrchestraClientBinding(
   bootstrap: OrchestraClientBootstrap,
   options?: RemoteApiOrchestraClientOptions,
 ): OrchestraClientBinding {
-  const transport = createRemoteApiTransport(bootstrap, options);
-  const eventManager = new RemoteApiEventManager(transport, bootstrap, options);
+  const connectionController = new OrchestraConnectionController(createOptimisticConnectionSnapshot(bootstrap));
+  const transport = createRemoteApiTransport(bootstrap, options, connectionController);
+  const eventManager = new RemoteApiEventManager(transport, bootstrap, connectionController, options);
 
   async function getAppInfo(): Promise<AppInfo> {
     if (bootstrap.appInfo) {
@@ -655,6 +660,7 @@ export function createRemoteApiOrchestraClientBinding(
     events: {
       subscribe: (handler) => eventManager.subscribe(handler),
     },
+    connection: connectionController,
   };
 
   return {

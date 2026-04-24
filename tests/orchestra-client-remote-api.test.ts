@@ -110,6 +110,10 @@ function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_
         logsWindow: { availability: "unavailable", reason: "Desktop only" },
         agentTerminal: { availability: "unavailable", reason: "Desktop only" },
         systemNotifications: { availability: "unavailable", reason: "Desktop only" },
+        bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
+        runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
+        harnessSettings: { availability: "unavailable", reason: "Desktop only" },
+        remoteAccess: { availability: "unavailable", reason: "Desktop only" },
       },
     },
     appInfo: null,
@@ -184,6 +188,28 @@ describe("remote api orchestra client", () => {
       source: "remote_api",
       operation: "tasks.list",
       message: "Nope",
+    });
+    expect(binding.client.connection.getSnapshot().hostState).toBe("online");
+  });
+
+  test("normalizes offline HTTP failures and marks the host offline", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl,
+    });
+
+    await expect(binding.client.tasks.list()).rejects.toMatchObject({
+      name: "OrchestraClientError",
+      code: "offline",
+      source: "remote_api",
+      operation: "tasks.list",
+    });
+    expect(binding.client.connection.getSnapshot()).toMatchObject({
+      hostState: "offline",
+      liveState: "disconnected",
+      degraded: true,
     });
   });
 
@@ -301,5 +327,46 @@ describe("remote api orchestra client", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     await rejection;
+  });
+
+  test("exposes reconnecting live state when the websocket closes unexpectedly", async () => {
+    vi.useFakeTimers();
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl: vi.fn(async () => jsonResponse([])),
+      webSocketFactory: (url) => new FakeWebSocket(url) as unknown as WebSocket,
+    });
+
+    const unsubscribePromise = binding.client.events.subscribe(() => undefined);
+    const firstSocket = FakeWebSocket.instances[0]!;
+    firstSocket.emitConnected();
+    const unsubscribe = await unsubscribePromise;
+    expect(binding.client.connection.getSnapshot()).toMatchObject({
+      hostState: "online",
+      liveState: "connected",
+      degraded: false,
+      retryAttempt: 0,
+    });
+
+    firstSocket.close();
+    expect(binding.client.connection.getSnapshot()).toMatchObject({
+      hostState: "online",
+      liveState: "reconnecting",
+      degraded: true,
+      retrying: true,
+      retryAttempt: 1,
+    });
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    FakeWebSocket.instances[1]!.emitConnected();
+    expect(binding.client.connection.getSnapshot()).toMatchObject({
+      hostState: "online",
+      liveState: "connected",
+      degraded: false,
+      retrying: false,
+      retryAttempt: 0,
+    });
+
+    unsubscribe();
   });
 });
