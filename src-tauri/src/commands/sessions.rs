@@ -10,9 +10,8 @@ use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{
-        QueuedSessionMessage, SessionDebugInfo, SessionListVisibilityState,
-        SessionMessageability, SessionModelState, SessionRecord, SessionRuntimeDetails,
-        SessionStats,
+        QueuedSessionMessage, SessionDebugInfo, SessionListVisibilityState, SessionMessageability,
+        SessionModelState, SessionRecord, SessionRuntimeDetails, SessionStats,
     },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
@@ -514,7 +513,10 @@ pub(crate) fn decorate_session_record_with_connection(
         (SessionDecorationSurface::List, Some(session_list::SessionListVisibility::Hidden(_))) => {
             record.status = "closed".into();
         }
-        (SessionDecorationSurface::Detail, Some(session_list::SessionListVisibility::Hidden(_))) => {
+        (
+            SessionDecorationSurface::Detail,
+            Some(session_list::SessionListVisibility::Hidden(_)),
+        ) => {
             if !persistent_agent_session {
                 record.status = "closed".into();
             }
@@ -561,6 +563,23 @@ fn attach_session_control_metadata(
     record.control_capabilities = Some(control_capabilities);
     record.control_operation = control_operation;
     Ok(record)
+}
+
+pub(crate) fn load_detail_session_record_for_state(
+    state: &AppState,
+    session_dir: &std::path::Path,
+    session_id: &str,
+    subscribed: bool,
+) -> Result<SessionRecord, String> {
+    let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let record = load_decorated_session_record(
+        session_dir,
+        session_id,
+        subscribed,
+        &terminal_attached_session_ids,
+        SessionDecorationSurface::Detail,
+    )?;
+    attach_session_control_metadata(state, record)
 }
 
 fn resolve_session_runtime_root(
@@ -2591,7 +2610,10 @@ mod tests {
         .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "idle");
-        assert_eq!(decorated.list_visibility, Some(SessionListVisibilityState::Hidden));
+        assert_eq!(
+            decorated.list_visibility,
+            Some(SessionListVisibilityState::Hidden)
+        );
         assert_eq!(
             decorated.messageability,
             Some(SessionMessageability::Messageable)

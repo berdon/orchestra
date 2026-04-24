@@ -9,6 +9,7 @@ import {
   executeScript,
   setInputValue,
   sleep,
+  waitForEnabledSelector,
   waitForSelector,
   waitForText,
 } from "./driver";
@@ -66,32 +67,64 @@ describe("desktop agent chat navigation", () => {
         (value) => value === true,
       );
 
-      const sessionsChrome = await executeScript<{
-        hasSessionList: boolean;
-        hasFilters: boolean;
-        hasModelPicker: boolean;
-        hasContextStats: boolean;
-        contextPercentLabel: string;
-        autoScrollMode: string;
-        scrollLocked: string;
+      expect(await executeScript<boolean>(sessionId, `
+        return Boolean(document.querySelector('[data-role="session-link"]'));
+      `)).toBe(false);
+      expect(await executeScript<boolean>(sessionId, `
+        return Boolean(document.querySelector('[data-role="session-filter-active"]'));
+      `)).toBe(false);
+      expect(await executeScript<boolean>(sessionId, `
+        return Boolean(document.querySelector('select[aria-label="Session model"]'));
+      `)).toBe(true);
+      expect(await executeScript<boolean>(sessionId, `
+        return Boolean(document.querySelector('[data-role="session-context-stats"]'));
+      `)).toBe(true);
+      expect((await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-context-percent"]')?.textContent || '';
+      `)).toLowerCase()).toContain('context');
+      expect(await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '';
+      `)).toBe('on');
+      expect(await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '';
+      `)).toBe('true');
+      await waitForEnabledSelector(sessionId, '[data-role="composer-input"]');
+      const initialComposerState = await executeScript<{
+        composerDisabled: boolean;
+        sendDisabled: boolean;
+        messageabilityClosed: boolean;
+        terminalReadonly: boolean;
+        piSetupRequired: boolean;
       }>(sessionId, `
+        const composer = document.querySelector('[data-role="composer-input"]');
+        const send = document.querySelector('[data-role="send-message"]');
         return {
-          hasSessionList: Boolean(document.querySelector('[data-role="session-link"]')),
-          hasFilters: Boolean(document.querySelector('[data-role="session-filter-active"]')),
-          hasModelPicker: Boolean(document.querySelector('select[aria-label="Session model"]')),
-          hasContextStats: Boolean(document.querySelector('[data-role="session-context-stats"]')),
-          contextPercentLabel: document.querySelector('[data-role="session-context-percent"]')?.textContent || '',
-          autoScrollMode: document.querySelector('[data-role="session-scroll-lock-toggle"]')?.getAttribute('data-auto-scroll-mode') || '',
-          scrollLocked: document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '',
+          composerDisabled: composer instanceof HTMLTextAreaElement ? composer.disabled : true,
+          sendDisabled: send instanceof HTMLButtonElement ? send.disabled : true,
+          messageabilityClosed: Boolean(document.querySelector('[data-role="session-messageability-closed"]')),
+          terminalReadonly: Boolean(document.querySelector('[data-role="session-terminal-readonly"]')),
+          piSetupRequired: Boolean(document.querySelector('[data-role="session-pi-setup-required"]')),
         };
       `);
-      expect(sessionsChrome.hasSessionList).toBe(false);
-      expect(sessionsChrome.hasFilters).toBe(false);
-      expect(sessionsChrome.hasModelPicker).toBe(true);
-      expect(sessionsChrome.hasContextStats).toBe(true);
-      expect(sessionsChrome.contextPercentLabel.toLowerCase()).toContain('context');
-      expect(sessionsChrome.autoScrollMode).toBe('on');
-      expect(sessionsChrome.scrollLocked).toBe('true');
+      expect(initialComposerState.composerDisabled).toBe(false);
+      expect(initialComposerState.sendDisabled).toBe(true);
+      expect(initialComposerState.messageabilityClosed).toBe(false);
+      expect(initialComposerState.terminalReadonly).toBe(false);
+      expect(initialComposerState.piSetupRequired).toBe(false);
+
+      const initialSupervisorMessage = `DESKTOP-SUPERVISOR-ENABLED-${Date.now()}`;
+      await setInputValue(sessionId, '[data-role="composer-input"]', initialSupervisorMessage);
+      await waitForEnabledSelector(sessionId, '[data-role="send-message"]');
+      await clickSelector(sessionId, '[data-role="send-message"]');
+      await waitForText(sessionId, initialSupervisorMessage);
+      await waitForCondition(
+        () => executeScript<boolean>(sessionId, `
+          const stop = document.querySelector('[data-role="stop-session-runtime"]');
+          return stop instanceof HTMLButtonElement ? stop.disabled : false;
+        `),
+        (value) => value === true,
+        90_000,
+      );
 
       await clickSelector(sessionId, '[data-role="session-scroll-lock-toggle"]');
       const pausedAutoScroll = await executeScript<{ autoScrollMode: string; scrollLocked: string }>(sessionId, `
@@ -120,6 +153,11 @@ describe("desktop agent chat navigation", () => {
 
       await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
       await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
+      await waitForSelector(sessionId, '[data-role="session-action-new"]');
+      expect(await executeScript<boolean>(sessionId, `
+        const button = document.querySelector('[data-role="session-action-new"]');
+        return button instanceof HTMLButtonElement ? button.disabled : true;
+      `)).toBe(false);
       await clickSelector(sessionId, '[data-role="session-action-new"]');
       await waitForText(sessionId, 'Supervisor chat');
 
@@ -134,11 +172,17 @@ describe("desktop agent chat navigation", () => {
 
       await clickSelector(sessionId, '[data-role="session-actions-trigger"]');
       await waitForSelector(sessionId, '[data-role="session-actions-menu"]');
+      await waitForSelector(sessionId, '[data-role="session-action-reload"]');
+      expect(await executeScript<boolean>(sessionId, `
+        const button = document.querySelector('[data-role="session-action-reload"]');
+        return button instanceof HTMLButtonElement ? button.disabled : true;
+      `)).toBe(false);
       await clickSelector(sessionId, '[data-role="session-action-reload"]');
       await waitForText(sessionId, 'Reloaded');
 
       const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
       await setInputValue(sessionId, '[data-role="composer-input"]', longLine);
+      await waitForEnabledSelector(sessionId, '[data-role="send-message"]');
       await clickSelector(sessionId, '[data-role="send-message"]');
       await waitForText(sessionId, longLine);
 

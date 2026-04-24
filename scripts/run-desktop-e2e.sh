@@ -137,6 +137,7 @@ run_inner() {
   export ORCHESTRA_DESKTOP_E2E=1
   export ORCHESTRA_ENABLE_WEBDRIVER_AUTOMATION=1
   export PATH="${REAL_HOME}/.cargo/bin:/workspace/orchestra/node_modules/.bin:${PATH}"
+  unset PI_CODING_AGENT_DIR PI_PACKAGE_DIR ORCHESTRA_PI_EXECUTABLE ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
   ensure_preview_assets
   rm -rf "${TEST_HOME}/.pi"
@@ -146,14 +147,31 @@ run_inner() {
 
   local managed_pi_dir="${TEST_HOME}/.orchestra/runtime/pi/agent"
   local legacy_pi_dir="${TEST_HOME}/.pi/agent"
+  local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-0}"
+  local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"
   if [[ -d "${legacy_pi_dir}" ]]; then
     mkdir -p "${managed_pi_dir}"
     chmod 700 "${TEST_HOME}/.orchestra" "${TEST_HOME}/.orchestra/runtime" "${TEST_HOME}/.orchestra/runtime/pi" "${managed_pi_dir}" 2>/dev/null || true
-    for file_name in auth.json models.json settings.json; do
-      if [[ -f "${legacy_pi_dir}/${file_name}" && ! -f "${managed_pi_dir}/${file_name}" ]]; then
-        install -m 600 "${legacy_pi_dir}/${file_name}" "${managed_pi_dir}/${file_name}"
+
+    if [[ -f "${legacy_pi_dir}/auth.json" && ! -f "${managed_pi_dir}/auth.json" ]]; then
+      install -m 600 "${legacy_pi_dir}/auth.json" "${managed_pi_dir}/auth.json"
+    fi
+
+    if [[ "${import_legacy_settings}" == "1" ]]; then
+      if [[ -f "${legacy_pi_dir}/settings.json" && ! -f "${managed_pi_dir}/settings.json" ]]; then
+        install -m 600 "${legacy_pi_dir}/settings.json" "${managed_pi_dir}/settings.json"
       fi
-    done
+    elif [[ -f "${legacy_pi_dir}/settings.json" ]]; then
+      echo "[desktop-e2e-runner] skipping legacy settings.json import by default; set ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS=1 to opt in"
+    fi
+
+    if [[ "${import_legacy_models}" == "1" ]]; then
+      if [[ -f "${legacy_pi_dir}/models.json" && ! -f "${managed_pi_dir}/models.json" ]]; then
+        install -m 600 "${legacy_pi_dir}/models.json" "${managed_pi_dir}/models.json"
+      fi
+    elif [[ -f "${legacy_pi_dir}/models.json" ]]; then
+      echo "[desktop-e2e-runner] skipping legacy models.json import by default; set ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS=1 to opt in"
+    fi
   fi
 
   ensure_binary_matches_preview_url

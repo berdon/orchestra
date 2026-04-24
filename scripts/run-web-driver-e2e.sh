@@ -33,6 +33,9 @@ if (( ${#positional_args[@]} > 0 )); then
       echo "Desktop webdriver routing only supports explicit desktop test file paths. Unsupported options: ${option_args[*]}" >&2
       exit 1
     fi
+    if (( ${#positional_args[@]} == 1 )); then
+      exec "${ROOT_DIR}/scripts/run-desktop-e2e.sh" "${positional_args[0]}"
+    fi
     exec "${ROOT_DIR}/scripts/run-desktop-e2e-suite.sh" "${positional_args[@]}"
   fi
 fi

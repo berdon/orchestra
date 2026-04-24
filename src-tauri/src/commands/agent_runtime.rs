@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::{
+    commands::sessions::load_detail_session_record_for_state,
     models::{
         AgentOperationsDetail, AgentOperationsSnapshot, AgentQueueEntry, AgentQueueEntryInput,
         SessionRecord,
@@ -10,7 +11,7 @@ use crate::{
     services::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
-        pi_sessions::{find_session_context_for_session, get_session, get_session_path},
+        pi_sessions::{find_session_context_for_session, get_session_path},
         pi_setup, session_attachments,
     },
     state::AppState,
@@ -156,8 +157,12 @@ pub async fn ensure_agent_session(
     let session_context = find_session_context_for_session(&session_id)?;
 
     if session_has_terminal_attachment(&state, &session_id)? {
-        let mut record = get_session(&session_context.session_dir, &session_id, false)?;
-        record.terminal_attached = true;
+        let record = load_detail_session_record_for_state(
+            state.inner(),
+            &session_context.session_dir,
+            &session_id,
+            false,
+        )?;
         let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
         return Ok(record);
     }
@@ -172,7 +177,12 @@ pub async fn ensure_agent_session(
     )?;
     runtime.set_subscribed(true);
 
-    let record = get_session(&session_context.session_dir, &session_id, false)?;
+    let record = load_detail_session_record_for_state(
+        state.inner(),
+        &session_context.session_dir,
+        &session_id,
+        true,
+    )?;
     let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
     Ok(record)
 }
@@ -248,9 +258,12 @@ pub async fn open_agent_session_terminal(
         existing
             .set_focus()
             .map_err(|error| format!("Unable to focus agent terminal window: {error}"))?;
-        let mut record = get_session(&session_context.session_dir, &session_id, false)?;
-        record.terminal_attached = true;
-        return Ok(record);
+        return load_detail_session_record_for_state(
+            state.inner(),
+            &session_context.session_dir,
+            &session_id,
+            false,
+        );
     }
 
     session_attachments::claim_session_terminal_attachment(
@@ -340,9 +353,12 @@ pub async fn open_agent_session_terminal(
     };
     let _ = app_events::emit_session_change(&app, "sessions.terminal.attach", [session_id.clone()]);
 
-    let mut record = get_session(&session_context.session_dir, &session_id, false)?;
-    record.terminal_attached = true;
-    Ok(record)
+    load_detail_session_record_for_state(
+        state.inner(),
+        &session_context.session_dir,
+        &session_id,
+        false,
+    )
 }
 
 #[tauri::command]
