@@ -194,6 +194,8 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "reorder_workflow_lanes",
     "duplicate_workflow",
     "archive_workflow",
+    "get_workflow_delete_impact",
+    "delete_workflow",
     "list_policies",
     "get_policy",
     "get_agent_permissions",
@@ -2209,6 +2211,19 @@ fn invoke_bridge_command(
             serde_json::to_value(workflows::archive_workflow(&writable, &workflow_id)?)
                 .map_err(|error| format!("Unable to serialize workflow: {error}"))
         }
+        "get_workflow_delete_impact" => {
+            let workflow_id = require_string(&payload, "workflowId")?;
+            command_authorization::require_permission(connection, authorization, "workflows.read")?;
+            serde_json::to_value(workflows::get_workflow_delete_impact(connection, &workflow_id)?)
+                .map_err(|error| format!("Unable to serialize workflow delete impact: {error}"))
+        }
+        "delete_workflow" => {
+            let workflow_id = require_string(&payload, "workflowId")?;
+            command_authorization::require_permission(connection, authorization, "workflows.delete")?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(workflows::delete_workflow(&mut writable, &workflow_id)?)
+                .map_err(|error| format!("Unable to serialize workflow delete result: {error}"))
+        }
         "list_policies" => {
             command_authorization::require_permission(connection, authorization, "policies.read")?;
             serde_json::to_value(policies::list_policies(connection)?)
@@ -3264,6 +3279,34 @@ mod tests {
             assert_eq!(
                 archived.get("archived").and_then(Value::as_bool),
                 Some(true)
+            );
+
+            let delete_impact = invoke_bridge_command(
+                &config,
+                &connection,
+                "get_workflow_delete_impact",
+                authorization,
+                None,
+                json!({ "workflowId": workflow_id }),
+            )
+            .expect("get_workflow_delete_impact should succeed");
+            assert_eq!(
+                delete_impact.get("canDelete").and_then(Value::as_bool),
+                Some(true)
+            );
+
+            let deleted = invoke_bridge_command(
+                &config,
+                &connection,
+                "delete_workflow",
+                authorization,
+                None,
+                json!({ "workflowId": workflow_id }),
+            )
+            .expect("delete_workflow should succeed");
+            assert_eq!(
+                deleted.get("workflowId").and_then(Value::as_str),
+                Some(workflow_id.as_str())
             );
         });
     }

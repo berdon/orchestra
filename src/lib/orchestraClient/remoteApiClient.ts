@@ -67,6 +67,7 @@ import type {
   TelegramBotValidation,
   TelegramChatCandidate,
   WorkflowDefinition,
+  WorkflowDeleteImpact,
   WorkflowSummary,
   WorkflowUpsertInput,
   WorkflowValidationResult,
@@ -626,6 +627,19 @@ export function createRemoteApiOrchestraClientBinding(
         return transport.requestJson<WorkflowDefinition>("workflows.archiveWorkflow", {
           method: "POST",
           path: `/api/v1/workflows/${encodeURIComponent(workflowId)}/archive`,
+        });
+      },
+      getWorkflowDeleteImpact: (workflowId) => {
+        transport.assertCapability("workflows.getWorkflowDeleteImpact", bootstrap.capabilities.admin.workflows);
+        return transport.requestJson<WorkflowDeleteImpact>("workflows.getWorkflowDeleteImpact", {
+          path: `/api/v1/workflows/${encodeURIComponent(workflowId)}/delete-impact`,
+        });
+      },
+      deleteWorkflow: (workflowId) => {
+        transport.assertCapability("workflows.deleteWorkflow", bootstrap.capabilities.admin.workflows);
+        return transport.requestJson<WorkflowDeleteImpact>("workflows.deleteWorkflow", {
+          method: "DELETE",
+          path: `/api/v1/workflows/${encodeURIComponent(workflowId)}`,
         });
       },
     },

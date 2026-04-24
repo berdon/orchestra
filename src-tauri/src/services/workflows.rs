@@ -5,9 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::{
-    WorkflowDefinition, WorkflowLane, WorkflowLaneInput, WorkflowLanePatchInput,
-    WorkflowLaneReorderInput, WorkflowSummary, WorkflowUpsertInput, WorkflowValidationError,
-    WorkflowValidationResult,
+    WorkflowDefinition, WorkflowDeleteImpact, WorkflowDeleteImpactReferenceCounts,
+    WorkflowLane, WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
+    WorkflowSummary, WorkflowUpsertInput, WorkflowValidationError, WorkflowValidationResult,
 };
 
 pub fn list_workflows(
@@ -256,6 +256,84 @@ pub fn archive_workflow(
     }
 
     get_workflow(connection, workflow_id)
+}
+
+pub fn get_workflow_delete_impact(
+    connection: &Connection,
+    workflow_id: &str,
+) -> Result<WorkflowDeleteImpact, String> {
+    let (workflow_id, workflow_name) = connection
+        .query_row(
+            "SELECT id, name FROM workflows WHERE id = ?1",
+            [workflow_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query workflow {workflow_id}: {error}"))?
+        .ok_or_else(|| format!("Workflow {workflow_id} was not found"))?;
+
+    let reference_counts = WorkflowDeleteImpactReferenceCounts {
+        tasks: count_workflow_references(connection, "tasks", "workflow_id", &workflow_id)?,
+        task_schedules: count_workflow_references(
+            connection,
+            "task_schedules",
+            "workflow_id",
+            &workflow_id,
+        )?,
+        task_lane_assignments: count_workflow_references(
+            connection,
+            "task_lane_assignments",
+            "workflow_id",
+            &workflow_id,
+        )?,
+        role_queue_entries: count_workflow_references(
+            connection,
+            "role_queue_entries",
+            "source_workflow_id",
+            &workflow_id,
+        )?,
+        agent_queue_entries: count_workflow_references(
+            connection,
+            "agent_queue_entries",
+            "source_workflow_id",
+            &workflow_id,
+        )?,
+    };
+    let blocker_messages = workflow_delete_blocker_messages(&reference_counts);
+
+    Ok(WorkflowDeleteImpact {
+        workflow_id,
+        workflow_name,
+        can_delete: blocker_messages.is_empty(),
+        reference_counts,
+        blocker_messages,
+    })
+}
+
+pub fn delete_workflow(
+    connection: &mut Connection,
+    workflow_id: &str,
+) -> Result<WorkflowDeleteImpact, String> {
+    let tx = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start workflow deletion transaction: {error}"))?;
+    let impact = get_workflow_delete_impact(&tx, workflow_id)?;
+
+    if !impact.can_delete {
+        return Err(format_workflow_delete_blocked_error(&impact));
+    }
+
+    let deleted = tx
+        .execute("DELETE FROM workflows WHERE id = ?1", [workflow_id])
+        .map_err(|error| format!("Unable to delete workflow {workflow_id}: {error}"))?;
+    if deleted == 0 {
+        return Err(format!("Workflow {workflow_id} was not found"));
+    }
+
+    tx.commit()
+        .map_err(|error| format!("Unable to commit workflow deletion: {error}"))?;
+
+    Ok(impact)
 }
 
 pub fn add_workflow_lane(
@@ -707,6 +785,94 @@ fn workflow_name_for_slug(connection: &Connection, workflow_id: &str) -> Result<
         .map_err(|error| format!("Unable to load workflow name for {workflow_id}: {error}"))
 }
 
+fn count_workflow_references(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    workflow_id: &str,
+) -> Result<usize, String> {
+    connection
+        .query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+            [workflow_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value as usize)
+        .map_err(|error| {
+            format!(
+                "Unable to count workflow delete references in {table}.{column} for {workflow_id}: {error}"
+            )
+        })
+}
+
+fn workflow_delete_blocker_messages(
+    counts: &WorkflowDeleteImpactReferenceCounts,
+) -> Vec<String> {
+    let mut messages = Vec::new();
+
+    if counts.tasks > 0 {
+        messages.push(format!(
+            "{} {}",
+            counts.tasks,
+            if counts.tasks == 1 { "task" } else { "tasks" }
+        ));
+    }
+    if counts.task_schedules > 0 {
+        messages.push(format!(
+            "{} {}",
+            counts.task_schedules,
+            if counts.task_schedules == 1 {
+                "task schedule"
+            } else {
+                "task schedules"
+            }
+        ));
+    }
+    if counts.task_lane_assignments > 0 {
+        messages.push(format!(
+            "{} {}",
+            counts.task_lane_assignments,
+            if counts.task_lane_assignments == 1 {
+                "task lane assignment"
+            } else {
+                "task lane assignments"
+            }
+        ));
+    }
+    if counts.role_queue_entries > 0 {
+        messages.push(format!(
+            "{} {}",
+            counts.role_queue_entries,
+            if counts.role_queue_entries == 1 {
+                "role queue entry"
+            } else {
+                "role queue entries"
+            }
+        ));
+    }
+    if counts.agent_queue_entries > 0 {
+        messages.push(format!(
+            "{} {}",
+            counts.agent_queue_entries,
+            if counts.agent_queue_entries == 1 {
+                "agent queue entry"
+            } else {
+                "agent queue entries"
+            }
+        ));
+    }
+
+    messages
+}
+
+fn format_workflow_delete_blocked_error(impact: &WorkflowDeleteImpact) -> String {
+    format!(
+        "Workflow {} cannot be deleted because it is still referenced by {}. Archive it instead if you want to hide it without removing historical state.",
+        impact.workflow_id,
+        impact.blocker_messages.join(", ")
+    )
+}
+
 fn unique_slug(
     connection: &Connection,
     name: &str,
@@ -1120,6 +1286,64 @@ mod tests {
         }
     }
 
+    fn seed_task_reference(connection: &Connection, workflow_id: &str) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, whip_max_attempts, auto_blocked_by_dependencies, archived, source_schedule_id, source_schedule_occurrence_id, created_at, updated_at) VALUES ('task-workflow-ref', 'project-1', 1, 'ORC-1', 'Workflow task', NULL, 'task', 'ready', 'P2', ?1, 'lane-plan', 'user', NULL, NULL, NULL, 10, 0, 0, NULL, NULL, ?2, ?2)",
+                params![workflow_id, now],
+            )
+            .expect("task reference should seed");
+    }
+
+    fn seed_task_schedule_reference(connection: &Connection, workflow_id: &str) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_schedules (id, project_id, title, description, task_type, priority, workflow_id, task_blueprint_json, trigger_type, trigger_json, enabled, one_shot, overlap_policy, next_fire_at, last_fired_at, last_materialized_task_id, last_error, consumed_at, created_at, updated_at) VALUES ('schedule-workflow-ref', 'project-1', 'Workflow schedule', NULL, 'task', 'P2', ?1, '{\"title\":\"Workflow schedule\"}', 'time', '{\"type\":\"everyMinutes\",\"everyMinutes\":60}', 1, 0, 'skip', NULL, NULL, NULL, NULL, NULL, ?2, ?2)",
+                params![workflow_id, now],
+            )
+            .expect("task schedule reference should seed");
+    }
+
+    fn seed_task_lane_assignment_reference(connection: &Connection, workflow_id: &str) {
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, whip_max_attempts, auto_blocked_by_dependencies, archived, source_schedule_id, source_schedule_occurrence_id, created_at, updated_at) VALUES ('task-assignment-ref', 'project-1', 2, 'ORC-2', 'Assignment task', NULL, 'task', 'ready', 'P2', NULL, NULL, 'user', NULL, NULL, NULL, 10, 0, 0, NULL, NULL, ?1, ?1)",
+                params![now],
+            )
+            .expect("task for lane assignment reference should seed");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-workflow-ref', 'task-assignment-ref', ?1, 'lane-plan', 'user', NULL, 'active', NULL, NULL, NULL, NULL, 'Prompt', NULL, NULL, 0, NULL, ?2, NULL, ?2, ?2)",
+                params![workflow_id, now],
+            )
+            .expect("task lane assignment reference should seed");
+    }
+
+    fn seed_role_queue_reference(connection: &Connection, workflow_id: &str) {
+        seed_worker(connection, "roles", "role-reviewer", "Reviewer").expect("role should seed");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO role_queue_entries (id, role_id, status, source_type, source_task_id, source_workflow_id, source_lane_id, title, summary, entry_prompt, assigned_instance_id, created_at, updated_at, started_at, completed_at) VALUES ('role-queue-workflow-ref', 'role-reviewer', 'queued', 'workflow_lane', NULL, ?1, 'lane-plan', 'Workflow queue', NULL, NULL, NULL, ?2, ?2, NULL, NULL)",
+                params![workflow_id, now],
+            )
+            .expect("role queue reference should seed");
+    }
+
+    fn seed_agent_queue_reference(connection: &Connection, workflow_id: &str) {
+        seed_worker(connection, "agents", "agent-reviewer", "Reviewer Agent").expect("agent should seed");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO agent_queue_entries (id, project_id, agent_id, status, source_type, source_task_id, source_workflow_id, source_lane_id, delivery_mode, title, message, session_id, run_id, dispatched_at, completed_at, created_at, updated_at) VALUES ('agent-queue-workflow-ref', 'project-1', 'agent-reviewer', 'queued', 'workflow_lane', NULL, ?1, 'lane-plan', 'queue', 'Workflow queue', 'Prompt', NULL, NULL, NULL, NULL, ?2, ?2)",
+                params![workflow_id, now],
+            )
+            .expect("agent queue reference should seed");
+    }
+
     #[test]
     fn creates_lists_and_loads_workflows() {
         let mut connection = open_test_connection("workflow-crud");
@@ -1190,6 +1414,118 @@ mod tests {
 
         let all = list_workflows(&connection, true).expect("all workflows should list");
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn deletes_unused_workflows_and_cascades_lanes() {
+        let mut connection = open_test_connection("workflow-delete");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
+
+        let impact = get_workflow_delete_impact(&connection, &created.id)
+            .expect("workflow delete impact should load");
+        assert!(impact.can_delete);
+        assert!(impact.blocker_messages.is_empty());
+
+        let deleted = delete_workflow(&mut connection, &created.id)
+            .expect("workflow should delete");
+        assert_eq!(deleted.workflow_id, created.id);
+        assert!(deleted.can_delete);
+        assert!(get_workflow(&connection, &created.id).is_err());
+
+        let lane_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM workflow_lanes WHERE workflow_id = ?1",
+                [&created.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("lane count should load");
+        assert_eq!(lane_count, 0);
+    }
+
+    #[test]
+    fn blocks_workflow_delete_when_tasks_reference_it() {
+        let mut connection = open_test_connection("workflow-delete-task-blocked");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
+        seed_task_reference(&connection, &created.id);
+
+        let impact = get_workflow_delete_impact(&connection, &created.id)
+            .expect("workflow delete impact should load");
+        assert!(!impact.can_delete);
+        assert_eq!(impact.reference_counts.tasks, 1);
+
+        let error = delete_workflow(&mut connection, &created.id)
+            .expect_err("workflow delete should be blocked");
+        assert!(error.contains("1 task"));
+    }
+
+    #[test]
+    fn blocks_workflow_delete_when_task_schedules_reference_it() {
+        let mut connection = open_test_connection("workflow-delete-schedule-blocked");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
+        seed_task_schedule_reference(&connection, &created.id);
+
+        let impact = get_workflow_delete_impact(&connection, &created.id)
+            .expect("workflow delete impact should load");
+        assert!(!impact.can_delete);
+        assert_eq!(impact.reference_counts.task_schedules, 1);
+
+        let error = delete_workflow(&mut connection, &created.id)
+            .expect_err("workflow delete should be blocked");
+        assert!(error.contains("1 task schedule"));
+    }
+
+    #[test]
+    fn blocks_workflow_delete_when_task_lane_assignments_reference_it() {
+        let mut connection = open_test_connection("workflow-delete-assignment-blocked");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
+        seed_task_lane_assignment_reference(&connection, &created.id);
+
+        let impact = get_workflow_delete_impact(&connection, &created.id)
+            .expect("workflow delete impact should load");
+        assert!(!impact.can_delete);
+        assert_eq!(impact.reference_counts.task_lane_assignments, 1);
+
+        let error = delete_workflow(&mut connection, &created.id)
+            .expect_err("workflow delete should be blocked");
+        assert!(error.contains("1 task lane assignment"));
+    }
+
+    #[test]
+    fn blocks_workflow_delete_when_role_queue_entries_reference_it() {
+        let mut connection = open_test_connection("workflow-delete-role-queue-blocked");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
+        seed_role_queue_reference(&connection, &created.id);
+
+        let impact = get_workflow_delete_impact(&connection, &created.id)
+            .expect("workflow delete impact should load");
+        assert!(!impact.can_delete);
+        assert_eq!(impact.reference_counts.role_queue_entries, 1);
+
+        let error = delete_workflow(&mut connection, &created.id)
+            .expect_err("workflow delete should be blocked");
+        assert!(error.contains("1 role queue entry"));
+    }
+
+    #[test]
+    fn blocks_workflow_delete_when_agent_queue_entries_reference_it() {
+        let mut connection = open_test_connection("workflow-delete-agent-queue-blocked");
+        let created = create_workflow(&mut connection, sample_workflow_input())
+            .expect("workflow should create");
+        seed_agent_queue_reference(&connection, &created.id);
+
+        let impact = get_workflow_delete_impact(&connection, &created.id)
+            .expect("workflow delete impact should load");
+        assert!(!impact.can_delete);
+        assert_eq!(impact.reference_counts.agent_queue_entries, 1);
+
+        let error = delete_workflow(&mut connection, &created.id)
+            .expect_err("workflow delete should be blocked");
+        assert!(error.contains("1 agent queue entry"));
     }
 
     #[test]

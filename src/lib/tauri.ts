@@ -65,6 +65,7 @@ import type {
   TaskTodoInput,
   TaskUpsertInput,
   WorkflowDefinition,
+  WorkflowDeleteImpact,
   WorkflowLane,
   WorkflowSummary,
   WorkflowUpsertInput,
@@ -769,6 +770,33 @@ function summarizeWorkflow(workflow: WorkflowDefinition): WorkflowSummary {
     laneCount: workflow.lanes.length,
     createdAt: workflow.createdAt,
     updatedAt: workflow.updatedAt,
+  };
+}
+
+function buildMockWorkflowDeleteImpact(workflow: WorkflowDefinition): WorkflowDeleteImpact {
+  const tasks = ensureMockTasks().filter((task) => task.workflowId === workflow.id).length;
+  const taskSchedules = ensureMockTaskSchedules().filter((schedule) => schedule.taskBlueprint.workflowId === workflow.id).length;
+  const blockerMessages: string[] = [];
+
+  if (tasks > 0) {
+    blockerMessages.push(`${tasks} ${tasks === 1 ? "task" : "tasks"}`);
+  }
+  if (taskSchedules > 0) {
+    blockerMessages.push(`${taskSchedules} ${taskSchedules === 1 ? "task schedule" : "task schedules"}`);
+  }
+
+  return {
+    workflowId: workflow.id,
+    workflowName: workflow.name,
+    canDelete: blockerMessages.length === 0,
+    referenceCounts: {
+      tasks,
+      taskSchedules,
+      taskLaneAssignments: 0,
+      roleQueueEntries: 0,
+      agentQueueEntries: 0,
+    },
+    blockerMessages,
   };
 }
 
@@ -5829,4 +5857,48 @@ export async function archiveWorkflow(workflowId: string): Promise<WorkflowDefin
   }
 
   return invoke<WorkflowDefinition>("archive_workflow", { workflowId });
+}
+
+export async function getWorkflowDeleteImpact(workflowId: string): Promise<WorkflowDeleteImpact> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.getWorkflowDeleteImpact(workflowId);
+  }
+  if (!isTauriAvailable()) {
+    const workflow = ensureMockWorkflows().find((entry) => entry.id === workflowId);
+    if (!workflow) {
+      throw new Error(`Workflow ${workflowId} was not found`);
+    }
+    return buildMockWorkflowDeleteImpact(workflow);
+  }
+
+  return invoke<WorkflowDeleteImpact>("get_workflow_delete_impact", { workflowId });
+}
+
+export async function deleteWorkflow(workflowId: string): Promise<WorkflowDeleteImpact> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.deleteWorkflow(workflowId);
+  }
+  if (!isTauriAvailable()) {
+    const workflows = ensureMockWorkflows();
+    const workflow = workflows.find((entry) => entry.id === workflowId);
+    if (!workflow) {
+      throw new Error(`Workflow ${workflowId} was not found`);
+    }
+
+    const impact = buildMockWorkflowDeleteImpact(workflow);
+    if (!impact.canDelete) {
+      throw new Error(
+        `Workflow ${workflowId} cannot be deleted because it is still referenced by ${impact.blockerMessages.join(", ")}. Archive it instead if you want to hide it without removing historical state.`,
+      );
+    }
+
+    saveMockWorkflows(workflows.filter((entry) => entry.id !== workflowId));
+    appendMockLog("info", "workflow.deleted", `Deleted workflow ${workflowId}`);
+    appendMockDomainEvent("workflow.deleted", "workflow", workflowId, { workflowId, name: workflow.name }, null);
+    return impact;
+  }
+
+  return invoke<WorkflowDeleteImpact>("delete_workflow", { workflowId });
 }

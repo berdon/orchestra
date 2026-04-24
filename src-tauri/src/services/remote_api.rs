@@ -1254,7 +1254,13 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route("/api/v1/workflows/validate", post(post_validate_workflow))
         .route(
             "/api/v1/workflows/:workflow_id",
-            get(get_workflow_detail).patch(patch_workflow_update),
+            get(get_workflow_detail)
+                .patch(patch_workflow_update)
+                .delete(delete_workflow_record),
+        )
+        .route(
+            "/api/v1/workflows/:workflow_id/delete-impact",
+            get(get_workflow_delete_impact),
         )
         .route(
             "/api/v1/workflows/:workflow_id/archive",
@@ -3670,6 +3676,28 @@ async fn patch_workflow_update(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     workflow_commands::update_workflow(context.app.state::<AppState>(), workflow_id, input)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_workflow_delete_impact(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(workflow_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    workflow_commands::get_workflow_delete_impact(workflow_id)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn delete_workflow_record(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(workflow_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    workflow_commands::delete_workflow(context.app.state::<AppState>(), workflow_id)
         .map(Json)
         .map_err(command_api_error)
 }

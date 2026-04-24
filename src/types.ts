@@ -1362,6 +1362,7 @@ export type DomainEventTopic =
   | "workflow.created"
   | "workflow.updated"
   | "workflow.archived"
+  | "workflow.deleted"
   | "task.schedule.created"
   | "task.schedule.updated"
   | "task.schedule.deleted";
@@ -1491,6 +1492,22 @@ export interface WorkflowSummary {
   laneCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkflowDeleteImpactReferenceCounts {
+  tasks: number;
+  taskSchedules: number;
+  taskLaneAssignments: number;
+  roleQueueEntries: number;
+  agentQueueEntries: number;
+}
+
+export interface WorkflowDeleteImpact {
+  workflowId: string;
+  workflowName: string;
+  canDelete: boolean;
+  referenceCounts: WorkflowDeleteImpactReferenceCounts;
+  blockerMessages: string[];
 }
 
 export interface WorkflowLaneInput {

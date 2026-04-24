@@ -194,6 +194,16 @@ describe("orchestra tools extension bridge tool setup", () => {
         description: "Archive a workflow",
         requiredPermission: "workflows.archive",
       },
+      {
+        name: "get_workflow_delete_impact",
+        description: "Inspect whether a workflow can be deleted",
+        requiredPermission: "workflows.read",
+      },
+      {
+        name: "delete_workflow",
+        description: "Delete a workflow",
+        requiredPermission: "workflows.delete",
+      },
     ]);
     process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({ actorType: "user", actorId: "tester" });
   });
@@ -269,6 +279,8 @@ describe("orchestra tools extension bridge tool setup", () => {
         "reorder_workflow_lanes",
         "duplicate_workflow",
         "archive_workflow",
+        "get_workflow_delete_impact",
+        "delete_workflow",
       ]),
     );
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
@@ -694,7 +706,17 @@ describe("orchestra tools extension bridge tool setup", () => {
       newName: "Delivery workflow copy",
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(7);
+    const workflowDeleteImpactTool = registeredTools.find((tool) => tool.name === "get_workflow_delete_impact");
+    await workflowDeleteImpactTool.execute("tool-call-8", {
+      workflowId: "workflow-1",
+    });
+
+    const deleteWorkflowTool = registeredTools.find((tool) => tool.name === "delete_workflow");
+    await deleteWorkflowTool.execute("tool-call-9", {
+      workflowId: "workflow-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(9);
     const validateRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(validateRequest.command).toBe("validate_workflow");
     expect(validateRequest.payload.input.name).toBe("Validation workflow");
@@ -730,6 +752,12 @@ describe("orchestra tools extension bridge tool setup", () => {
       workflowId: "workflow-1",
       newName: "Delivery workflow copy",
     });
+    const deleteImpactRequest = JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body));
+    expect(deleteImpactRequest.command).toBe("get_workflow_delete_impact");
+    expect(deleteImpactRequest.payload).toEqual({ workflowId: "workflow-1" });
+    const deleteWorkflowRequest = JSON.parse(String(fetchMock.mock.calls[8]?.[1]?.body));
+    expect(deleteWorkflowRequest.command).toBe("delete_workflow");
+    expect(deleteWorkflowRequest.payload).toEqual({ workflowId: "workflow-1" });
   });
 
   test("exposes project-scoped tool parameters and detailed help", async () => {

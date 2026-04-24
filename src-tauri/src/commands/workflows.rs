@@ -3,8 +3,9 @@ use tauri::State;
 
 use crate::{
     models::{
-        WorkflowDefinition, WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
-        WorkflowSummary, WorkflowUpsertInput, WorkflowValidationResult,
+        WorkflowDefinition, WorkflowDeleteImpact, WorkflowLaneInput, WorkflowLanePatchInput,
+        WorkflowLaneReorderInput, WorkflowSummary, WorkflowUpsertInput,
+        WorkflowValidationResult,
     },
     services::{database, domain_events, workflows},
     state::AppState,
@@ -297,4 +298,43 @@ pub fn archive_workflow(
         },
     );
     Ok(workflow)
+}
+
+#[tauri::command]
+pub fn get_workflow_delete_impact(workflow_id: String) -> Result<WorkflowDeleteImpact, String> {
+    let connection = database::open_connection()?;
+    workflows::get_workflow_delete_impact(&connection, &workflow_id)
+}
+
+#[tauri::command]
+pub fn delete_workflow(
+    state: State<'_, AppState>,
+    workflow_id: String,
+) -> Result<WorkflowDeleteImpact, String> {
+    let mut connection = database::open_connection()?;
+    let impact = workflows::delete_workflow(&mut connection, &workflow_id)?;
+    state.log(
+        "info",
+        "workflow.deleted",
+        &format!("Deleted workflow {}", impact.workflow_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "delete_workflow",
+        None,
+        None,
+        &workflow_id,
+        "success",
+    );
+    let _ = domain_events::record_event(
+        &connection,
+        domain_events::DomainEventInput {
+            project_id: None,
+            topic: "workflow.deleted".into(),
+            entity_type: "workflow".into(),
+            entity_id: Some(impact.workflow_id.clone()),
+            payload: json!({ "workflowId": impact.workflow_id.clone(), "name": impact.workflow_name.clone() }),
+        },
+    );
+    Ok(impact)
 }

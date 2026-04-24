@@ -90,9 +90,10 @@ use commands::{
         set_default_task_file_reference, stop_task_activity, update_task, update_task_comment,
     },
     workflows::{
-        add_workflow_lane, archive_workflow, create_workflow, delete_workflow_lane,
-        duplicate_workflow, get_workflow, list_workflows, reorder_workflow_lanes, update_workflow,
-        update_workflow_lane, validate_workflow,
+        add_workflow_lane, archive_workflow, create_workflow, delete_workflow,
+        delete_workflow_lane, duplicate_workflow, get_workflow, get_workflow_delete_impact,
+        list_workflows, reorder_workflow_lanes, update_workflow, update_workflow_lane,
+        validate_workflow,
     },
 };
 use state::AppState;
@@ -369,7 +370,9 @@ pub fn run() {
             delete_workflow_lane,
             reorder_workflow_lanes,
             duplicate_workflow,
-            archive_workflow
+            archive_workflow,
+            get_workflow_delete_impact,
+            delete_workflow
         ])
         .build(tauri_context())
         .expect("error while building tauri application");

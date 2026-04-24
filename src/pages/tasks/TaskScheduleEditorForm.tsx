@@ -42,6 +42,7 @@ const DOMAIN_EVENT_OPTIONS = [
   "workflow.created",
   "workflow.updated",
   "workflow.archived",
+  "workflow.deleted",
 ] as const;
 
 interface TaskScheduleEditorFormProps {

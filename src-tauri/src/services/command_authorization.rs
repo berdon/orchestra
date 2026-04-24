@@ -89,6 +89,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Archive a workflow",
         "workflows.archive",
     ),
+    (
+        "get_workflow_delete_impact",
+        "Inspect whether a workflow can be deleted",
+        "workflows.read",
+    ),
+    (
+        "delete_workflow",
+        "Delete a workflow",
+        "workflows.delete",
+    ),
     ("list_policies", "List policies", "policies.read"),
     ("get_policy", "Get a policy", "policies.read"),
     (

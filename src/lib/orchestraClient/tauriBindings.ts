@@ -257,6 +257,8 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     updateWorkflow: (workflowId, input) => invokeTauri("update_workflow", { workflowId, input }),
     duplicateWorkflow: (workflowId, newName) => invokeTauri("duplicate_workflow", { workflowId, newName: newName ?? null }),
     archiveWorkflow: (workflowId) => invokeTauri("archive_workflow", { workflowId }),
+    getWorkflowDeleteImpact: (workflowId) => invokeTauri("get_workflow_delete_impact", { workflowId }),
+    deleteWorkflow: (workflowId) => invokeTauri("delete_workflow", { workflowId }),
   },
   policies: {
     listPolicies,

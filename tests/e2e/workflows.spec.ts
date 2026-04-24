@@ -10,7 +10,7 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Workflows" }).click();
 
-  await expect(page.getByText("Built-in workflows are editable like any other workflow.")).toBeVisible();
+  await expect(page.getByText("Orchestra includes ready-to-use Product Strategy, Planning, and Development workflows on first install. They're regular workflow records, so you can edit, duplicate, archive, or permanently delete them when nothing else still references them.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Development" })).toBeVisible();
 
   const seededWorkflowRefs = await page.evaluate(() => {
@@ -45,4 +45,20 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   expect(savedLane?.assignedEntityId).toBe("data");
   expect(savedLane?.useSeparateWorktree).toBe(true);
   expect(savedLane?.requireUserApprovalOnSuccess).toBe(true);
+
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("heading", { name: "Delete Agent Driven Flow?" })).toBeVisible();
+  await expect(page.getByText("This permanently deletes the workflow definition and its lanes. This cannot be undone.")).toBeVisible();
+  await page.getByRole("button", { name: "Delete workflow" }).click();
+
+  await expect(page.getByRole("link", { name: "Agent Driven Flow" })).toHaveCount(0);
+  const remainingWorkflows = await page.evaluate(() => JSON.parse(window.localStorage.getItem("orchestra.mock.workflows") ?? "[]"));
+  expect(remainingWorkflows.some((workflow: { name: string }) => workflow.name === "Agent Driven Flow")).toBe(false);
+
+  await page.getByRole("link", { name: "Development" }).click();
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("heading", { name: "Delete Development?" })).toBeVisible();
+  await expect(page.getByText("This workflow is still referenced and cannot be permanently deleted safely.")).toBeVisible();
+  await expect(page.locator('[data-role="workflow-delete-impact-list"]')).toContainText("Tasks: 3");
+  await expect(page.getByRole("button", { name: "Delete workflow" })).toHaveCount(0);
 });

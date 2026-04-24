@@ -1993,6 +1993,26 @@ pub struct WorkflowSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkflowDeleteImpactReferenceCounts {
+    pub tasks: usize,
+    pub task_schedules: usize,
+    pub task_lane_assignments: usize,
+    pub role_queue_entries: usize,
+    pub agent_queue_entries: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowDeleteImpact {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub can_delete: bool,
+    pub reference_counts: WorkflowDeleteImpactReferenceCounts,
+    pub blocker_messages: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowUpsertInput {
     pub name: String,
     pub description: Option<String>,

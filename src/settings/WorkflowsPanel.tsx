@@ -6,8 +6,10 @@ import { listRoles } from "../lib/roles";
 import {
   archiveWorkflow,
   createWorkflow,
+  deleteWorkflow,
   duplicateWorkflow,
   getWorkflow,
+  getWorkflowDeleteImpact,
   listWorkflows,
   updateWorkflow,
   validateWorkflow,
@@ -16,6 +18,7 @@ import type {
   AgentSummary,
   RoleSummary,
   WorkflowDefinition,
+  WorkflowDeleteImpact,
   WorkflowLaneInput,
   WorkflowSummary,
   WorkflowTransitionType,
@@ -160,6 +163,10 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
   const [isCreatingWorkflow, setIsCreatingWorkflow] = useState(false);
   const [loadedWorkflowId, setLoadedWorkflowId] = useState<string | null>(null);
   const [loadedWorkflowArchived, setLoadedWorkflowArchived] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState<WorkflowDeleteImpact | null>(null);
+  const [loadingDeleteImpact, setLoadingDeleteImpact] = useState(false);
+  const [deletingWorkflow, setDeletingWorkflow] = useState(false);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const selectionRequestTokenRef = useRef<number>(0);
@@ -184,6 +191,29 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
   const selectedLane = selectedLaneIndex >= 0 ? workflowDraft.lanes[selectedLaneIndex] ?? null : workflowDraft.lanes[0] ?? null;
 
   const validationSummary = useMemo(() => workflowValidation.map((error) => `${error.path}: ${error.message}`), [workflowValidation]);
+  const deleteImpactRows = useMemo(() => {
+    if (!deleteImpact) {
+      return [];
+    }
+
+    return [
+      { label: "Tasks", count: deleteImpact.referenceCounts.tasks },
+      { label: "Task schedules", count: deleteImpact.referenceCounts.taskSchedules },
+      { label: "Task lane assignments", count: deleteImpact.referenceCounts.taskLaneAssignments },
+      { label: "Role queue entries", count: deleteImpact.referenceCounts.roleQueueEntries },
+      { label: "Agent queue entries", count: deleteImpact.referenceCounts.agentQueueEntries },
+    ].filter((entry) => entry.count > 0);
+  }, [deleteImpact]);
+
+  function resetWorkflowEditor() {
+    const nextDraft = createBlankWorkflowDraft();
+    setWorkflowDraft(nextDraft);
+    setSelectedLaneId(nextDraft.lanes[0]?.id ?? null);
+    setWorkflowValidation([]);
+    setLoadedWorkflowId(null);
+    setLoadedWorkflowArchived(false);
+    setIsCreatingWorkflow(false);
+  }
 
   async function loadWorkflows() {
     setLoadingWorkflows(true);
@@ -299,6 +329,8 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
     setWorkflowActionError(null);
     setLoadedWorkflowId(null);
     setLoadedWorkflowArchived(false);
+    setShowDeleteConfirm(false);
+    setDeleteImpact(null);
     setIsCreatingWorkflow(true);
   }
 
@@ -373,6 +405,55 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
     }
   }
 
+  async function handleRequestDeleteWorkflow() {
+    if (!selectedWorkflowSummary) {
+      return;
+    }
+
+    setShowDeleteConfirm(true);
+    setDeleteImpact(null);
+    setLoadingDeleteImpact(true);
+    setWorkflowActionError(null);
+
+    try {
+      const impact = await getWorkflowDeleteImpact(selectedWorkflowSummary.id);
+      setDeleteImpact(impact);
+    } catch (error) {
+      setShowDeleteConfirm(false);
+      setWorkflowActionError(error instanceof Error ? error.message : "Unable to inspect workflow delete impact.");
+    } finally {
+      setLoadingDeleteImpact(false);
+    }
+  }
+
+  async function handleConfirmDeleteWorkflow() {
+    if (!selectedWorkflowSummary) {
+      return;
+    }
+
+    setDeletingWorkflow(true);
+    setWorkflowActionError(null);
+    try {
+      await deleteWorkflow(selectedWorkflowSummary.id);
+      const nextWorkflows = await listWorkflows(includeArchivedWorkflows);
+      const nextSelectedWorkflowId = nextWorkflows[0]?.id ?? null;
+      setWorkflows(nextWorkflows);
+      setSelectedWorkflowId(nextSelectedWorkflowId);
+      setShowDeleteConfirm(false);
+      setDeleteImpact(null);
+
+      if (nextSelectedWorkflowId) {
+        await loadWorkflowDetail(nextSelectedWorkflowId);
+      } else {
+        resetWorkflowEditor();
+      }
+    } catch (error) {
+      setWorkflowActionError(error instanceof Error ? error.message : "Unable to delete workflow.");
+    } finally {
+      setDeletingWorkflow(false);
+    }
+  }
+
   return (
     <section className="panel-stack workflow-stack">
       <section className="panel workflow-board-panel">
@@ -443,7 +524,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
             <div>
               <p className="eyebrow">Workflow library</p>
               <h3>Workflows</h3>
-              <p className="supporting-copy">Built-in workflows are editable like any other workflow.</p>
+              <p className="muted-copy">Orchestra includes ready-to-use Product Strategy, Planning, and Development workflows on first install. They&apos;re regular workflow records, so you can edit, duplicate, archive, or permanently delete them when nothing else still references them.</p>
             </div>
             <div className="action-cluster">
               <label className="checkbox-row">
@@ -505,13 +586,16 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
             </div>
 
             <div className="action-cluster">
-              <button className="secondary-button" type="button" disabled={savingWorkflow || !selectedWorkflowSummary} onClick={() => void handleDuplicateWorkflow()}>
+              <button className="secondary-button" type="button" disabled={savingWorkflow || deletingWorkflow || !selectedWorkflowSummary} onClick={() => void handleDuplicateWorkflow()}>
                 Duplicate
               </button>
-              <button className="secondary-button" type="button" disabled={savingWorkflow || !selectedWorkflowSummary || loadedWorkflowArchived} onClick={() => void handleArchiveWorkflow()}>
+              <button className="secondary-button" type="button" disabled={savingWorkflow || deletingWorkflow || !selectedWorkflowSummary || loadedWorkflowArchived} onClick={() => void handleArchiveWorkflow()}>
                 Archive
               </button>
-              <button className="primary-button" data-role="save-workflow" type="button" disabled={savingWorkflow || loadingWorkflowDetail} onClick={() => void handleSaveWorkflow()}>
+              <button className="secondary-button secondary-button--danger" data-role="delete-workflow" type="button" disabled={savingWorkflow || deletingWorkflow || loadingDeleteImpact || !selectedWorkflowSummary} onClick={() => void handleRequestDeleteWorkflow()}>
+                Delete
+              </button>
+              <button className="primary-button" data-role="save-workflow" type="button" disabled={savingWorkflow || deletingWorkflow || loadingWorkflowDetail} onClick={() => void handleSaveWorkflow()}>
                 {savingWorkflow ? "Saving…" : loadedWorkflowId && !isCreatingWorkflow ? "Save changes" : "Create workflow"}
               </button>
             </div>
@@ -939,6 +1023,51 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
         </>
         )}
       />
+
+      {showDeleteConfirm ? (
+        <div className="quick-chat-overlay" data-role="workflow-delete-confirm-overlay" onClick={() => !loadingDeleteImpact && !deletingWorkflow && setShowDeleteConfirm(false)}>
+          <section className="quick-chat-modal panel task-delete-confirm" data-role="workflow-delete-confirm" onClick={(event) => event.stopPropagation()}>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Delete workflow</p>
+                <h3>Delete {selectedWorkflowSummary?.name ?? "workflow"}?</h3>
+              </div>
+            </div>
+
+            {loadingDeleteImpact ? (
+              <p>Loading delete impact…</p>
+            ) : deleteImpact?.canDelete ? (
+              <>
+                <p>This permanently deletes the workflow definition and its lanes. This cannot be undone.</p>
+                <p className="muted-copy">No tasks, schedules, or runtime records currently block this delete.</p>
+              </>
+            ) : (
+              <>
+                <p>This workflow is still referenced and cannot be permanently deleted safely.</p>
+                {deleteImpactRows.length ? (
+                  <ul className="workflow-validation-list" data-role="workflow-delete-impact-list">
+                    {deleteImpactRows.map((entry) => (
+                      <li key={entry.label}>{entry.label}: {entry.count}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <p className="muted-copy">Archive the workflow instead if you want it out of normal use while keeping its historical references intact.</p>
+              </>
+            )}
+
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" disabled={loadingDeleteImpact || deletingWorkflow} onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </button>
+              {deleteImpact?.canDelete ? (
+                <button className="secondary-button secondary-button--danger" data-role="confirm-delete-workflow" type="button" disabled={deletingWorkflow} onClick={() => void handleConfirmDeleteWorkflow()}>
+                  {deletingWorkflow ? "Deleting…" : "Delete workflow"}
+                </button>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

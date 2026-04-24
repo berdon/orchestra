@@ -778,6 +778,44 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
+  if (tool.name === "get_workflow_delete_impact") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id to inspect." }),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string }) {
+        const payload = { workflowId: params.workflowId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "delete_workflow") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: workflowSchemaDescription(tool) + " Provide workflowId.",
+      parameters: Type.Object({
+        workflowId: Type.String({ description: "Workflow id to delete." }),
+      }),
+      async execute(_toolCallId: string, params: { workflowId: string }) {
+        const payload = { workflowId: params.workflowId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
   if (tool.name === "list_tasks") {
     return {
       name: tool.name,

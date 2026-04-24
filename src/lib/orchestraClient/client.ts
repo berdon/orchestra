@@ -67,6 +67,7 @@ import type {
   TelegramBotValidation,
   TelegramChatCandidate,
   WorkflowDefinition,
+  WorkflowDeleteImpact,
   WorkflowSummary,
   WorkflowUpsertInput,
   WorkflowValidationResult,
@@ -149,6 +150,7 @@ export type {
   TelegramBotValidation,
   TelegramChatCandidate,
   WorkflowDefinition,
+  WorkflowDeleteImpact,
   WorkflowSummary,
   WorkflowUpsertInput,
   WorkflowValidationResult,
@@ -245,6 +247,8 @@ export interface OrchestraWorkflowService {
   updateWorkflow(workflowId: string, input: WorkflowUpsertInput): Promise<WorkflowDefinition>;
   duplicateWorkflow(workflowId: string, newName?: string): Promise<WorkflowDefinition>;
   archiveWorkflow(workflowId: string): Promise<WorkflowDefinition>;
+  getWorkflowDeleteImpact(workflowId: string): Promise<WorkflowDeleteImpact>;
+  deleteWorkflow(workflowId: string): Promise<WorkflowDeleteImpact>;
 }
 
 export interface OrchestraPolicyService {
