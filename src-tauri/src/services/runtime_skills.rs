@@ -10,13 +10,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::services::{
-    database,
-    orchestra_paths::{
-        default_orchestra_root, orchestra_pi_agent_skills_dir, orchestra_pi_skill_snapshots_dir,
-        sanitize_slug,
+use crate::{
+    models::{
+        ManagedSkillRuntimeAmbientEntry, ManagedSkillRuntimeContextSummary,
+        ManagedSkillRuntimeDiagnostics, ManagedSkillRuntimeResolvedEntry,
+        ManagedSkillRuntimeSnapshotSummary, ManagedSkillRuntimeSuppressedEntry,
     },
-    pi_sessions, projects, task_runtime,
+    services::{
+        database,
+        orchestra_paths::{
+            default_orchestra_root, orchestra_pi_agent_skills_dir,
+            orchestra_pi_skill_snapshots_dir, sanitize_slug,
+        },
+        pi_sessions, projects, task_runtime,
+    },
 };
 
 const SCOPE_GLOBAL: &str = "global";
@@ -67,6 +74,7 @@ pub struct ManagedPiSkillLaunchPlan {
     pub skill_paths: Vec<PathBuf>,
     pub global_skill_slugs: Vec<String>,
     pub scoped_skill_slugs: Vec<String>,
+    pub diagnostics: ManagedSkillRuntimeDiagnostics,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,11 +97,25 @@ struct ResolvedRuntimeSkillCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct SuppressedRuntimeSkillCandidate {
+    candidate: ResolvedRuntimeSkillCandidate,
+    suppression_reason: String,
+    winner_skill_id: Option<String>,
+    winner_binding_id: Option<String>,
+    explanation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct EffectiveRuntimeSkills {
     global_winners: Vec<ResolvedRuntimeSkillCandidate>,
     scoped_winners: Vec<ResolvedRuntimeSkillCandidate>,
-    suppressed_same_record: Vec<ResolvedRuntimeSkillCandidate>,
-    suppressed_same_slug: Vec<ResolvedRuntimeSkillCandidate>,
+    suppressed: Vec<SuppressedRuntimeSkillCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManagedPiSkillResolution {
+    launch_plan: Option<ManagedPiSkillLaunchPlan>,
+    diagnostics: ManagedSkillRuntimeDiagnostics,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +216,18 @@ pub fn resolve_managed_pi_skill_launch_plan(
     resolve_managed_pi_skill_launch_plan_for_connection(&connection, &orchestra_root, session_id)
 }
 
+pub fn get_managed_pi_skill_runtime_diagnostics(
+    session_id: &str,
+) -> Result<ManagedSkillRuntimeDiagnostics, String> {
+    let connection = database::open_connection()?;
+    let orchestra_root = default_orchestra_root()?;
+    get_managed_pi_skill_runtime_diagnostics_for_connection(
+        &connection,
+        &orchestra_root,
+        session_id,
+    )
+}
+
 pub fn append_managed_pi_extension_and_skill_args(
     args: &mut Vec<String>,
     orchestra_extension_path: &Path,
@@ -252,56 +286,32 @@ pub(crate) fn resolve_managed_pi_skill_launch_plan_for_connection(
     build_managed_pi_skill_launch_plan(connection, orchestra_root, context)
 }
 
-fn build_managed_pi_skill_launch_plan(
+pub(crate) fn get_managed_pi_skill_runtime_diagnostics_for_connection(
+    connection: &Connection,
+    orchestra_root: &Path,
+    session_id: &str,
+) -> Result<ManagedSkillRuntimeDiagnostics, String> {
+    let session_project_id = load_session_project_id(connection, session_id)?;
+    let context = resolve_managed_runtime_context_for_connection(
+        connection,
+        session_id,
+        session_project_id.as_deref(),
+    )?;
+    Ok(build_managed_pi_skill_resolution(connection, orchestra_root, context)?.diagnostics)
+}
+
+fn build_managed_pi_skill_resolution(
     connection: &Connection,
     orchestra_root: &Path,
     context: ManagedSkillRuntimeContext,
-) -> Result<ManagedPiSkillLaunchPlan, String> {
+) -> Result<ManagedPiSkillResolution, String> {
     let candidates = load_runtime_skill_candidates(connection, &context)?;
     let effective = resolve_effective_runtime_skills(candidates)?;
-    let default_ambient_external_slugs = load_default_ambient_external_slugs(connection)?;
-
-    if let Some(conflicts) = find_slug_collisions(
-        effective
-            .global_winners
-            .iter()
-            .map(|candidate| candidate.slug.as_str()),
-        &default_ambient_external_slugs,
-    ) {
-        return Err(format!(
-            "Global managed skills conflict with default ambient ~/.agents/skills slugs: {}",
-            conflicts.join(", ")
-        ));
-    }
-
-    let global_publication_manifest_path =
-        publish_global_winners(orchestra_root, &effective.global_winners)?;
-
-    let mut ambient_slugs = default_ambient_external_slugs;
-    for candidate in &effective.global_winners {
-        ambient_slugs.insert(candidate.slug.clone());
-    }
-
-    if let Some(conflicts) = find_slug_collisions(
-        effective
-            .scoped_winners
-            .iter()
-            .map(|candidate| candidate.slug.as_str()),
-        &ambient_slugs,
-    ) {
-        return Err(format!(
-            "Scoped managed skills conflict with ambient skill slugs and cannot be loaded explicitly: {}",
-            conflicts.join(", ")
-        ));
-    }
-
-    let snapshot =
-        materialize_scoped_snapshot(orchestra_root, &context, &effective.scoped_winners)?;
-    let skill_paths = snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.skill_paths.clone())
-        .unwrap_or_default();
-
+    let default_ambient_entries = load_default_ambient_external_entries(connection)?;
+    let default_ambient_external_slugs = default_ambient_entries
+        .iter()
+        .map(|entry| entry.slug.clone())
+        .collect::<HashSet<_>>();
     let context_hash = hash_json(&LaunchPlanHashInput {
         context: context.clone(),
         global_skills: effective
@@ -316,22 +326,136 @@ fn build_managed_pi_skill_launch_plan(
             .collect(),
     })?;
 
-    Ok(ManagedPiSkillLaunchPlan {
-        context,
-        context_hash,
-        global_publication_manifest_path,
-        snapshot,
-        skill_paths,
-        global_skill_slugs: effective
+    let mut notes = vec![
+        "Orchestra keeps the managed-skills model hybrid: default ~/.agents/skills entries stay ambient, Orchestra-managed global skills publish ambiently, and only non-global scoped skills are passed explicitly with --skill.".into(),
+    ];
+    if effective
+        .suppressed
+        .iter()
+        .any(|entry| entry.candidate.status == STATUS_SHADOWED)
+    {
+        notes.push(
+            "Catalog shadowed status is not treated as a runtime exclusion by itself; runtime precedence is recomputed from active bindings, scope ordering, and source ordering.".into(),
+        );
+    }
+
+    let mut ambient_entries = default_ambient_entries;
+    let mut warnings = Vec::new();
+    let mut error_message = None;
+    let mut global_publication_manifest_path = None;
+    let mut snapshot = None;
+    let mut skill_paths = Vec::new();
+
+    if let Some(conflicts) = find_slug_collisions(
+        effective
             .global_winners
             .iter()
-            .map(|candidate| candidate.slug.clone())
-            .collect(),
-        scoped_skill_slugs: effective
-            .scoped_winners
-            .iter()
-            .map(|candidate| candidate.slug.clone())
-            .collect(),
+            .map(|candidate| candidate.slug.as_str()),
+        &default_ambient_external_slugs,
+    ) {
+        let message = format!(
+            "Global managed skills conflict with default ambient ~/.agents/skills slugs: {}",
+            conflicts.join(", ")
+        );
+        warnings.push(message.clone());
+        error_message = Some(message);
+    } else {
+        let published_manifest = publish_global_winners(orchestra_root, &effective.global_winners)?;
+        global_publication_manifest_path = Some(published_manifest.clone());
+        ambient_entries.extend(global_ambient_entries(
+            orchestra_root,
+            &effective.global_winners,
+        ));
+
+        let mut ambient_slugs = default_ambient_external_slugs;
+        for candidate in &effective.global_winners {
+            ambient_slugs.insert(candidate.slug.clone());
+        }
+
+        if let Some(conflicts) = find_slug_collisions(
+            effective
+                .scoped_winners
+                .iter()
+                .map(|candidate| candidate.slug.as_str()),
+            &ambient_slugs,
+        ) {
+            let message = format!(
+                "Scoped managed skills conflict with ambient skill slugs and cannot be loaded explicitly: {}",
+                conflicts.join(", ")
+            );
+            warnings.push(message.clone());
+            error_message = Some(message);
+        } else {
+            let scoped_snapshot =
+                materialize_scoped_snapshot(orchestra_root, &context, &effective.scoped_winners)?;
+            skill_paths = scoped_snapshot
+                .as_ref()
+                .map(|value| value.skill_paths.clone())
+                .unwrap_or_default();
+            snapshot = scoped_snapshot;
+        }
+    }
+
+    if let Some(error_message) = error_message.as_ref() {
+        notes.push(format!(
+            "Managed skill resolution is currently blocking runtime launch: {error_message}"
+        ));
+    }
+
+    let diagnostics = build_runtime_diagnostics(
+        &context,
+        &context_hash,
+        &ambient_entries,
+        &effective,
+        global_publication_manifest_path.as_ref(),
+        snapshot.as_ref(),
+        &notes,
+        &warnings,
+        error_message.clone(),
+    );
+
+    let launch_plan = if error_message.is_some() {
+        None
+    } else {
+        Some(ManagedPiSkillLaunchPlan {
+            context,
+            context_hash,
+            global_publication_manifest_path: global_publication_manifest_path
+                .clone()
+                .expect("global publication manifest path should exist for successful resolutions"),
+            snapshot,
+            skill_paths,
+            global_skill_slugs: effective
+                .global_winners
+                .iter()
+                .map(|candidate| candidate.slug.clone())
+                .collect(),
+            scoped_skill_slugs: effective
+                .scoped_winners
+                .iter()
+                .map(|candidate| candidate.slug.clone())
+                .collect(),
+            diagnostics: diagnostics.clone(),
+        })
+    };
+
+    Ok(ManagedPiSkillResolution {
+        launch_plan,
+        diagnostics,
+    })
+}
+
+fn build_managed_pi_skill_launch_plan(
+    connection: &Connection,
+    orchestra_root: &Path,
+    context: ManagedSkillRuntimeContext,
+) -> Result<ManagedPiSkillLaunchPlan, String> {
+    let resolution = build_managed_pi_skill_resolution(connection, orchestra_root, context)?;
+    resolution.launch_plan.ok_or_else(|| {
+        resolution
+            .diagnostics
+            .error_message
+            .unwrap_or_else(|| "Managed skill resolution did not produce a launch plan".into())
     })
 }
 
@@ -598,42 +722,110 @@ fn load_runtime_skill_candidates(
 fn resolve_effective_runtime_skills(
     candidates: Vec<ResolvedRuntimeSkillCandidate>,
 ) -> Result<EffectiveRuntimeSkills, String> {
-    let mut loadable = candidates
-        .into_iter()
-        .filter(is_runtime_loadable)
-        .collect::<Vec<_>>();
+    let mut loadable = Vec::new();
+    let mut suppressed = Vec::new();
 
-    if let Some(invalid_slug) = loadable
-        .iter()
-        .find(|candidate| candidate.slug.trim().is_empty())
-    {
-        return Err(format!(
-            "Skill {} is bound into runtime resolution but has no usable slug",
-            invalid_slug.skill_id
-        ));
+    for candidate in candidates {
+        let trimmed_slug = candidate.slug.trim().to_string();
+        if trimmed_slug.is_empty() {
+            suppressed.push(SuppressedRuntimeSkillCandidate {
+                explanation: format!(
+                    "{} is bound into runtime resolution but has no usable slug.",
+                    candidate.name
+                ),
+                candidate,
+                suppression_reason: "empty_slug".into(),
+                winner_skill_id: None,
+                winner_binding_id: None,
+            });
+            continue;
+        }
+        if candidate.archived {
+            suppressed.push(SuppressedRuntimeSkillCandidate {
+                explanation: format!(
+                    "{} is archived and is skipped during runtime resolution.",
+                    candidate.name
+                ),
+                candidate,
+                suppression_reason: "archived".into(),
+                winner_skill_id: None,
+                winner_binding_id: None,
+            });
+            continue;
+        }
+        if matches!(
+            candidate.status.as_str(),
+            STATUS_MISSING | STATUS_INVALID | STATUS_UNLOADABLE
+        ) {
+            let reason = match candidate.status.as_str() {
+                STATUS_MISSING => "missing",
+                STATUS_INVALID => "invalid",
+                STATUS_UNLOADABLE => "unloadable",
+                _ => unreachable!(),
+            };
+            let explanation = match candidate.status.as_str() {
+                STATUS_MISSING => format!("{} is missing from disk and cannot be loaded into the runtime.", candidate.name),
+                STATUS_INVALID => format!("{} did not pass managed-skill validation and cannot be loaded into the runtime.", candidate.name),
+                STATUS_UNLOADABLE => format!("{} could not be read from disk and cannot be loaded into the runtime.", candidate.name),
+                _ => unreachable!(),
+            };
+            suppressed.push(SuppressedRuntimeSkillCandidate {
+                candidate,
+                suppression_reason: reason.into(),
+                winner_skill_id: None,
+                winner_binding_id: None,
+                explanation,
+            });
+            continue;
+        }
+        loadable.push(candidate);
     }
 
     loadable.sort_by(compare_runtime_skill_candidates);
 
-    let mut suppressed_same_record = Vec::new();
     let mut seen_skill_ids = HashSet::new();
     let mut same_record_deduped = Vec::new();
     for candidate in loadable {
         if seen_skill_ids.insert(candidate.skill_id.clone()) {
             same_record_deduped.push(candidate);
         } else {
-            suppressed_same_record.push(candidate);
+            let winner = same_record_deduped
+                .iter()
+                .find(|winner| winner.skill_id == candidate.skill_id)
+                .expect("same-record winner should exist");
+            suppressed.push(SuppressedRuntimeSkillCandidate {
+                explanation: format!(
+                    "{} was deduplicated because a narrower or earlier binding for the same managed skill record already won.",
+                    candidate.name
+                ),
+                suppression_reason: "same_record_deduped".into(),
+                winner_skill_id: Some(winner.skill_id.clone()),
+                winner_binding_id: Some(winner.binding_id.clone()),
+                candidate,
+            });
         }
     }
 
-    let mut suppressed_same_slug = Vec::new();
     let mut seen_slugs = HashSet::new();
     let mut winners = Vec::new();
     for candidate in same_record_deduped {
         if seen_slugs.insert(candidate.slug.clone()) {
             winners.push(candidate);
         } else {
-            suppressed_same_slug.push(candidate);
+            let winner = winners
+                .iter()
+                .find(|winner| winner.slug == candidate.slug)
+                .expect("same-slug winner should exist");
+            suppressed.push(SuppressedRuntimeSkillCandidate {
+                explanation: format!(
+                    "{} was suppressed because {} already won the slug {} after runtime precedence ordering.",
+                    candidate.name, winner.name, candidate.slug
+                ),
+                suppression_reason: "same_slug_suppressed".into(),
+                winner_skill_id: Some(winner.skill_id.clone()),
+                winner_binding_id: Some(winner.binding_id.clone()),
+                candidate,
+            });
         }
     }
 
@@ -650,19 +842,8 @@ fn resolve_effective_runtime_skills(
     Ok(EffectiveRuntimeSkills {
         global_winners,
         scoped_winners,
-        suppressed_same_record,
-        suppressed_same_slug,
+        suppressed,
     })
-}
-
-fn is_runtime_loadable(candidate: &ResolvedRuntimeSkillCandidate) -> bool {
-    if candidate.archived {
-        return false;
-    }
-    !matches!(
-        candidate.status.as_str(),
-        STATUS_MISSING | STATUS_INVALID | STATUS_UNLOADABLE
-    )
 }
 
 fn compare_runtime_skill_candidates(
@@ -701,27 +882,169 @@ fn source_rank(source_kind: &str) -> u8 {
     }
 }
 
-fn load_default_ambient_external_slugs(connection: &Connection) -> Result<HashSet<String>, String> {
+fn load_default_ambient_external_entries(
+    connection: &Connection,
+) -> Result<Vec<ManagedSkillRuntimeAmbientEntry>, String> {
     let mut statement = connection
         .prepare(
             r#"
-            SELECT DISTINCT slug
+            SELECT id, slug, name, source_path, content_path, relative_source_path
             FROM skills
             WHERE source_kind = 'external'
               AND slug IS NOT NULL
+              AND trim(slug) != ''
               AND status NOT IN ('missing', 'invalid', 'unloadable')
+            ORDER BY relative_source_path COLLATE NOCASE ASC, source_path COLLATE NOCASE ASC, id ASC
             "#,
         )
         .map_err(|error| format!("Unable to prepare ambient external skill query: {error}"))?;
 
     let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            Ok(ManagedSkillRuntimeAmbientEntry {
+                source_kind: "default_external".into(),
+                slug: row.get(1)?,
+                skill_id: Some(row.get(0)?),
+                skill_name: Some(row.get(2)?),
+                source_path: Some(row.get(3)?),
+                content_path: Some(row.get(4)?),
+                relative_source_path: row.get(5)?,
+                materialized_dir: None,
+            })
+        })
         .map_err(|error| format!("Unable to query ambient external skills: {error}"))?;
 
-    let slugs = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read ambient external skills: {error}"))?;
-    Ok(slugs.into_iter().collect())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read ambient external skills: {error}"))
+}
+
+fn global_ambient_entries(
+    orchestra_root: &Path,
+    winners: &[ResolvedRuntimeSkillCandidate],
+) -> Vec<ManagedSkillRuntimeAmbientEntry> {
+    let publication_root = orchestra_pi_agent_skills_dir(orchestra_root);
+    winners
+        .iter()
+        .map(|candidate| ManagedSkillRuntimeAmbientEntry {
+            source_kind: "published_global".into(),
+            slug: candidate.slug.clone(),
+            skill_id: Some(candidate.skill_id.clone()),
+            skill_name: Some(candidate.name.clone()),
+            source_path: Some(candidate.source_path.clone()),
+            content_path: Some(candidate.content_path.clone()),
+            relative_source_path: candidate.relative_source_path.clone(),
+            materialized_dir: Some(publication_root.join(&candidate.slug).display().to_string()),
+        })
+        .collect()
+}
+
+fn build_runtime_diagnostics(
+    context: &ManagedSkillRuntimeContext,
+    context_hash: &str,
+    ambient_entries: &[ManagedSkillRuntimeAmbientEntry],
+    effective: &EffectiveRuntimeSkills,
+    global_publication_manifest_path: Option<&PathBuf>,
+    snapshot: Option<&MaterializedSkillSnapshot>,
+    notes: &[String],
+    warnings: &[String],
+    error_message: Option<String>,
+) -> ManagedSkillRuntimeDiagnostics {
+    let resolved_global =
+        effective
+            .global_winners
+            .iter()
+            .map(|candidate| ManagedSkillRuntimeResolvedEntry {
+                binding_id: candidate.binding_id.clone(),
+                skill_id: candidate.skill_id.clone(),
+                slug: candidate.slug.clone(),
+                name: candidate.name.clone(),
+                scope_kind: candidate.scope_kind.clone(),
+                source_kind: candidate.source_kind.clone(),
+                load_mode: "ambient".into(),
+                source_path: candidate.source_path.clone(),
+                content_path: candidate.content_path.clone(),
+                relative_source_path: candidate.relative_source_path.clone(),
+                materialized_dir: global_publication_manifest_path.map(|path| {
+                    path.parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .join(&candidate.slug)
+                        .display()
+                        .to_string()
+                }),
+            });
+    let resolved_scoped = effective
+        .scoped_winners
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| ManagedSkillRuntimeResolvedEntry {
+            binding_id: candidate.binding_id.clone(),
+            skill_id: candidate.skill_id.clone(),
+            slug: candidate.slug.clone(),
+            name: candidate.name.clone(),
+            scope_kind: candidate.scope_kind.clone(),
+            source_kind: candidate.source_kind.clone(),
+            load_mode: "scoped".into(),
+            source_path: candidate.source_path.clone(),
+            content_path: candidate.content_path.clone(),
+            relative_source_path: candidate.relative_source_path.clone(),
+            materialized_dir: snapshot
+                .and_then(|value| value.skill_paths.get(index))
+                .map(|path| path.display().to_string()),
+        });
+
+    ManagedSkillRuntimeDiagnostics {
+        state: if error_message.is_some() {
+            "error".into()
+        } else {
+            "resolved".into()
+        },
+        context: ManagedSkillRuntimeContextSummary {
+            session_id: context.session_id.clone(),
+            project_id: context.project_id.clone(),
+            role_id: context.role_id.clone(),
+            agent_id: context.agent_id.clone(),
+            workflow_id: context.workflow_id.clone(),
+            workflow_lane_id: context.workflow_lane_id.clone(),
+            context_source: context.context_source.clone(),
+        },
+        context_hash: context_hash.into(),
+        ambient_skills: ambient_entries.to_vec(),
+        resolved_skills: resolved_global.chain(resolved_scoped).collect(),
+        suppressed_skills: effective
+            .suppressed
+            .iter()
+            .map(|entry| ManagedSkillRuntimeSuppressedEntry {
+                binding_id: entry.candidate.binding_id.clone(),
+                skill_id: entry.candidate.skill_id.clone(),
+                slug: entry.candidate.slug.clone(),
+                name: entry.candidate.name.clone(),
+                scope_kind: entry.candidate.scope_kind.clone(),
+                source_kind: entry.candidate.source_kind.clone(),
+                source_path: entry.candidate.source_path.clone(),
+                content_path: entry.candidate.content_path.clone(),
+                relative_source_path: entry.candidate.relative_source_path.clone(),
+                suppression_reason: entry.suppression_reason.clone(),
+                winner_skill_id: entry.winner_skill_id.clone(),
+                winner_binding_id: entry.winner_binding_id.clone(),
+                explanation: entry.explanation.clone(),
+            })
+            .collect(),
+        scoped_snapshot: snapshot.map(|snapshot| ManagedSkillRuntimeSnapshotSummary {
+            snapshot_id: snapshot.snapshot_id.clone(),
+            snapshot_dir: snapshot.snapshot_dir.display().to_string(),
+            manifest_path: snapshot.manifest_path.display().to_string(),
+            skill_paths: snapshot
+                .skill_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }),
+        global_publication_manifest_path: global_publication_manifest_path
+            .map(|path| path.display().to_string()),
+        notes: notes.to_vec(),
+        warnings: warnings.to_vec(),
+        error_message,
+    }
 }
 
 fn find_slug_collisions<'a>(
@@ -1366,16 +1689,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["delta", "gamma", "beta", "alpha"]
         );
-        assert_eq!(resolved.suppressed_same_record.len(), 1);
-        assert_eq!(resolved.suppressed_same_record[0].scope_kind, SCOPE_GLOBAL);
-        assert_eq!(resolved.suppressed_same_slug.len(), 2);
+        assert_eq!(resolved.suppressed.len(), 3);
         assert_eq!(
             resolved
-                .suppressed_same_slug
+                .suppressed
                 .iter()
-                .map(|candidate| candidate.slug.as_str())
+                .map(|entry| (
+                    entry.candidate.slug.as_str(),
+                    entry.suppression_reason.as_str()
+                ))
                 .collect::<Vec<_>>(),
-            vec!["beta", "alpha"]
+            vec![
+                ("gamma", "same_record_deduped"),
+                ("beta", "same_slug_suppressed"),
+                ("alpha", "same_slug_suppressed"),
+            ]
         );
     }
 
@@ -1397,6 +1725,15 @@ mod tests {
         assert_eq!(resolved.global_winners.len(), 1);
         assert_eq!(resolved.global_winners[0].slug, "shadowed");
         assert!(resolved.scoped_winners.is_empty());
+        assert_eq!(resolved.suppressed.len(), 2);
+        assert_eq!(
+            resolved
+                .suppressed
+                .iter()
+                .map(|entry| entry.suppression_reason.as_str())
+                .collect::<Vec<_>>(),
+            vec!["invalid", "archived"]
+        );
     }
 
     #[test]
@@ -1646,6 +1983,103 @@ mod tests {
     }
 
     #[test]
+    fn collision_diagnostics_remain_available_even_when_launch_plan_fails() {
+        let orchestra_root = unique_temp_dir("orchestra-root-collision-diagnostics");
+        let local_root = unique_temp_dir("local-root-collision-diagnostics");
+        let external_root = unique_temp_dir("external-root-collision-diagnostics");
+        fs::create_dir_all(&orchestra_root).expect("orchestra root should create");
+        fs::create_dir_all(&local_root).expect("local root should create");
+        fs::create_dir_all(&external_root).expect("external root should create");
+        let mut connection = test_connection();
+        seed_project(&connection, "project-1", "project-one");
+
+        insert_external_skill(
+            &connection,
+            &external_root,
+            "skill-ambient",
+            "collision-skill",
+            STATUS_SHADOWED,
+        );
+        let local_skill = create_local_skill(&mut connection, &local_root, "collision-skill");
+        bind_skill(&mut connection, &local_skill, SCOPE_PROJECT, "project-1");
+
+        let resolution = build_managed_pi_skill_resolution(
+            &connection,
+            &orchestra_root,
+            ManagedSkillRuntimeContext {
+                session_id: Some("session-1".into()),
+                project_id: "project-1".into(),
+                role_id: None,
+                agent_id: None,
+                workflow_id: None,
+                workflow_lane_id: None,
+                context_source: "project_session".into(),
+            },
+        )
+        .expect("resolution should still succeed");
+
+        assert!(resolution.launch_plan.is_none());
+        assert_eq!(resolution.diagnostics.state, "error");
+        assert!(resolution
+            .diagnostics
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("collision-skill"));
+        assert!(!resolution.diagnostics.ambient_skills.is_empty());
+    }
+
+    #[test]
+    fn public_launch_plan_resolver_preserves_collision_reason() {
+        let orchestra_root = unique_temp_dir("orchestra-root-public-collision");
+        let local_root = unique_temp_dir("local-root-public-collision");
+        let external_root = unique_temp_dir("external-root-public-collision");
+        fs::create_dir_all(&orchestra_root).expect("orchestra root should create");
+        fs::create_dir_all(&local_root).expect("local root should create");
+        fs::create_dir_all(&external_root).expect("external root should create");
+        let mut connection = test_connection();
+        seed_project(&connection, "project-1", "project-one");
+        seed_workflow(&connection, "workflow-1");
+        seed_workflow_lane(&connection, "workflow-1", "lane-1");
+        let now = test_now_iso();
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, whip_max_attempts, archived, created_at, updated_at) VALUES ('task-1', 'project-1', 1, 'PRJ-1', 'Task', NULL, 'task', 'in_progress', 'P1', 'workflow-1', 'lane-1', 'unassigned', NULL, NULL, NULL, 10, 0, ?1, ?1)",
+                [now.as_str()],
+            )
+            .expect("task should seed");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-1', 'task-1', 'workflow-1', 'lane-1', 'role', 'role-1', 'active', 'session-1', '/tmp/runtime', NULL, NULL, NULL, 0, NULL, ?1, NULL, ?1, ?1)",
+                [now.as_str()],
+            )
+            .expect("assignment should seed");
+
+        insert_external_skill(
+            &connection,
+            &external_root,
+            "skill-ambient",
+            "collision-skill",
+            STATUS_SHADOWED,
+        );
+        let local_skill = create_local_skill(&mut connection, &local_root, "collision-skill");
+        bind_skill(&mut connection, &local_skill, SCOPE_PROJECT, "project-1");
+
+        let error = resolve_managed_pi_skill_launch_plan_for_connection(
+            &connection,
+            &orchestra_root,
+            "session-1",
+        )
+        .expect_err("public launch-plan resolver should preserve collision failures");
+
+        assert!(error.contains("collision-skill"));
+        assert!(
+            error.contains("ambient skill slugs")
+                || error.contains("ambient ~/.agents/skills slugs")
+        );
+    }
+
+    #[test]
     fn appends_only_scoped_skill_args_without_disabling_ambient_skills() {
         let launch_plan = ManagedPiSkillLaunchPlan {
             context: ManagedSkillRuntimeContext {
@@ -1668,6 +2102,27 @@ mod tests {
             skill_paths: vec![PathBuf::from("/tmp/snapshot/skills/000-project-alpha")],
             global_skill_slugs: vec!["global-alpha".into()],
             scoped_skill_slugs: vec!["project-alpha".into()],
+            diagnostics: ManagedSkillRuntimeDiagnostics {
+                state: "resolved".into(),
+                context: ManagedSkillRuntimeContextSummary {
+                    session_id: Some("session-1".into()),
+                    project_id: "project-1".into(),
+                    role_id: None,
+                    agent_id: None,
+                    workflow_id: None,
+                    workflow_lane_id: None,
+                    context_source: "project_session".into(),
+                },
+                context_hash: "hash-1".into(),
+                ambient_skills: Vec::new(),
+                resolved_skills: Vec::new(),
+                suppressed_skills: Vec::new(),
+                scoped_snapshot: None,
+                global_publication_manifest_path: Some("/tmp/manifest.json".into()),
+                notes: Vec::new(),
+                warnings: Vec::new(),
+                error_message: None,
+            },
         };
 
         let mut args = vec![

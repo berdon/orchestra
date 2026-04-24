@@ -3,7 +3,7 @@ use tauri::State;
 use crate::{
     models::{
         AgentSkillLinks, LocalSkillUpsertInput, RoleSkillLinks, SkillBindingInput, SkillDetail,
-        SkillSummary, WorkflowSkillLinks,
+        SkillSummary, SkillsCatalogDiagnostics, WorkflowSkillLinks,
     },
     services::{database, skill_bindings, skills},
     state::AppState,
@@ -19,6 +19,12 @@ pub fn list_skills(include_archived: Option<bool>) -> Result<Vec<SkillSummary>, 
 pub fn get_skill(skill_id: String) -> Result<SkillDetail, String> {
     let connection = database::open_connection()?;
     skills::get_skill(&connection, &skill_id)
+}
+
+#[tauri::command]
+pub fn get_skills_catalog_diagnostics() -> Result<SkillsCatalogDiagnostics, String> {
+    let connection = database::open_connection()?;
+    skills::get_skills_catalog_diagnostics(&connection)
 }
 
 #[tauri::command]

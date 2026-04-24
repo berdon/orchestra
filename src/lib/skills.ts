@@ -9,6 +9,7 @@ import type {
   SkillBindingInput,
   SkillDetail,
   SkillSummary,
+  SkillsCatalogDiagnostics,
   WorkflowSkillLinks,
 } from "../types";
 
@@ -33,6 +34,11 @@ export async function listSkills(includeArchived = false): Promise<SkillSummary[
 export async function getSkill(skillId: string): Promise<SkillDetail> {
   requireLocalTauriBackend();
   return invoke<SkillDetail>("get_skill", { skillId });
+}
+
+export async function getSkillsCatalogDiagnostics(): Promise<SkillsCatalogDiagnostics> {
+  requireLocalTauriBackend();
+  return invoke<SkillsCatalogDiagnostics>("get_skills_catalog_diagnostics");
 }
 
 export async function createLocalSkill(input: LocalSkillUpsertInput): Promise<SkillDetail> {

@@ -358,6 +358,78 @@ export interface SessionControlOperationState {
   message?: string | null;
 }
 
+export interface ManagedSkillRuntimeContextSummary {
+  sessionId?: string | null;
+  projectId: string;
+  roleId?: string | null;
+  agentId?: string | null;
+  workflowId?: string | null;
+  workflowLaneId?: string | null;
+  contextSource: string;
+}
+
+export interface ManagedSkillRuntimeAmbientEntry {
+  sourceKind: string;
+  slug: string;
+  skillId?: string | null;
+  skillName?: string | null;
+  sourcePath?: string | null;
+  contentPath?: string | null;
+  relativeSourcePath?: string | null;
+  materializedDir?: string | null;
+}
+
+export interface ManagedSkillRuntimeResolvedEntry {
+  bindingId: string;
+  skillId: string;
+  slug: string;
+  name: string;
+  scopeKind: string;
+  sourceKind: string;
+  loadMode: string;
+  sourcePath: string;
+  contentPath: string;
+  relativeSourcePath?: string | null;
+  materializedDir?: string | null;
+}
+
+export interface ManagedSkillRuntimeSuppressedEntry {
+  bindingId: string;
+  skillId: string;
+  slug: string;
+  name: string;
+  scopeKind: string;
+  sourceKind: string;
+  sourcePath: string;
+  contentPath: string;
+  relativeSourcePath?: string | null;
+  suppressionReason: string;
+  winnerSkillId?: string | null;
+  winnerBindingId?: string | null;
+  explanation: string;
+}
+
+export interface ManagedSkillRuntimeSnapshotSummary {
+  snapshotId: string;
+  snapshotDir: string;
+  manifestPath: string;
+  skillPaths: string[];
+}
+
+export interface ManagedSkillRuntimeDiagnostics {
+  state: "resolved" | "error";
+  context: ManagedSkillRuntimeContextSummary;
+  contextHash: string;
+  ambientSkills: ManagedSkillRuntimeAmbientEntry[];
+  resolvedSkills: ManagedSkillRuntimeResolvedEntry[];
+  suppressedSkills: ManagedSkillRuntimeSuppressedEntry[];
+  scopedSnapshot?: ManagedSkillRuntimeSnapshotSummary | null;
+  globalPublicationManifestPath?: string | null;
+  notes: string[];
+  warnings: string[];
+  errorMessage?: string | null;
+}
+
 export interface SessionRuntimeDetails {
   sessionId: string;
   source: string;
@@ -385,6 +457,7 @@ export interface SessionRuntimeDetails {
   sessionDir?: string | null;
   sessionPath?: string | null;
   notes: string[];
+  managedSkills?: ManagedSkillRuntimeDiagnostics | null;
   controlCapabilities?: SessionControlCapabilities | null;
   controlOperation?: SessionControlOperationState | null;
 }
@@ -977,6 +1050,44 @@ export type SkillSourceKind = "local" | "external";
 export type SkillStatus = "active" | "shadowed" | "missing" | "invalid" | "unloadable";
 export type SkillBindingScopeKind = "global" | "project" | "role" | "agent" | "workflow" | "workflow_lane";
 
+export interface SkillRuntimeWarning {
+  code: string;
+  tone: "neutral" | "warning" | "error";
+  title: string;
+  message: string;
+}
+
+export interface SkillSlugConflictSummary {
+  slug: string;
+  ambientSkillIds: string[];
+  scopedSkillIds: string[];
+  ambientSources: string[];
+  scopedScopes: string[];
+}
+
+export interface SkillCatalogStatusSummary {
+  active: number;
+  shadowed: number;
+  missing: number;
+  invalid: number;
+  unloadable: number;
+}
+
+export interface SkillCatalogMigrationCallout {
+  title: string;
+  message: string;
+  bullets: string[];
+}
+
+export interface SkillsCatalogDiagnostics {
+  externalRootPath: string;
+  hasDiscoveredExternalSkills: boolean;
+  externalStatusSummary: SkillCatalogStatusSummary;
+  scopedAmbientConflictCount: number;
+  scopedAmbientConflicts: SkillSlugConflictSummary[];
+  migrationCallout?: SkillCatalogMigrationCallout | null;
+}
+
 export interface SkillSummary {
   id: string;
   slug?: string | null;
@@ -991,6 +1102,7 @@ export interface SkillSummary {
   statusReason?: string | null;
   shadowedBySkillId?: string | null;
   lastSeenAt?: string | null;
+  runtimeWarnings: SkillRuntimeWarning[];
   createdAt: string;
   updatedAt: string;
 }

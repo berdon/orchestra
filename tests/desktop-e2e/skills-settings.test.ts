@@ -71,6 +71,7 @@ describe("desktop skills settings", () => {
       await clickSelector(sessionId, '[data-role="refresh-external-skills"]');
       await waitForText(sessionId, "external-readonly");
       await waitForText(sessionId, "bad_slug");
+      await waitForText(sessionId, "External ~/.agents/skills are now part of the managed catalog");
 
       await clickByText(sessionId, '[data-role="skills-list"] button', "external-readonly");
       await waitForText(sessionId, "Read-only external skill");
@@ -181,11 +182,18 @@ describe("desktop skills settings", () => {
       await setInputValue(sessionId, '[data-role="skill-markdown-body"]', '# Title\n\nLocal shadow copy.\n');
       await clickSelector(sessionId, '[data-role="save-skill"]');
       await expect.poll(() => existsSync(shadowLocalSkillPath)).toBe(true);
+      await setInputValue(sessionId, '[data-role="skill-project-search"]', 'orchestra');
+      await clickByText(sessionId, 'button', 'Add Orchestra');
+      await clickSelector(sessionId, '[data-role="save-skill-bindings"]');
+      await waitForText(sessionId, 'Ambient/scoped slug conflict');
+      await waitForText(sessionId, 'Ambient conflicts · 1');
+      await waitForText(sessionId, 'Matching runtimes will reject that hybrid load');
 
       await setInputValue(sessionId, '[data-role="skills-status-filter"]', 'shadowed');
       await clickByText(sessionId, '[data-role="skills-list"] button', 'external-readonly');
       await waitForText(sessionId, 'Shadowed by another skill');
       await waitForText(sessionId, 'Shadow Winner currently takes precedence for this slug.');
+      await waitForText(sessionId, 'Ambient/scoped slug conflict');
 
       await setInputValue(sessionId, '[data-role="skills-status-filter"]', 'invalid');
       await clickByText(sessionId, '[data-role="skills-list"] button', 'bad_slug');

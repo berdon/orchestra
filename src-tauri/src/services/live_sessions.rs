@@ -16,9 +16,10 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, PiRuntimeHealth, SessionControlCapabilities,
-        SessionControlCapability, SessionControlOperationState, SessionModel, SessionModelState,
-        SessionRuntimeDetails, SessionStats, SessionStreamEnvelope,
+        AuthorizationContext, ManagedSkillRuntimeDiagnostics, PiRuntimeHealth,
+        SessionControlCapabilities, SessionControlCapability, SessionControlOperationState,
+        SessionModel, SessionModelState, SessionRuntimeDetails, SessionStats,
+        SessionStreamEnvelope,
     },
     services::{
         app_events, database, harness_settings,
@@ -135,6 +136,7 @@ pub struct SessionRuntime {
     orchestra_extension_path: PathBuf,
     extra_extensions: Vec<String>,
     skill_context_hash: String,
+    managed_skills: ManagedSkillRuntimeDiagnostics,
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Option<Child>>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
@@ -305,6 +307,7 @@ impl SessionRuntime {
             orchestra_extension_path: extension_path,
             extra_extensions,
             skill_context_hash: skill_launch_plan.context_hash,
+            managed_skills: skill_launch_plan.diagnostics,
             stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(Some(child)),
             pending: Mutex::new(HashMap::new()),
@@ -1109,6 +1112,7 @@ impl SessionRuntime {
             notes: vec![
                 "Orchestra launches live runtimes with --no-extensions and then explicitly loads only the extensions listed here.".into(),
             ],
+            managed_skills: Some(self.managed_skills.clone()),
             control_capabilities: None,
             control_operation: self.control_operation(),
         }
@@ -1256,8 +1260,39 @@ pub fn ensure_runtime(
     session_dir: PathBuf,
     session_id: &str,
 ) -> Result<Arc<SessionRuntime>, String> {
-    let desired_skill_launch_plan =
-        runtime_skills::resolve_managed_pi_skill_launch_plan(session_id)?;
+    let desired_skill_launch_plan = match runtime_skills::resolve_managed_pi_skill_launch_plan(session_id) {
+        Ok(plan) => {
+            app.state::<crate::state::AppState>().log(
+                "info",
+                "skills.runtime.resolved",
+                &format!(
+                    "Resolved managed skills for session {} (context_hash={} ambient={} resolved={} suppressed={} snapshot={})",
+                    session_id,
+                    plan.context_hash,
+                    plan.diagnostics.ambient_skills.len(),
+                    plan.diagnostics.resolved_skills.len(),
+                    plan.diagnostics.suppressed_skills.len(),
+                    plan.diagnostics
+                        .scoped_snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.snapshot_id.as_str())
+                        .unwrap_or("<none>"),
+                ),
+            );
+            plan
+        }
+        Err(error) => {
+            app.state::<crate::state::AppState>().log(
+                "error",
+                "skills.runtime.collision",
+                &format!(
+                    "Failed to resolve managed skills for session {}: {}",
+                    session_id, error
+                ),
+            );
+            return Err(error);
+        }
+    };
     let desired_skill_context_hash = desired_skill_launch_plan.context_hash.clone();
 
     let existing_runtime = if let Ok(mut runtimes_guard) = runtimes.lock() {
@@ -1921,6 +1956,7 @@ pub fn get_session_runtime_details(
             }
             notes
         },
+        managed_skills: runtime_skills::get_managed_pi_skill_runtime_diagnostics(session_id).ok(),
         control_capabilities: Some(control_capabilities),
         control_operation,
     })
@@ -2114,6 +2150,27 @@ mod tests {
             skill_paths: Vec::new(),
             global_skill_slugs: Vec::new(),
             scoped_skill_slugs: Vec::new(),
+            diagnostics: ManagedSkillRuntimeDiagnostics {
+                state: "resolved".into(),
+                context: crate::models::ManagedSkillRuntimeContextSummary {
+                    session_id: Some("session-1".into()),
+                    project_id: "project-1".into(),
+                    role_id: None,
+                    agent_id: None,
+                    workflow_id: None,
+                    workflow_lane_id: None,
+                    context_source: "project_session".into(),
+                },
+                context_hash: context_hash.into(),
+                ambient_skills: Vec::new(),
+                resolved_skills: Vec::new(),
+                suppressed_skills: Vec::new(),
+                scoped_snapshot: None,
+                global_publication_manifest_path: Some("/tmp/manifest.json".into()),
+                notes: Vec::new(),
+                warnings: Vec::new(),
+                error_message: None,
+            },
         }
     }
 
@@ -2148,6 +2205,44 @@ mod tests {
             orchestra_extension_path: PathBuf::from("/tmp/orchestra-tools.ts"),
             extra_extensions: Vec::new(),
             skill_context_hash: skill_context_hash.into(),
+            managed_skills: runtime_skills::ManagedPiSkillLaunchPlan {
+                context: runtime_skills::ManagedSkillRuntimeContext {
+                    session_id: Some(session_id.into()),
+                    project_id: "project-1".into(),
+                    role_id: None,
+                    agent_id: None,
+                    workflow_id: None,
+                    workflow_lane_id: None,
+                    context_source: "project_session".into(),
+                },
+                context_hash: skill_context_hash.into(),
+                global_publication_manifest_path: PathBuf::from("/tmp/manifest.json"),
+                snapshot: None,
+                skill_paths: Vec::new(),
+                global_skill_slugs: Vec::new(),
+                scoped_skill_slugs: Vec::new(),
+                diagnostics: crate::models::ManagedSkillRuntimeDiagnostics {
+                    state: "resolved".into(),
+                    context: crate::models::ManagedSkillRuntimeContextSummary {
+                        session_id: Some(session_id.into()),
+                        project_id: "project-1".into(),
+                        role_id: None,
+                        agent_id: None,
+                        workflow_id: None,
+                        workflow_lane_id: None,
+                        context_source: "project_session".into(),
+                    },
+                    context_hash: skill_context_hash.into(),
+                    ambient_skills: Vec::new(),
+                    resolved_skills: Vec::new(),
+                    suppressed_skills: Vec::new(),
+                    scoped_snapshot: None,
+                    global_publication_manifest_path: Some("/tmp/manifest.json".into()),
+                    notes: Vec::new(),
+                    warnings: Vec::new(),
+                    error_message: None,
+                },
+            }.diagnostics,
             stdin: Mutex::new(None),
             child: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
@@ -2297,6 +2392,15 @@ mod tests {
     }
 
     #[test]
+    fn live_runtime_details_include_managed_skill_diagnostics() {
+        let app_handle = test_app_handle();
+        let runtime = test_runtime(&app_handle, "session-diagnostics", "hash-diagnostics", false);
+        let details = runtime.runtime_details();
+        assert_eq!(details.managed_skills.as_ref().map(|value| value.context_hash.as_str()), Some("hash-diagnostics"));
+        assert_eq!(details.managed_skills.as_ref().map(|value| value.state.as_str()), Some("resolved"));
+    }
+
+    #[test]
     fn build_runtime_pi_args_appends_configured_extensions_after_orchestra_extension() {
         let launch_plan = runtime_skills::ManagedPiSkillLaunchPlan {
             context: runtime_skills::ManagedSkillRuntimeContext {
@@ -2314,6 +2418,27 @@ mod tests {
             skill_paths: vec![PathBuf::from("/tmp/skills/000-project-skill")],
             global_skill_slugs: vec!["global-skill".into()],
             scoped_skill_slugs: vec!["project-skill".into()],
+            diagnostics: ManagedSkillRuntimeDiagnostics {
+                state: "resolved".into(),
+                context: crate::models::ManagedSkillRuntimeContextSummary {
+                    session_id: Some("session-1".into()),
+                    project_id: "orchestra".into(),
+                    role_id: None,
+                    agent_id: None,
+                    workflow_id: None,
+                    workflow_lane_id: None,
+                    context_source: "project_session".into(),
+                },
+                context_hash: "hash-1".into(),
+                ambient_skills: Vec::new(),
+                resolved_skills: Vec::new(),
+                suppressed_skills: Vec::new(),
+                scoped_snapshot: None,
+                global_publication_manifest_path: Some("/tmp/manifest.json".into()),
+                notes: Vec::new(),
+                warnings: Vec::new(),
+                error_message: None,
+            },
         };
         let args = build_runtime_pi_args(
             Path::new("/tmp/session.jsonl"),

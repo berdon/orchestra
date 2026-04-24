@@ -684,6 +684,90 @@ pub struct SessionControlOperationState {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillRuntimeContextSummary {
+    pub session_id: Option<String>,
+    pub project_id: String,
+    pub role_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub workflow_lane_id: Option<String>,
+    pub context_source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillRuntimeAmbientEntry {
+    pub source_kind: String,
+    pub slug: String,
+    pub skill_id: Option<String>,
+    pub skill_name: Option<String>,
+    pub source_path: Option<String>,
+    pub content_path: Option<String>,
+    pub relative_source_path: Option<String>,
+    pub materialized_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillRuntimeResolvedEntry {
+    pub binding_id: String,
+    pub skill_id: String,
+    pub slug: String,
+    pub name: String,
+    pub scope_kind: String,
+    pub source_kind: String,
+    pub load_mode: String,
+    pub source_path: String,
+    pub content_path: String,
+    pub relative_source_path: Option<String>,
+    pub materialized_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillRuntimeSuppressedEntry {
+    pub binding_id: String,
+    pub skill_id: String,
+    pub slug: String,
+    pub name: String,
+    pub scope_kind: String,
+    pub source_kind: String,
+    pub source_path: String,
+    pub content_path: String,
+    pub relative_source_path: Option<String>,
+    pub suppression_reason: String,
+    pub winner_skill_id: Option<String>,
+    pub winner_binding_id: Option<String>,
+    pub explanation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillRuntimeSnapshotSummary {
+    pub snapshot_id: String,
+    pub snapshot_dir: String,
+    pub manifest_path: String,
+    pub skill_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillRuntimeDiagnostics {
+    pub state: String,
+    pub context: ManagedSkillRuntimeContextSummary,
+    pub context_hash: String,
+    pub ambient_skills: Vec<ManagedSkillRuntimeAmbientEntry>,
+    pub resolved_skills: Vec<ManagedSkillRuntimeResolvedEntry>,
+    pub suppressed_skills: Vec<ManagedSkillRuntimeSuppressedEntry>,
+    pub scoped_snapshot: Option<ManagedSkillRuntimeSnapshotSummary>,
+    pub global_publication_manifest_path: Option<String>,
+    pub notes: Vec<String>,
+    pub warnings: Vec<String>,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRuntimeDetails {
@@ -713,6 +797,7 @@ pub struct SessionRuntimeDetails {
     pub session_dir: Option<String>,
     pub session_path: Option<String>,
     pub notes: Vec<String>,
+    pub managed_skills: Option<ManagedSkillRuntimeDiagnostics>,
     pub control_capabilities: Option<SessionControlCapabilities>,
     pub control_operation: Option<SessionControlOperationState>,
 }
@@ -1399,6 +1484,54 @@ pub struct RoleValidationError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRuntimeWarning {
+    pub code: String,
+    pub tone: String,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSlugConflictSummary {
+    pub slug: String,
+    pub ambient_skill_ids: Vec<String>,
+    pub scoped_skill_ids: Vec<String>,
+    pub ambient_sources: Vec<String>,
+    pub scoped_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCatalogStatusSummary {
+    pub active: i64,
+    pub shadowed: i64,
+    pub missing: i64,
+    pub invalid: i64,
+    pub unloadable: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCatalogMigrationCallout {
+    pub title: String,
+    pub message: String,
+    pub bullets: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsCatalogDiagnostics {
+    pub external_root_path: String,
+    pub has_discovered_external_skills: bool,
+    pub external_status_summary: SkillCatalogStatusSummary,
+    pub scoped_ambient_conflict_count: i64,
+    pub scoped_ambient_conflicts: Vec<SkillSlugConflictSummary>,
+    pub migration_callout: Option<SkillCatalogMigrationCallout>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSummary {
@@ -1415,6 +1548,7 @@ pub struct SkillSummary {
     pub status_reason: Option<String>,
     pub shadowed_by_skill_id: Option<String>,
     pub last_seen_at: Option<String>,
+    pub runtime_warnings: Vec<SkillRuntimeWarning>,
     pub created_at: String,
     pub updated_at: String,
 }

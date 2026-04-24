@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
 };
@@ -9,7 +9,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::{
-    models::{LocalSkillUpsertInput, SkillDetail, SkillSummary},
+    models::{
+        LocalSkillUpsertInput, SkillCatalogMigrationCallout, SkillCatalogStatusSummary,
+        SkillDetail, SkillRuntimeWarning, SkillSlugConflictSummary, SkillSummary,
+        SkillsCatalogDiagnostics,
+    },
     services::{
         orchestra_paths::{default_orchestra_root, orchestra_local_skill_path, sanitize_slug},
         skill_bindings,
@@ -59,6 +63,12 @@ struct ExternalCandidate {
     relative_source_path: Option<String>,
 }
 
+#[derive(Debug, Default, Clone)]
+struct SkillBindingPresence {
+    global: bool,
+    scoped_scopes: BTreeSet<String>,
+}
+
 pub fn external_skills_dir_from_home(home_dir: &Path) -> PathBuf {
     home_dir.join(".agents").join("skills")
 }
@@ -74,66 +84,27 @@ pub fn list_skills(
     connection: &Connection,
     include_archived: bool,
 ) -> Result<Vec<SkillSummary>, String> {
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT
-                id,
-                slug,
-                name,
-                description,
-                source_kind,
-                source_path,
-                content_path,
-                relative_source_path,
-                archived,
-                status,
-                status_reason,
-                shadowed_by_skill_id,
-                last_seen_at,
-                created_at,
-                updated_at
-            FROM skills
-            WHERE (?1 = 1 OR archived = 0)
-            ORDER BY
-                archived ASC,
-                CASE source_kind WHEN 'local' THEN 0 ELSE 1 END ASC,
-                CASE status
-                    WHEN 'active' THEN 0
-                    WHEN 'shadowed' THEN 1
-                    WHEN 'invalid' THEN 2
-                    WHEN 'unloadable' THEN 3
-                    WHEN 'missing' THEN 4
-                    ELSE 5
-                END ASC,
-                name COLLATE NOCASE ASC,
-                relative_source_path COLLATE NOCASE ASC,
-                source_path COLLATE NOCASE ASC,
-                updated_at DESC
-            "#,
-        )
-        .map_err(|error| format!("Unable to prepare skills list query: {error}"))?;
+    let mut skills = load_skill_summaries(connection, include_archived)?;
+    apply_runtime_warning_annotations(connection, &mut skills)?;
+    Ok(skills)
+}
 
-    let rows = statement
-        .query_map(
-            [if include_archived { 1 } else { 0 }],
-            map_skill_summary_row,
-        )
-        .map_err(|error| format!("Unable to query skills: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read skills: {error}"))?;
-
-    Ok(rows.into_iter().map(|row| row.summary).collect())
+pub fn get_skills_catalog_diagnostics(
+    connection: &Connection,
+) -> Result<SkillsCatalogDiagnostics, String> {
+    build_skills_catalog_diagnostics(connection)
 }
 
 pub fn get_skill(connection: &Connection, skill_id: &str) -> Result<SkillDetail, String> {
     let row = get_skill_row(connection, skill_id)?;
-    Ok(SkillDetail {
+    let mut detail = SkillDetail {
         markdown_body: load_skill_markdown_body(&row.summary)?,
         binding_summary: skill_bindings::load_skill_binding_summary(connection, skill_id)?,
         bindings: skill_bindings::load_skill_bindings(connection, skill_id)?,
         summary: row.summary,
-    })
+    };
+    apply_runtime_warning_annotations(connection, std::slice::from_mut(&mut detail.summary))?;
+    Ok(detail)
 }
 
 pub fn create_local_skill(
@@ -462,6 +433,252 @@ pub fn default_orchestra_root_for_skills() -> Result<PathBuf, String> {
     default_orchestra_root()
 }
 
+fn load_skill_summaries(
+    connection: &Connection,
+    include_archived: bool,
+) -> Result<Vec<SkillSummary>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                id,
+                slug,
+                name,
+                description,
+                source_kind,
+                source_path,
+                content_path,
+                relative_source_path,
+                archived,
+                status,
+                status_reason,
+                shadowed_by_skill_id,
+                last_seen_at,
+                created_at,
+                updated_at
+            FROM skills
+            WHERE (?1 = 1 OR archived = 0)
+            ORDER BY
+                archived ASC,
+                CASE source_kind WHEN 'local' THEN 0 ELSE 1 END ASC,
+                CASE status
+                    WHEN 'active' THEN 0
+                    WHEN 'shadowed' THEN 1
+                    WHEN 'invalid' THEN 2
+                    WHEN 'unloadable' THEN 3
+                    WHEN 'missing' THEN 4
+                    ELSE 5
+                END ASC,
+                name COLLATE NOCASE ASC,
+                relative_source_path COLLATE NOCASE ASC,
+                source_path COLLATE NOCASE ASC,
+                updated_at DESC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare skills list query: {error}"))?;
+
+    let rows = statement
+        .query_map(
+            [if include_archived { 1 } else { 0 }],
+            map_skill_summary_row,
+        )
+        .map_err(|error| format!("Unable to query skills: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read skills: {error}"))?;
+
+    Ok(rows.into_iter().map(|row| row.summary).collect())
+}
+
+fn apply_runtime_warning_annotations(
+    connection: &Connection,
+    skills: &mut [SkillSummary],
+) -> Result<(), String> {
+    let warnings_by_skill_id = build_runtime_warning_map(connection, skills)?;
+    for skill in skills {
+        skill.runtime_warnings = warnings_by_skill_id.get(&skill.id).cloned().unwrap_or_default();
+    }
+    Ok(())
+}
+
+fn build_skills_catalog_diagnostics(
+    connection: &Connection,
+) -> Result<SkillsCatalogDiagnostics, String> {
+    let external_root_path = default_external_skills_dir()?.display().to_string();
+    let skills = load_skill_summaries(connection, true)?;
+    let conflicts = build_slug_conflict_summaries(connection, &skills)?;
+    let external_rows = skills
+        .iter()
+        .filter(|skill| skill.source_kind == SKILL_SOURCE_EXTERNAL)
+        .collect::<Vec<_>>();
+    let has_discovered_external_skills = !external_rows.is_empty();
+
+    let external_status_summary = external_rows.iter().fold(
+        SkillCatalogStatusSummary {
+            active: 0,
+            shadowed: 0,
+            missing: 0,
+            invalid: 0,
+            unloadable: 0,
+        },
+        |mut summary, skill| {
+            match skill.status.as_str() {
+                SKILL_STATUS_ACTIVE => summary.active += 1,
+                SKILL_STATUS_SHADOWED => summary.shadowed += 1,
+                SKILL_STATUS_MISSING => summary.missing += 1,
+                SKILL_STATUS_INVALID => summary.invalid += 1,
+                SKILL_STATUS_UNLOADABLE => summary.unloadable += 1,
+                _ => {}
+            }
+            summary
+        },
+    );
+
+    let migration_callout = has_discovered_external_skills.then(|| SkillCatalogMigrationCallout {
+        title: "External ~/.agents/skills are now part of the managed catalog".into(),
+        message: "Orchestra now discovers external skills from ~/.agents/skills explicitly, shows them read-only in Settings, and keeps the managed-skills runtime model hybrid instead of silently replacing ambient behavior.".into(),
+        bullets: vec![
+            "Discovered ~/.agents/skills entries remain ambient by default and continue loading from the default Pi skills directory.".into(),
+            "Orchestra-managed global skills are also ambient after publication into the Orchestra Pi agent skills directory.".into(),
+            "Non-global managed bindings are loaded explicitly from scoped snapshots via repeated --skill arguments.".into(),
+            "If the same slug appears in both ambient and scoped loading paths, Orchestra now surfaces the conflict because matching runtimes can no longer load that combination deterministically.".into(),
+        ],
+    });
+
+    Ok(SkillsCatalogDiagnostics {
+        external_root_path,
+        has_discovered_external_skills,
+        external_status_summary,
+        scoped_ambient_conflict_count: conflicts.len() as i64,
+        scoped_ambient_conflicts: conflicts,
+        migration_callout,
+    })
+}
+
+fn build_runtime_warning_map(
+    connection: &Connection,
+    skills: &[SkillSummary],
+) -> Result<BTreeMap<String, Vec<SkillRuntimeWarning>>, String> {
+    let conflicts = build_slug_conflict_summaries(connection, skills)?;
+    let mut warnings = BTreeMap::<String, Vec<SkillRuntimeWarning>>::new();
+
+    for conflict in conflicts {
+        let message = format!(
+            "Slug {} is ambient via {} and also assigned to scoped bindings ({}). Matching runtimes will reject that hybrid load until the slug conflict is removed or renamed.",
+            conflict.slug,
+            conflict.ambient_sources.join(", "),
+            conflict.scoped_scopes.join(", "),
+        );
+        let warning = SkillRuntimeWarning {
+            code: "ambient_collision".into(),
+            tone: "warning".into(),
+            title: "Ambient/scoped slug conflict".into(),
+            message,
+        };
+        for skill_id in conflict
+            .ambient_skill_ids
+            .iter()
+            .chain(conflict.scoped_skill_ids.iter())
+        {
+            warnings
+                .entry(skill_id.clone())
+                .or_default()
+                .push(warning.clone());
+        }
+    }
+
+    Ok(warnings)
+}
+
+fn build_slug_conflict_summaries(
+    connection: &Connection,
+    skills: &[SkillSummary],
+) -> Result<Vec<SkillSlugConflictSummary>, String> {
+    let binding_presence = load_skill_binding_presence(connection)?;
+    let mut grouped = BTreeMap::<String, SkillSlugConflictSummary>::new();
+
+    for skill in skills {
+        let Some(slug) = skill.slug.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if skill.archived || !is_runtime_loadable_skill(skill) {
+            continue;
+        }
+
+        let entry = grouped.entry(slug.to_string()).or_insert_with(|| SkillSlugConflictSummary {
+            slug: slug.to_string(),
+            ambient_skill_ids: Vec::new(),
+            scoped_skill_ids: Vec::new(),
+            ambient_sources: Vec::new(),
+            scoped_scopes: Vec::new(),
+        });
+        let presence = binding_presence.get(&skill.id).cloned().unwrap_or_default();
+
+        if skill.source_kind == SKILL_SOURCE_EXTERNAL {
+            entry.ambient_skill_ids.push(skill.id.clone());
+            entry.ambient_sources.push("default ~/.agents/skills ambient discovery".into());
+        }
+        if presence.global {
+            entry.ambient_skill_ids.push(skill.id.clone());
+            entry.ambient_sources.push("global managed binding".into());
+        }
+        if !presence.scoped_scopes.is_empty() {
+            entry.scoped_skill_ids.push(skill.id.clone());
+            entry.scoped_scopes.extend(presence.scoped_scopes.into_iter());
+        }
+    }
+
+    let mut conflicts = grouped
+        .into_values()
+        .filter_map(|mut summary| {
+            summary.ambient_skill_ids.sort();
+            summary.ambient_skill_ids.dedup();
+            summary.scoped_skill_ids.sort();
+            summary.scoped_skill_ids.dedup();
+            summary.ambient_sources.sort();
+            summary.ambient_sources.dedup();
+            summary.scoped_scopes.sort();
+            summary.scoped_scopes.dedup();
+            (!summary.ambient_skill_ids.is_empty() && !summary.scoped_skill_ids.is_empty())
+                .then_some(summary)
+        })
+        .collect::<Vec<_>>();
+    conflicts.sort_by(|left, right| left.slug.cmp(&right.slug));
+    Ok(conflicts)
+}
+
+fn load_skill_binding_presence(
+    connection: &Connection,
+) -> Result<BTreeMap<String, SkillBindingPresence>, String> {
+    let mut statement = connection
+        .prepare("SELECT skill_id, scope_kind FROM skill_scope_bindings")
+        .map_err(|error| format!("Unable to prepare skill binding diagnostics query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("Unable to query skill binding diagnostics: {error}"))?;
+
+    let mut presence_by_skill_id = BTreeMap::<String, SkillBindingPresence>::new();
+    for row in rows {
+        let (skill_id, scope_kind) = row
+            .map_err(|error| format!("Unable to read skill binding diagnostics row: {error}"))?;
+        let entry = presence_by_skill_id.entry(skill_id).or_default();
+        if scope_kind == "global" {
+            entry.global = true;
+        } else {
+            entry.scoped_scopes.insert(scope_kind);
+        }
+    }
+    Ok(presence_by_skill_id)
+}
+
+fn is_runtime_loadable_skill(summary: &SkillSummary) -> bool {
+    !matches!(
+        summary.status.as_str(),
+        SKILL_STATUS_MISSING | SKILL_STATUS_INVALID | SKILL_STATUS_UNLOADABLE
+    )
+}
+
 fn get_skill_row(connection: &Connection, skill_id: &str) -> Result<SkillRow, String> {
     connection
         .query_row(
@@ -509,6 +726,7 @@ fn map_skill_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SkillRow> 
             status_reason: row.get(10)?,
             shadowed_by_skill_id: row.get(11)?,
             last_seen_at: row.get(12)?,
+            runtime_warnings: Vec::new(),
             created_at: row.get(13)?,
             updated_at: row.get(14)?,
         },
@@ -1359,6 +1577,73 @@ mod tests {
             find_skill_by_slug(&connection, "shared", SKILL_SOURCE_EXTERNAL);
         assert_eq!(external_active_again.status, SKILL_STATUS_ACTIVE);
         assert_eq!(external_active_again.shadowed_by_skill_id, None);
+    }
+
+    #[test]
+    fn catalog_diagnostics_and_runtime_warnings_surface_scoped_ambient_conflicts() {
+        let root = unique_temp_dir("skills-runtime-warning-root");
+        let external_root = unique_temp_dir("skills-runtime-warning-external");
+        fs::create_dir_all(external_root.join("shared")).expect("shared external dir should exist");
+        fs::write(
+            external_root.join("shared").join("SKILL.md"),
+            "External shared skill.",
+        )
+        .expect("shared external skill should write");
+
+        let mut connection = test_connection();
+        refresh_external_skills(&mut connection, &external_root)
+            .expect("external skills should refresh");
+        let local = create_local_skill(
+            &mut connection,
+            &root,
+            LocalSkillUpsertInput {
+                name: "Shared".into(),
+                slug: Some("shared".into()),
+                markdown_body: "Local shared skill.".into(),
+            },
+        )
+        .expect("local shared skill should create");
+        connection
+            .execute(
+                r#"
+                INSERT INTO skill_scope_bindings (
+                    id,
+                    skill_id,
+                    scope_kind,
+                    project_id,
+                    role_id,
+                    agent_id,
+                    workflow_id,
+                    workflow_lane_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?1, ?2, 'project', 'project-1', NULL, NULL, NULL, NULL, ?3, ?3)
+                "#,
+                params!["binding-shared-project", local.summary.id, now_iso()],
+            )
+            .expect("binding should insert");
+
+        let skills = list_skills(&connection, true).expect("skills should list");
+        let local_with_warning = skills
+            .iter()
+            .find(|skill| skill.id == local.summary.id)
+            .expect("local shared skill should exist");
+        let external_with_warning = skills
+            .iter()
+            .find(|skill| skill.source_kind == SKILL_SOURCE_EXTERNAL && skill.slug.as_deref() == Some("shared"))
+            .expect("external shared skill should exist");
+        assert_eq!(local_with_warning.runtime_warnings.len(), 1);
+        assert_eq!(external_with_warning.runtime_warnings.len(), 1);
+        assert_eq!(local_with_warning.runtime_warnings[0].code, "ambient_collision");
+
+        let diagnostics = get_skills_catalog_diagnostics(&connection)
+            .expect("catalog diagnostics should load");
+        assert!(diagnostics.has_discovered_external_skills);
+        assert_eq!(diagnostics.external_status_summary.shadowed, 1);
+        assert_eq!(diagnostics.scoped_ambient_conflict_count, 1);
+        assert_eq!(diagnostics.scoped_ambient_conflicts[0].slug, "shared");
+        assert!(diagnostics.migration_callout.is_some());
     }
 
     #[test]

@@ -32,6 +32,7 @@ function makeSkill(overrides: Partial<SkillSummary>): SkillSummary {
     statusReason: overrides.statusReason ?? null,
     shadowedBySkillId: overrides.shadowedBySkillId ?? null,
     lastSeenAt: overrides.lastSeenAt ?? null,
+    runtimeWarnings: overrides.runtimeWarnings ?? [],
     createdAt: overrides.createdAt ?? "2026-01-01T00:00:00Z",
     updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00Z",
   };

@@ -55,6 +55,10 @@ function formatCapability(value?: { status: string; reason?: string | null } | n
   return value.reason ? `${status} · ${value.reason}` : status;
 }
 
+function formatManagedSkillsStateLabel(state?: string | null) {
+  return state === "error" ? "Error" : "Resolved";
+}
+
 interface SessionsPageProps {
   sessions: SessionRecord[];
   referenceTasks: TaskSummary[];
@@ -639,6 +643,97 @@ export function SessionsPage({
                     <p className="session-debug-value">{runtimeDetails.orchestraExtensionPath ?? "—"}</p>
                   </section>
                 </div>
+
+                {runtimeDetails.managedSkills ? (
+                  <>
+                    <div className="session-debug-grid" data-role="session-managed-skills-summary">
+                      <section className="session-debug-item">
+                        <p className="eyebrow">Managed skills state</p>
+                        <p className="session-debug-value">{formatManagedSkillsStateLabel(runtimeDetails.managedSkills.state)}</p>
+                      </section>
+                      <section className="session-debug-item">
+                        <p className="eyebrow">Context source</p>
+                        <p className="session-debug-value">{runtimeDetails.managedSkills.context.contextSource}</p>
+                      </section>
+                      <section className="session-debug-item">
+                        <p className="eyebrow">Context hash</p>
+                        <p className="session-debug-value">{runtimeDetails.managedSkills.contextHash}</p>
+                      </section>
+                      <section className="session-debug-item">
+                        <p className="eyebrow">Scoped snapshot</p>
+                        <p className="session-debug-value">{runtimeDetails.managedSkills.scopedSnapshot?.snapshotId ?? "None"}</p>
+                      </section>
+                    </div>
+
+                    <div className="session-runtime-details-grid">
+                      <section className="session-debug-item" data-role="session-managed-skills-ambient">
+                        <p className="eyebrow">Ambient skills</p>
+                        {runtimeDetails.managedSkills.ambientSkills.length ? (
+                          <ul className="session-runtime-details-list">
+                            {runtimeDetails.managedSkills.ambientSkills.map((skill) => (
+                              <li className="session-debug-value" key={`${skill.sourceKind}-${skill.slug}-${skill.skillId ?? "ambient"}`}>
+                                {skill.slug} · {skill.sourceKind}{skill.relativeSourcePath ? ` · ${skill.relativeSourcePath}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="session-debug-value">None</p>}
+                      </section>
+                      <section className="session-debug-item" data-role="session-managed-skills-resolved">
+                        <p className="eyebrow">Resolved skills</p>
+                        {runtimeDetails.managedSkills.resolvedSkills.length ? (
+                          <ul className="session-runtime-details-list">
+                            {runtimeDetails.managedSkills.resolvedSkills.map((skill) => (
+                              <li className="session-debug-value" key={`${skill.bindingId}-${skill.skillId}`}>
+                                {skill.slug} · {skill.scopeKind} · {skill.loadMode}{skill.materializedDir ? ` · ${skill.materializedDir}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="session-debug-value">None</p>}
+                      </section>
+                      <section className="session-debug-item" data-role="session-managed-skills-suppressed">
+                        <p className="eyebrow">Suppressed skills</p>
+                        {runtimeDetails.managedSkills.suppressedSkills.length ? (
+                          <ul className="session-runtime-details-list">
+                            {runtimeDetails.managedSkills.suppressedSkills.map((skill) => (
+                              <li className="session-debug-value" key={`${skill.bindingId}-${skill.skillId}-${skill.suppressionReason}`}>
+                                {skill.slug || skill.name} · {skill.suppressionReason} · {skill.explanation}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="session-debug-value">None</p>}
+                      </section>
+                      <section className="session-debug-item" data-role="session-managed-skills-snapshot">
+                        <p className="eyebrow">Snapshot and publication</p>
+                        <ul className="session-runtime-details-list">
+                          <li className="session-debug-value">Global manifest · {runtimeDetails.managedSkills.globalPublicationManifestPath ?? "—"}</li>
+                          <li className="session-debug-value">Snapshot dir · {runtimeDetails.managedSkills.scopedSnapshot?.snapshotDir ?? "—"}</li>
+                          <li className="session-debug-value">Snapshot manifest · {runtimeDetails.managedSkills.scopedSnapshot?.manifestPath ?? "—"}</li>
+                        </ul>
+                      </section>
+                    </div>
+
+                    {runtimeDetails.managedSkills.warnings.length || runtimeDetails.managedSkills.errorMessage ? (
+                      <section className="session-debug-item" data-role="session-managed-skills-warnings">
+                        <p className="eyebrow">Managed skills warnings</p>
+                        <ul className="session-runtime-details-list">
+                          {runtimeDetails.managedSkills.warnings.map((warning) => (
+                            <li className="session-debug-value" key={warning}>{warning}</li>
+                          ))}
+                          {runtimeDetails.managedSkills.errorMessage ? <li className="session-debug-value">{runtimeDetails.managedSkills.errorMessage}</li> : null}
+                        </ul>
+                      </section>
+                    ) : null}
+
+                    <section className="session-debug-item" data-role="session-managed-skills-notes">
+                      <p className="eyebrow">Managed skills notes</p>
+                      <ul className="session-runtime-details-list">
+                        {runtimeDetails.managedSkills.notes.map((note) => (
+                          <li className="session-debug-value" key={note}>{note}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  </>
+                ) : null}
 
                 <section className="session-debug-item" data-role="session-runtime-notes">
                   <p className="eyebrow">Notes</p>

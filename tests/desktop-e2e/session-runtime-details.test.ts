@@ -49,6 +49,12 @@ describe("desktop session runtime details", () => {
       expect(dialogText).toContain("npm:pi-example");
       expect(dialogText).toContain("./extensions/local-extra.ts");
       expect(dialogText).toContain("Disabled by --no-extensions");
+      expect(dialogText).toContain("Managed skills state");
+      expect(dialogText).toContain("Resolved");
+      expect(dialogText).toContain("Context hash");
+      expect(dialogText).toContain("Ambient skills");
+      expect(dialogText).toContain("Resolved skills");
+      expect(dialogText).toContain("Managed skills notes");
 
       await clickSelector(sessionId, '[data-role="close-session-runtime-details"]');
       const dialogVisible = await executeScript<boolean>(

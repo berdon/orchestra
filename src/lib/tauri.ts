@@ -2513,6 +2513,27 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
       notes: session.subscribed
         ? ["Browser-mode mock simulates an active runtime for subscribed sessions."]
         : ["No live runtime is active in browser mode; these are the extensions Orchestra would load the next time this session spawns a runtime."],
+      managedSkills: {
+        state: "resolved",
+        context: {
+          sessionId,
+          projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
+          roleId: null,
+          agentId: null,
+          workflowId: null,
+          workflowLaneId: null,
+          contextSource: "project_session",
+        },
+        contextHash: `mock-skill-context-${sessionId}`,
+        ambientSkills: [],
+        resolvedSkills: [],
+        suppressedSkills: [],
+        scopedSnapshot: null,
+        globalPublicationManifestPath: "/mock/.orchestra/runtime/pi/agent/skills/manifest.json",
+        notes: ["Browser-mode mock exposes an empty managed-skills diagnostics payload for compatibility with the desktop runtime details UI."],
+        warnings: [],
+        errorMessage: null,
+      },
       controlCapabilities: session.controlCapabilities ?? null,
       controlOperation: session.controlOperation ?? null,
     };

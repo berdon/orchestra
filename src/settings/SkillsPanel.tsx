@@ -10,6 +10,7 @@ import {
   createLocalSkill,
   deleteLocalSkill,
   getSkill,
+  getSkillsCatalogDiagnostics,
   listSkills,
   refreshExternalSkills,
   setSkillBindings,
@@ -45,6 +46,7 @@ import type {
   SkillDetail,
   SkillStatus,
   SkillSummary,
+  SkillsCatalogDiagnostics,
   WorkflowDefinition,
 } from "../types";
 
@@ -168,6 +170,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillDetail | null>(null);
+  const [catalogDiagnostics, setCatalogDiagnostics] = useState<SkillsCatalogDiagnostics | null>(null);
   const [localDraft, setLocalDraft] = useState<LocalSkillUpsertInput>(createBlankLocalSkillDraft);
   const [bindingDraft, setBindingDraft] = useState<SkillBindingDraft>(createBlankSkillBindingDraft);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -195,9 +198,6 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   const selectionRequestTokenRef = useRef<number>(0);
 
   const localDraftState = useMemo(() => buildLocalSkillDraftState(localDraft), [localDraft]);
-  const selectedExternalSkill = !isCreatingLocalSkill && selectedSkillDetail?.sourceKind === "external"
-    ? selectedSkillDetail
-    : null;
   const selectedLocalSkill = !isCreatingLocalSkill && selectedSkillDetail?.sourceKind === "local"
     ? selectedSkillDetail
     : null;
@@ -225,8 +225,12 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
     setActionError(null);
 
     try {
-      const nextSkills = await listSkills(true);
+      const [nextSkills, nextDiagnostics] = await Promise.all([
+        listSkills(true),
+        getSkillsCatalogDiagnostics(),
+      ]);
       setSkills(nextSkills);
+      setCatalogDiagnostics(nextDiagnostics);
       if (isCreatingLocalSkill) {
         return;
       }
@@ -507,30 +511,31 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   }
 
   const detailWarnings = useMemo(() => {
-    if (!selectedExternalSkill) {
+    if (!currentDetail) {
       return [] as Array<{ tone: "neutral" | "warning" | "error"; title: string; message: string }>;
     }
 
-    const warnings: Array<{ tone: "neutral" | "warning" | "error"; title: string; message: string }> = [
-      {
+    const warnings: Array<{ tone: "neutral" | "warning" | "error"; title: string; message: string }> = [];
+    if (currentDetail.sourceKind === "external") {
+      warnings.push({
         tone: "neutral",
         title: "Read-only external skill",
         message: "External skills come from ~/.agents/skills and cannot be edited in Orchestra Settings.",
-      },
-    ];
+      });
+    }
 
-    if (selectedExternalSkill.status === "shadowed") {
-      const shadowWinner = selectedExternalSkill.shadowedBySkillId ? skillsById.get(selectedExternalSkill.shadowedBySkillId) ?? null : null;
+    if (currentDetail.sourceKind === "external" && currentDetail.status === "shadowed") {
+      const shadowWinner = currentDetail.shadowedBySkillId ? skillsById.get(currentDetail.shadowedBySkillId) ?? null : null;
       warnings.push({
         tone: "warning",
         title: "Shadowed by another skill",
         message: shadowWinner
           ? `${shadowWinner.name} currently takes precedence for this slug.`
-          : selectedExternalSkill.statusReason ?? "Another skill currently takes precedence for this slug.",
+          : currentDetail.statusReason ?? "Another skill currently takes precedence for this slug.",
       });
     }
 
-    if (selectedExternalSkill.status === "missing") {
+    if (currentDetail.sourceKind === "external" && currentDetail.status === "missing") {
       warnings.push({
         tone: "warning",
         title: "Missing on disk",
@@ -538,16 +543,20 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
       });
     }
 
-    if (selectedExternalSkill.status === "invalid" || selectedExternalSkill.status === "unloadable") {
+    if (currentDetail.sourceKind === "external" && (currentDetail.status === "invalid" || currentDetail.status === "unloadable")) {
       warnings.push({
         tone: "error",
-        title: selectedExternalSkill.status === "invalid" ? "Invalid external skill" : "Unreadable external skill",
-        message: selectedExternalSkill.statusReason ?? "Orchestra could not validate this external skill.",
+        title: currentDetail.status === "invalid" ? "Invalid external skill" : "Unreadable external skill",
+        message: currentDetail.statusReason ?? "Orchestra could not validate this external skill.",
       });
     }
 
+    for (const warning of currentDetail.runtimeWarnings) {
+      warnings.push({ tone: warning.tone, title: warning.title, message: warning.message });
+    }
+
     return warnings;
-  }, [selectedExternalSkill, skillsById]);
+  }, [currentDetail, skillsById]);
 
   const selectedProjectEntries = useMemo(
     () => projects.filter((project) => bindingDraft.projectIds.includes(project.id)),
@@ -656,6 +665,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
             <p className="muted-copy">No bindings yet.</p>
           )}
         </div>
+
+        {detail.runtimeWarnings.length > 0 ? (
+          <div className="skills-warning-stack" data-role="skill-binding-runtime-warnings">
+            {detail.runtimeWarnings.map((warning) => (
+              <div className={`skills-warning skills-warning--${warning.tone}`} key={`${warning.code}-${warning.message}`}>
+                <strong>{warning.title}</strong>
+                <p>{warning.message}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="skills-binding-editor">
           <label className="checkbox-row skills-binding-global-toggle">
@@ -874,6 +894,46 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
             </label>
           </div>
 
+          {catalogDiagnostics?.migrationCallout ? (
+            <div className="skills-warning-stack" data-role="skills-migration-callout">
+              <div className="skills-warning skills-warning--warning">
+                <strong>{catalogDiagnostics.migrationCallout.title}</strong>
+                <p>{catalogDiagnostics.migrationCallout.message}</p>
+                <ul className="session-runtime-details-list">
+                  {catalogDiagnostics.migrationCallout.bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
+
+          {catalogDiagnostics ? (
+            <div className="skills-binding-summary" data-role="skills-diagnostics-summary">
+              {catalogDiagnostics.externalStatusSummary.missing > 0 ? <span className="status-badge status-badge--warning">Missing · {catalogDiagnostics.externalStatusSummary.missing}</span> : null}
+              {catalogDiagnostics.externalStatusSummary.shadowed > 0 ? <span className="status-badge status-badge--warning">Shadowed · {catalogDiagnostics.externalStatusSummary.shadowed}</span> : null}
+              {catalogDiagnostics.externalStatusSummary.invalid > 0 ? <span className="status-badge status-badge--error">Invalid · {catalogDiagnostics.externalStatusSummary.invalid}</span> : null}
+              {catalogDiagnostics.externalStatusSummary.unloadable > 0 ? <span className="status-badge status-badge--error">Unloadable · {catalogDiagnostics.externalStatusSummary.unloadable}</span> : null}
+              {catalogDiagnostics.scopedAmbientConflictCount > 0 ? <span className="status-badge status-badge--warning">Ambient conflicts · {catalogDiagnostics.scopedAmbientConflictCount}</span> : null}
+            </div>
+          ) : null}
+
+          {catalogDiagnostics && catalogDiagnostics.scopedAmbientConflicts.length > 0 ? (
+            <div className="skills-warning-stack" data-role="skills-conflict-summary">
+              <div className="skills-warning skills-warning--warning">
+                <strong>Scoped/ambient conflicts need operator review</strong>
+                <p>
+                  Orchestra found {catalogDiagnostics.scopedAmbientConflictCount} slug conflict{catalogDiagnostics.scopedAmbientConflictCount === 1 ? "" : "s"} between ambient skill discovery and scoped managed bindings. Matching runtimes stay auditable by surfacing the collision instead of guessing load order.
+                </p>
+                <ul className="session-runtime-details-list">
+                  {catalogDiagnostics.scopedAmbientConflicts.map((conflict) => (
+                    <li key={conflict.slug}>{conflict.slug} · ambient via {conflict.ambientSources.join(", ")} · scoped via {conflict.scopedScopes.join(", ")}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
+
           {loadingList ? <p className="muted-copy">Loading skills…</p> : null}
           {actionError ? <p className="error-copy">{actionError}</p> : null}
 
@@ -901,6 +961,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                       {skill.sourceKind === "external" ? <span className="status-badge status-badge--neutral">Read-only</span> : null}
                       {skill.archived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
                       {!skill.archived ? <span className={getSkillStatusBadgeClass(skill.status)}>{getSkillStatusLabel(skill.status)}</span> : null}
+                      {skill.runtimeWarnings.length > 0 ? <span className="status-badge status-badge--warning">Conflict</span> : null}
                     </div>
                   </div>
                   <span className="skills-list-item__meta">{getSkillListMeta(skill)}</span>
@@ -998,6 +1059,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               </div>
 
               {loadingDetail ? <p className="muted-copy">Loading skill…</p> : null}
+
+              {detailWarnings.length > 0 ? (
+                <div className="skills-warning-stack">
+                  {detailWarnings.map((warning) => (
+                    <div className={`skills-warning skills-warning--${warning.tone}`} key={`${warning.title}-${warning.message}`}>
+                      <strong>{warning.title}</strong>
+                      <p>{warning.message}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               <section className="workflow-section skills-form-section">
                 <div>
