@@ -11,6 +11,11 @@ export interface SystemNotificationInput {
   body: string;
   tag?: string;
   iconPath?: string;
+  onClick?: () => void;
+}
+
+interface SystemNotificationSendOptions {
+  requestPermission?: boolean;
 }
 
 interface SystemNotificationTestDriver {
@@ -169,13 +174,39 @@ export async function requestSystemNotificationPermission(): Promise<SystemNotif
   return mapWebPermission(await ensureWebNotificationPermission());
 }
 
-export async function sendSystemNotification(input: SystemNotificationInput) {
-  recordNotificationForTests(input);
+async function currentPermissionState(requestPermission: boolean) {
+  if (requestPermission) {
+    return requestSystemNotificationPermission();
+  }
 
   const testDriver = getTestDriver();
   if (testDriver) {
-    const permission = testDriver.permission
-      ?? (testDriver.requestPermission ? await testDriver.requestPermission() : "granted");
+    return mapWebPermission(testDriver.permission ?? "default");
+  }
+
+  if (isTauriAvailable()) {
+    try {
+      const { isPermissionGranted } = await loadPluginNotificationModule();
+      if (await isPermissionGranted()) {
+        return "granted" satisfies SystemNotificationPermissionState;
+      }
+    } catch {
+      // fall through to the shared state query below
+    }
+  }
+
+  return getSystemNotificationPermissionState();
+}
+
+export async function sendSystemNotification(input: SystemNotificationInput, options?: SystemNotificationSendOptions) {
+  recordNotificationForTests(input);
+  const shouldRequestPermission = options?.requestPermission ?? true;
+
+  const testDriver = getTestDriver();
+  if (testDriver) {
+    const permission = shouldRequestPermission
+      ? (testDriver.permission ?? (testDriver.requestPermission ? await testDriver.requestPermission() : "granted"))
+      : (testDriver.permission ?? "default");
     if (permission !== "granted") {
       return false;
     }
@@ -185,8 +216,10 @@ export async function sendSystemNotification(input: SystemNotificationInput) {
 
   if (isTauriAvailable()) {
     try {
-      const permission = await requestSystemNotificationPermission();
-      if (![("granted"), ("provisional"), ("ephemeral")].includes(permission)) {
+      const permission = shouldRequestPermission
+        ? await requestSystemNotificationPermission()
+        : await currentPermissionState(false);
+      if (!["granted", "provisional", "ephemeral"].includes(permission)) {
         return false;
       }
 
@@ -208,7 +241,9 @@ export async function sendSystemNotification(input: SystemNotificationInput) {
     return false;
   }
 
-  const permission = await ensureWebNotificationPermission();
+  const permission = shouldRequestPermission
+    ? await ensureWebNotificationPermission()
+    : window.Notification.permission;
   if (permission !== "granted") {
     return false;
   }
@@ -219,8 +254,13 @@ export async function sendSystemNotification(input: SystemNotificationInput) {
   });
   notification.onclick = () => {
     window.focus();
+    input.onClick?.();
   };
   return true;
+}
+
+export async function deliverSystemNotification(input: SystemNotificationInput) {
+  return sendSystemNotification(input, { requestPermission: false });
 }
 
 export async function sendTestSystemNotification() {
@@ -230,4 +270,3 @@ export async function sendTestSystemNotification() {
     tag: "system-test",
   });
 }
-

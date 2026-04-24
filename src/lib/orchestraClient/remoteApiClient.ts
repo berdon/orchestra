@@ -83,6 +83,7 @@ import type {
   OrchestraRoleInstanceReleaseOutcome,
   OrchestraTaskCompletionOutcome,
 } from "./client";
+import { createLocalNotificationsExtension } from "./localNotificationsExtension";
 import { RemoteApiEventManager } from "./remoteApiEvents";
 import {
   createRemoteApiTaskListQuery,
@@ -1234,6 +1235,7 @@ export function createRemoteApiOrchestraClientBinding(
       subscribe: (handler) => eventManager.subscribe(handler),
     },
     connection: connectionController,
+    notifications: createLocalNotificationsExtension(),
   };
 
   return {

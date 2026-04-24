@@ -60,7 +60,7 @@ use crate::{
         WorkflowLaneReorderInput, WorkflowUpsertInput,
     },
     services::{
-        agent_dispatch, app_events, database, messages,
+        agent_dispatch, app_events, database, messages, notifications,
         orchestra_paths::discover_dev_checkout_root, pi_sessions, projects, remote_access, tasks,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle},
@@ -4811,6 +4811,7 @@ async fn post_send_inbox_message(
     if let Some(task_id) = message.task_id.clone() {
         let _ = app_events::emit_task_change(&context.app, "mailbox.sent", [task_id]);
     }
+    let _ = notifications::publish_mailbox_notification(Some(&context.app), &connection, &message);
     Ok(Json(message))
 }
 

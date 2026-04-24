@@ -1629,28 +1629,31 @@ async fn complete_lane_command(
         let mut connection = database::open_connection()?;
         let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
         let mut task = match outcome {
-            "success" => task_runtime::complete_lane_as_success(
+            "success" => task_runtime::complete_lane_as_success_with_app(
                 &mut connection,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
                 notes,
+                Some(&app),
                 None,
             )?,
-            "failure" => task_runtime::complete_lane_as_failure(
+            "failure" => task_runtime::complete_lane_as_failure_with_app(
                 &mut connection,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
                 notes,
+                Some(&app),
                 None,
             )?,
-            _ => task_runtime::request_user_intervention(
+            _ => task_runtime::request_user_intervention_with_app(
                 &mut connection,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
                 notes,
+                Some(&app),
                 None,
             )?,
         };

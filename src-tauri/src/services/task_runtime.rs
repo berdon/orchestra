@@ -10,9 +10,9 @@ use crate::{
         TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
     },
     services::{
-        agent_dispatch, agent_runtime, agents, channels, live_sessions, messages, pi_sessions,
-        project_settings, projects, role_dispatch, role_runtime, roles, session_list,
-        task_repositories, tasks, workflows,
+        agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications,
+        pi_sessions, project_settings, projects, role_dispatch,
+        role_runtime, roles, session_list, task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -2412,6 +2412,11 @@ pub(crate) fn dispatch_task_comment_notification_target(
                                 [task_id],
                             );
                         }
+                        let _ = crate::services::notifications::publish_mailbox_notification(
+                            Some(app),
+                            connection,
+                            &message,
+                        );
                     }
                     None
                 }
@@ -2603,6 +2608,26 @@ pub fn complete_lane_as_success(
     notes: Option<String>,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
+    complete_lane_as_success_with_app(
+        connection,
+        project_root,
+        session_dir,
+        task_id,
+        notes,
+        None,
+        authorization,
+    )
+}
+
+pub fn complete_lane_as_success_with_app(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    notes: Option<String>,
+    app: Option<&AppHandle>,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<TaskDetail, String> {
     complete_lane(
         connection,
         project_root,
@@ -2610,6 +2635,7 @@ pub fn complete_lane_as_success(
         task_id,
         "success",
         notes,
+        app,
         authorization,
     )
 }
@@ -2622,6 +2648,26 @@ pub fn complete_lane_as_failure(
     notes: Option<String>,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
+    complete_lane_as_failure_with_app(
+        connection,
+        project_root,
+        session_dir,
+        task_id,
+        notes,
+        None,
+        authorization,
+    )
+}
+
+pub fn complete_lane_as_failure_with_app(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    notes: Option<String>,
+    app: Option<&AppHandle>,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<TaskDetail, String> {
     complete_lane(
         connection,
         project_root,
@@ -2629,6 +2675,7 @@ pub fn complete_lane_as_failure(
         task_id,
         "failure",
         notes,
+        app,
         authorization,
     )
 }
@@ -2641,6 +2688,26 @@ pub fn request_user_intervention(
     notes: Option<String>,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
+    request_user_intervention_with_app(
+        connection,
+        project_root,
+        session_dir,
+        task_id,
+        notes,
+        None,
+        authorization,
+    )
+}
+
+pub fn request_user_intervention_with_app(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    notes: Option<String>,
+    app: Option<&AppHandle>,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<TaskDetail, String> {
     complete_lane(
         connection,
         project_root,
@@ -2648,6 +2715,7 @@ pub fn request_user_intervention(
         task_id,
         "needs_user",
         notes,
+        app,
         authorization,
     )
 }
@@ -2937,6 +3005,7 @@ fn complete_lane(
     task_id: &str,
     outcome: &str,
     notes: Option<String>,
+    app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
     let active_assignment = get_active_lane_assignment(connection, task_id)?;
@@ -3032,7 +3101,8 @@ fn complete_lane(
             mark_assignment_worker_waiting_for_user_response(connection, assignment, &now)?;
             move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
             let updated = tasks::get_task_context(connection, task_id)?;
-            let _ = channels::notify_task_user_attention_channels(
+            let _ = notifications::publish_task_attention_notification(
+                app,
                 connection,
                 &updated,
                 &lane,
@@ -3052,7 +3122,8 @@ fn complete_lane(
             mark_assignment_worker_waiting_for_user_response(connection, assignment, &now)?;
             move_task_to_user_review(connection, &task.id, &lane.id, &now)?;
             let updated = tasks::get_task_context(connection, task_id)?;
-            let _ = channels::notify_task_user_attention_channels(
+            let _ = notifications::publish_task_attention_notification(
+                app,
                 connection,
                 &updated,
                 &lane,
@@ -3094,7 +3165,8 @@ fn complete_lane(
         )?;
     }
     if outcome == "needs_user" {
-        let _ = channels::notify_task_user_attention_channels(
+        let _ = notifications::publish_task_attention_notification(
+            app,
             connection,
             &updated,
             &lane,

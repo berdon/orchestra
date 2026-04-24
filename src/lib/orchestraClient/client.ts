@@ -78,7 +78,7 @@ import type {
   OrchestraClientEventHandler,
   OrchestraUnsubscribe,
 } from "./events";
-import type { OrchestraHostAdminExtension, OrchestraShellExtension } from "./extensions";
+import type { OrchestraHostAdminExtension, OrchestraLocalNotificationsExtension, OrchestraShellExtension } from "./extensions";
 import type { OrchestraConnectionService } from "./connection";
 
 export type {
@@ -360,6 +360,7 @@ export interface OrchestraClient {
   readonly events: OrchestraEventService;
   readonly connection: OrchestraConnectionService;
   readonly shell?: OrchestraShellExtension;
+  readonly notifications?: OrchestraLocalNotificationsExtension;
   readonly hostAdmin?: OrchestraHostAdminExtension;
 }
 

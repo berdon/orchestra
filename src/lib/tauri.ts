@@ -4,7 +4,8 @@ import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import { getStoredMockProjectRuntimeSettings } from "./mockProjectRuntimeSettings";
 import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
 import { sortSessionRecords } from "./sessionList";
-import { emitMockInboxChange, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "./mockOrchestra/events";
+import { buildMailboxNotificationIntent, buildTaskAttentionNotificationIntent, resolveNotificationProjectLabel } from "./notificationIntents";
+import { emitMockInboxChange, emitMockNotificationIntent, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "./mockOrchestra/events";
 import { isTauriAvailable } from "./mockOrchestra/host";
 import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
 import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
@@ -30,6 +31,7 @@ import type {
   PiOAuthFlowState,
   PiProviderAuthMethodSummary,
   PiSetupState,
+  ProjectDetail,
   QueuedSessionMessage,
   RoleSummary,
   SendMailboxMessageInput,
@@ -118,11 +120,12 @@ function getStoredMockHarnessSettings() {
   return getStoredValue<{ extraExtensions?: string[]; updatedAt?: string | null }>(HARNESS_SETTINGS_STORAGE_KEY) ?? {};
 }
 
+function getStoredMockProjects() {
+  return getStoredValue<ProjectDetail[]>("orchestra.mock.projects") ?? buildSeededMockProjects();
+}
+
 function getStoredMockProjectsForSettings() {
-  const value = window.localStorage.getItem("orchestra.mock.projects");
-  return value
-    ? (JSON.parse(value) as Array<{ id: string; slug: string }>)
-    : buildSeededMockProjects().map((project) => ({ id: project.id, slug: project.slug }));
+  return getStoredMockProjects().map((project) => ({ id: project.id, slug: project.slug }));
 }
 
 function resolveCurrentMockProjectId(preferredProjectId?: string | null) {
@@ -4297,7 +4300,14 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 
     appendMockLog("info", "task.transition", `Task ${taskId} is awaiting user approval on ${lane.name}`);
     emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.awaiting_user_approval" });
-    return getTask(taskId);
+    const updatedTask = await getTask(taskId);
+    const projects = getStoredMockProjects();
+    emitMockNotificationIntent(buildTaskAttentionNotificationIntent(
+      updatedTask,
+      "task.awaiting_user_approval",
+      resolveNotificationProjectLabel(projects, updatedTask.projectId),
+    ));
+    return updatedTask;
   }
 
   if (
@@ -4328,7 +4338,14 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 
     appendMockLog("info", "task.transition", `Task ${taskId} is awaiting user intervention on ${lane.name}`);
     emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.awaiting_user_intervention" });
-    return getTask(taskId);
+    const updatedTask = await getTask(taskId);
+    const projects = getStoredMockProjects();
+    emitMockNotificationIntent(buildTaskAttentionNotificationIntent(
+      updatedTask,
+      "task.awaiting_user_intervention",
+      resolveNotificationProjectLabel(projects, updatedTask.projectId),
+    ));
+    return updatedTask;
   }
 
   let nextLaneId: string | null = task.currentLaneId;
@@ -5234,7 +5251,7 @@ export async function sendMailboxMessage(input: SendMailboxMessageInput): Promis
     const tasks = ensureMockTasks();
     const task = input.taskId ? tasks.find((entry) => entry.id === input.taskId) ?? null : null;
     const projectId = task?.projectId ?? input.projectId ?? getActiveProjectId() ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID;
-    const projects = getStoredValue<Array<{ id: string; repositories: Array<{ id: string; name: string; slug: string; localPath?: string | null }> }>>("orchestra.mock.projects") ?? [];
+    const projects = getStoredMockProjects();
     const storedAgents = getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
     let recipientType = input.recipientType;
     let recipientId = input.recipientId ?? null;
@@ -5286,6 +5303,12 @@ export async function sendMailboxMessage(input: SendMailboxMessageInput): Promis
     emitMockInboxChange({ deliveryIds: [message.deliveryId], reason: "mailbox.sent" });
     if (message.taskId) {
       emitMockTaskChange({ taskIds: [message.taskId], reason: "mailbox.sent" });
+    }
+    if (message.recipientType === "user") {
+      emitMockNotificationIntent(buildMailboxNotificationIntent(
+        message,
+        resolveNotificationProjectLabel(projects, message.projectId),
+      ));
     }
     appendMockLog("info", "mailbox.sent", `Sent mailbox delivery ${message.deliveryId} to ${message.recipientLabel}`);
     return message;
@@ -5414,7 +5437,7 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
       throw new Error(`Task ${taskId} was not found`);
     }
 
-    const projects = getStoredValue<Array<{ id: string; repositories: Array<{ id: string; name: string; slug: string; localPath?: string | null }> }>>("orchestra.mock.projects") ?? [];
+    const projects = getStoredMockProjects();
     const project = projects.find((entry) => entry.id === task.projectId) ?? null;
     const repository = project?.repositories.find((entry) => entry.id === input.repositoryId) ?? null;
     if (!repository) {
@@ -5433,7 +5456,7 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
       repositoryName: repository.name,
       repositorySlug: repository.slug,
       relativePath,
-      absolutePath: repository.localPath ? `${repository.localPath.replace(/\/$/, "")}/${relativePath}` : null,
+      absolutePath: repository.repositoryPath ? `${repository.repositoryPath.replace(/\/$/, "")}/${relativePath}` : null,
       exists: false,
       isDefault: false,
       createdAt: nowIso(),

@@ -42,6 +42,51 @@ pub struct SystemNotificationEnvironmentStatus {
     pub app_bundle_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationEventType {
+    MailboxMessageReceived,
+    TaskAwaitingUserApproval,
+    TaskAwaitingUserIntervention,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationActionType {
+    OpenInbox,
+    OpenTask,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationActionTarget {
+    Details,
+    Review,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationAction {
+    pub r#type: NotificationActionType,
+    pub task_id: Option<String>,
+    pub target: Option<NotificationActionTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationIntent {
+    pub id: String,
+    pub event_type: NotificationEventType,
+    pub title: String,
+    pub body: String,
+    pub tag: String,
+    pub project_id: Option<String>,
+    pub task_id: Option<String>,
+    pub delivery_id: Option<String>,
+    pub action: Option<NotificationAction>,
+    pub occurred_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAccessSettings {

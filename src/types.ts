@@ -868,6 +868,29 @@ export interface InboxChangeEvent {
   reason: string;
 }
 
+export type NotificationEventType = "mailbox.message_received" | "task.awaiting_user_approval" | "task.awaiting_user_intervention";
+export type NotificationActionType = "open_inbox" | "open_task";
+export type NotificationActionTarget = "details" | "review";
+
+export interface NotificationAction {
+  type: NotificationActionType;
+  taskId?: string | null;
+  target?: NotificationActionTarget | null;
+}
+
+export interface NotificationIntent {
+  id: string;
+  eventType: NotificationEventType;
+  title: string;
+  body: string;
+  tag: string;
+  projectId?: string | null;
+  taskId?: string | null;
+  deliveryId?: string | null;
+  action?: NotificationAction | null;
+  occurredAt: string;
+}
+
 export type WorkflowOwnerType = "user" | "agent" | "role";
 export type WorkflowTransitionType = "lane" | "user_intervention" | "end";
 

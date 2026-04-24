@@ -19,8 +19,9 @@ use uuid::Uuid;
 use crate::{
     models::{
         ChannelActivityEntry, ChannelDetail, ChannelSummary, ChannelUpsertInput, MailboxMessage,
-        SendMailboxMessageInput, TaskDetail, TelegramBotValidation, TelegramChannelConfig,
-        TelegramChannelConfigInput, TelegramChatCandidate, TelegramNotificationScope, WorkflowLane,
+        NotificationEventType, NotificationIntent, SendMailboxMessageInput, TaskDetail,
+        TelegramBotValidation, TelegramChannelConfig, TelegramChannelConfigInput,
+        TelegramChatCandidate, TelegramNotificationScope, WorkflowLane,
     },
     services::{
         agent_dispatch, database,
@@ -606,10 +607,55 @@ pub fn notify_task_user_attention_channels(
 ) -> Result<usize, String> {
     let project = projects::get_project(connection, &task.project_id)?;
     let body = format_task_user_attention_notification(&project.name, task, lane, reason, notes);
+    let event_type = match reason {
+        "awaiting_user_approval" => NotificationEventType::TaskAwaitingUserApproval,
+        "awaiting_user_intervention" | "needs_user" => {
+            NotificationEventType::TaskAwaitingUserIntervention
+        }
+        _ => NotificationEventType::TaskAwaitingUserIntervention,
+    };
+
+    deliver_telegram_notification_intent(
+        connection,
+        &NotificationIntent {
+            id: format!("legacy-task-notification-{}-{}", task.id, reason),
+            event_type,
+            title: if event_type == NotificationEventType::TaskAwaitingUserApproval {
+                "Orchestra — Approval needed".into()
+            } else {
+                "Orchestra — User intervention needed".into()
+            },
+            body,
+            tag: format!("task-attention:{reason}:{}", task.id),
+            project_id: Some(task.project_id.clone()),
+            task_id: Some(task.id.clone()),
+            delivery_id: None,
+            action: None,
+            occurred_at: chrono::Utc::now().to_rfc3339(),
+        },
+    )
+}
+
+pub fn deliver_telegram_notification_intent(
+    connection: &Connection,
+    intent: &NotificationIntent,
+) -> Result<usize, String> {
+    if !matches!(
+        intent.event_type,
+        NotificationEventType::TaskAwaitingUserApproval
+            | NotificationEventType::TaskAwaitingUserIntervention
+    ) {
+        return Ok(0);
+    }
+
+    let Some(task_project_id) = intent.project_id.as_deref() else {
+        return Ok(0);
+    };
+    let body = render_telegram_notification_body(intent);
     let channels = load_runnable_channels(connection)?
         .into_iter()
         .filter(|channel| channel.kind == CHANNEL_KIND_TELEGRAM)
-        .filter(|channel| channel_matches_task_notification_scope(channel, &task.project_id))
+        .filter(|channel| channel_matches_task_notification_scope(channel, task_project_id))
         .collect::<Vec<_>>();
 
     let mut delivered = 0usize;
@@ -1587,6 +1633,11 @@ fn telegram_mail_task_text(
     if let Some(task_id) = sent.task_id.clone() {
         let _ = crate::services::app_events::emit_task_change(app, "mailbox.sent", [task_id]);
     }
+    let _ = crate::services::notifications::publish_mailbox_notification(
+        Some(app),
+        &connection,
+        &sent,
+    );
     Ok(format!(
         "Sent mail about {} to {}.",
         task.number, sent.recipient_label,
@@ -1625,6 +1676,15 @@ fn resolve_mailbox_message_by_reference(
 
 fn short_delivery_id(message: &MailboxMessage) -> String {
     message.delivery_id.chars().take(12).collect()
+}
+
+fn render_telegram_notification_body(intent: &NotificationIntent) -> String {
+    let body = intent.body.trim();
+    if body.is_empty() {
+        intent.title.clone()
+    } else {
+        format!("{}\n\n{}", intent.title, body)
+    }
 }
 
 fn format_task_user_attention_notification(

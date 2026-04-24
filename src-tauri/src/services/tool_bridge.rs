@@ -1384,6 +1384,11 @@ fn invoke_bridge_command(
                 let _ =
                     crate::services::app_events::emit_task_change(&app, "mailbox.sent", [task_id]);
             }
+            let _ = crate::services::notifications::publish_mailbox_notification(
+                Some(&app),
+                connection,
+                &message,
+            );
             serde_json::to_value(message)
                 .map_err(|error| format!("Unable to serialize mailbox message: {error}"))
         }

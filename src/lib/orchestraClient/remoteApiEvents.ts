@@ -1,5 +1,6 @@
 import type {
   InboxChangeEvent,
+  NotificationIntent,
   RemoteEventEnvelope,
   SessionChangeEvent,
   SessionStreamEnvelope,
@@ -15,6 +16,7 @@ import {
 import type { OrchestraClientEventHandler, OrchestraUnsubscribe } from "./events";
 import {
   toOrchestraInboxChangeDelivery,
+  toOrchestraNotificationIntentDelivery,
   toOrchestraSessionChangeDelivery,
   toOrchestraSessionStreamDelivery,
   toOrchestraTaskChangeDelivery,
@@ -72,6 +74,8 @@ function normalizeRemoteTopic(topic: string) {
       return "inbox.change" as const;
     case "session.stream":
       return "session.stream" as const;
+    case "notification.intent":
+      return "notification.intent" as const;
     default:
       return null;
   }
@@ -458,6 +462,14 @@ export class RemoteApiEventManager {
         for (const handler of this.handlers) {
           handler(toOrchestraSessionStreamDelivery(payload));
         }
+        return;
+      }
+      case "notification.intent": {
+        const payload = envelope.payload as unknown as NotificationIntent;
+        for (const handler of this.handlers) {
+          handler(toOrchestraNotificationIntentDelivery(payload));
+        }
+        return;
       }
     }
   }

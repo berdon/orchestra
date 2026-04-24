@@ -6,6 +6,7 @@ import {
 import { createOptimisticConnectionSnapshot, createStaticConnectionService } from "./connection";
 import type { OrchestraClient, OrchestraClientBinding } from "./client";
 import { withNormalizedBindingErrors, type OrchestraClientServiceBindings } from "./serviceBindings";
+import { createLocalNotificationsExtension } from "./localNotificationsExtension";
 import { createTauriHostAdminExtension } from "./tauriHostAdminExtension";
 import { tauriOrchestraClientServiceBindings } from "./tauriBindings";
 import { createTauriShellExtension } from "./tauriShellExtension";
@@ -31,6 +32,7 @@ export function createTauriOrchestraClient(
     {
       connection: createStaticConnectionService(createOptimisticConnectionSnapshot(optimisticBootstrap)),
       shell: createTauriShellExtension(),
+      notifications: createLocalNotificationsExtension(),
       hostAdmin: createTauriHostAdminExtension(),
     },
   );

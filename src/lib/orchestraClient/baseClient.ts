@@ -5,11 +5,12 @@ import {
   createStaticConnectionService,
   type OrchestraConnectionService,
 } from "./connection";
-import type { OrchestraHostAdminExtension, OrchestraShellExtension } from "./extensions";
+import type { OrchestraHostAdminExtension, OrchestraLocalNotificationsExtension, OrchestraShellExtension } from "./extensions";
 import type { OrchestraClientServiceBindings } from "./serviceBindings";
 
 interface OrchestraClientExtensions {
   shell?: OrchestraShellExtension;
+  notifications?: OrchestraLocalNotificationsExtension;
   hostAdmin?: OrchestraHostAdminExtension;
   connection?: OrchestraConnectionService;
 }
@@ -46,6 +47,7 @@ export function createOrchestraClient(
       lastError: null,
     }),
     shell: extensions?.shell,
+    notifications: extensions?.notifications,
     hostAdmin: extensions?.hostAdmin,
   };
 }

@@ -5,7 +5,7 @@ use crate::{
         ArchiveMailboxMessagesInput, MailboxMessage, MarkMailboxMessagesReadInput,
         SendMailboxMessageInput,
     },
-    services::{app_events, database, messages},
+    services::{app_events, database, messages, notifications},
     state::AppState,
 };
 
@@ -49,6 +49,7 @@ pub fn send_mailbox_message(
     if let Some(task_id) = message.task_id.clone() {
         let _ = app_events::emit_task_change(&app, "mailbox.sent", [task_id]);
     }
+    let _ = notifications::publish_mailbox_notification(Some(&app), &connection, &message);
     Ok(message)
 }
 
