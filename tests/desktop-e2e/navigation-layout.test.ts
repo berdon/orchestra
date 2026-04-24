@@ -84,20 +84,51 @@ describe("desktop navigation layout", () => {
         menuWidth: number | null;
         menuLeft: number | null;
         triggerRight: number | null;
+        overlapsHeader: boolean;
+        headerInStack: boolean;
+        menuOnTopOfHeader: boolean;
       }>(
         sessionId,
         `
           const trigger = document.querySelector('[data-role="project-switcher-trigger"]');
           const menu = document.querySelector('[data-role="project-switcher-menu"]');
-          if (!(trigger instanceof HTMLElement) || !(menu instanceof HTMLElement)) {
-            return { menuWidth: null, menuLeft: null, triggerRight: null };
+          const header = document.querySelector('.page-header');
+          if (!(trigger instanceof HTMLElement) || !(menu instanceof HTMLElement) || !(header instanceof HTMLElement)) {
+            return {
+              menuWidth: null,
+              menuLeft: null,
+              triggerRight: null,
+              overlapsHeader: false,
+              headerInStack: false,
+              menuOnTopOfHeader: false,
+            };
           }
           const triggerRect = trigger.getBoundingClientRect();
           const menuRect = menu.getBoundingClientRect();
+          const headerRect = header.getBoundingClientRect();
+          const overlapLeft = Math.max(menuRect.left, headerRect.left);
+          const overlapRight = Math.min(menuRect.right, headerRect.right);
+          const overlapTop = Math.max(menuRect.top, headerRect.top);
+          const overlapBottom = Math.min(menuRect.bottom, headerRect.bottom);
+          const overlapsHeader = overlapRight - overlapLeft >= 4 && overlapBottom - overlapTop >= 4;
+          const probeX = overlapsHeader ? overlapLeft + 4 : null;
+          const probeY = overlapsHeader ? overlapTop + 4 : null;
+          const stack = overlapsHeader && probeX !== null && probeY !== null
+            ? document.elementsFromPoint(probeX, probeY)
+            : [];
           return {
             menuWidth: Math.round(menuRect.width),
             menuLeft: Math.round(menuRect.left),
             triggerRight: Math.round(triggerRect.right),
+            overlapsHeader,
+            headerInStack: overlapsHeader
+              ? stack.some((element) => element instanceof Element && element.closest('.page-header') === header)
+              : false,
+            menuOnTopOfHeader: overlapsHeader
+              ? stack.some((element) => element instanceof Element && element.closest('[data-role="project-switcher-menu"]') === menu)
+                && stack[0] instanceof Element
+                && stack[0].closest('[data-role="project-switcher-menu"]') === menu
+              : false,
           };
         `,
       );
@@ -106,6 +137,9 @@ describe("desktop navigation layout", () => {
       expect(collapsedMenuState.menuLeft).not.toBeNull();
       expect(collapsedMenuState.triggerRight).not.toBeNull();
       expect(collapsedMenuState.menuLeft ?? 0).toBeGreaterThanOrEqual((collapsedMenuState.triggerRight ?? 0) - 1);
+      expect(collapsedMenuState.overlapsHeader).toBe(true);
+      expect(collapsedMenuState.headerInStack).toBe(true);
+      expect(collapsedMenuState.menuOnTopOfHeader).toBe(true);
 
       await clickSelector(sessionId, '[data-role="toggle-sidebar-collapse"]');
       const expanded = await executeScript<string | null>(
