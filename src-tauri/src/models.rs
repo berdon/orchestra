@@ -750,6 +750,21 @@ pub struct SessionStats {
     pub context_usage: Option<SessionContextUsage>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionListVisibilityState {
+    Active,
+    Closed,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionMessageability {
+    Messageable,
+    Closed,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
@@ -784,6 +799,10 @@ pub struct SessionRecord {
     pub worker_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worker_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_visibility: Option<SessionListVisibilityState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub messageability: Option<SessionMessageability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub control_capabilities: Option<SessionControlCapabilities>,
     #[serde(skip_serializing_if = "Option::is_none")]

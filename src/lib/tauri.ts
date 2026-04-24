@@ -2463,8 +2463,13 @@ export async function getSessionRecord(sessionId: string): Promise<SessionRecord
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
+    const dismissed = getDismissedMockSessionIds();
     appendMockLog("info", "sessions.record", `Loaded session record ${sessionId}`);
-    return session;
+    return {
+      ...session,
+      listVisibility: dismissed.has(sessionId) ? "hidden" : (session.listVisibility ?? (session.status === "closed" ? "closed" : "active")),
+      messageability: session.messageability ?? (session.status === "closed" ? "closed" : "messageable"),
+    };
   }
 
   return invoke<SessionRecord>("get_session_record", { sessionId });

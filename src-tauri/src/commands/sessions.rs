@@ -10,8 +10,9 @@ use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
 use crate::{
     models::{
-        QueuedSessionMessage, SessionDebugInfo, SessionModelState, SessionRecord,
-        SessionRuntimeDetails, SessionStats,
+        QueuedSessionMessage, SessionDebugInfo, SessionListVisibilityState,
+        SessionMessageability, SessionModelState, SessionRecord, SessionRuntimeDetails,
+        SessionStats,
     },
     services::{
         agent_runtime, agents, app_events, database, domain_events,
@@ -430,11 +431,57 @@ fn load_session_list_metadata(
     ))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionDecorationSurface {
+    List,
+    Detail,
+}
+
+fn session_list_visibility_state(
+    visibility: Option<&session_list::SessionListVisibility>,
+) -> Option<SessionListVisibilityState> {
+    match visibility {
+        Some(session_list::SessionListVisibility::Active) => {
+            Some(SessionListVisibilityState::Active)
+        }
+        Some(session_list::SessionListVisibility::Closed) => {
+            Some(SessionListVisibilityState::Closed)
+        }
+        Some(session_list::SessionListVisibility::Hidden(_)) => {
+            Some(SessionListVisibilityState::Hidden)
+        }
+        Some(session_list::SessionListVisibility::Unchanged) | None => None,
+    }
+}
+
+fn session_messageability(
+    visibility: Option<&session_list::SessionListVisibility>,
+    persistent_agent_session: bool,
+    current_status: &str,
+) -> SessionMessageability {
+    match visibility {
+        Some(session_list::SessionListVisibility::Active) => SessionMessageability::Messageable,
+        Some(session_list::SessionListVisibility::Hidden(_)) if persistent_agent_session => {
+            SessionMessageability::Messageable
+        }
+        Some(session_list::SessionListVisibility::Closed)
+        | Some(session_list::SessionListVisibility::Hidden(_)) => SessionMessageability::Closed,
+        Some(session_list::SessionListVisibility::Unchanged) | None => {
+            if current_status == "closed" {
+                SessionMessageability::Closed
+            } else {
+                SessionMessageability::Messageable
+            }
+        }
+    }
+}
+
 pub(crate) fn decorate_session_record_with_connection(
     connection: &rusqlite::Connection,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     mut record: SessionRecord,
     include_debug_info: bool,
+    surface: SessionDecorationSurface,
 ) -> Result<SessionRecord, String> {
     if include_debug_info {
         record.debug_info = load_session_debug_info(connection, &record.id)?;
@@ -442,6 +489,8 @@ pub(crate) fn decorate_session_record_with_connection(
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
 
     let decoration = session_list::load_session_list_decoration(connection, &record.id)?;
+    let visibility = decoration.visibility.clone();
+    let persistent_agent_session = decoration.persistent_agent_session;
     record.task_id = decoration.task_id;
     record.task_project_id = decoration.task_project_id;
     record.task_number = decoration.task_number;
@@ -452,12 +501,25 @@ pub(crate) fn decorate_session_record_with_connection(
     record.active_task_title = decoration.active_task_title;
     record.worker_type = decoration.worker_type;
     record.worker_name = decoration.worker_name;
+    record.list_visibility = session_list_visibility_state(visibility.as_ref());
+    record.messageability = Some(session_messageability(
+        visibility.as_ref(),
+        persistent_agent_session,
+        &record.status,
+    ));
 
-    match decoration.visibility {
-        Some(session_list::SessionListVisibility::Active) => record.status = "active".into(),
-        Some(session_list::SessionListVisibility::Closed)
-        | Some(session_list::SessionListVisibility::Hidden(_)) => record.status = "closed".into(),
-        Some(session_list::SessionListVisibility::Unchanged) | None => {}
+    match (surface, visibility.as_ref()) {
+        (_, Some(session_list::SessionListVisibility::Active)) => record.status = "active".into(),
+        (_, Some(session_list::SessionListVisibility::Closed)) => record.status = "closed".into(),
+        (SessionDecorationSurface::List, Some(session_list::SessionListVisibility::Hidden(_))) => {
+            record.status = "closed".into();
+        }
+        (SessionDecorationSurface::Detail, Some(session_list::SessionListVisibility::Hidden(_))) => {
+            if !persistent_agent_session {
+                record.status = "closed".into();
+            }
+        }
+        (_, Some(session_list::SessionListVisibility::Unchanged)) | (_, None) => {}
     }
 
     Ok(record)
@@ -467,6 +529,7 @@ fn decorate_session_record(
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     record: SessionRecord,
     include_debug_info: bool,
+    surface: SessionDecorationSurface,
 ) -> Result<SessionRecord, String> {
     let connection = database::open_connection()?;
     decorate_session_record_with_connection(
@@ -474,6 +537,7 @@ fn decorate_session_record(
         terminal_attached_session_ids,
         record,
         include_debug_info,
+        surface,
     )
 }
 
@@ -482,9 +546,10 @@ fn load_decorated_session_record(
     session_id: &str,
     subscribed: bool,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
+    surface: SessionDecorationSurface,
 ) -> Result<SessionRecord, String> {
     let record = get_session(session_dir, session_id, subscribed)?;
-    decorate_session_record(terminal_attached_session_ids, record, true)
+    decorate_session_record(terminal_attached_session_ids, record, true, surface)
 }
 
 fn attach_session_control_metadata(
@@ -618,6 +683,7 @@ pub(crate) fn list_command_sessions_with_connection(
             terminal_attached_session_ids,
             record,
             false,
+            SessionDecorationSurface::List,
         )?);
     }
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -669,6 +735,7 @@ pub async fn get_session_record(
             &session_id_for_task,
             subscribed,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -762,6 +829,7 @@ pub async fn create_session(
             &created.record.id,
             true,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -1204,6 +1272,7 @@ pub async fn create_contextual_session(
             &new_session_id_for_task,
             true,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -1318,6 +1387,7 @@ pub async fn resume_session(
             &session_id_for_task,
             true,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -1379,6 +1449,7 @@ pub async fn subscribe_session(
                 &session_id_for_task,
                 true,
                 &terminal_attached_session_ids,
+                SessionDecorationSurface::Detail,
             )
         })
         .await
@@ -1421,6 +1492,7 @@ pub async fn unsubscribe_session(
             &session_id_for_task,
             false,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -1650,6 +1722,7 @@ pub async fn compact_session(
             &session_id_for_task,
             true,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -1737,6 +1810,7 @@ pub async fn reload_session(
             &session_id_for_task,
             true,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -1775,6 +1849,7 @@ pub async fn stop_session_runtime(
             &session_id_for_task,
             true,
             &terminal_attached_session_ids,
+            SessionDecorationSurface::Detail,
         )
     })
     .await
@@ -2003,6 +2078,8 @@ mod tests {
             active_task_title: None,
             worker_type: None,
             worker_name: None,
+            list_visibility: None,
+            messageability: None,
             control_capabilities: None,
             control_operation: None,
         }
@@ -2133,6 +2210,7 @@ mod tests {
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
             false,
+            SessionDecorationSurface::Detail,
         )
         .expect("session decoration should succeed");
 
@@ -2237,6 +2315,7 @@ mod tests {
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
             false,
+            SessionDecorationSurface::Detail,
         )
         .expect("session decoration should succeed");
 
@@ -2307,6 +2386,7 @@ mod tests {
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
             false,
+            SessionDecorationSurface::Detail,
         )
         .expect("session decoration should succeed");
 
@@ -2472,10 +2552,50 @@ mod tests {
             &std::collections::HashSet::new(),
             make_session_record("session-1"),
             false,
+            SessionDecorationSurface::Detail,
         )
         .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "active");
+    }
+
+    #[test]
+    fn hidden_persistent_agent_sessions_remain_messageable_in_detail() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("agent insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('project-1', 'agent-1', 'idle', 'session-agent-hidden', '/tmp/runtime', NULL, NULL, NULL, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("agent runtime insert should succeed");
+        dismiss_session_entry(&connection, "session-agent-hidden")
+            .expect("hidden entry should insert");
+
+        let mut record = make_session_record("session-agent-hidden");
+        record.status = "idle".into();
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            record,
+            false,
+            SessionDecorationSurface::Detail,
+        )
+        .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "idle");
+        assert_eq!(decorated.list_visibility, Some(SessionListVisibilityState::Hidden));
+        assert_eq!(
+            decorated.messageability,
+            Some(SessionMessageability::Messageable)
+        );
     }
 
     #[test]

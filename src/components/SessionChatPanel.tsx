@@ -149,6 +149,7 @@ interface SessionChatPanelProps {
   selectedModelState?: SessionModelState;
   selectedSessionStats?: SessionStats;
   sessionReadOnly?: boolean;
+  sessionMessageable?: boolean;
   loadingStatsSessionId?: string | null;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
@@ -186,6 +187,7 @@ interface SessionComposerProps {
   sessionPending: boolean;
   selectedModelState?: SessionModelState;
   sessionReadOnly: boolean;
+  sessionMessageable: boolean;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
   draftMessage: string;
@@ -262,6 +264,7 @@ const SessionComposer = memo(function SessionComposer({
   sessionPending,
   selectedModelState,
   sessionReadOnly,
+  sessionMessageable,
   loadingModelSessionId,
   changingModelSessionId,
   draftMessage,
@@ -279,21 +282,22 @@ const SessionComposer = memo(function SessionComposer({
 }: SessionComposerProps) {
   const [showSessionActions, setShowSessionActions] = useState(false);
   const sessionControlBusy = session.controlOperation?.status === "running";
-  const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly && !sessionPending && !sessionControlBusy;
+  const composerDisabled = sessionReadOnly || !sessionMessageable;
+  const canCreateNewSession = Boolean(onCreateNewSession) && !composerDisabled && !sessionPending && !sessionControlBusy;
   const canCompactSession = Boolean(onCompactSession)
-    && !sessionReadOnly
+    && !composerDisabled
     && !sessionPending
     && !sessionControlBusy
     && session.controlCapabilities?.compact.status !== "unsupported";
   const canReloadSession = Boolean(onReloadSession)
-    && !sessionReadOnly
+    && !composerDisabled
     && !sessionPending
     && !sessionControlBusy
     && session.controlCapabilities?.reload.status !== "unsupported";
 
   useEffect(() => {
     setShowSessionActions(false);
-  }, [session.id, sessionPending, sessionReadOnly]);
+  }, [session.id, sessionPending, sessionReadOnly, sessionMessageable]);
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -305,6 +309,12 @@ const SessionComposer = memo(function SessionComposer({
       {sessionReadOnly ? (
         <div className="session-readonly-banner" data-role="session-terminal-readonly">
           This session is currently attached to an embedded terminal window. Close that window to resume chat here.
+        </div>
+      ) : null}
+
+      {!sessionReadOnly && !sessionMessageable ? (
+        <div className="session-readonly-banner" data-role="session-messageability-closed">
+          This session is historical and no longer accepts new messages.
         </div>
       ) : null}
 
@@ -326,7 +336,7 @@ const SessionComposer = memo(function SessionComposer({
           <AutocompleteTextarea
             ariaLabel="Message"
             dataRole="composer-input"
-            disabled={sessionReadOnly}
+            disabled={composerDisabled}
             listDataRole="composer-mention-list"
             onChange={onDraftChange}
             onSubmitShortcut={onSendMessage}
@@ -351,9 +361,11 @@ const SessionComposer = memo(function SessionComposer({
             <p className="muted-copy">
               {sessionReadOnly
                 ? "This session is read-only while the embedded terminal window is attached."
-                : sessionPending
-                  ? "Response in progress…"
-                  : "Press Ctrl+Enter or ⌘+Enter to send."}
+                : !sessionMessageable
+                  ? "This session is read-only because it is closed history."
+                  : sessionPending
+                    ? "Response in progress…"
+                    : "Press Ctrl+Enter or ⌘+Enter to send."}
             </p>
             <div className="session-detail__meta session-detail__meta--footer">
               <span>Created {formatDateTime(session.createdAt)}</span>
@@ -441,7 +453,7 @@ const SessionComposer = memo(function SessionComposer({
                 aria-label="Session model"
                 value={selectedModelState?.currentModel ? `${selectedModelState.currentModel.provider}/${selectedModelState.currentModel.id}` : ""}
                 disabled={
-                  sessionReadOnly ||
+                  composerDisabled ||
                   loadingModelSessionId === session.id ||
                   changingModelSessionId === session.id ||
                   sessionPending ||
@@ -463,7 +475,7 @@ const SessionComposer = memo(function SessionComposer({
               className="secondary-button"
               data-role="stop-session-runtime"
               type="button"
-              disabled={sessionReadOnly || !sessionPending}
+              disabled={composerDisabled || !sessionPending}
               onClick={onStopSession}
             >
               Stop
@@ -474,7 +486,7 @@ const SessionComposer = memo(function SessionComposer({
               type="submit"
               aria-label="Send message"
               title="Send message"
-              disabled={sessionReadOnly || piSetupState?.status !== "ready" || draftMessage.trim().length === 0}
+              disabled={composerDisabled || piSetupState?.status !== "ready" || draftMessage.trim().length === 0}
             >
               ↗
             </button>
@@ -644,6 +656,7 @@ export function SessionChatPanel({
   selectedModelState,
   selectedSessionStats,
   sessionReadOnly = false,
+  sessionMessageable = true,
   loadingStatsSessionId,
   loadingModelSessionId,
   changingModelSessionId,
@@ -691,10 +704,11 @@ export function SessionChatPanel({
 
   return (
     <section
-      className={sessionReadOnly ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
+      className={sessionReadOnly || !sessionMessageable ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
       data-role="session-chat-panel"
       data-session-id={session?.id ?? ""}
       data-terminal-attached={sessionReadOnly ? "true" : "false"}
+      data-messageable={sessionMessageable ? "true" : "false"}
     >
       {session ? (
         <>
@@ -725,6 +739,7 @@ export function SessionChatPanel({
                 </span>
               ) : null}
               {sessionReadOnly ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
+              {!sessionReadOnly && !sessionMessageable ? <span className="status-badge status-badge--warning">Read only</span> : null}
             </div>
           </div>
 
@@ -752,6 +767,7 @@ export function SessionChatPanel({
             sessionPending={sessionPending}
             selectedModelState={selectedModelState}
             sessionReadOnly={sessionReadOnly}
+            sessionMessageable={sessionMessageable}
             loadingModelSessionId={loadingModelSessionId}
             changingModelSessionId={changingModelSessionId}
             draftMessage={draftMessage}

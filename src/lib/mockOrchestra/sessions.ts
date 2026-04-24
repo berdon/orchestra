@@ -67,6 +67,8 @@ export function createMockSessionRecord(title: string, openingAssistantMessage: 
     createdAt: timestamp,
     updatedAt: timestamp,
     subscribed: false,
+    listVisibility: "active",
+    messageability: "messageable",
     events: [
       createEvent("system", `${title} created from Orchestra runtime.`),
       createEvent("assistant", openingAssistantMessage),
