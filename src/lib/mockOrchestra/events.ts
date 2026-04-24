@@ -1,5 +1,6 @@
 import type {
   InboxChangeEvent,
+  NotificationIntent,
   SessionChangeEvent,
   SessionStreamEnvelope,
   TaskChangeEvent,
@@ -10,6 +11,7 @@ export const ORCHESTRA_BROWSER_EVENT_NAMES = {
   sessionChange: "orchestra:session-change",
   taskChange: "orchestra:task-change",
   inboxChange: "orchestra:inbox-change",
+  notificationIntent: "orchestra:notification-intent",
 } as const;
 
 function dispatchOrchestraBrowserEvent<T>(eventName: string, detail: T) {
@@ -30,4 +32,8 @@ export function emitMockTaskChange(event: TaskChangeEvent) {
 
 export function emitMockInboxChange(event: InboxChangeEvent) {
   dispatchOrchestraBrowserEvent(ORCHESTRA_BROWSER_EVENT_NAMES.inboxChange, event);
+}
+
+export function emitMockNotificationIntent(event: NotificationIntent) {
+  dispatchOrchestraBrowserEvent(ORCHESTRA_BROWSER_EVENT_NAMES.notificationIntent, event);
 }

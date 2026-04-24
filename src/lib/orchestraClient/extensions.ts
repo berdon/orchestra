@@ -38,13 +38,16 @@ export interface OrchestraShellExtension {
   readonly agentTerminal: OrchestraShellAgentTerminalExtension;
 }
 
-export interface OrchestraHostAdminNotificationsExtension {
+export interface OrchestraLocalNotificationsExtension {
   getEnvironmentStatus(): Promise<SystemNotificationEnvironmentStatus>;
   getPermissionState(): Promise<SystemNotificationPermissionState>;
   requestPermission(): Promise<SystemNotificationPermissionState>;
-  send(input: { title: string; body: string; tag?: string; iconPath?: string }): Promise<boolean>;
+  send(input: { title: string; body: string; tag?: string; iconPath?: string; onClick?: () => void }): Promise<boolean>;
+  deliver(input: { title: string; body: string; tag?: string; iconPath?: string; onClick?: () => void }): Promise<boolean>;
   sendTest(): Promise<boolean>;
 }
+
+export interface OrchestraHostAdminNotificationsExtension extends OrchestraLocalNotificationsExtension {}
 
 export interface OrchestraHostAdminHarnessExtension {
   getSetupState(): Promise<PiSetupState>;
@@ -126,11 +129,8 @@ export function supportsBridgeDiagnostics(
   return Boolean(client.hostAdmin) && isCapabilityAvailable(bootstrap.capabilities.host.bridgeDiagnostics);
 }
 
-export function supportsSystemNotifications(
-  client: { hostAdmin?: OrchestraHostAdminExtension },
-  bootstrap: OrchestraClientBootstrap,
-) {
-  return Boolean(client.hostAdmin) && isCapabilityAvailable(bootstrap.capabilities.host.systemNotifications);
+export function supportsSystemNotifications(client: { notifications?: OrchestraLocalNotificationsExtension }) {
+  return Boolean(client.notifications);
 }
 
 export function supportsHarnessSettings(

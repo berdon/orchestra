@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
-import { ORCHESTRA_BROWSER_EVENT_NAMES, emitMockInboxChange, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "../src/lib/mockOrchestra/events";
+import { ORCHESTRA_BROWSER_EVENT_NAMES, emitMockInboxChange, emitMockNotificationIntent, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "../src/lib/mockOrchestra/events";
 import { ORCHESTRA_CLIENT_CONTRACT_VERSION } from "../src/lib/orchestraClient/bootstrap";
 import { createMockOrchestraClient } from "../src/lib/orchestraClient/mockClient";
 import { createTauriOrchestraClient } from "../src/lib/orchestraClient/tauriClient";
@@ -145,12 +145,14 @@ describe("orchestra client adapters", () => {
     expect(tauriClient.shell?.agentTerminal).toBeDefined();
     expect(tauriClient.hostAdmin?.remoteAccess).toBeDefined();
     expect(tauriClient.hostAdmin?.harness.getSetupState).toBeDefined();
+    expect(tauriClient.notifications?.deliver).toBeDefined();
 
     expect(mockClient.shell).toBeDefined();
     expect(mockClient.hostAdmin).toBeDefined();
     expect(mockClient.shell?.agentTerminal).toBeDefined();
     expect(mockClient.hostAdmin?.remoteAccess).toBeDefined();
     expect(mockClient.hostAdmin?.harness.getSetupState).toBeDefined();
+    expect(mockClient.notifications?.deliver).toBeDefined();
   });
 
   test("browser event subscriptions deliver the shared discriminated event union", async () => {
@@ -175,12 +177,25 @@ describe("orchestra client adapters", () => {
     emitMockSessionChange({ sessionIds: ["session-1"], reason: "session.updated" });
     emitMockTaskChange({ taskIds: ["task-1"], reason: "task.updated" });
     emitMockInboxChange({ deliveryIds: ["delivery-1"], reason: "mail.read" });
+    emitMockNotificationIntent({
+      id: "intent-1",
+      eventType: "mailbox.message_received",
+      title: "Orchestra — New message",
+      body: "Body",
+      tag: "mailbox:delivery-1",
+      projectId: "project-1",
+      taskId: null,
+      deliveryId: "delivery-1",
+      action: { type: "open_inbox", taskId: null, target: null },
+      occurredAt: "2026-04-23T00:00:00.000Z",
+    });
 
     expect(tauriEvents).toEqual([
       "session.stream",
       "session.change",
       "task.change",
       "inbox.change",
+      "notification.intent",
     ]);
     expect(mockEvents).toEqual(tauriEvents);
 
@@ -191,8 +206,8 @@ describe("orchestra client adapters", () => {
       detail: { taskIds: ["task-2"], reason: "task.updated" },
     }));
 
-    expect(tauriEvents).toHaveLength(4);
-    expect(mockEvents).toHaveLength(4);
+    expect(tauriEvents).toHaveLength(5);
+    expect(mockEvents).toHaveLength(5);
   });
 
   test("default client selection chooses Tauri only when Tauri internals are present", async () => {

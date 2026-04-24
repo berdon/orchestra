@@ -5,6 +5,7 @@ import {
 } from "./bootstrapFactory";
 import { createOptimisticConnectionSnapshot, createStaticConnectionService } from "./connection";
 import type { OrchestraClient, OrchestraClientBinding } from "./client";
+import { createLocalNotificationsExtension } from "./localNotificationsExtension";
 import { createMockHostAdminExtension } from "./mockHostAdminExtension";
 import { mockOrchestraClientServiceBindings } from "./mockBindings";
 import { createMockShellExtension } from "./mockShellExtension";
@@ -31,6 +32,7 @@ export function createMockOrchestraClient(
     {
       connection: createStaticConnectionService(createOptimisticConnectionSnapshot(optimisticBootstrap)),
       shell: createMockShellExtension(),
+      notifications: createLocalNotificationsExtension(),
       hostAdmin: createMockHostAdminExtension(),
     },
   );

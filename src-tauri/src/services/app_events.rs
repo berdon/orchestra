@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use crate::state::AppState;
+use crate::{models::NotificationIntent, state::AppState};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,4 +102,19 @@ pub fn emit_inbox_change(
         &event,
     );
     emit_window_event(app, "orchestra:inbox-change", &event)
+}
+
+pub fn emit_notification_intent(
+    app: &AppHandle,
+    intent: &NotificationIntent,
+) -> Result<(), String> {
+    let _ = app.state::<AppState>().publish_remote_event(
+        "notification.intent",
+        intent.project_id.clone(),
+        None,
+        intent.task_id.clone(),
+        intent.delivery_id.clone(),
+        intent,
+    );
+    emit_window_event(app, "orchestra:notification-intent", intent)
 }

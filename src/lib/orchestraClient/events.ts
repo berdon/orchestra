@@ -1,5 +1,6 @@
 import type {
   InboxChangeEvent,
+  NotificationIntent,
   SessionChangeEvent,
   SessionStreamEnvelope,
   TaskChangeEvent,
@@ -9,7 +10,8 @@ export type OrchestraClientEventKind =
   | "session.change"
   | "session.stream"
   | "task.change"
-  | "inbox.change";
+  | "inbox.change"
+  | "notification.intent";
 
 export type OrchestraSessionChangeDelivery = SessionChangeEvent & {
   kind: "session.change";
@@ -27,11 +29,16 @@ export type OrchestraInboxChangeDelivery = InboxChangeEvent & {
   kind: "inbox.change";
 };
 
+export type OrchestraNotificationIntentDelivery = NotificationIntent & {
+  kind: "notification.intent";
+};
+
 export type OrchestraClientEvent =
   | OrchestraSessionChangeDelivery
   | OrchestraSessionStreamDelivery
   | OrchestraTaskChangeDelivery
-  | OrchestraInboxChangeDelivery;
+  | OrchestraInboxChangeDelivery
+  | OrchestraNotificationIntentDelivery;
 
 export type OrchestraUnsubscribe = () => void;
 export type OrchestraClientEventHandler = (event: OrchestraClientEvent) => void;
@@ -68,6 +75,15 @@ export function toOrchestraInboxChangeDelivery(
 ): OrchestraInboxChangeDelivery {
   return {
     kind: "inbox.change",
+    ...event,
+  };
+}
+
+export function toOrchestraNotificationIntentDelivery(
+  event: NotificationIntent,
+): OrchestraNotificationIntentDelivery {
+  return {
+    kind: "notification.intent",
     ...event,
   };
 }

@@ -19,13 +19,7 @@ import {
   submitPiOAuthFlowInput,
 } from "../tauri";
 import { getPiRuntimeSettings, updatePiRuntimeSettings } from "../harnessSettings";
-import {
-  getSystemNotificationEnvironmentStatus,
-  getSystemNotificationPermissionState,
-  requestSystemNotificationPermission,
-  sendSystemNotification,
-  sendTestSystemNotification,
-} from "../systemNotifications";
+import { createLocalNotificationsExtension } from "./localNotificationsExtension";
 import {
   createRemotePairingCode,
   getRemoteAccessStatus,
@@ -45,13 +39,7 @@ export function createTauriHostAdminExtension(): OrchestraHostAdminExtension {
       clear: clearLogs,
       exportBundle: exportLogsBundle,
     },
-    notifications: {
-      getEnvironmentStatus: getSystemNotificationEnvironmentStatus,
-      getPermissionState: getSystemNotificationPermissionState,
-      requestPermission: requestSystemNotificationPermission,
-      send: sendSystemNotification,
-      sendTest: sendTestSystemNotification,
-    },
+    notifications: createLocalNotificationsExtension(),
     harness: {
       getSetupState: getPiSetupState,
       getRuntimeSettings: getPiRuntimeSettings,

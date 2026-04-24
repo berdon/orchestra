@@ -1,5 +1,6 @@
 import type {
   InboxChangeEvent,
+  NotificationIntent,
   SessionChangeEvent,
   SessionStreamEnvelope,
   TaskChangeEvent,
@@ -8,6 +9,7 @@ import { ORCHESTRA_BROWSER_EVENT_NAMES } from "../mockOrchestra/events";
 import type { OrchestraClientEventHandler, OrchestraUnsubscribe } from "./events";
 import {
   toOrchestraInboxChangeDelivery,
+  toOrchestraNotificationIntentDelivery,
   toOrchestraSessionChangeDelivery,
   toOrchestraSessionStreamDelivery,
   toOrchestraTaskChangeDelivery,
@@ -42,14 +44,19 @@ export function listenToInboxChanges(handler: (event: InboxChangeEvent) => void)
   return listenToBrowserEvent(ORCHESTRA_BROWSER_EVENT_NAMES.inboxChange, handler);
 }
 
+export function listenToNotificationIntents(handler: (event: NotificationIntent) => void) {
+  return listenToBrowserEvent(ORCHESTRA_BROWSER_EVENT_NAMES.notificationIntent, handler);
+}
+
 export async function subscribeToOrchestraBrowserEvents(
   handler: OrchestraClientEventHandler,
 ): Promise<OrchestraUnsubscribe> {
-  const [stopSessionStream, stopSessionChanges, stopTaskChanges, stopInboxChanges] = await Promise.all([
+  const [stopSessionStream, stopSessionChanges, stopTaskChanges, stopInboxChanges, stopNotificationIntents] = await Promise.all([
     listenToSessionStream((event) => handler(toOrchestraSessionStreamDelivery(event))),
     listenToSessionChanges((event) => handler(toOrchestraSessionChangeDelivery(event))),
     listenToTaskChanges((event) => handler(toOrchestraTaskChangeDelivery(event))),
     listenToInboxChanges((event) => handler(toOrchestraInboxChangeDelivery(event))),
+    listenToNotificationIntents((event) => handler(toOrchestraNotificationIntentDelivery(event))),
   ]);
 
   return () => {
@@ -57,5 +64,6 @@ export async function subscribeToOrchestraBrowserEvents(
     stopSessionChanges();
     stopTaskChanges();
     stopInboxChanges();
+    stopNotificationIntents();
   };
 }

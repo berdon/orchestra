@@ -18,6 +18,7 @@ pub mod install_seed;
 pub mod live_sessions;
 pub mod logging;
 pub mod messages;
+pub mod notifications;
 pub mod orchestra_paths;
 pub mod pi_launch;
 pub mod pi_oauth;

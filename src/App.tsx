@@ -19,8 +19,8 @@ import {
 import { ConnectionStatusBanner } from "./components/ConnectionStatusBanner";
 import { useProjectReferenceData, useProjectUnreadCounts } from "./lib/orchestraData/appShell";
 import { useOrchestraConnection } from "./lib/orchestraData/connection";
-import { useOrchestraEventSubscription } from "./lib/orchestraData/events";
 import { reportUiError, toUiErrorState, type UiErrorState } from "./lib/orchestraData/errors";
+import { useNotificationController } from "./lib/orchestraData/notifications";
 import { useSessionEventRefresh, useSessionPollingRefresh } from "./lib/orchestraData/sessions";
 import {
   defaultOrchestraShellWindowState,
@@ -50,6 +50,7 @@ import {
   storeTaskOverviewState,
   type TaskOverviewState,
 } from "./pages/tasks/taskOverviewState";
+import { loadStoredLocalNotificationsEnabled, storeLocalNotificationsEnabled } from "./lib/localNotifications";
 import { AgentsPanel } from "./settings/AgentsPanel";
 import { ChannelsPanel } from "./settings/ChannelsPanel";
 import { ProjectsPanel } from "./settings/ProjectsPanel";
@@ -67,7 +68,6 @@ import type {
   BridgeDiagnostics,
   JsonValue,
   LogEntry,
-  MailboxMessage,
   PiOAuthFlowState,
   PiRuntimeSettings,
   PiSetupState,
@@ -88,7 +88,6 @@ import type {
   SessionStatus,
   SessionStreamEnvelope,
   SettingsTab,
-  TaskDetail,
   TaskSummary,
   WorkflowSummary,
 } from "./types";
@@ -369,40 +368,6 @@ function formatNavigationBadgeCount(count: number) {
     return "99+";
   }
   return String(count);
-}
-
-function truncateNotificationText(value: string, maxLength = 140) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLength - 1)}…`;
-}
-
-function resolveProjectNotificationLabel(projects: ProjectSummary[], projectId?: string | null) {
-  return projects.find((project) => project.id === projectId)?.name ?? "Orchestra";
-}
-
-function buildInboxNotificationBody(message: MailboxMessage, projectLabel: string) {
-  const taskLabel = message.taskNumber
-    ? message.taskTitle
-      ? `${message.taskNumber} · ${message.taskTitle}`
-      : message.taskNumber
-    : null;
-  const summary = truncateNotificationText(message.body);
-  const context = [projectLabel, message.senderLabel, taskLabel].filter(Boolean).join(" · ");
-  return summary ? `${context}\n${summary}` : context;
-}
-
-function buildTaskAttentionNotificationBody(task: TaskDetail, projectLabel: string, reason: string) {
-  const headline = `${projectLabel} · ${task.number} · ${task.title}`;
-  const notes = task.activeLaneAssignment?.completionNotes
-    ? truncateNotificationText(task.activeLaneAssignment.completionNotes)
-    : "";
-  const action = reason === "task.transition.awaiting_user_approval"
-    ? "Open Orchestra to approve the lane or send it back for more work."
-    : "Open Orchestra to review the blocker and decide how to proceed.";
-  return [headline, notes || action].filter(Boolean).join("\n");
 }
 
 function isScrolledToBottom(node: HTMLDivElement, threshold = 24) {
@@ -778,6 +743,7 @@ export function App() {
   const orchestraBootstrap = useOrchestraBootstrap();
   const connection = useOrchestraConnection();
   const shellExtension = orchestraClient.shell;
+  const notificationsExtension = orchestraClient.notifications;
   const hostAdminExtension = orchestraClient.hostAdmin;
   const initialShellWindowState = shellExtension?.getInitialWindowState() ?? defaultOrchestraShellWindowState();
   const canOpenLogsWindow = supportsLogsWindow(orchestraClient, orchestraBootstrap);
@@ -786,7 +752,7 @@ export function App() {
   const canManageBridgeDiagnostics = supportsBridgeDiagnostics(orchestraClient, orchestraBootstrap);
   const canManageHarnessSettings = supportsHarnessSettings(orchestraClient, orchestraBootstrap);
   const canManageRemoteAccess = supportsRemoteAccess(orchestraClient, orchestraBootstrap);
-  const canManageSystemNotifications = supportsSystemNotifications(orchestraClient, orchestraBootstrap);
+  const canManageSystemNotifications = supportsSystemNotifications(orchestraClient);
 
   const [activePage, setActivePage] = useState<PrimaryPage>(initialRouteState.page);
   const [sessionFilter, setSessionFilter] = useState<"active" | "closed">("active");
@@ -825,6 +791,7 @@ export function App() {
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [themeId, setThemeId] = useState<OrchestraThemeId>(() => loadStoredOrchestraTheme());
   const [explanatoryTooltipsEnabled, setExplanatoryTooltipsEnabled] = useState(() => loadStoredExplanatoryTooltips());
+  const [localNotificationsEnabled, setLocalNotificationsEnabled] = useState(() => loadStoredLocalNotificationsEnabled());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => loadStoredSidebarCollapsed());
   const [isMobileNavigation, setIsMobileNavigation] = useState(() => isMobileNavigationViewport());
   const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
@@ -893,8 +860,6 @@ export function App() {
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const commandPaletteRequestIdRef = useRef(0);
-  const notifiedInboxDeliveryIdsRef = useRef(new Set<string>());
-  const notifiedTaskAttentionKeysRef = useRef(new Set<string>());
 
   useEffect(() => {
     commandPaletteRequestIdRef.current += 1;
@@ -912,6 +877,10 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    storeLocalNotificationsEnabled(localNotificationsEnabled);
+  }, [localNotificationsEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -1669,15 +1638,15 @@ export function App() {
   }
 
   async function loadSystemNotificationPermission() {
-    if (!hostAdminExtension || !canManageSystemNotifications) {
+    if (!notificationsExtension || !canManageSystemNotifications) {
       setSystemNotificationEnvironment(null);
       setSystemNotificationPermission("unsupported");
       return;
     }
     try {
       const [environment, permission] = await Promise.all([
-        hostAdminExtension.notifications.getEnvironmentStatus(),
-        hostAdminExtension.notifications.getPermissionState(),
+        notificationsExtension.getEnvironmentStatus(),
+        notificationsExtension.getPermissionState(),
       ]);
       setSystemNotificationEnvironment(environment);
       setSystemNotificationPermission(permission);
@@ -1687,7 +1656,7 @@ export function App() {
   }
 
   async function handleRefreshSystemNotificationPermission() {
-    if (!hostAdminExtension || !canManageSystemNotifications) {
+    if (!notificationsExtension || !canManageSystemNotifications) {
       return;
     }
     setRefreshingSystemNotificationPermission(true);
@@ -1699,12 +1668,12 @@ export function App() {
   }
 
   async function handleRequestSystemNotificationPermission() {
-    if (!hostAdminExtension || !canManageSystemNotifications) {
+    if (!notificationsExtension || !canManageSystemNotifications) {
       return;
     }
     setRequestingSystemNotificationPermission(true);
     try {
-      setSystemNotificationPermission(await hostAdminExtension.notifications.requestPermission());
+      setSystemNotificationPermission(await notificationsExtension.requestPermission());
       await loadSystemNotificationPermission();
     } catch (error) {
       setSessionActionError(await reportUiError(orchestraClient, "ui.notifications.permission.request", error, "Unable to request system notification permission."));
@@ -1714,12 +1683,12 @@ export function App() {
   }
 
   async function handleSendTestSystemNotification() {
-    if (!hostAdminExtension || !canManageSystemNotifications) {
+    if (!notificationsExtension || !canManageSystemNotifications) {
       return;
     }
     setSendingTestSystemNotification(true);
     try {
-      await hostAdminExtension.notifications.sendTest();
+      await notificationsExtension.sendTest();
       await loadSystemNotificationPermission();
     } catch (error) {
       setSessionActionError(await reportUiError(orchestraClient, "ui.notifications.test", error, "Unable to send the test system notification."));
@@ -2161,88 +2130,11 @@ export function App() {
     });
   }, [activePage, activeSettingsTab, isDetachedWindow, refreshProjectReferenceData]);
 
-  useOrchestraEventSubscription((event) => {
-    if (isDetachedWindow || isLogsWindow || isAgentTerminalWindow || !canManageSystemNotifications) {
-      return;
-    }
-
-    const notifications = hostAdminExtension?.notifications;
-    if (!notifications) {
-      return;
-    }
-
-    const notifyInboxDeliveries = async (deliveryIds: string[]) => {
-      if (!deliveryIds.length) {
-        return;
-      }
-      const messages = await orchestraClient.inbox.list(null, true);
-      const deliveries = messages.filter(
-        (message) => deliveryIds.includes(message.deliveryId) && !message.readAt && !message.archivedAt,
-      );
-      for (const message of deliveries) {
-        if (notifiedInboxDeliveryIdsRef.current.has(message.deliveryId)) {
-          continue;
-        }
-        notifiedInboxDeliveryIdsRef.current.add(message.deliveryId);
-        await notifications.send({
-          title: "Orchestra — New message",
-          body: buildInboxNotificationBody(
-            message,
-            resolveProjectNotificationLabel(projects, message.projectId),
-          ),
-          tag: `mailbox:${message.deliveryId}`,
-        });
-      }
-    };
-
-    const notifyTaskAttention = async (taskIds: string[], reason: string) => {
-      if (!taskIds.length) {
-        return;
-      }
-      const tasks = await Promise.all(taskIds.map(async (taskId) => {
-        try {
-          return await orchestraClient.tasks.get(taskId);
-        } catch {
-          return null;
-        }
-      }));
-      for (const task of tasks) {
-        if (!task) {
-          continue;
-        }
-        if (
-          reason === "task.transition.awaiting_user_approval"
-          && task.activeLaneAssignment?.status !== "awaiting_user_approval"
-        ) {
-          continue;
-        }
-        const dedupeKey = `${reason}:${task.id}:${task.updatedAt}`;
-        if (notifiedTaskAttentionKeysRef.current.has(dedupeKey)) {
-          continue;
-        }
-        notifiedTaskAttentionKeysRef.current.add(dedupeKey);
-        await notifications.send({
-          title: reason === "task.transition.awaiting_user_approval"
-            ? "Orchestra — Approval needed"
-            : "Orchestra — User intervention needed",
-          body: buildTaskAttentionNotificationBody(
-            task,
-            resolveProjectNotificationLabel(projects, task.projectId),
-            reason,
-          ),
-          tag: `task-attention:${reason}:${task.id}`,
-        });
-      }
-    };
-
-    if (event.kind === "inbox.change" && event.reason === "mailbox.sent") {
-      void notifyInboxDeliveries(event.deliveryIds).catch(() => undefined);
-    }
-
-    if (event.kind === "task.change" && ["task.transition.awaiting_user_approval", "task.transition.needs_user"].includes(event.reason)) {
-      void notifyTaskAttention(event.taskIds, event.reason).catch(() => undefined);
-    }
-  }, { disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow || !canManageSystemNotifications });
+  useNotificationController({
+    disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow,
+    enabled: localNotificationsEnabled,
+    notifications: notificationsExtension,
+  });
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -3983,6 +3875,7 @@ export function App() {
               canManageSystemNotifications={canManageSystemNotifications}
               canOpenLogsWindow={canOpenLogsWindow}
               bridgeDiagnostics={bridgeDiagnostics}
+              localNotificationsEnabled={localNotificationsEnabled}
               systemNotificationEnvironment={systemNotificationEnvironment}
               systemNotificationPermission={systemNotificationPermission}
               refreshingSystemNotificationPermission={refreshingSystemNotificationPermission}
@@ -4004,6 +3897,7 @@ export function App() {
               onCleanupStaleBridges={() => void handleCleanupStaleBridges()}
               onOpenLogsWindow={() => void handleOpenLogsWindow()}
               onOpenPromptingSettings={() => setSettingsTab("prompting")}
+              onToggleLocalNotificationsEnabled={setLocalNotificationsEnabled}
               onRefreshSystemNotificationPermission={() => void handleRefreshSystemNotificationPermission()}
               onRequestSystemNotificationPermission={() => void handleRequestSystemNotificationPermission()}
               onSendTestSystemNotification={() => void handleSendTestSystemNotification()}

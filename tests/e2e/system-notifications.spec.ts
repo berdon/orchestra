@@ -52,8 +52,19 @@ test("sends a system notification when the user receives a new inbox message", a
       updatedAt: now,
     });
     window.localStorage.setItem("orchestra.mock.mailbox", JSON.stringify(mailbox));
-    window.dispatchEvent(new CustomEvent("orchestra:inbox-change", {
-      detail: { deliveryIds: ["delivery-system-notify"], reason: "mailbox.sent" },
+    window.dispatchEvent(new CustomEvent("orchestra:notification-intent", {
+      detail: {
+        id: "notification-mailbox-delivery-system-notify",
+        eventType: "mailbox.message_received",
+        title: "Orchestra — New message",
+        body: "Orchestra · Reviewer · ORC-1 · Implement task foundation shell\nPlease review the latest runtime output before approving the lane.",
+        tag: "mailbox:delivery-system-notify",
+        projectId: "orchestra",
+        taskId: "task-1",
+        deliveryId: "delivery-system-notify",
+        action: { type: "open_inbox", taskId: "task-1", target: null },
+        occurredAt: now,
+      },
     }));
   });
 
@@ -107,8 +118,19 @@ test("sends a system notification when a task starts awaiting user approval", as
     };
     target.updatedAt = updatedAt;
     window.localStorage.setItem(key, JSON.stringify(tasks));
-    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
-      detail: { taskIds: [target.id], reason: "task.transition.awaiting_user_approval" },
+    window.dispatchEvent(new CustomEvent("orchestra:notification-intent", {
+      detail: {
+        id: `notification-task-awaiting-user-approval-${target.id}`,
+        eventType: "task.awaiting_user_approval",
+        title: "Orchestra — Approval needed",
+        body: `Orchestra · ${target.number} · ${target.title}\nPlease verify the lane output before approving.`,
+        tag: `task-attention:task.awaiting_user_approval:${target.id}`,
+        projectId: target.projectId,
+        taskId: target.id,
+        deliveryId: null,
+        action: { type: "open_task", taskId: target.id, target: "review" },
+        occurredAt: updatedAt,
+      },
     }));
   });
 

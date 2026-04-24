@@ -11,6 +11,7 @@ interface GeneralPanelProps {
   canManageSystemNotifications: boolean;
   canOpenLogsWindow: boolean;
   bridgeDiagnostics: BridgeDiagnostics | null;
+  localNotificationsEnabled: boolean;
   systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
   systemNotificationPermission: SystemNotificationPermissionState;
   refreshingSystemNotificationPermission: boolean;
@@ -32,6 +33,7 @@ interface GeneralPanelProps {
   onCleanupStaleBridges: () => void;
   onOpenLogsWindow: () => void;
   onOpenPromptingSettings: () => void;
+  onToggleLocalNotificationsEnabled: (nextEnabled: boolean) => void;
   onRefreshSystemNotificationPermission: () => void;
   onRequestSystemNotificationPermission: () => void;
   onSendTestSystemNotification: () => void;
@@ -73,6 +75,7 @@ export function GeneralPanel({
   canManageSystemNotifications,
   canOpenLogsWindow,
   bridgeDiagnostics,
+  localNotificationsEnabled,
   systemNotificationEnvironment,
   systemNotificationPermission,
   refreshingSystemNotificationPermission,
@@ -94,6 +97,7 @@ export function GeneralPanel({
   onCleanupStaleBridges,
   onOpenLogsWindow,
   onOpenPromptingSettings,
+  onToggleLocalNotificationsEnabled,
   onRefreshSystemNotificationPermission,
   onRequestSystemNotificationPermission,
   onSendTestSystemNotification,
@@ -161,8 +165,8 @@ export function GeneralPanel({
           <div className="task-section__header">
             <div>
               <p className="eyebrow">Desktop integration</p>
-              <h4>System notifications</h4>
-              <p className="supporting-copy">Manage macOS notification access and send a test notification.</p>
+              <h4>Local notifications</h4>
+              <p className="supporting-copy">Enable local browser/macOS notifications for this client, manage permission access, and send a test notification.</p>
             </div>
             <div className="action-cluster action-cluster--wrap">
               <button
@@ -194,6 +198,15 @@ export function GeneralPanel({
               </button>
             </div>
           </div>
+          <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Turn local browser or desktop notifications on or off for this specific Orchestra client.")}>
+            <input
+              data-role="local-notifications-enabled"
+              type="checkbox"
+              checked={localNotificationsEnabled}
+              onChange={(event) => onToggleLocalNotificationsEnabled(event.target.checked)}
+            />
+            <span>Enable local notifications on this device</span>
+          </label>
           <p className="muted-copy" data-role="system-notification-permission-state">
             Permission status: {formatNotificationPermissionLabel(systemNotificationPermission)}
           </p>
@@ -203,9 +216,11 @@ export function GeneralPanel({
           {systemNotificationEnvironment?.reason ? (
             <p className="muted-copy" data-role="system-notification-environment-reason">{systemNotificationEnvironment.reason}</p>
           ) : systemNotificationPermission === "unsupported" ? (
-            <p className="supporting-copy">Available in macOS desktop builds only.</p>
+            <p className="supporting-copy">This client cannot deliver local notifications in the current environment.</p>
+          ) : localNotificationsEnabled ? (
+            <p className="supporting-copy">If Orchestra is missing from Notification Center or browser prompts were dismissed, refresh the status, request permission again, and send a test notification.</p>
           ) : (
-            <p className="supporting-copy">If Orchestra is missing from Notification Center, request permission and send a test notification.</p>
+            <p className="supporting-copy">Local notifications are disabled for this client until you turn them back on here.</p>
           )}
         </section>
         ) : null}
