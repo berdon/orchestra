@@ -7,6 +7,7 @@ import { sortSessionRecords } from "./sessionList";
 import { emitMockInboxChange, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "./mockOrchestra/events";
 import { isTauriAvailable } from "./mockOrchestra/host";
 import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { getTaskTags } from "./taskListQuery";
 import { normalizeTaskTags, TASK_TAG_COUNT_ERROR, validateTaskTag } from "./taskTags";
 import type {
@@ -2246,6 +2247,11 @@ function describeError(error: unknown, fallback: string) {
 }
 
 export async function reportClientError(target: string, error: unknown, fallback: string) {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.app.reportError(target, error, fallback);
+  }
+
   const message = describeError(error, fallback);
   console.error(`[${target}] ${message}`, error);
   if (!isTauriAvailable()) {
@@ -2796,6 +2802,10 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
 }
 
 export async function stopSessionRuntime(sessionId: string, notes?: string): Promise<SessionRecord> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.sessions.stopRuntime(sessionId, notes);
+  }
   if (!isTauriAvailable()) {
     const activeRuns = getMockActiveSessionRuns();
     delete activeRuns[sessionId];
@@ -2821,6 +2831,26 @@ export async function stopSessionRuntime(sessionId: string, notes?: string): Pro
 }
 
 export async function getPiExecutableDiagnostic(): Promise<PiExecutableDiagnostic> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    try {
+      return await hostedWebClient.settings.getPiExecutableDiagnostic();
+    } catch {
+      return {
+        source: "remote_api",
+        mode: "browser",
+        status: "unsupported",
+        resolvedPath: null,
+        packageDir: null,
+        agentDir: null,
+        version: null,
+        builtAt: null,
+        manifestPath: null,
+        errorKind: "desktop_only",
+        errorMessage: "Local Pi executable diagnostics are only available in the desktop app.",
+      };
+    }
+  }
   if (!isTauriAvailable()) {
     return {
       source: "bundled",
@@ -3134,6 +3164,10 @@ export async function dismissPiOAuthFlow(): Promise<PiOAuthFlowState | null> {
 }
 
 export async function listPiModels(): Promise<SessionModel[]> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.settings.listPiModels();
+  }
   if (!isTauriAvailable()) {
     return MOCK_MODELS;
   }
@@ -3808,6 +3842,10 @@ export async function deleteTask(taskId: string): Promise<TaskDetail> {
 }
 
 export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.tasks.dispatch(taskId);
+  }
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const task = tasks.find((entry) => entry.id === taskId);
@@ -4831,6 +4869,10 @@ export async function manualTaskWhip(taskId: string): Promise<TaskDetail> {
 }
 
 export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.tasks.resetRuntime(taskId);
+  }
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
     const resetAt = nowIso();
@@ -5645,6 +5687,10 @@ export async function deleteTaskSchedule(scheduleId: string): Promise<TaskSchedu
 }
 
 export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.catalog.listWorkflows(includeArchived);
+  }
   if (!isTauriAvailable()) {
     return ensureMockWorkflows().filter((workflow) => includeArchived || !workflow.archived).map(summarizeWorkflow);
   }
@@ -5653,6 +5699,10 @@ export async function listWorkflows(includeArchived = false): Promise<WorkflowSu
 }
 
 export async function getWorkflow(workflowId: string): Promise<WorkflowDefinition> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.catalog.getWorkflow(workflowId);
+  }
   if (!isTauriAvailable()) {
     const workflow = ensureMockWorkflows().find((entry) => entry.id === workflowId);
     if (!workflow) {
@@ -5665,6 +5715,10 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowDefinitio
 }
 
 export async function validateWorkflow(input: WorkflowUpsertInput): Promise<WorkflowValidationResult> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.validateWorkflow(input);
+  }
   if (!isTauriAvailable()) {
     return validateMockWorkflowInput(input);
   }
@@ -5673,6 +5727,10 @@ export async function validateWorkflow(input: WorkflowUpsertInput): Promise<Work
 }
 
 export async function createWorkflow(input: WorkflowUpsertInput): Promise<WorkflowDefinition> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.createWorkflow(input);
+  }
   if (!isTauriAvailable()) {
     const validation = validateMockWorkflowInput(input);
     if (!validation.valid) {
@@ -5689,6 +5747,10 @@ export async function createWorkflow(input: WorkflowUpsertInput): Promise<Workfl
 }
 
 export async function updateWorkflow(workflowId: string, input: WorkflowUpsertInput): Promise<WorkflowDefinition> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.updateWorkflow(workflowId, input);
+  }
   if (!isTauriAvailable()) {
     const validation = validateMockWorkflowInput(input);
     if (!validation.valid) {
@@ -5711,6 +5773,10 @@ export async function updateWorkflow(workflowId: string, input: WorkflowUpsertIn
 }
 
 export async function duplicateWorkflow(workflowId: string, newName?: string): Promise<WorkflowDefinition> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.duplicateWorkflow(workflowId, newName);
+  }
   if (!isTauriAvailable()) {
     const workflow = await getWorkflow(workflowId);
     const duplicatedInput: WorkflowUpsertInput = {
@@ -5740,6 +5806,10 @@ export async function duplicateWorkflow(workflowId: string, newName?: string): P
 }
 
 export async function archiveWorkflow(workflowId: string): Promise<WorkflowDefinition> {
+  const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
+  if (hostedWebClient) {
+    return hostedWebClient.workflows.archiveWorkflow(workflowId);
+  }
   if (!isTauriAvailable()) {
     const workflows = ensureMockWorkflows();
     const workflow = workflows.find((entry) => entry.id === workflowId);

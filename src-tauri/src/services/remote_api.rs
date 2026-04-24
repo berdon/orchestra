@@ -46,8 +46,8 @@ use crate::{
         AgentQueueEntryInput, AgentUpsertInput, AppInfo, ArchiveMailboxMessagesInput,
         ChannelUpsertInput, MailboxMessage, MarkMailboxMessagesReadInput,
         OrchestraCapabilityAvailability, OrchestraCapabilityDescriptor,
-        OrchestraClientAppCapabilities, OrchestraClientAuthMode, OrchestraClientBootstrap,
-        OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
+        OrchestraClientAdminCapabilities, OrchestraClientAppCapabilities, OrchestraClientAuthMode,
+        OrchestraClientBootstrap, OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
         OrchestraClientFeatureFlags, OrchestraClientHostCapabilities, OrchestraClientHostKind,
         OrchestraClientInboxCapabilities, OrchestraClientSessionCapabilities,
         OrchestraClientTaskCapabilities, OrchestraClientTransportUrls, ProjectUpsertInput,
@@ -732,7 +732,10 @@ fn request_base_url_from_headers(headers: &HeaderMap) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::{to_bytes, Body}, http::Request};
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
     use std::{path::PathBuf, process::Command, sync::Mutex};
     use tower::ServiceExt;
 
@@ -798,7 +801,9 @@ mod tests {
             .block_on(async move {
                 to_bytes(response.into_body(), usize::MAX)
                     .await
-                    .map_err(|error| format!("failed to read remote API parity response body {uri}: {error}"))
+                    .map_err(|error| {
+                        format!("failed to read remote API parity response body {uri}: {error}")
+                    })
             })?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("failed to decode remote API parity JSON {uri}: {error}"))
@@ -1883,7 +1888,9 @@ fn resolve_hosted_web_e2e_root() -> Result<PathBuf, String> {
     }
 
     let root = discover_dev_checkout_root()
-        .ok_or_else(|| "Unable to locate the Orchestra repository root for hosted-web E2E assets.".to_string())?
+        .ok_or_else(|| {
+            "Unable to locate the Orchestra repository root for hosted-web E2E assets.".to_string()
+        })?
         .join("dist");
     if root.exists() {
         return Ok(root);
@@ -1970,11 +1977,17 @@ fn seed_hosted_web_e2e_fixture() -> Result<String, String> {
         Some("Hosted web seeded session"),
         true,
     )?;
-    let session_path = pi_sessions::get_session_path(&context.session_dir, &stored_session.record.id)?;
+    let session_path =
+        pi_sessions::get_session_path(&context.session_dir, &stored_session.record.id)?;
     let mut session_file = OpenOptions::new()
         .append(true)
         .open(&session_path)
-        .map_err(|error| format!("Unable to append hosted-web E2E session {}: {error}", session_path.display()))?;
+        .map_err(|error| {
+            format!(
+                "Unable to append hosted-web E2E session {}: {error}",
+                session_path.display()
+            )
+        })?;
     writeln!(
         session_file,
         "{}",
@@ -2096,8 +2109,9 @@ pub fn run_hosted_web_e2e_server() -> Result<(), String> {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(HOSTED_WEB_E2E_PORT);
     let bind_address = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(&bind_address)
-        .map_err(|error| format!("Unable to bind hosted-web E2E server on {bind_address}: {error}"))?;
+    let listener = TcpListener::bind(&bind_address).map_err(|error| {
+        format!("Unable to bind hosted-web E2E server on {bind_address}: {error}")
+    })?;
     listener
         .set_nonblocking(true)
         .map_err(|error| format!("Unable to configure hosted-web E2E listener: {error}"))?;
@@ -2696,6 +2710,46 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             roles: auth_guarded_capability(authenticated, true, "Remote role endpoints are unavailable."),
             workflows: auth_guarded_capability(authenticated, true, "Remote workflow endpoints are unavailable."),
         },
+        admin: OrchestraClientAdminCapabilities {
+            projects: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote project administration endpoints are unavailable.",
+            ),
+            settings: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote settings endpoints are unavailable.",
+            ),
+            workers: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote worker administration endpoints are unavailable.",
+            ),
+            workflows: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote workflow administration endpoints are unavailable.",
+            ),
+            policies: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote policy endpoints are unavailable.",
+            ),
+            channels: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote channel endpoints are unavailable.",
+            ),
+            model_catalog: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote model catalog endpoints are unavailable.",
+            ),
+            pi_executable_diagnostic: unavailable_capability(
+                "Local Pi executable diagnostics are only available in the desktop app.",
+            ),
+        },
         tasks: OrchestraClientTaskCapabilities {
             read: auth_guarded_capability(authenticated, true, "Remote task read endpoints are unavailable."),
             write: auth_guarded_capability(authenticated, true, "Remote task mutation endpoints are unavailable."),
@@ -2728,6 +2782,18 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
                 "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
             ),
             system_notifications: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+            bridge_diagnostics: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+            runtime_logs: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+            harness_settings: unavailable_capability(
+                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            ),
+            remote_access: unavailable_capability(
                 "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
             ),
         },

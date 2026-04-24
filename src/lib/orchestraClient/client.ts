@@ -1,18 +1,51 @@
 import type {
+  AgentDefinition,
+  AgentMemoryInfo,
+  AgentOperationsDetail,
+  AgentOperationsSnapshot,
+  AgentQueueEntry,
+  AgentQueueEntryInput,
   AgentSummary,
+  AgentUpsertInput,
+  AgentValidationResult,
   AppInfo,
   ArchiveMailboxMessagesInput,
+  ChannelActivityEntry,
+  ChannelDetail,
+  ChannelSummary,
+  ChannelUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
+  PiExecutableDiagnostic,
+  PolicyDefinition,
+  PolicySummary,
   ProjectDetail,
+  ProjectSessionPromptSettings,
+  ProjectSourceControlSettings,
   ProjectSummary,
+  ProjectTaskAutomationSettings,
+  ProjectUpsertInput,
+  ProjectWorkerOverlay,
   QueuedSessionMessage,
+  RepositoryRecord,
+  RepositoryRemoteInput,
+  RepositoryUpsertInput,
+  ResolvedPermissions,
+  RoleDefinition,
+  RoleOperationsDetail,
+  RoleOperationsSnapshot,
+  RoleQueueEntry,
+  RoleQueueEntryInput,
   RoleSummary,
+  RoleUpsertInput,
+  RoleValidationResult,
   SendMailboxMessageInput,
+  SessionModel,
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
+  SourceControlSettings,
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
@@ -31,8 +64,12 @@ import type {
   TaskTodo,
   TaskTodoInput,
   TaskUpsertInput,
+  TelegramBotValidation,
+  TelegramChatCandidate,
   WorkflowDefinition,
   WorkflowSummary,
+  WorkflowUpsertInput,
+  WorkflowValidationResult,
 } from "../../types";
 import type { OrchestraClientBootstrap, OrchestraClientContractVersion } from "./bootstrap";
 import type {
@@ -44,20 +81,53 @@ import type { OrchestraHostAdminExtension, OrchestraShellExtension } from "./ext
 import type { OrchestraConnectionService } from "./connection";
 
 export type {
+  AgentDefinition,
+  AgentMemoryInfo,
+  AgentOperationsDetail,
+  AgentOperationsSnapshot,
+  AgentQueueEntry,
+  AgentQueueEntryInput,
   AgentSummary,
+  AgentUpsertInput,
+  AgentValidationResult,
   AppInfo,
   ArchiveMailboxMessagesInput,
+  ChannelActivityEntry,
+  ChannelDetail,
+  ChannelSummary,
+  ChannelUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
+  PiExecutableDiagnostic,
+  PolicyDefinition,
+  PolicySummary,
   ProjectDetail,
+  ProjectSessionPromptSettings,
+  ProjectSourceControlSettings,
   ProjectSummary,
+  ProjectTaskAutomationSettings,
+  ProjectUpsertInput,
+  ProjectWorkerOverlay,
   QueuedSessionMessage,
+  RepositoryRecord,
+  RepositoryRemoteInput,
+  RepositoryUpsertInput,
+  ResolvedPermissions,
+  RoleDefinition,
+  RoleOperationsDetail,
+  RoleOperationsSnapshot,
+  RoleQueueEntry,
+  RoleQueueEntryInput,
   RoleSummary,
+  RoleUpsertInput,
+  RoleValidationResult,
   SendMailboxMessageInput,
+  SessionModel,
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
+  SourceControlSettings,
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
@@ -76,11 +146,16 @@ export type {
   TaskTodo,
   TaskTodoInput,
   TaskUpsertInput,
+  TelegramBotValidation,
+  TelegramChatCandidate,
   WorkflowDefinition,
   WorkflowSummary,
+  WorkflowUpsertInput,
+  WorkflowValidationResult,
 };
 
 export type OrchestraTaskCompletionOutcome = "success" | "failure" | "needs_user";
+export type OrchestraRoleInstanceReleaseOutcome = "success" | "failure" | "canceled";
 
 export interface OrchestraAppService {
   getInfo(): Promise<AppInfo>;
@@ -94,6 +169,98 @@ export interface OrchestraCatalogService {
   listRoles(includeArchived?: boolean): Promise<RoleSummary[]>;
   listWorkflows(includeArchived?: boolean): Promise<WorkflowSummary[]>;
   getWorkflow(workflowId: string): Promise<WorkflowDefinition>;
+}
+
+export interface OrchestraProjectService {
+  createProject(input: ProjectUpsertInput): Promise<ProjectDetail>;
+  updateProject(projectId: string, input: ProjectUpsertInput): Promise<ProjectDetail>;
+  deleteProject(projectId: string): Promise<ProjectDetail>;
+  listRepositories(projectId?: string | null): Promise<RepositoryRecord[]>;
+  getRepository(repositoryId: string): Promise<RepositoryRecord>;
+  createRepository(projectId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord>;
+  updateRepository(repositoryId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord>;
+  deleteRepository(repositoryId: string): Promise<RepositoryRecord>;
+  attachRepositoryRemote(repositoryId: string, input: RepositoryRemoteInput): Promise<RepositoryRecord>;
+  setProjectDefaultRepository(projectId: string, repositoryId: string | null): Promise<ProjectDetail>;
+}
+
+export interface OrchestraSettingsService {
+  listPiModels(): Promise<SessionModel[]>;
+  getPiExecutableDiagnostic(): Promise<PiExecutableDiagnostic>;
+  getSourceControlSettings(): Promise<SourceControlSettings>;
+  updateSourceControlSettings(gitUserNameTemplate: string | null, gitEmailTemplate: string | null): Promise<SourceControlSettings>;
+  getProjectSourceControlSettings(projectSlug?: string | null): Promise<ProjectSourceControlSettings>;
+  updateProjectSourceControlSettings(
+    gitUserNameTemplate: string | null,
+    gitEmailTemplate: string | null,
+    projectSlug?: string | null,
+  ): Promise<ProjectSourceControlSettings>;
+  getSessionPromptSettings(projectSlug?: string | null): Promise<ProjectSessionPromptSettings>;
+  updateSessionPromptSettings(template: string | null, projectSlug?: string | null): Promise<ProjectSessionPromptSettings>;
+  getTaskAutomationSettings(projectSlug?: string | null): Promise<ProjectTaskAutomationSettings>;
+  updateTaskAutomationSettings(
+    autoDispatchOnBlockerCompletion: boolean,
+    projectSlug?: string | null,
+  ): Promise<ProjectTaskAutomationSettings>;
+  getWorkerOverlay(workerType: string, workerSlug: string, projectSlug?: string | null): Promise<ProjectWorkerOverlay>;
+  updateWorkerOverlay(workerType: string, workerSlug: string, prompt: string, projectSlug?: string | null): Promise<ProjectWorkerOverlay>;
+}
+
+export interface OrchestraWorkerService {
+  validateAgent(input: AgentUpsertInput): Promise<AgentValidationResult>;
+  getAgent(agentId: string, projectId?: string | null): Promise<AgentDefinition>;
+  createAgent(input: AgentUpsertInput): Promise<AgentDefinition>;
+  updateAgent(agentId: string, input: AgentUpsertInput): Promise<AgentDefinition>;
+  archiveAgent(agentId: string): Promise<AgentDefinition>;
+  getAgentMemoryInfo(agentId: string): Promise<AgentMemoryInfo>;
+  listAgentOperations(includeArchived?: boolean, projectId?: string | null): Promise<AgentOperationsSnapshot[]>;
+  getAgentOperations(agentId: string, projectId?: string | null): Promise<AgentOperationsDetail>;
+  ensureAgentSession(agentId: string, projectId?: string | null): Promise<SessionRecord>;
+  enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry>;
+  deleteAgentQueueEntry(queueEntryId: string): Promise<AgentQueueEntry>;
+  getAgentPermissions(agentId: string): Promise<ResolvedPermissions>;
+  validateRole(input: RoleUpsertInput): Promise<RoleValidationResult>;
+  getRole(roleId: string): Promise<RoleDefinition>;
+  createRole(input: RoleUpsertInput): Promise<RoleDefinition>;
+  updateRole(roleId: string, input: RoleUpsertInput): Promise<RoleDefinition>;
+  archiveRole(roleId: string): Promise<RoleDefinition>;
+  listRoleOperations(includeArchived?: boolean): Promise<RoleOperationsSnapshot[]>;
+  getRoleOperations(roleId: string): Promise<RoleOperationsDetail>;
+  enqueueRoleWork(input: RoleQueueEntryInput): Promise<RoleQueueEntry>;
+  dispatchRoleQueue(roleId: string): Promise<RoleOperationsDetail>;
+  deleteRoleQueueEntry(queueEntryId: string): Promise<RoleQueueEntry>;
+  resetRoleAssignments(roleId: string): Promise<RoleOperationsDetail>;
+  releaseRoleInstance(
+    instanceId: string,
+    outcome: OrchestraRoleInstanceReleaseOutcome,
+    errorMessage?: string,
+  ): Promise<RoleOperationsDetail>;
+  disposeRoleInstance(instanceId: string): Promise<RoleOperationsDetail>;
+  getRolePermissions(roleId: string): Promise<ResolvedPermissions>;
+}
+
+export interface OrchestraWorkflowService {
+  validateWorkflow(input: WorkflowUpsertInput): Promise<WorkflowValidationResult>;
+  createWorkflow(input: WorkflowUpsertInput): Promise<WorkflowDefinition>;
+  updateWorkflow(workflowId: string, input: WorkflowUpsertInput): Promise<WorkflowDefinition>;
+  duplicateWorkflow(workflowId: string, newName?: string): Promise<WorkflowDefinition>;
+  archiveWorkflow(workflowId: string): Promise<WorkflowDefinition>;
+}
+
+export interface OrchestraPolicyService {
+  listPolicies(): Promise<PolicySummary[]>;
+  getPolicy(policyId: string): Promise<PolicyDefinition>;
+}
+
+export interface OrchestraChannelService {
+  listChannels(): Promise<ChannelSummary[]>;
+  getChannel(channelId: string): Promise<ChannelDetail>;
+  listChannelActivity(channelId: string, limit?: number): Promise<ChannelActivityEntry[]>;
+  createChannel(input: ChannelUpsertInput): Promise<ChannelDetail>;
+  updateChannel(channelId: string, input: ChannelUpsertInput): Promise<ChannelDetail>;
+  deleteChannel(channelId: string): Promise<void>;
+  validateTelegramBot(botToken: string, apiBaseUrl?: string | null): Promise<TelegramBotValidation>;
+  listTelegramChatCandidates(botToken: string, apiBaseUrl?: string | null): Promise<TelegramChatCandidate[]>;
 }
 
 export interface OrchestraTaskService {
@@ -177,6 +344,12 @@ export interface OrchestraClient {
   getBootstrap(): Promise<OrchestraClientBootstrap>;
   readonly app: OrchestraAppService;
   readonly catalog: OrchestraCatalogService;
+  readonly projects: OrchestraProjectService;
+  readonly settings: OrchestraSettingsService;
+  readonly workers: OrchestraWorkerService;
+  readonly workflows: OrchestraWorkflowService;
+  readonly policies: OrchestraPolicyService;
+  readonly channels: OrchestraChannelService;
   readonly tasks: OrchestraTaskService;
   readonly inbox: OrchestraInboxService;
   readonly sessions: OrchestraSessionService;

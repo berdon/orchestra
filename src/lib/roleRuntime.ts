@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getRole, listRoles } from "./roles";
 import { emitMockSessionChange } from "./mockOrchestra/events";
 import { isTauriAvailable } from "./mockOrchestra/host";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
 import type {
   RoleDefinition,
@@ -168,7 +169,15 @@ async function runMockDispatch(roleId: string) {
   );
 }
 
+function getHostedWebWorkersClient() {
+  return getHostedWebOrchestraClientBinding()?.client.workers ?? null;
+}
+
 export async function listRoleOperations(includeArchived = false): Promise<RoleOperationsSnapshot[]> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.listRoleOperations(includeArchived);
+  }
   if (!isTauriAvailable()) {
     const roles = await listRoles(includeArchived);
     const queueEntries = getMockQueueEntries();
@@ -186,6 +195,10 @@ export async function listRoleOperations(includeArchived = false): Promise<RoleO
 }
 
 export async function getRoleOperations(roleId: string): Promise<RoleOperationsDetail> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.getRoleOperations(roleId);
+  }
   if (!isTauriAvailable()) {
     const { role, queueEntries, instances } = await loadMockRoleState(roleId);
     return toRoleOperationsDetail(role, queueEntries, instances);
@@ -195,6 +208,10 @@ export async function getRoleOperations(roleId: string): Promise<RoleOperationsD
 }
 
 export async function enqueueRoleWork(input: RoleQueueEntryInput): Promise<RoleQueueEntry> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.enqueueRoleWork(input);
+  }
   const normalized = normalizeQueueInput(input);
   if (!normalized.title) {
     throw new Error("Role work title is required.");
@@ -228,6 +245,10 @@ export async function enqueueRoleWork(input: RoleQueueEntryInput): Promise<RoleQ
 }
 
 export async function dispatchRoleQueue(roleId: string): Promise<RoleOperationsDetail> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.dispatchRoleQueue(roleId);
+  }
   if (!isTauriAvailable()) {
     return runMockDispatch(roleId);
   }
@@ -236,6 +257,10 @@ export async function dispatchRoleQueue(roleId: string): Promise<RoleOperationsD
 }
 
 export async function deleteRoleQueueEntry(queueEntryId: string): Promise<RoleQueueEntry> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.deleteRoleQueueEntry(queueEntryId);
+  }
   if (!isTauriAvailable()) {
     const entries = getMockQueueEntries();
     const entry = entries.find((current) => current.id === queueEntryId);
@@ -253,6 +278,10 @@ export async function deleteRoleQueueEntry(queueEntryId: string): Promise<RoleQu
 }
 
 export async function resetRoleAssignments(roleId: string): Promise<RoleOperationsDetail> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.resetRoleAssignments(roleId);
+  }
   if (!isTauriAvailable()) {
     const { role, queueEntries, instances } = await loadMockRoleState(roleId);
     const resetAt = nowIso();
@@ -295,6 +324,10 @@ export async function resetRoleAssignments(roleId: string): Promise<RoleOperatio
 }
 
 export async function releaseRoleInstance(instanceId: string, outcome: "success" | "failure" | "canceled", errorMessage?: string): Promise<RoleOperationsDetail> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.releaseRoleInstance(instanceId, outcome, errorMessage);
+  }
   if (!isTauriAvailable()) {
     const instances = getMockRoleInstances();
     const instance = instances.find((entry) => entry.id === instanceId);
@@ -334,6 +367,10 @@ export async function releaseRoleInstance(instanceId: string, outcome: "success"
 }
 
 export async function disposeRoleInstance(instanceId: string): Promise<RoleOperationsDetail> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.disposeRoleInstance(instanceId);
+  }
   if (!isTauriAvailable()) {
     const instances = getMockRoleInstances();
     const instance = instances.find((entry) => entry.id === instanceId);

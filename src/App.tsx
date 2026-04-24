@@ -1926,11 +1926,11 @@ export function App() {
           if (current && nextProjects.some((project) => project.id === current)) {
             return current;
           }
-          const fallback = nextProjects[0]?.id ?? null;
-          if (fallback) {
-            setActiveProjectId(fallback);
+          const fallbackProject = nextProjects[0] ?? null;
+          if (fallbackProject) {
+            setActiveProjectId(fallbackProject.id, fallbackProject.slug);
           }
-          return fallback;
+          return fallbackProject?.id ?? null;
         });
       });
     };
@@ -1972,7 +1972,9 @@ export function App() {
 
   useEffect(() => {
     if (activeProjectId) {
-      setActiveProjectId(activeProjectId);
+      setActiveProjectId(activeProjectId, activeProject?.slug ?? null);
+    } else {
+      setActiveProjectId(null, null);
     }
     sessionsRef.current = [];
     pendingSessionRecordRequestKeyRef.current = null;
@@ -1984,7 +1986,7 @@ export function App() {
     lastKnownChatSessionIdRef.current = null;
     lastKnownChatSessionAgentIdRef.current = null;
     lastKnownChatSessionDraftRef.current = "";
-  }, [activeProjectId, pendingSessionOpenRequest]);
+  }, [activeProject?.slug, activeProjectId, pendingSessionOpenRequest]);
 
   useEffect(() => {
     if (isDetachedWindow) {

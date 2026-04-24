@@ -213,6 +213,19 @@ pub struct OrchestraClientCatalogCapabilities {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OrchestraClientAdminCapabilities {
+    pub projects: OrchestraCapabilityDescriptor,
+    pub settings: OrchestraCapabilityDescriptor,
+    pub workers: OrchestraCapabilityDescriptor,
+    pub workflows: OrchestraCapabilityDescriptor,
+    pub policies: OrchestraCapabilityDescriptor,
+    pub channels: OrchestraCapabilityDescriptor,
+    pub model_catalog: OrchestraCapabilityDescriptor,
+    pub pi_executable_diagnostic: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OrchestraClientTaskCapabilities {
     pub read: OrchestraCapabilityDescriptor,
     pub write: OrchestraCapabilityDescriptor,
@@ -250,6 +263,10 @@ pub struct OrchestraClientHostCapabilities {
     pub logs_window: OrchestraCapabilityDescriptor,
     pub agent_terminal: OrchestraCapabilityDescriptor,
     pub system_notifications: OrchestraCapabilityDescriptor,
+    pub bridge_diagnostics: OrchestraCapabilityDescriptor,
+    pub runtime_logs: OrchestraCapabilityDescriptor,
+    pub harness_settings: OrchestraCapabilityDescriptor,
+    pub remote_access: OrchestraCapabilityDescriptor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +274,7 @@ pub struct OrchestraClientHostCapabilities {
 pub struct OrchestraClientCapabilities {
     pub app: OrchestraClientAppCapabilities,
     pub catalog: OrchestraClientCatalogCapabilities,
+    pub admin: OrchestraClientAdminCapabilities,
     pub tasks: OrchestraClientTaskCapabilities,
     pub inbox: OrchestraClientInboxCapabilities,
     pub sessions: OrchestraClientSessionCapabilities,

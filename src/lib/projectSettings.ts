@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { getActiveProjectSlug } from "./projects";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { isTauriAvailable } from "./tauri";
 import {
   getStoredMockProjectSettingsStorage,
@@ -100,7 +101,15 @@ function resolveProjectSlug(projectSlug?: string | null) {
   return projectSlug ?? getActiveProjectSlug() ?? DEFAULT_PROJECT_SLUG;
 }
 
-export async function getSessionPromptSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSessionPromptSettings> {
+function getHostedWebSettingsClient() {
+  return getHostedWebOrchestraClientBinding()?.client.settings ?? null;
+}
+
+export async function getSessionPromptSettings(projectSlug?: string | null): Promise<ProjectSessionPromptSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.getSessionPromptSettings(projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const runtimeSettings = getStoredMockProjectRuntimeSettings(resolvedProjectSlug);
@@ -116,7 +125,11 @@ export async function getSessionPromptSettings(projectSlug = DEFAULT_PROJECT_SLU
   return invoke<ProjectSessionPromptSettings>("get_session_prompt_settings", { projectSlug: resolvedProjectSlug });
 }
 
-export async function updateSessionPromptSettings(template: string | null, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSessionPromptSettings> {
+export async function updateSessionPromptSettings(template: string | null, projectSlug?: string | null): Promise<ProjectSessionPromptSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.updateSessionPromptSettings(template, projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     updateStoredMockProjectRuntimeSettings(resolvedProjectSlug, (current) => ({
@@ -130,7 +143,11 @@ export async function updateSessionPromptSettings(template: string | null, proje
   return invoke<ProjectSessionPromptSettings>("update_session_prompt_settings", { projectSlug: resolvedProjectSlug, template });
 }
 
-export async function getTaskAutomationSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectTaskAutomationSettings> {
+export async function getTaskAutomationSettings(projectSlug?: string | null): Promise<ProjectTaskAutomationSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.getTaskAutomationSettings(projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const runtimeSettings = getStoredMockProjectRuntimeSettings(resolvedProjectSlug);
@@ -146,8 +163,12 @@ export async function getTaskAutomationSettings(projectSlug = DEFAULT_PROJECT_SL
 
 export async function updateTaskAutomationSettings(
   autoDispatchOnBlockerCompletion: boolean,
-  projectSlug = DEFAULT_PROJECT_SLUG,
+  projectSlug?: string | null,
 ): Promise<ProjectTaskAutomationSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.updateTaskAutomationSettings(autoDispatchOnBlockerCompletion, projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     updateStoredMockProjectRuntimeSettings(resolvedProjectSlug, (current) => ({
@@ -164,7 +185,11 @@ export async function updateTaskAutomationSettings(
   });
 }
 
-export async function getWorkerOverlay(workerType: string, workerSlug: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {
+export async function getWorkerOverlay(workerType: string, workerSlug: string, projectSlug?: string | null): Promise<ProjectWorkerOverlay> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.getWorkerOverlay(workerType, workerSlug, projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredMockProjectSettingsStorage();
@@ -186,7 +211,11 @@ export async function getWorkerOverlay(workerType: string, workerSlug: string, p
   return invoke<ProjectWorkerOverlay>("get_worker_overlay", { projectSlug: resolvedProjectSlug, workerType, workerSlug });
 }
 
-export async function updateWorkerOverlay(workerType: string, workerSlug: string, prompt: string, projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectWorkerOverlay> {
+export async function updateWorkerOverlay(workerType: string, workerSlug: string, prompt: string, projectSlug?: string | null): Promise<ProjectWorkerOverlay> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.updateWorkerOverlay(workerType, workerSlug, prompt, projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const settings = getStoredMockProjectSettingsStorage();

@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { buildSeededMockProjects, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
+import { isHostedWebBrowserMode } from "./mockOrchestra/host";
+import { getStoredActiveProjectId, getStoredActiveProjectSlug, setStoredActiveProject } from "./projectPreferences";
 import { normalizeTaskPrefix, suggestTaskPrefix, validateTaskPrefix } from "./taskPrefixes";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import type {
   ProjectDetail,
   ProjectSummary,
@@ -12,7 +15,6 @@ import type {
 } from "../types";
 
 const PROJECT_STORAGE_KEY = "orchestra.mock.projects";
-const ACTIVE_PROJECT_STORAGE_KEY = "orchestra.mock.active-project-id";
 const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const DISMISSED_SESSION_STORAGE_KEY = "orchestra.mock.dismissed-sessions";
@@ -28,6 +30,10 @@ const NO_PROJECT_RUNTIME_KEY = "no-project";
 
 function isTauriAvailable() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
+function getHostedWebClient() {
+  return getHostedWebOrchestraClientBinding()?.client ?? null;
 }
 
 function createId(prefix: string) {
@@ -175,8 +181,8 @@ function ensureMockProjects() {
 
   const seeded = seedMockProjects();
   saveStoredProjects(seeded);
-  if (!window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY) && seeded[0]) {
-    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, seeded[0].id);
+  if (!getStoredActiveProjectId() && seeded[0]) {
+    setStoredActiveProject(seeded[0].id, seeded[0].slug);
   }
   return seeded;
 }
@@ -189,17 +195,18 @@ function resolveStoredProjectId(projects: ProjectDetail[], preferredId?: string 
 }
 
 export function getDefaultProjectId() {
-  if (isTauriAvailable()) {
-    return window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY) ?? null;
+  const stored = getStoredActiveProjectId();
+  if (isTauriAvailable() || isHostedWebBrowserMode()) {
+    return stored;
   }
   const projects = ensureMockProjects();
-  return resolveStoredProjectId(projects, window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY));
+  return resolveStoredProjectId(projects, stored);
 }
 
 export function getActiveProjectId() {
-  const stored = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
-  if (isTauriAvailable()) {
-    return stored ?? null;
+  const stored = getStoredActiveProjectId();
+  if (isTauriAvailable() || isHostedWebBrowserMode()) {
+    return stored;
   }
 
   const projects = ensureMockProjects();
@@ -207,17 +214,20 @@ export function getActiveProjectId() {
 }
 
 export function getActiveProjectSlug() {
+  if (isHostedWebBrowserMode()) {
+    return getStoredActiveProjectSlug();
+  }
   if (isTauriAvailable()) {
-    return null;
+    return getStoredActiveProjectSlug();
   }
 
   const projects = ensureMockProjects();
-  const activeProjectId = resolveStoredProjectId(projects, window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY));
+  const activeProjectId = resolveStoredProjectId(projects, getStoredActiveProjectId());
   return projects.find((project) => project.id === activeProjectId)?.slug ?? projects[0]?.slug ?? null;
 }
 
 export function getProjectRuntimeCwd(projectId?: string | null) {
-  if (isTauriAvailable()) {
+  if (isTauriAvailable() || isHostedWebBrowserMode()) {
     const resolvedProjectId = projectId ?? getActiveProjectId();
     return `/mock/projects/${resolvedProjectId ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID}`;
   }
@@ -232,16 +242,15 @@ export function getProjectRuntimeCwd(projectId?: string | null) {
   return defaultRepository?.repositoryPath ?? `/mock/projects/${project?.slug ?? resolvedProjectId ?? NO_PROJECT_RUNTIME_KEY}`;
 }
 
-export function setActiveProjectId(projectId: string | null) {
-  if (projectId) {
-    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId);
-  } else {
-    window.localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
-  }
-  window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
+export function setActiveProjectId(projectId: string | null, projectSlug?: string | null) {
+  setStoredActiveProject(projectId, projectSlug);
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.catalog.listProjects();
+  }
   if (!isTauriAvailable()) {
     return ensureMockProjects().map(({ repositories, ...project }) => project);
   }
@@ -250,6 +259,10 @@ export async function listProjects(): Promise<ProjectSummary[]> {
 }
 
 export async function getProject(projectId: string): Promise<ProjectDetail> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.catalog.getProject(projectId);
+  }
   if (!isTauriAvailable()) {
     const project = ensureMockProjects().find((entry) => entry.id === projectId);
     if (!project) {
@@ -265,7 +278,42 @@ function emitProjectsChanged() {
   window.dispatchEvent(new CustomEvent("orchestra:projects-changed"));
 }
 
+export async function listRepositories(projectId?: string | null): Promise<RepositoryRecord[]> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.listRepositories(projectId ?? null);
+  }
+  if (!isTauriAvailable()) {
+    if (projectId) {
+      return getProject(projectId).then((project) => project.repositories);
+    }
+    return ensureMockProjects().flatMap((project) => project.repositories);
+  }
+
+  return invoke<RepositoryRecord[]>("list_repositories", { projectId: projectId ?? null });
+}
+
+export async function getRepository(repositoryId: string): Promise<RepositoryRecord> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.getRepository(repositoryId);
+  }
+  if (!isTauriAvailable()) {
+    const repository = ensureMockProjects().flatMap((project) => project.repositories).find((entry) => entry.id === repositoryId) ?? null;
+    if (!repository) {
+      throw new Error(`Repository ${repositoryId} was not found`);
+    }
+    return repository;
+  }
+
+  return invoke<RepositoryRecord>("get_repository", { repositoryId });
+}
+
 export async function createProject(input: ProjectUpsertInput): Promise<ProjectDetail> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.createProject(input);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     const { name, taskPrefix } = validateMockProjectInput(input, projects);
@@ -282,7 +330,7 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectD
       updatedAt: timestamp,
     };
     saveStoredProjects([project, ...projects]);
-    setActiveProjectId(project.id);
+    setActiveProjectId(project.id, project.slug);
     return project;
   }
 
@@ -292,6 +340,10 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectD
 }
 
 export async function updateProject(projectId: string, input: ProjectUpsertInput): Promise<ProjectDetail> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.updateProject(projectId, input);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     const existing = projects.find((project) => project.id === projectId);
@@ -317,21 +369,21 @@ export async function updateProject(projectId: string, input: ProjectUpsertInput
 }
 
 export async function deleteProject(projectId: string): Promise<ProjectDetail> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.deleteProject(projectId);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     const existing = projects.find((project) => project.id === projectId);
     if (!existing) {
       throw new Error(`Project ${projectId} was not found`);
     }
-    const activeProjectId = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
+    const activeProjectId = getStoredActiveProjectId();
     const nextProjects = projects.filter((project) => project.id !== projectId);
     if (activeProjectId === projectId) {
-      const fallback = nextProjects[0]?.id ?? null;
-      if (fallback) {
-        window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, fallback);
-      } else {
-        window.localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
-      }
+      const fallbackProject = nextProjects[0] ?? null;
+      setActiveProjectId(fallbackProject?.id ?? null, fallbackProject?.slug ?? null);
     }
     deleteProjectScopedMockState(projectId);
     saveStoredProjects(nextProjects);
@@ -345,6 +397,10 @@ export async function deleteProject(projectId: string): Promise<ProjectDetail> {
 }
 
 export async function createRepository(projectId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.createRepository(projectId, input);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     const project = projects.find((entry) => entry.id === projectId);
@@ -388,6 +444,10 @@ export async function createRepository(projectId: string, input: RepositoryUpser
 }
 
 export async function updateRepository(repositoryId: string, input: RepositoryUpsertInput): Promise<RepositoryRecord> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.updateRepository(repositoryId, input);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     let updatedRepository: RepositoryRecord | null = null;
@@ -427,6 +487,10 @@ export async function updateRepository(repositoryId: string, input: RepositoryUp
 }
 
 export async function deleteRepository(repositoryId: string): Promise<RepositoryRecord> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.deleteRepository(repositoryId);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     let deletedRepository: RepositoryRecord | null = null;
@@ -458,6 +522,10 @@ export async function deleteRepository(repositoryId: string): Promise<Repository
 }
 
 export async function attachRepositoryRemote(repositoryId: string, input: RepositoryRemoteInput): Promise<RepositoryRecord> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.attachRepositoryRemote(repositoryId, input);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     let updatedRepository: RepositoryRecord | null = null;
@@ -490,6 +558,10 @@ export async function attachRepositoryRemote(repositoryId: string, input: Reposi
 }
 
 export async function setProjectDefaultRepository(projectId: string, repositoryId: string | null): Promise<ProjectDetail> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.projects.setProjectDefaultRepository(projectId, repositoryId);
+  }
   if (!isTauriAvailable()) {
     const projects = ensureMockProjects();
     let updatedProject: ProjectDetail | null = null;

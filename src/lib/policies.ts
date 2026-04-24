@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { AgentDefinition, PolicyDefinition, PolicySummary, ResolvedPermissions, RoleDefinition } from "../types";
 import { SUPERVISOR_POLICY_ID, buildEffectivePermissions, uniq } from "./access";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { isTauriAvailable } from "./tauri";
 
 const POLICY_STORAGE_KEY = "orchestra.mock.policies";
@@ -124,7 +125,16 @@ function resolveAgentPermissionsFromMock(agentId: string): ResolvedPermissions {
   };
 }
 
+function getHostedWebPolicyServices() {
+  const binding = getHostedWebOrchestraClientBinding();
+  return binding ? { policies: binding.client.policies, workers: binding.client.workers } : null;
+}
+
 export async function listPolicies(): Promise<PolicySummary[]> {
+  const hostedWebServices = getHostedWebPolicyServices();
+  if (hostedWebServices) {
+    return hostedWebServices.policies.listPolicies();
+  }
   if (!isTauriAvailable()) {
     return ensureMockPolicies().map(toPolicySummary);
   }
@@ -133,6 +143,10 @@ export async function listPolicies(): Promise<PolicySummary[]> {
 }
 
 export async function getPolicy(policyId: string): Promise<PolicyDefinition> {
+  const hostedWebServices = getHostedWebPolicyServices();
+  if (hostedWebServices) {
+    return hostedWebServices.policies.getPolicy(policyId);
+  }
   if (!isTauriAvailable()) {
     const policy = ensureMockPolicies().find((entry) => entry.id === policyId);
     if (!policy) {
@@ -145,6 +159,10 @@ export async function getPolicy(policyId: string): Promise<PolicyDefinition> {
 }
 
 export async function getRolePermissions(roleId: string): Promise<ResolvedPermissions> {
+  const hostedWebServices = getHostedWebPolicyServices();
+  if (hostedWebServices) {
+    return hostedWebServices.workers.getRolePermissions(roleId);
+  }
   if (!isTauriAvailable()) {
     return resolveRolePermissionsFromMock(roleId);
   }
@@ -153,6 +171,10 @@ export async function getRolePermissions(roleId: string): Promise<ResolvedPermis
 }
 
 export async function getAgentPermissions(agentId: string): Promise<ResolvedPermissions> {
+  const hostedWebServices = getHostedWebPolicyServices();
+  if (hostedWebServices) {
+    return hostedWebServices.workers.getAgentPermissions(agentId);
+  }
   if (!isTauriAvailable()) {
     return resolveAgentPermissionsFromMock(agentId);
   }

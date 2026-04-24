@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { buildSeededMockRoles } from "./defaultInstallBaseline";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { isTauriAvailable } from "./tauri";
 import type { RoleDefinition, RoleSummary, RoleUpsertInput, RoleValidationError, RoleValidationResult } from "../types";
 
@@ -153,7 +154,15 @@ function ensureMockRoles() {
   return seeded;
 }
 
+function getHostedWebWorkersClient() {
+  return getHostedWebOrchestraClientBinding()?.client.workers ?? null;
+}
+
 export async function listRoles(includeArchived = false): Promise<RoleSummary[]> {
+  const hostedWebBinding = getHostedWebOrchestraClientBinding();
+  if (hostedWebBinding) {
+    return hostedWebBinding.client.catalog.listRoles(includeArchived);
+  }
   if (!isTauriAvailable()) {
     return ensureMockRoles().filter((role) => includeArchived || !role.archived).map(summarizeRole);
   }
@@ -162,6 +171,10 @@ export async function listRoles(includeArchived = false): Promise<RoleSummary[]>
 }
 
 export async function getRole(roleId: string): Promise<RoleDefinition> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.getRole(roleId);
+  }
   if (!isTauriAvailable()) {
     const role = ensureMockRoles().find((entry) => entry.id === roleId);
     if (!role) {
@@ -174,6 +187,10 @@ export async function getRole(roleId: string): Promise<RoleDefinition> {
 }
 
 export async function validateRole(input: RoleUpsertInput): Promise<RoleValidationResult> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.validateRole(input);
+  }
   if (!isTauriAvailable()) {
     return buildMockRoleValidation(input);
   }
@@ -182,6 +199,10 @@ export async function validateRole(input: RoleUpsertInput): Promise<RoleValidati
 }
 
 export async function createRole(input: RoleUpsertInput): Promise<RoleDefinition> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.createRole(input);
+  }
   if (!isTauriAvailable()) {
     const validation = buildMockRoleValidation(input);
     if (!validation.valid) {
@@ -197,6 +218,10 @@ export async function createRole(input: RoleUpsertInput): Promise<RoleDefinition
 }
 
 export async function updateRole(roleId: string, input: RoleUpsertInput): Promise<RoleDefinition> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.updateRole(roleId, input);
+  }
   if (!isTauriAvailable()) {
     const validation = buildMockRoleValidation(input);
     if (!validation.valid) {
@@ -218,6 +243,10 @@ export async function updateRole(roleId: string, input: RoleUpsertInput): Promis
 }
 
 export async function archiveRole(roleId: string): Promise<RoleDefinition> {
+  const hostedWebWorkersClient = getHostedWebWorkersClient();
+  if (hostedWebWorkersClient) {
+    return hostedWebWorkersClient.archiveRole(roleId);
+  }
   if (!isTauriAvailable()) {
     const roles = ensureMockRoles();
     const existing = roles.find((role) => role.id === roleId);

@@ -82,6 +82,16 @@ function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_
         roles: { availability: "available" },
         workflows: { availability: "available" },
       },
+      admin: {
+        projects: { availability: "available" },
+        settings: { availability: "available" },
+        workers: { availability: "available" },
+        workflows: { availability: "available" },
+        policies: { availability: "available" },
+        channels: { availability: "available" },
+        modelCatalog: { availability: "available" },
+        piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+      },
       tasks: {
         read: { availability: "available" },
         write: { availability: "available" },

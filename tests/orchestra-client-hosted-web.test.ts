@@ -41,6 +41,16 @@ const bootstrapFixture: OrchestraClientBootstrap = {
       roles: { availability: "unavailable", reason: "Not implemented" },
       workflows: { availability: "unavailable", reason: "Not implemented" },
     },
+    admin: {
+      projects: { availability: "available" },
+      settings: { availability: "available" },
+      workers: { availability: "unavailable", reason: "Not implemented" },
+      workflows: { availability: "unavailable", reason: "Not implemented" },
+      policies: { availability: "unavailable", reason: "Not implemented" },
+      channels: { availability: "unavailable", reason: "Not implemented" },
+      modelCatalog: { availability: "unavailable", reason: "Not implemented" },
+      piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+    },
     tasks: {
       read: { availability: "available" },
       write: { availability: "unavailable", reason: "Not implemented" },

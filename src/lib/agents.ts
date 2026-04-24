@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getActiveProjectId, getDefaultProjectId, getProjectRuntimeCwd } from "./projects";
 import { emitMockSessionChange } from "./mockOrchestra/events";
 import { isTauriAvailable } from "./mockOrchestra/host";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
 import type {
   AgentDefinition,
@@ -401,7 +402,15 @@ function summarizeAgentOperations(agent: AgentDefinition): AgentOperationsSnapsh
   };
 }
 
+function getHostedWebClient() {
+  return getHostedWebOrchestraClientBinding()?.client ?? null;
+}
+
 export async function listAgents(includeArchived = false, projectId?: string | null): Promise<AgentSummary[]> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.catalog.listAgents(includeArchived, projectId);
+  }
   if (!isTauriAvailable()) {
     return ensureMockAgents()
       .filter((agent) => (includeArchived || !agent.archived) && isAgentVisibleInProject(agent, projectId ?? activeProjectId()))
@@ -412,6 +421,10 @@ export async function listAgents(includeArchived = false, projectId?: string | n
 }
 
 export async function getAgent(agentId: string, projectId?: string | null): Promise<AgentDefinition> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.getAgent(agentId, projectId);
+  }
   if (!isTauriAvailable()) {
     const agent = ensureMockAgents().find((entry) => entry.id === agentId);
     if (!agent) {
@@ -427,6 +440,10 @@ export async function getAgent(agentId: string, projectId?: string | null): Prom
 }
 
 export async function listAgentOperations(includeArchived = false, projectId?: string | null): Promise<AgentOperationsSnapshot[]> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.listAgentOperations(includeArchived, projectId);
+  }
   if (!isTauriAvailable()) {
     return ensureMockAgents()
       .filter((agent) => (includeArchived || !agent.archived) && isAgentVisibleInProject(agent, projectId ?? activeProjectId()))
@@ -437,6 +454,10 @@ export async function listAgentOperations(includeArchived = false, projectId?: s
 }
 
 export async function getAgentOperations(agentId: string, projectId?: string | null): Promise<AgentOperationsDetail> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.getAgentOperations(agentId, projectId);
+  }
   if (!isTauriAvailable()) {
     const agent = await getAgent(agentId, projectId);
     const snapshot = summarizeAgentOperations(agent);
@@ -452,6 +473,10 @@ export async function getAgentOperations(agentId: string, projectId?: string | n
 }
 
 export async function ensureAgentSession(agentId: string, projectId?: string | null): Promise<SessionRecord> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.ensureAgentSession(agentId, projectId);
+  }
   if (!isTauriAvailable()) {
     const agent = await getAgent(agentId);
     const runtime = ensureMockAgentRuntime(agentId);
@@ -577,6 +602,10 @@ export async function shutdownAgentTerminalSession(sessionId: string): Promise<v
 }
 
 export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.enqueueAgentWork(input);
+  }
   if (!isTauriAvailable()) {
     const normalized: AgentQueueEntry = {
       id: createId("agent-queue"),
@@ -606,6 +635,10 @@ export async function enqueueAgentWork(input: AgentQueueEntryInput): Promise<Age
 }
 
 export async function deleteAgentQueueEntry(queueEntryId: string): Promise<AgentQueueEntry> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.deleteAgentQueueEntry(queueEntryId);
+  }
   if (!isTauriAvailable()) {
     const entries = getStoredAgentQueue();
     const entry = entries.find((current) => current.id === queueEntryId);
@@ -623,6 +656,10 @@ export async function deleteAgentQueueEntry(queueEntryId: string): Promise<Agent
 }
 
 export async function validateAgent(input: AgentUpsertInput): Promise<AgentValidationResult> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.validateAgent(input);
+  }
   if (!isTauriAvailable()) {
     return buildMockAgentValidation(input);
   }
@@ -631,6 +668,10 @@ export async function validateAgent(input: AgentUpsertInput): Promise<AgentValid
 }
 
 export async function createAgent(input: AgentUpsertInput): Promise<AgentDefinition> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.createAgent(input);
+  }
   if (!isTauriAvailable()) {
     const validation = buildMockAgentValidation(input);
     if (!validation.valid) {
@@ -646,6 +687,10 @@ export async function createAgent(input: AgentUpsertInput): Promise<AgentDefinit
 }
 
 export async function updateAgent(agentId: string, input: AgentUpsertInput): Promise<AgentDefinition> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.updateAgent(agentId, input);
+  }
   if (!isTauriAvailable()) {
     const validation = buildMockAgentValidation(input);
     if (!validation.valid) {
@@ -677,6 +722,10 @@ export async function updateAgent(agentId: string, input: AgentUpsertInput): Pro
 }
 
 export async function archiveAgent(agentId: string): Promise<AgentDefinition> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.archiveAgent(agentId);
+  }
   if (!isTauriAvailable()) {
     const agents = ensureMockAgents();
     const existing = agents.find((agent) => agent.id === agentId);
@@ -702,6 +751,10 @@ export async function archiveAgent(agentId: string): Promise<AgentDefinition> {
 }
 
 export async function getAgentMemoryInfo(agentId: string): Promise<AgentMemoryInfo> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.getAgentMemoryInfo(agentId);
+  }
   if (!isTauriAvailable()) {
     const agent = ensureMockAgents().find((entry) => entry.id === agentId);
     if (!agent) {

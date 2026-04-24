@@ -37,6 +37,16 @@ export interface OrchestraClientCapabilities {
     roles: OrchestraCapabilityDescriptor;
     workflows: OrchestraCapabilityDescriptor;
   };
+  admin: {
+    projects: OrchestraCapabilityDescriptor;
+    settings: OrchestraCapabilityDescriptor;
+    workers: OrchestraCapabilityDescriptor;
+    workflows: OrchestraCapabilityDescriptor;
+    policies: OrchestraCapabilityDescriptor;
+    channels: OrchestraCapabilityDescriptor;
+    modelCatalog: OrchestraCapabilityDescriptor;
+    piExecutableDiagnostic: OrchestraCapabilityDescriptor;
+  };
   tasks: {
     read: OrchestraCapabilityDescriptor;
     write: OrchestraCapabilityDescriptor;

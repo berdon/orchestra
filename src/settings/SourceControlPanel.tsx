@@ -50,7 +50,7 @@ export function SourceControlPanel() {
     () => buildSourceControlPreviewRows({ gitUserNameTemplate, gitEmailTemplate }),
     [gitEmailTemplate, gitUserNameTemplate],
   );
-  const saveDisabled = saving || templateErrors.gitUserNameTemplate.length > 0 || templateErrors.gitEmailTemplate.length > 0;
+  const saveDisabled = loading || saving || templateErrors.gitUserNameTemplate.length > 0 || templateErrors.gitEmailTemplate.length > 0;
 
   async function handleSave() {
     if (saveDisabled) {
@@ -93,13 +93,13 @@ export function SourceControlPanel() {
       <div className="task-editor-grid">
         <label className="field-group">
           <span className="field-group__label">Default git user.name template</span>
-          <input className="text-input" data-role="source-control-git-user-name-template" value={gitUserNameTemplate} onChange={(event) => setGitUserNameTemplate(event.target.value)} />
+          <input className="text-input" data-role="source-control-git-user-name-template" value={gitUserNameTemplate} disabled={loading || saving} onChange={(event) => setGitUserNameTemplate(event.target.value)} />
           <span className="field-group__hint">Examples: <code>Orchestra {"{role}"}</code> or <code>Client reviewer</code>.</span>
           {templateErrors.gitUserNameTemplate.length ? <span className="error-copy">Unknown variables: {templateErrors.gitUserNameTemplate.join(", ")}</span> : null}
         </label>
         <label className="field-group">
           <span className="field-group__label">Default git user.email template</span>
-          <input className="text-input" data-role="source-control-git-email-template" value={gitEmailTemplate} onChange={(event) => setGitEmailTemplate(event.target.value)} />
+          <input className="text-input" data-role="source-control-git-email-template" value={gitEmailTemplate} disabled={loading || saving} onChange={(event) => setGitEmailTemplate(event.target.value)} />
           <span className="field-group__hint">Examples: <code>orchestra+{"{role}"}{"{agent}"}@example.com</code>.</span>
           {templateErrors.gitEmailTemplate.length ? <span className="error-copy">Unknown variables: {templateErrors.gitEmailTemplate.join(", ")}</span> : null}
         </label>

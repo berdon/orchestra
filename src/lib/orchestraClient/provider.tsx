@@ -1,8 +1,9 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import type { OrchestraClient, OrchestraClientBinding } from "./client";
 import type { OrchestraClientBootstrap } from "./bootstrap";
 import { createDefaultOrchestraClientBinding } from "./defaultClient";
+import { getActiveOrchestraClientBinding, registerActiveOrchestraClientBinding } from "./runtime";
 
 const OrchestraClientContext = createContext<OrchestraClientBinding | null>(null);
 
@@ -52,6 +53,16 @@ export function OrchestraClientProvider({ binding, children }: OrchestraClientPr
       cancelled = true;
     };
   }, [binding]);
+
+  useLayoutEffect(() => {
+    registerActiveOrchestraClientBinding(resolvedBinding);
+    return () => {
+      const activeBinding = getActiveOrchestraClientBinding();
+      if (activeBinding?.client === resolvedBinding.client) {
+        registerActiveOrchestraClientBinding(null);
+      }
+    };
+  }, [resolvedBinding]);
 
   return (
     <OrchestraClientContext.Provider value={resolvedBinding}>

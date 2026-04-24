@@ -137,11 +137,12 @@
       "id": "agents-queue-operations",
       "surface": "Agents",
       "journey": "Inspect and delete queued agent or role work from workforce views",
-      "requiredHarnesses": ["browser", "desktop"],
+      "requiredHarnesses": ["browser", "desktop", "hosted-web"],
       "status": "covered",
       "specs": [
         "tests/e2e/agents.spec.ts",
-        "tests/desktop-e2e/agent-queue-delete.test.ts"
+        "tests/desktop-e2e/agent-queue-delete.test.ts",
+        "tests/hosted-web-e2e/agents.spec.ts"
       ]
     },
     {
@@ -216,12 +217,13 @@
       "id": "chat-navigation-and-mentions",
       "surface": "Chat",
       "journey": "Navigate chat surfaces and use mention autocomplete in runtime messaging",
-      "requiredHarnesses": ["browser", "desktop"],
+      "requiredHarnesses": ["browser", "desktop", "hosted-web"],
       "status": "covered",
       "specs": [
         "tests/e2e/chat.spec.ts",
         "tests/desktop-e2e/chat-nav.test.ts",
-        "tests/desktop-e2e/chat-mention-autocomplete.test.ts"
+        "tests/desktop-e2e/chat-mention-autocomplete.test.ts",
+        "tests/hosted-web-e2e/chat.spec.ts"
       ]
     },
     {

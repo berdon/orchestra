@@ -201,14 +201,27 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
       setLoadedAgentId(agent.id);
       setLoadedAgentArchived(agent.archived);
       setLoadedAgentProtected(Boolean(agent.system || agent.immutable || agent.slug === "supervisor"));
+      setAgentMemoryInfo(null);
+      setProjectOverlay(null);
+      setOverlayDraft("");
       setIsCreatingAgent(false);
       setLoadingAgentDetail(false);
 
-      void Promise.all([getAgentMemoryInfo(agentId), getWorkerOverlay("agent", agent.slug)])
-        .then(([memoryInfo, overlay]) => {
-          setAgentMemoryInfo(memoryInfo);
-          setProjectOverlay(overlay);
-          setOverlayDraft(overlay.prompt ?? "");
+      void Promise.allSettled([getAgentMemoryInfo(agentId), getWorkerOverlay("agent", agent.slug)])
+        .then(([memoryResult, overlayResult]) => {
+          if (memoryResult.status === "fulfilled") {
+            setAgentMemoryInfo(memoryResult.value);
+          } else {
+            setAgentMemoryInfo(null);
+          }
+
+          if (overlayResult.status === "fulfilled") {
+            setProjectOverlay(overlayResult.value);
+            setOverlayDraft(overlayResult.value.prompt ?? "");
+            return;
+          }
+
+          throw overlayResult.reason;
         })
         .catch((error) => {
           setAgentActionError(error instanceof Error ? error.message : "Unable to load agent details.");

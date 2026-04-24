@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { getActiveProjectSlug } from "./projects";
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { isTauriAvailable } from "./tauri";
 import {
   getStoredMockProjectRuntimeSettings,
@@ -47,6 +48,10 @@ function nowIso() {
 
 function resolveProjectSlug(projectSlug?: string | null) {
   return projectSlug ?? getActiveProjectSlug() ?? DEFAULT_PROJECT_SLUG;
+}
+
+function getHostedWebSettingsClient() {
+  return getHostedWebOrchestraClientBinding()?.client.settings ?? null;
 }
 
 function normalizeTemplate(value?: string | null) {
@@ -172,6 +177,10 @@ export function buildSourceControlPreviewRows(
 }
 
 export async function getSourceControlSettings(): Promise<SourceControlSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.getSourceControlSettings();
+  }
   if (!isTauriAvailable()) {
     return getStoredSourceControlSettings();
   }
@@ -182,6 +191,10 @@ export async function updateSourceControlSettings(
   gitUserNameTemplate: string | null,
   gitEmailTemplate: string | null,
 ): Promise<SourceControlSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.updateSourceControlSettings(gitUserNameTemplate, gitEmailTemplate);
+  }
   if (!isTauriAvailable()) {
     const nextSettings: SourceControlSettings = {
       gitUserNameTemplate: normalizeTemplate(gitUserNameTemplate),
@@ -198,7 +211,11 @@ export async function updateSourceControlSettings(
   });
 }
 
-export async function getProjectSourceControlSettings(projectSlug = DEFAULT_PROJECT_SLUG): Promise<ProjectSourceControlSettings> {
+export async function getProjectSourceControlSettings(projectSlug?: string | null): Promise<ProjectSourceControlSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.getProjectSourceControlSettings(projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     const runtimeSettings = getStoredMockProjectRuntimeSettings(resolvedProjectSlug);
@@ -218,8 +235,12 @@ export async function getProjectSourceControlSettings(projectSlug = DEFAULT_PROJ
 export async function updateProjectSourceControlSettings(
   gitUserNameTemplate: string | null,
   gitEmailTemplate: string | null,
-  projectSlug = DEFAULT_PROJECT_SLUG,
+  projectSlug?: string | null,
 ): Promise<ProjectSourceControlSettings> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.updateProjectSourceControlSettings(gitUserNameTemplate, gitEmailTemplate, projectSlug);
+  }
   const resolvedProjectSlug = resolveProjectSlug(projectSlug);
   if (!isTauriAvailable()) {
     updateStoredMockProjectRuntimeSettings(resolvedProjectSlug, (current) => ({

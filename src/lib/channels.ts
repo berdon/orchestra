@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { isTauriAvailable } from "./tauri";
 import type {
   ChannelActivityEntry,
@@ -44,7 +45,15 @@ function saveStoredChannelActivity(entries: ChannelActivityEntry[]) {
   window.localStorage.setItem(CHANNEL_ACTIVITY_STORAGE_KEY, JSON.stringify(entries));
 }
 
+function getHostedWebChannelsClient() {
+  return getHostedWebOrchestraClientBinding()?.client.channels ?? null;
+}
+
 export async function listChannels(): Promise<ChannelSummary[]> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.listChannels();
+  }
   if (!isTauriAvailable()) {
     return getStoredChannels();
   }
@@ -52,6 +61,10 @@ export async function listChannels(): Promise<ChannelSummary[]> {
 }
 
 export async function getChannel(channelId: string): Promise<ChannelDetail> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.getChannel(channelId);
+  }
   if (!isTauriAvailable()) {
     const channel = getStoredChannels().find((entry) => entry.id === channelId);
     if (!channel) {
@@ -63,6 +76,10 @@ export async function getChannel(channelId: string): Promise<ChannelDetail> {
 }
 
 export async function listChannelActivity(channelId: string, limit = 50): Promise<ChannelActivityEntry[]> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.listChannelActivity(channelId, limit);
+  }
   if (!isTauriAvailable()) {
     return getStoredChannelActivity().filter((entry) => entry.channelId === channelId).slice(0, limit);
   }
@@ -70,6 +87,10 @@ export async function listChannelActivity(channelId: string, limit = 50): Promis
 }
 
 export async function createChannel(input: ChannelUpsertInput): Promise<ChannelDetail> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.createChannel(input);
+  }
   if (!isTauriAvailable()) {
     const timestamp = nowIso();
     const channel: ChannelDetail = {
@@ -103,6 +124,10 @@ export async function createChannel(input: ChannelUpsertInput): Promise<ChannelD
 }
 
 export async function updateChannel(channelId: string, input: ChannelUpsertInput): Promise<ChannelDetail> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.updateChannel(channelId, input);
+  }
   if (!isTauriAvailable()) {
     const channels = getStoredChannels();
     const existing = channels.find((entry) => entry.id === channelId);
@@ -144,6 +169,10 @@ export async function updateChannel(channelId: string, input: ChannelUpsertInput
 }
 
 export async function deleteChannel(channelId: string): Promise<void> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.deleteChannel(channelId);
+  }
   if (!isTauriAvailable()) {
     saveStoredChannels(getStoredChannels().filter((entry) => entry.id !== channelId));
     saveStoredChannelActivity(getStoredChannelActivity().filter((entry) => entry.channelId !== channelId));
@@ -153,6 +182,10 @@ export async function deleteChannel(channelId: string): Promise<void> {
 }
 
 export async function validateTelegramBot(botToken: string, apiBaseUrl?: string | null): Promise<TelegramBotValidation> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.validateTelegramBot(botToken, apiBaseUrl);
+  }
   if (!isTauriAvailable()) {
     return {
       botId: "mock-bot",
@@ -167,6 +200,10 @@ export async function validateTelegramBot(botToken: string, apiBaseUrl?: string 
 }
 
 export async function listTelegramChatCandidates(botToken: string, apiBaseUrl?: string | null): Promise<TelegramChatCandidate[]> {
+  const hostedWebChannelsClient = getHostedWebChannelsClient();
+  if (hostedWebChannelsClient) {
+    return hostedWebChannelsClient.listTelegramChatCandidates(botToken, apiBaseUrl);
+  }
   if (!isTauriAvailable()) {
     return [
       {

@@ -1,6 +1,81 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { getActiveProjectId } from "../projects";
+import {
+  attachRepositoryRemote,
+  createProject,
+  createRepository,
+  deleteProject,
+  deleteRepository,
+  getActiveProjectId,
+  getProject,
+  getRepository,
+  listProjects,
+  listRepositories,
+  setProjectDefaultRepository,
+  updateProject,
+  updateRepository,
+} from "../projects";
+import {
+  getProjectSourceControlSettings,
+  getSourceControlSettings,
+  updateProjectSourceControlSettings,
+  updateSourceControlSettings,
+} from "../sourceControlSettings";
+import {
+  getSessionPromptSettings,
+  getTaskAutomationSettings,
+  getWorkerOverlay,
+  updateSessionPromptSettings,
+  updateTaskAutomationSettings,
+  updateWorkerOverlay,
+} from "../projectSettings";
+import {
+  archiveAgent,
+  createAgent,
+  deleteAgentQueueEntry,
+  enqueueAgentWork,
+  ensureAgentSession,
+  getAgent,
+  getAgentMemoryInfo,
+  getAgentOperations,
+  listAgentOperations,
+  updateAgent,
+  validateAgent,
+} from "../agents";
+import {
+  archiveRole,
+  createRole,
+  getRole,
+  updateRole,
+  validateRole,
+} from "../roles";
+import {
+  deleteRoleQueueEntry,
+  dispatchRoleQueue,
+  disposeRoleInstance,
+  enqueueRoleWork,
+  getRoleOperations,
+  listRoleOperations,
+  releaseRoleInstance,
+  resetRoleAssignments,
+} from "../roleRuntime";
+import {
+  getAgentPermissions,
+  getPolicy,
+  getRolePermissions,
+  listPolicies,
+} from "../policies";
+import {
+  createChannel,
+  deleteChannel,
+  getChannel,
+  listChannelActivity,
+  listChannels,
+  listTelegramChatCandidates,
+  updateChannel,
+  validateTelegramBot,
+} from "../channels";
+import { getPiExecutableDiagnostic, listPiModels } from "../tauri";
 import { normalizeTaskTags } from "../taskTags";
 import type {
   AgentSummary,
@@ -112,8 +187,8 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     reportError: reportClientError,
   },
   catalog: {
-    listProjects: () => invokeTauri<ProjectSummary[]>("list_projects"),
-    getProject: (projectId) => invokeTauri<ProjectDetail>("get_project", { projectId }),
+    listProjects,
+    getProject,
     listAgents: (includeArchived = false, projectId) =>
       invokeTauri<AgentSummary[]>("list_agents", { includeArchived, projectId: projectId ?? null }),
     listRoles: (includeArchived = false) =>
@@ -121,6 +196,81 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     listWorkflows: (includeArchived = false) =>
       invokeTauri<WorkflowSummary[]>("list_workflows", { includeArchived }),
     getWorkflow: (workflowId) => invokeTauri<WorkflowDefinition>("get_workflow", { workflowId }),
+  },
+  projects: {
+    createProject,
+    updateProject,
+    deleteProject,
+    listRepositories,
+    getRepository,
+    createRepository,
+    updateRepository,
+    deleteRepository,
+    attachRepositoryRemote,
+    setProjectDefaultRepository,
+  },
+  settings: {
+    listPiModels,
+    getPiExecutableDiagnostic,
+    getSourceControlSettings,
+    updateSourceControlSettings,
+    getProjectSourceControlSettings,
+    updateProjectSourceControlSettings,
+    getSessionPromptSettings,
+    updateSessionPromptSettings,
+    getTaskAutomationSettings,
+    updateTaskAutomationSettings,
+    getWorkerOverlay,
+    updateWorkerOverlay,
+  },
+  workers: {
+    validateAgent,
+    getAgent,
+    createAgent,
+    updateAgent,
+    archiveAgent,
+    getAgentMemoryInfo,
+    listAgentOperations,
+    getAgentOperations,
+    ensureAgentSession,
+    enqueueAgentWork,
+    deleteAgentQueueEntry,
+    getAgentPermissions,
+    validateRole,
+    getRole,
+    createRole,
+    updateRole,
+    archiveRole,
+    listRoleOperations,
+    getRoleOperations,
+    enqueueRoleWork,
+    dispatchRoleQueue,
+    deleteRoleQueueEntry,
+    resetRoleAssignments,
+    releaseRoleInstance,
+    disposeRoleInstance,
+    getRolePermissions,
+  },
+  workflows: {
+    validateWorkflow: (input) => invokeTauri("validate_workflow", { input }),
+    createWorkflow: (input) => invokeTauri("create_workflow", { input }),
+    updateWorkflow: (workflowId, input) => invokeTauri("update_workflow", { workflowId, input }),
+    duplicateWorkflow: (workflowId, newName) => invokeTauri("duplicate_workflow", { workflowId, newName: newName ?? null }),
+    archiveWorkflow: (workflowId) => invokeTauri("archive_workflow", { workflowId }),
+  },
+  policies: {
+    listPolicies,
+    getPolicy,
+  },
+  channels: {
+    listChannels,
+    getChannel,
+    listChannelActivity,
+    createChannel,
+    updateChannel,
+    deleteChannel,
+    validateTelegramBot,
+    listTelegramChatCandidates,
   },
   tasks: {
     list: async (options) => {

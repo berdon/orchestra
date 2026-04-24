@@ -68,6 +68,16 @@ function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClient
       roles: available,
       workflows: available,
     },
+    admin: {
+      projects: available,
+      settings: available,
+      workers: available,
+      workflows: available,
+      policies: available,
+      channels: available,
+      modelCatalog: available,
+      piExecutableDiagnostic: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+    },
     tasks: {
       read: available,
       write: available,
