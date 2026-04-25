@@ -1944,6 +1944,20 @@ export function TaskDetailPage({
 
       {stickyChromeStyle ? (
         <div className="task-detail-tab-dock" data-role="task-detail-tab-dock" style={stickyChromeStyle}>
+          <label className="task-detail-section-select" data-role="task-detail-section-select-mobile">
+            <span className="task-detail-section-select__label">Section</span>
+            <select
+              className="select-input task-detail-section-select__control"
+              data-role="task-detail-section-select-control"
+              aria-label="Task detail section"
+              value={activeTab}
+              onChange={(event) => handleTabSelect(event.target.value as TaskDetailTab)}
+            >
+              {TAB_OPTIONS.map((tab) => (
+                <option key={tab.id} value={tab.id}>{tab.label}</option>
+              ))}
+            </select>
+          </label>
           <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Task detail panels">
             <button
               className="task-detail-tab task-detail-tab--jump"

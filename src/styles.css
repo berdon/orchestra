@@ -3772,6 +3772,26 @@ strong {
   padding-bottom: 4px;
 }
 
+.task-detail-section-select {
+  display: none;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.task-detail-section-select__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.task-detail-section-select__control {
+  width: 100%;
+  min-width: 0;
+}
+
 .task-detail-tab--jump {
   flex-shrink: 0;
 }
@@ -5853,6 +5873,14 @@ strong {
 
   .command-palette__header {
     grid-template-columns: 1fr;
+  }
+
+  .task-detail-tab-dock .task-detail-tabs--dock {
+    display: none;
+  }
+
+  .task-detail-section-select {
+    display: grid;
   }
 
   .task-action-menu__desktop {
