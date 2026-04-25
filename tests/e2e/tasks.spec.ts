@@ -4039,6 +4039,7 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
 
   const tabDock = page.getByRole('tablist', { name: 'Task detail panels' });
   await expect(tabDock).toBeVisible();
+  await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeHidden();
 
   const initialDockGap = await tabDock.evaluate((node) => Math.round(window.innerHeight - node.getBoundingClientRect().bottom));
   expect(initialDockGap).toBeLessThanOrEqual(32);
@@ -4070,6 +4071,34 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
   await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
 
+});
+
+test("task detail on mobile uses a section select for tab panels", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTasksOverviewOnMobile(page);
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toBeVisible();
+  const mobileSectionSelect = page.locator('[data-role="task-detail-section-select-control"]');
+  await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeVisible();
+  await expect(mobileSectionSelect).toHaveValue("repo-files");
+  await expect(page.getByRole("tablist", { name: "Task detail panels" })).toBeHidden();
+
+  await mobileSectionSelect.selectOption("comments");
+  await expect(mobileSectionSelect).toHaveValue("comments");
+  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
+
+  await mobileSectionSelect.selectOption("todos");
+  await expect(mobileSectionSelect).toHaveValue("todos");
+  await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toBeVisible();
+
+  await page.locator('[data-role="open-task-comments"]').click();
+  await expect(mobileSectionSelect).toHaveValue("comments");
+  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
 });
 
 test("task detail refreshes from backend task-change events without waiting on polling", async ({ page }) => {
