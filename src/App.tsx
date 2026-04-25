@@ -3347,6 +3347,14 @@ export function App() {
       return;
     }
 
+    if (
+      session.terminalAttached
+      || !isSessionMessageable(session)
+      || (piSetupState?.status != null && piSetupState.status !== "ready")
+    ) {
+      return;
+    }
+
     const trimmedMessage = message.trim();
     if (!trimmedMessage) {
       return;
@@ -3380,7 +3388,7 @@ export function App() {
       }
       setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.message.queue", error, "Unable to queue message."));
     });
-  }, [draftMessages, patchSessionRecord, removePendingRun, sessions, updateDraftMessage]);
+  }, [draftMessages, patchSessionRecord, piSetupState?.status, removePendingRun, sessions, updateDraftMessage]);
 
   const handleSendMessage = useCallback((sessionId: string) => {
     const trimmedMessage = (draftMessages[sessionId] ?? "").trim();

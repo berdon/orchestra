@@ -177,6 +177,7 @@ interface SessionChatPanelProps {
   emptyStateEyebrow?: string;
   emptyStateTitle?: string;
   emptyStateDescription?: string;
+  emptyStateLoading?: boolean;
   surface?: "default" | "chat-page";
 }
 
@@ -487,7 +488,6 @@ const SessionComposer = memo(function SessionComposer({
               type="submit"
               aria-label="Send message"
               title="Send message"
-              disabled={composerDisabled || piSetupState?.status !== "ready" || draftMessage.trim().length === 0}
             >
               ↗
             </button>
@@ -685,6 +685,7 @@ export function SessionChatPanel({
   emptyStateEyebrow = "No session selected",
   emptyStateTitle = "Create or select a session",
   emptyStateDescription = "Use the session list to select an existing session or create a new one to begin the interaction flow.",
+  emptyStateLoading = false,
   surface = "default",
 }: SessionChatPanelProps) {
   const projectMentionLookup = useMemo(
@@ -788,7 +789,19 @@ export function SessionChatPanel({
           />
         </>
       ) : (
-        <div className="empty-state">
+        <div
+          className={emptyStateLoading ? "empty-state empty-state--loading" : "empty-state"}
+          data-role={emptyStateLoading ? "session-chat-loading-state" : undefined}
+          aria-busy={emptyStateLoading ? "true" : undefined}
+        >
+          {emptyStateLoading ? (
+            <div className="empty-state__loading-visual" aria-hidden="true">
+              <span className="empty-state__loading-pill" />
+              <span className="empty-state__loading-line empty-state__loading-line--title" />
+              <span className="empty-state__loading-line" />
+              <span className="empty-state__loading-line empty-state__loading-line--short" />
+            </div>
+          ) : null}
           <p className="eyebrow">{emptyStateEyebrow}</p>
           <h3>{emptyStateTitle}</h3>
           <p>{emptyStateDescription}</p>

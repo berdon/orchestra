@@ -125,7 +125,7 @@ test("agents page opens an embedded terminal window and locks the session chat u
   await expect(page.getByRole("button", { name: "Sessions" })).toHaveClass(/nav-item--active/);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
   await expect(page.locator('[data-role="session-terminal-readonly"]')).toContainText("embedded terminal window");
-  await expect(page.locator('[data-role="send-message"]')).toBeDisabled();
+  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-terminal-attached", "true");
 
   await popup.waitForLoadState();

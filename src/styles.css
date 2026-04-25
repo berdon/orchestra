@@ -1487,6 +1487,18 @@ strong {
   font-size: 0.9rem;
 }
 
+.page-mobile-switcher__hint--status {
+  padding: 0 4px;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.page-mobile-switcher--loading .page-mobile-switcher__trigger {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--bg-elevated));
+}
+
 .panel {
   border: 0;
   background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
@@ -4823,9 +4835,58 @@ strong {
   min-height: 420px;
 }
 
+.empty-state--loading {
+  align-content: start;
+  min-height: min(420px, 100%);
+}
+
+.empty-state__loading-visual {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.empty-state__loading-pill,
+.empty-state__loading-line {
+  display: block;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--bg-subtle));
+  animation: empty-state-loading-pulse 1.2s ease-in-out infinite;
+}
+
+.empty-state__loading-pill {
+  width: 96px;
+  height: 10px;
+}
+
+.empty-state__loading-line {
+  width: min(100%, 320px);
+  height: 12px;
+}
+
+.empty-state__loading-line--title {
+  width: min(78%, 260px);
+  height: 16px;
+}
+
+.empty-state__loading-line--short {
+  width: min(62%, 220px);
+}
+
 .empty-state h3,
 .empty-state p {
   margin: 0;
+}
+
+@keyframes empty-state-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .primary-button:disabled,
@@ -5142,8 +5203,36 @@ strong {
     gap: 8px;
   }
 
+  .agent-chat-page {
+    min-height: 0;
+    height: 100%;
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+  }
+
+  .agent-chat-page .session-detail-column--standalone {
+    overflow: hidden;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .session-stats-strip {
+    flex: 0 0 auto;
+  }
+
+  .agent-chat-page .session-chat-panel[data-surface="chat-page"] .session-transcript {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
   .agent-chat-page .session-chat-panel[data-surface="chat-page"] .composer {
-    padding: 0 14px 14px;
+    flex: 0 0 auto;
+    padding: 0 14px calc(14px + env(safe-area-inset-bottom, 0px));
   }
 
   .agent-chat-page .session-chat-panel[data-surface="chat-page"] .composer__footer {

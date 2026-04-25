@@ -117,18 +117,29 @@ export function AgentChatPage({
     setMobileAgentPickerOpen(false);
   }, [selectedAgentId]);
 
+  const emptyStateLoading = !session && (loadingAgents || loadingSession);
+  const mobileSwitcherBusy = loadingAgents || loadingSession;
+  const mobileSwitcherLabel = mobileSwitcherBusy
+    ? (loadingSession ? "Opening chat" : "Loading chat")
+    : null;
+  const mobileSwitcherStatus = loadingSession && agent
+    ? `Opening ${agent.name}…`
+    : loadingAgents
+      ? "Loading available chat agents…"
+      : null;
+
   let emptyStateTitle = "Choose a chat";
   let emptyStateDescription = "Select a named agent from the page picker or the desktop Chat sidebar to open or resume its main session.";
 
   if (loadingAgents) {
-    emptyStateTitle = "Loading agents";
-    emptyStateDescription = "Fetching named agents for chat…";
+    emptyStateTitle = "Loading chat workspace";
+    emptyStateDescription = "Fetching the available named agents and restoring the last chat selection.";
   } else if (!agent) {
     emptyStateTitle = "No agents available";
     emptyStateDescription = "Create a named agent in Settings → Agents to start chatting here.";
   } else if (loadingSession) {
     emptyStateTitle = `Opening ${agent.name}`;
-    emptyStateDescription = "Loading the agent’s main session…";
+    emptyStateDescription = "Restoring the agent’s main session and chat controls…";
   }
 
   const panelStackClassName = error
@@ -145,13 +156,19 @@ export function AgentChatPage({
         retryLabel="Retry chat"
         dataRolePrefix="agent-chat-status"
       />
-      <div className="page-mobile-switcher page-mobile-switcher--chat" data-role="chat-mobile-agent-switcher">
+      <div
+        className={mobileSwitcherBusy ? "page-mobile-switcher page-mobile-switcher--chat page-mobile-switcher--loading" : "page-mobile-switcher page-mobile-switcher--chat"}
+        data-role="chat-mobile-agent-switcher"
+        aria-busy={mobileSwitcherBusy}
+      >
+        {mobileSwitcherLabel ? <p className="eyebrow">{mobileSwitcherLabel}</p> : null}
         <button
           className="page-mobile-switcher__trigger"
           type="button"
           data-role="chat-mobile-agent-picker-trigger"
           aria-haspopup="listbox"
           aria-expanded={mobileAgentPickerOpen}
+          disabled={loadingAgents && chatAgents.length === 0}
           onClick={() => setMobileAgentPickerOpen((current) => !current)}
         >
           <span className="page-mobile-switcher__current">
@@ -159,6 +176,7 @@ export function AgentChatPage({
           </span>
           <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
         </button>
+        {mobileSwitcherStatus ? <p className="page-mobile-switcher__hint page-mobile-switcher__hint--status" data-role="chat-mobile-agent-switcher-status">{mobileSwitcherStatus}</p> : null}
         {mobileAgentPickerOpen ? (
           <div className="page-mobile-switcher__sheet" data-role="chat-mobile-agent-picker">
             <div className="page-mobile-switcher__list" role="listbox" aria-label="Chat agents">
@@ -225,6 +243,7 @@ export function AgentChatPage({
           emptyStateEyebrow="Chat"
           emptyStateTitle={emptyStateTitle}
           emptyStateDescription={emptyStateDescription}
+          emptyStateLoading={emptyStateLoading}
           surface="chat-page"
         />
       </div>

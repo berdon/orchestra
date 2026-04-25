@@ -16,11 +16,12 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
     const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
     const composerFooter = document.querySelector('.composer__footer') as HTMLDivElement | null;
+    const sendButton = document.querySelector('[data-role="send-message"]') as HTMLButtonElement | null;
     const modelSelect = document.querySelector('.session-model-field--composer .select-input') as HTMLSelectElement | null;
     const panelHeader = panel.querySelector('.panel__header') as HTMLElement | null;
     const mobileAgentPicker = document.querySelector('[data-role="chat-mobile-agent-switcher"]') as HTMLElement | null;
 
-    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !modelSelect) {
+    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !sendButton || !modelSelect) {
       return null;
     }
 
@@ -29,6 +30,7 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const transcriptRect = transcript.getBoundingClientRect();
     const composerRect = composerInput.getBoundingClientRect();
     const composerFooterRect = composerFooter.getBoundingClientRect();
+    const sendRect = sendButton.getBoundingClientRect();
     const modelRect = modelSelect.getBoundingClientRect();
 
     return {
@@ -44,6 +46,8 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
       composerInputHeight: composerRect.height,
       composerInputWidth: composerRect.width,
       composerBottom: composerRect.bottom,
+      sendBottom: sendRect.bottom,
+      sendDisabled: sendButton.disabled,
       composerFooterWidth: composerFooterRect.width,
       modelWidth: modelRect.width,
       panelHeaderVisible: panelHeader ? window.getComputedStyle(panelHeader).display !== 'none' : false,
@@ -214,6 +218,7 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
   await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
+  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
   await expect(page.locator('[data-role="session-filter-active"]')).toHaveCount(0);
   await expect(page.locator('[data-role="session-link"]')).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Session model" })).toBeVisible();
@@ -305,6 +310,7 @@ test("chat page hides shared header controls on mobile while keeping chat usable
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
+  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
 
   await page.locator('[data-role="composer-input"]').fill("Hello from mobile chat");
   await page.locator('[data-role="composer-input"]').press("Control+Enter");
@@ -358,7 +364,7 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
     window.localStorage.clear();
   });
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 375, height: 667 });
   await page.goto("/");
   await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await page.getByRole("button", { name: "Chat" }).click();
@@ -372,6 +378,7 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
 
   await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Data");
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
+  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
   await page.locator('[data-role="composer-input"]').fill("Mobile chat message");
   await page.locator('[data-role="send-message"]').click();
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Mobile chat message", { timeout: 10_000 });
@@ -384,6 +391,8 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(160);
   expect(mobileLayout?.transcriptTop ?? 999).toBeLessThan((mobileLayout?.viewportHeight ?? 0) - 180);
   expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+  expect(mobileLayout?.sendBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+  expect(mobileLayout?.sendDisabled).toBe(false);
   expect(Math.abs((mobileLayout?.composerFooterWidth ?? 0) - (mobileLayout?.composerInputWidth ?? 0))).toBeLessThanOrEqual(2);
   expect(mobileLayout?.modelWidth ?? 999).toBeLessThan((mobileLayout?.composerInputWidth ?? 0) * 0.6);
 

@@ -437,6 +437,7 @@ test("sessions composer model selector is compact, fixed-width, and unlabeled", 
   const sendButton = page.locator('[data-role="send-message"]');
   await expect(modelSelect).toBeVisible();
   await expect(cogButton).toBeVisible();
+  await expect(sendButton).toBeEnabled();
   await expect(page.locator('.session-model-field .field-group__label')).toHaveCount(0);
 
   const modelWidth = await modelSelect.evaluate((node) => node.getBoundingClientRect().width);
