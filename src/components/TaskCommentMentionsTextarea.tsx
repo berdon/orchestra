@@ -1,3 +1,5 @@
+import type { MutableRefObject } from "react";
+
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { searchProjectReferenceAutocompleteCandidates } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
@@ -11,6 +13,7 @@ interface TaskCommentMentionsTextareaProps {
   value: string;
   rows?: number;
   dataRole: string;
+  textareaRef?: MutableRefObject<HTMLTextAreaElement | null>;
   listDataRole: string;
   optionDataRole: string;
   onChange: (value: string) => void;
@@ -25,6 +28,7 @@ export function TaskCommentMentionsTextarea({
   value,
   rows = 4,
   dataRole,
+  textareaRef,
   listDataRole,
   optionDataRole,
   onChange,
@@ -35,6 +39,7 @@ export function TaskCommentMentionsTextarea({
   return (
     <AutocompleteTextarea
       dataRole={dataRole}
+      textareaRef={textareaRef}
       listDataRole={listDataRole}
       onChange={onChange}
       onSubmitShortcut={onSubmitShortcut}

@@ -1,3 +1,5 @@
+import type { MutableRefObject } from "react";
+
 import { TaskCommentMentionsTextarea } from "./TaskCommentMentionsTextarea";
 import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
 
@@ -14,6 +16,7 @@ interface TaskCommentComposerProps {
   submitDataRole: string;
   messageLabel: string;
   messageDataRole: string;
+  messageRef?: MutableRefObject<HTMLTextAreaElement | null>;
   mentionListDataRole: string;
   mentionOptionDataRole: string;
   rows?: number;
@@ -45,6 +48,7 @@ export function TaskCommentComposer({
   submitDataRole,
   messageLabel,
   messageDataRole,
+  messageRef,
   mentionListDataRole,
   mentionOptionDataRole,
   rows = 4,
@@ -93,6 +97,7 @@ export function TaskCommentComposer({
           value={message}
           rows={rows}
           dataRole={messageDataRole}
+          textareaRef={messageRef}
           listDataRole={mentionListDataRole}
           optionDataRole={mentionOptionDataRole}
           onChange={onMessageChange}
