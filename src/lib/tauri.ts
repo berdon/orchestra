@@ -992,11 +992,17 @@ function seedMockTasks(): TaskDetail[] {
   return enrichMockTasks(tasks, dependencies);
 }
 
+type StoredMockTaskDependency = TaskDependency & {
+  blockerWorkflowId?: string | null;
+  blockerLaneId?: string | null;
+  blockerLaneOrder?: number | null;
+};
+
 function ensureMockTaskDependencies() {
-  return getStoredValue<TaskDependency[]>(TASK_DEPENDENCY_STORAGE_KEY) ?? [];
+  return getStoredValue<StoredMockTaskDependency[]>(TASK_DEPENDENCY_STORAGE_KEY) ?? [];
 }
 
-function saveMockTaskDependencies(dependencies: TaskDependency[]) {
+function saveMockTaskDependencies(dependencies: StoredMockTaskDependency[]) {
   setStoredValue(TASK_DEPENDENCY_STORAGE_KEY, dependencies);
 }
 
@@ -1581,6 +1587,39 @@ function collectMockRefreshTaskIds(
   ]);
 }
 
+function mockDependencyBlockerLaneSnapshot(tasks: TaskDetail[], blockerTaskId: string) {
+  const blocker = tasks.find((task) => task.id === blockerTaskId);
+  const workflow = blocker?.workflowId ? ensureMockWorkflows().find((entry) => entry.id === blocker.workflowId) : null;
+  const lane = blocker?.currentLaneId ? workflow?.lanes.find((entry) => entry.id === blocker.currentLaneId) : null;
+
+  return {
+    blockerWorkflowId: blocker?.workflowId ?? null,
+    blockerLaneId: blocker?.currentLaneId ?? null,
+    blockerLaneOrder: lane?.order ?? null,
+  };
+}
+
+function mockDependencyHasUnresolvedBlocker(
+  dependency: TaskDependency,
+  blocker?: Pick<TaskSummary, "status" | "workflowId" | "currentLaneId"> | null,
+) {
+  if (!blocker || ["completed", "canceled"].includes(blocker.status)) {
+    return false;
+  }
+
+  const snapshot = dependency as StoredMockTaskDependency;
+  if (!snapshot.blockerWorkflowId || !snapshot.blockerLaneId || snapshot.blockerLaneOrder == null) {
+    return true;
+  }
+  if (!blocker.workflowId || !blocker.currentLaneId || blocker.workflowId !== snapshot.blockerWorkflowId) {
+    return true;
+  }
+
+  const workflow = ensureMockWorkflows().find((entry) => entry.id === blocker.workflowId);
+  const currentLane = workflow?.lanes.find((entry) => entry.id === blocker.currentLaneId);
+  return currentLane?.order == null || currentLane.order <= snapshot.blockerLaneOrder;
+}
+
 function mockTaskHasUnresolvedDependencyBlockers(
   taskId: string,
   tasks: StoredMockTask[],
@@ -1591,7 +1630,7 @@ function mockTaskHasUnresolvedDependencyBlockers(
       return false;
     }
     const blocker = tasks.find((task) => task.id === dependency.blockerTaskId);
-    return blocker ? !["completed", "canceled"].includes(blocker.status) : false;
+    return mockDependencyHasUnresolvedBlocker(dependency, blocker);
   });
 }
 
@@ -1808,7 +1847,7 @@ function hasUnfinishedChildBlockers(children: Array<{ status: string; archived?:
 
 function summarizeTask(task: TaskDetail): TaskSummary {
   const dependencyBlocked =
-    task.blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status))
+    task.blockedBy.some((dependency) => mockDependencyHasUnresolvedBlocker(dependency, dependency.blocker))
     || hasUnfinishedChildBlockers(task.children);
   return {
     id: task.id,
@@ -1909,7 +1948,7 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         }));
 
       const dependencyBlocked =
-        blockedBy.some((dependency) => !["completed", "canceled"].includes(dependency.blocker.status))
+        blockedBy.some((dependency) => mockDependencyHasUnresolvedBlocker(dependency, dependency.blocker))
         || hasUnfinishedChildBlockers(children);
 
       return {
@@ -4517,9 +4556,7 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   );
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
-  const autoDispatchedDependentTaskIds = ["completed", "canceled"].includes(nextStatus)
-    ? await autoDispatchMockDependentTasks(taskId)
-    : [];
+  const autoDispatchedDependentTaskIds = await autoDispatchMockDependentTasks(taskId);
 
   appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
   const updatedTask = await getTask(taskId);
@@ -4630,9 +4667,7 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
   finalizeMockAgentState(task, "success", updatedAt, autoAssignment);
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
-  const autoDispatchedDependentTaskIds = ["completed", "canceled"].includes(nextStatus)
-    ? await autoDispatchMockDependentTasks(taskId)
-    : [];
+  const autoDispatchedDependentTaskIds = await autoDispatchMockDependentTasks(taskId);
 
   appendMockLog("info", "task.transition", `Approved pending lane completion for task ${taskId}`);
   emitMockTaskChange({ taskIds: dedupeMockTaskIds([...refreshTaskIds, ...autoDispatchedDependentTaskIds]), reason: "task.transition.approved_success" });
@@ -5089,12 +5124,13 @@ export async function addTaskDependency(blockerTaskId: string, blockedTaskId: st
 
     const blocker = tasks.find((task) => task.id === blockerTaskId)!;
     const blocked = tasks.find((task) => task.id === blockedTaskId)!;
-    const dependency: TaskDependency = {
+    const dependency: StoredMockTaskDependency = {
       id: createId("task-dependency"),
       blockerTaskId,
       blockedTaskId,
       blocker: summarizeTask(blocker),
       blocked: summarizeTask(blocked),
+      ...mockDependencyBlockerLaneSnapshot(tasks, blockerTaskId),
       createdAt: nowIso(),
     };
     const nextDependencies = [...dependencies, dependency];

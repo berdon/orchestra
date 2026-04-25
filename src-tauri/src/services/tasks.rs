@@ -834,6 +834,8 @@ pub fn add_task_dependency(
     validate_dependency_edge(connection, blocker_task_id, blocked_task_id)?;
 
     let project_id = task_project_id(connection, blocker_task_id)?;
+    let (blocker_workflow_id, blocker_lane_id, blocker_lane_order) =
+        dependency_blocker_lane_snapshot(connection, blocker_task_id)?;
     let dependency_id = dependency_id();
     let now = now_iso();
     let tx = connection
@@ -842,14 +844,26 @@ pub fn add_task_dependency(
 
     tx.execute(
         r#"
-        INSERT INTO task_dependencies (id, project_id, blocker_task_id, blocked_task_id, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        INSERT INTO task_dependencies (
+            id,
+            project_id,
+            blocker_task_id,
+            blocked_task_id,
+            blocker_workflow_id,
+            blocker_lane_id,
+            blocker_lane_order,
+            created_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         "#,
         params![
             dependency_id,
             project_id,
             blocker_task_id,
             blocked_task_id,
+            blocker_workflow_id,
+            blocker_lane_id,
+            blocker_lane_order,
             now
         ],
     )
@@ -2530,16 +2544,47 @@ fn dependency_exists(
     Ok(exists.is_some())
 }
 
-fn unresolved_blocker_count(connection: &Connection, task_id: &str) -> Result<i64, String> {
+fn dependency_blocker_lane_snapshot(
+    connection: &Connection,
+    blocker_task_id: &str,
+) -> Result<(Option<String>, Option<String>, Option<i64>), String> {
     connection
         .query_row(
             r#"
-            SELECT COUNT(*)
-            FROM task_dependencies d
-            JOIN tasks blocker ON blocker.id = d.blocker_task_id
-            WHERE d.blocked_task_id = ?1
-              AND blocker.status NOT IN ('completed', 'canceled')
+            SELECT t.workflow_id, t.current_lane_id, wl.lane_order
+            FROM tasks t
+            LEFT JOIN workflow_lanes wl
+                ON wl.workflow_id = t.workflow_id
+               AND wl.id = t.current_lane_id
+            WHERE t.id = ?1
             "#,
+            [blocker_task_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to snapshot blocker lane for task {blocker_task_id}: {error}")
+        })?
+        .ok_or_else(|| format!("Task {blocker_task_id} was not found"))
+}
+
+fn unresolved_blocker_count(connection: &Connection, task_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            &format!(
+                r#"
+                SELECT {unresolved_blockers}
+                FROM tasks t
+                WHERE t.id = ?1
+                "#,
+                unresolved_blockers = unresolved_blocker_sql("t"),
+            ),
             [task_id],
             |row| row.get(0),
         )
@@ -2910,7 +2955,26 @@ fn unread_user_comment_count_sql(alias: &str) -> String {
 
 fn unresolved_blocker_sql(alias: &str) -> String {
     format!(
-        "COALESCE((SELECT COUNT(*) FROM task_dependencies d JOIN tasks blocker ON blocker.id = d.blocker_task_id WHERE d.blocked_task_id = {alias}.id AND blocker.status NOT IN ('completed', 'canceled')), 0)"
+        r#"COALESCE((
+            SELECT COUNT(*)
+            FROM task_dependencies d
+            JOIN tasks blocker ON blocker.id = d.blocker_task_id
+            LEFT JOIN workflow_lanes blocker_current_lane
+                ON blocker_current_lane.workflow_id = blocker.workflow_id
+               AND blocker_current_lane.id = blocker.current_lane_id
+            WHERE d.blocked_task_id = {alias}.id
+              AND blocker.status NOT IN ('completed', 'canceled')
+              AND (
+                    d.blocker_workflow_id IS NULL
+                 OR d.blocker_lane_id IS NULL
+                 OR d.blocker_lane_order IS NULL
+                 OR blocker.workflow_id IS NULL
+                 OR blocker.current_lane_id IS NULL
+                 OR blocker.workflow_id != d.blocker_workflow_id
+                 OR blocker_current_lane.lane_order IS NULL
+                 OR blocker_current_lane.lane_order <= d.blocker_lane_order
+              )
+        ), 0)"#
     )
 }
 
@@ -3160,6 +3224,36 @@ mod tests {
             },
         )
         .expect("create named task")
+    }
+
+    fn move_task_to_lane(
+        connection: &mut Connection,
+        task: &TaskDetail,
+        status: &str,
+        lane_id: &str,
+    ) -> TaskDetail {
+        update_task(
+            connection,
+            &task.id,
+            TaskUpsertInput {
+                title: task.title.clone(),
+                description: task.description.clone(),
+                task_type: task.task_type.clone(),
+                tags: task.tags.clone(),
+                status: status.into(),
+                priority: task.priority.clone(),
+                workflow_id: task.workflow_id.clone(),
+                current_lane_id: Some(lane_id.into()),
+                assignee_type: task.assignee_type.clone(),
+                assignee_id: task.assignee_id.clone(),
+                repository_id: task.repository_id.clone(),
+                repository_ids: task.repository_ids.clone(),
+                parent_task_id: task.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(task.archived),
+            },
+        )
+        .expect("move task to lane")
     }
 
     fn load_persisted_task_tags(connection: &Connection, task_id: &str) -> Vec<String> {
@@ -5086,6 +5180,86 @@ mod tests {
 
         assert_eq!(updated_blocker.status, "completed");
         let unblocked = get_task(&connection, &blocked.id).expect("reload blocked task");
+        assert_eq!(unblocked.status, "ready");
+        assert!(!unblocked.dependency_blocked);
+        assert!(unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn dependency_resolves_when_blocker_advances_beyond_captured_lane() {
+        let mut connection = in_memory_connection();
+        seed_multi_lane_workflow(&connection);
+
+        let blocker = create_named_task(&mut connection, "Blocker", "in_progress", None);
+        let blocked = create_named_task(&mut connection, "Blocked", "ready", None);
+
+        add_task_dependency(&mut connection, &blocker.id, &blocked.id).expect("add dependency");
+        let initially_blocked = get_task(&connection, &blocked.id).expect("load blocked task");
+        assert_eq!(initially_blocked.status, "blocked");
+        assert!(initially_blocked.dependency_blocked);
+        assert!(!initially_blocked.ready_for_dispatch);
+
+        let advanced_blocker =
+            move_task_to_lane(&mut connection, &blocker, "in_review", "lane-review");
+        assert_eq!(
+            advanced_blocker.current_lane_id.as_deref(),
+            Some("lane-review")
+        );
+
+        let unblocked = get_task(&connection, &blocked.id).expect("reload unblocked task");
+        assert_eq!(unblocked.status, "ready");
+        assert!(!unblocked.dependency_blocked);
+        assert!(unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn dependency_remains_unresolved_without_lane_snapshot_until_terminal_status() {
+        let mut connection = in_memory_connection();
+        seed_multi_lane_workflow(&connection);
+
+        let blocker = create_named_task(&mut connection, "Legacy Blocker", "in_progress", None);
+        let blocked = create_named_task(&mut connection, "Legacy Blocked", "ready", None);
+
+        add_task_dependency(&mut connection, &blocker.id, &blocked.id).expect("add dependency");
+        connection
+            .execute(
+                "UPDATE task_dependencies SET blocker_workflow_id = NULL, blocker_lane_id = NULL, blocker_lane_order = NULL WHERE blocker_task_id = ?1 AND blocked_task_id = ?2",
+                params![blocker.id.as_str(), blocked.id.as_str()],
+            )
+            .expect("clear dependency lane snapshot");
+
+        move_task_to_lane(&mut connection, &blocker, "in_review", "lane-review");
+        let still_blocked = get_task(&connection, &blocked.id).expect("reload still blocked task");
+        assert_eq!(still_blocked.status, "blocked");
+        assert!(still_blocked.dependency_blocked);
+        assert!(!still_blocked.ready_for_dispatch);
+
+        let review_blocker = get_task(&connection, &blocker.id).expect("reload blocker");
+        let completed_blocker = update_task(
+            &mut connection,
+            &blocker.id,
+            TaskUpsertInput {
+                title: review_blocker.title.clone(),
+                description: review_blocker.description.clone(),
+                task_type: review_blocker.task_type.clone(),
+                tags: review_blocker.tags.clone(),
+                status: "completed".into(),
+                priority: review_blocker.priority.clone(),
+                workflow_id: review_blocker.workflow_id.clone(),
+                current_lane_id: review_blocker.current_lane_id.clone(),
+                assignee_type: review_blocker.assignee_type.clone(),
+                assignee_id: review_blocker.assignee_id.clone(),
+                repository_id: review_blocker.repository_id.clone(),
+                repository_ids: review_blocker.repository_ids.clone(),
+                parent_task_id: review_blocker.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("complete legacy blocker");
+        assert_eq!(completed_blocker.status, "completed");
+
+        let unblocked = get_task(&connection, &blocked.id).expect("reload unblocked legacy task");
         assert_eq!(unblocked.status, "ready");
         assert!(!unblocked.dependency_blocked);
         assert!(unblocked.ready_for_dispatch);

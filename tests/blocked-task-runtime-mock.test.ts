@@ -168,6 +168,115 @@ describe("blocked task runtime mock parity", () => {
     expect(blocked.laneRuns.at(-1)?.result).toBe("blocked");
   });
 
+  test("mock mode unblocks a dependent when the blocker advances to the Test lane", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const { createWorkflow, createTask, addTaskDependency, completeLaneAsSuccess, getTask } = await import("../src/lib/tauri");
+
+    await createProject({ name: "Dependency Test Lane Mock Project", description: "mock project", taskPrefix: "DTM" });
+    const role = await createRole({
+      name: "Mock Dependency Implementer",
+      description: "Role for dependency lane coverage.",
+      systemPrompt: "Implement the work.",
+      capacity: 1,
+    });
+    const blockerWorkflow = await createWorkflow({
+      name: "Mock Blocker Implement Test Flow",
+      description: "Implement lane advances to Test.",
+      lanes: [
+        {
+          id: "lane-implement",
+          key: "implement",
+          name: "Implement",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Implement the blocker.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          successTransitionType: "lane",
+          successTargetLaneId: "lane-test",
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+        {
+          id: "lane-test",
+          key: "test",
+          name: "Test",
+          order: 1,
+          assignedEntityType: "user",
+          assignedEntityId: null,
+          entryPromptTemplate: "Test the blocker.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "lane",
+          failureTargetLaneId: "lane-implement",
+        },
+      ],
+    });
+    const dependentWorkflow = await createWorkflow({
+      name: "Mock Dependent Flow",
+      description: "Dependent work lane.",
+      lanes: [
+        {
+          id: "lane-dependent-implement",
+          key: "implement",
+          name: "Implement",
+          order: 0,
+          assignedEntityType: "user",
+          assignedEntityId: null,
+          entryPromptTemplate: "Implement dependent work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+
+    const blocker = await createTask({
+      title: "Mock blocker to test",
+      description: "Advancing this to Test should unblock the dependent.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: blockerWorkflow.id,
+      currentLaneId: "lane-implement",
+      assigneeType: "role",
+      assigneeId: role.slug,
+    });
+    const dependent = await createTask({
+      title: "Mock dependent blocked until test",
+      description: "Should be runnable once the blocker reaches Test.",
+      type: "task",
+      status: "ready",
+      priority: "P2",
+      workflowId: dependentWorkflow.id,
+      currentLaneId: "lane-dependent-implement",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    await addTaskDependency(blocker.id, dependent.id);
+    const blocked = await getTask(dependent.id);
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.dependencyBlocked).toBe(true);
+    expect(blocked.readyForDispatch).toBe(false);
+
+    const transitioned = await completeLaneAsSuccess(blocker.id, "Implementation ready for Test.");
+    expect(transitioned.status).toBe("in_review");
+    expect(transitioned.currentLaneId).toBe("lane-test");
+
+    const unblocked = await getTask(dependent.id);
+    expect(unblocked.status).toBe("ready");
+    expect(unblocked.dependencyBlocked).toBe(false);
+    expect(unblocked.readyForDispatch).toBe(true);
+  });
+
   test("mock mode rejects dispatch for initially blocked tasks", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");

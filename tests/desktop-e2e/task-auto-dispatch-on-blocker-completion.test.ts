@@ -201,6 +201,189 @@ describe("desktop auto dispatch on blocker completion", () => {
     }
   }, 240_000);
 
+  it.skipIf(!isDesktopE2E)("auto-dispatches a dependent when the blocker advances from Implement to Test", async () => {
+    expect(testHome).toBeTruthy();
+
+    const repoPath = join(testHome!, "workspace", "auto-dispatch-blocker-to-test", "repository");
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(join(repoPath, "README.md"), "auto dispatch blocker to test repo\n", "utf8");
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "desktop-e2e@example.invalid"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Desktop E2E"], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["add", "."], { cwd: repoPath, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repoPath, stdio: "ignore" });
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const project = await invokeCommand<{ id: string; name: string; slug: string }>(sessionId, "create_project", {
+        input: {
+          name: "Auto Dispatch Blocker To Test Project",
+          taskPrefix: "ADT",
+          description: "Auto dispatch when a blocker advances to Test instead of completed.",
+        },
+      });
+      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
+        projectId: project.id,
+        input: {
+          name: "Auto Dispatch Blocker To Test Repo",
+          repositoryPath: repoPath,
+          defaultBranch: "main",
+        },
+      });
+      await invokeCommand(sessionId, "set_project_default_repository", { projectId: project.id, repositoryId: repository.id });
+
+      const developerRole = await invokeCommand<{ id: string; slug: string }>(sessionId, "create_role", {
+        input: {
+          name: "Test Lane Dependent Developer",
+          description: "Role dispatched after blocker enters Test.",
+          systemPrompt: "Implement the dependent task.",
+          capacity: 1,
+        },
+      });
+
+      const blockerWorkflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: "Blocker Implement To Test Workflow",
+          description: "User-owned implement lane advances to user Test lane.",
+          lanes: [
+            {
+              id: "lane-blocker-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Implement blocker work.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "lane",
+              successTargetLaneId: "lane-blocker-test",
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+            {
+              id: "lane-blocker-test",
+              key: "test",
+              name: "Test",
+              order: 1,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Test blocker work.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "lane",
+              failureTargetLaneId: "lane-blocker-implement",
+            },
+          ],
+        },
+      });
+      const dependentWorkflow = await invokeCommand<any>(sessionId, "create_workflow", {
+        input: {
+          name: "Dependent Auto Dispatch After Test Workflow",
+          description: "Role-owned dependent workflow.",
+          lanes: [
+            {
+              id: "lane-dependent-after-test-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: developerRole.slug,
+              entryPromptTemplate: "Implement the dependent task.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+
+      const blockerTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Blocker that advances to Test",
+          description: "Leaving Implement should unblock dependent work before final completion.",
+          type: "task",
+          status: "in_review",
+          priority: "P1",
+          workflowId: blockerWorkflow.id,
+          currentLaneId: "lane-blocker-implement",
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: "user",
+          assigneeId: null,
+        },
+      });
+      const dependentTask = await invokeCommand<any>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Dependent unblocked at Test",
+          description: "Should auto-dispatch when blocker moves into Test.",
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          workflowId: dependentWorkflow.id,
+          currentLaneId: "lane-dependent-after-test-implement",
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: "unassigned",
+          assigneeId: null,
+        },
+      });
+
+      const automation = await invokeCommand<{ autoDispatchOnBlockerCompletion: boolean }>(sessionId, "get_task_automation_settings", {
+        projectSlug: project.slug,
+      });
+      expect(automation.autoDispatchOnBlockerCompletion).toBe(true);
+
+      await invokeCommand(sessionId, "add_task_dependency", {
+        blockerTaskId: blockerTask.id,
+        blockedTaskId: dependentTask.id,
+      });
+
+      const blockedDependent = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: dependentTask.id }),
+        (task) => task.status === "blocked" && task.dependencyBlocked === true,
+        30_000,
+      );
+      expect(blockedDependent.readyForDispatch).toBe(false);
+
+      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
+      await switchProject(sessionId, project.name);
+      await clickByText(sessionId, "button", "Tasks");
+      await waitForText(sessionId, "Blocker that advances to Test");
+
+      await invokeCommand(sessionId, "complete_lane_as_success", {
+        taskId: blockerTask.id,
+        notes: "Implementation ready for Test in desktop test.",
+      });
+
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: blockerTask.id }),
+        (task) => task.status === "in_review" && task.currentLaneId === "lane-blocker-test",
+        30_000,
+      );
+      const autoDispatched = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: dependentTask.id }),
+        (task) => task.status === "in_progress" && task.dependencyBlocked === false && Boolean(task.activeLaneAssignment),
+        60_000,
+      );
+
+      expect(autoDispatched.assigneeType).toBe("role");
+      expect(autoDispatched.activeLaneAssignment?.workerType).toBe("role");
+      expect(["queued", "active"]).toContain(autoDispatched.activeLaneAssignment?.status);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
+
   it.skipIf(!isDesktopE2E)("auto-dispatches newly unblocked tasks when the project setting is enabled", async () => {
     expect(testHome).toBeTruthy();
 

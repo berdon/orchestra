@@ -9050,6 +9050,181 @@ mod tests {
     }
 
     #[test]
+    fn blocker_implementation_to_test_transition_restores_dependent_to_ready() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Dependent Test Lane Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let blocker_workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Blocker Implement To Test Flow".into(),
+                description: None,
+                lanes: vec![
+                    WorkflowLaneInput {
+                        id: Some("lane-blocker-implement".into()),
+                        key: "implement".into(),
+                        name: "Implement".into(),
+                        description: None,
+                        order: Some(0),
+                        assigned_entity_type: "user".into(),
+                        assigned_entity_id: None,
+                        entry_prompt_template: Some("Implement the blocker.".into()),
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: false,
+                        success_transition_type: "lane".into(),
+                        success_target_lane_id: Some("lane-blocker-test".into()),
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                    WorkflowLaneInput {
+                        id: Some("lane-blocker-test".into()),
+                        key: "test".into(),
+                        name: "Test".into(),
+                        description: None,
+                        order: Some(1),
+                        assigned_entity_type: "user".into(),
+                        assigned_entity_id: None,
+                        entry_prompt_template: Some("Test the blocker.".into()),
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: false,
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "lane".into(),
+                        failure_target_lane_id: Some("lane-blocker-implement".into()),
+                    },
+                ],
+            },
+        )
+        .expect("blocker workflow should create");
+        let dependent_workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Dependent Test Lane Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-dependent-implement".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the dependent task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("dependent workflow should create");
+        let root = init_test_repo("task-runtime-blocker-test-lane-unblocks-dependent");
+        insert_project_and_repository(
+            &connection,
+            "project-blocker-test-lane",
+            "project-blocker-test-lane",
+            "repo-blocker-test-lane",
+            "repo-blocker-test-lane",
+            "Blocker Test Lane Repo",
+            &root,
+        );
+
+        let blocker = tasks::create_task(
+            &mut connection,
+            Some("project-blocker-test-lane"),
+            TaskUpsertInput {
+                title: "Blocker task".into(),
+                description: Some(
+                    "Advancing this to Test should unblock the dependent task.".into(),
+                ),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_review".into(),
+                priority: "P1".into(),
+                workflow_id: Some(blocker_workflow.id.clone()),
+                current_lane_id: Some("lane-blocker-implement".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: Some("repo-blocker-test-lane".into()),
+                repository_ids: vec!["repo-blocker-test-lane".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("blocker task should create");
+        let dependent = tasks::create_task(
+            &mut connection,
+            Some("project-blocker-test-lane"),
+            TaskUpsertInput {
+                title: "Dependent task".into(),
+                description: Some("Should return to ready once the blocker reaches Test.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(dependent_workflow.id.clone()),
+                current_lane_id: Some("lane-dependent-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-blocker-test-lane".into()),
+                repository_ids: vec!["repo-blocker-test-lane".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("dependent task should create");
+        tasks::add_task_dependency(&mut connection, &blocker.id, &dependent.id)
+            .expect("dependency should add");
+
+        let blocked_dependent =
+            tasks::get_task(&connection, &dependent.id).expect("dependent should reload blocked");
+        assert_eq!(blocked_dependent.status, "blocked");
+        assert!(blocked_dependent.dependency_blocked);
+        assert!(!blocked_dependent.ready_for_dispatch);
+
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let transitioned_blocker = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &blocker.id,
+            Some("Implementation ready for Test".into()),
+            None,
+        )
+        .expect("blocker transition should succeed");
+        assert_eq!(transitioned_blocker.status, "in_review");
+        assert_eq!(
+            transitioned_blocker.current_lane_id.as_deref(),
+            Some("lane-blocker-test")
+        );
+
+        let unblocked_dependent = tasks::get_task(&connection, &dependent.id)
+            .expect("dependent should reload ready after blocker enters Test");
+        assert_eq!(unblocked_dependent.status, "ready");
+        assert!(!unblocked_dependent.dependency_blocked);
+        assert!(unblocked_dependent.ready_for_dispatch);
+    }
+
+    #[test]
     fn active_task_blocked_by_a_new_subtask_keeps_running_until_transition() {
         let mut connection = in_memory_connection();
         let agent = agents::create_agent(
