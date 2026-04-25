@@ -17,6 +17,9 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
     const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
     const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
+    const composerFooter = document.querySelector('.composer__footer') as HTMLDivElement | null;
+    const panelHeader = panel?.querySelector('.panel__header') as HTMLElement | null;
+    const mobileSessionPicker = document.querySelector('[data-role="sessions-mobile-switcher"]') as HTMLElement | null;
 
     if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
       return null;
@@ -26,6 +29,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const panelRect = panel.getBoundingClientRect();
     const transcriptRect = transcript.getBoundingClientRect();
     const composerRect = composerInput.getBoundingClientRect();
+    const composerFooterRect = composerFooter?.getBoundingClientRect() ?? null;
 
     return {
       viewportHeight: window.innerHeight,
@@ -37,11 +41,15 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       detailTop: detailRect.top,
       panelHeight: panelRect.height,
       panelTop: panelRect.top,
+      panelHeaderVisible: panelHeader ? window.getComputedStyle(panelHeader).display !== 'none' : false,
+      mobilePickerTop: mobileSessionPicker?.getBoundingClientRect().top ?? null,
       transcriptHeight: transcriptRect.height,
       transcriptTop: transcriptRect.top,
       transcriptClientHeight: transcript.clientHeight,
       transcriptScrollHeight: transcript.scrollHeight,
       composerInputHeight: composerRect.height,
+      composerInputWidth: composerRect.width,
+      composerFooterWidth: composerFooterRect?.width ?? 0,
       composerBottom: composerRect.bottom,
       panelResize: window.getComputedStyle(panel).resize,
       composerResize: window.getComputedStyle(composerInput).resize,
@@ -205,8 +213,10 @@ test("sessions transcript fills the available page height while the composer rem
   const initialLayout = await measureSessionLayout(page);
   expect(initialLayout).not.toBeNull();
   expect(initialLayout?.stackHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) - 24);
+  expect(initialLayout?.listPanelWidth ?? 0).toBeGreaterThan(220);
   expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan((initialLayout?.stackHeight ?? 0) - 24);
   expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) * 0.85);
+  expect(initialLayout?.panelHeaderVisible).toBe(true);
   expect(initialLayout?.transcriptHeight ?? 0).toBeGreaterThan(400);
   expect(initialLayout?.panelResize).toBe("none");
   expect(initialLayout?.composerResize).toBe("vertical");
@@ -310,7 +320,7 @@ test("sessions list uses deterministic task ordering and delays the dismiss affo
   await expect(dismissButton).toHaveJSProperty('tabIndex', 0);
 });
 
-test("sessions mobile keeps the detail pane primary and exposes a touch-friendly session picker", async ({ page }) => {
+test("sessions mobile mirrors chat with a lightweight page-local session picker and single-column detail view", async ({ page }) => {
   const timestamp = new Date().toISOString();
   await page.addInitScript(({ nextTimestamp }) => {
     window.localStorage.clear();
@@ -365,7 +375,8 @@ test("sessions mobile keeps the detail pane primary and exposes a touch-friendly
 
   await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-1"]').click();
   await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Mobile planning session");
+  await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Mobile planning session");
+  await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("First mobile transcript entry.");
 
   await page.locator('[data-role="composer-input"]').fill("Reply from mobile sessions test");
@@ -375,12 +386,16 @@ test("sessions mobile keeps the detail pane primary and exposes a touch-friendly
   const mobileLayout = await measureSessionLayout(page);
   expect(mobileLayout).not.toBeNull();
   expect(mobileLayout?.panelTop ?? 999).toBeLessThan(330);
+  expect(mobileLayout?.mobilePickerTop ?? 999).toBeLessThan(mobileLayout?.panelTop ?? 999);
+  expect(mobileLayout?.panelHeaderVisible).toBe(false);
   expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(140);
+  expect(Math.abs((mobileLayout?.composerFooterWidth ?? 0) - (mobileLayout?.composerInputWidth ?? 0))).toBeLessThanOrEqual(2);
   expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
 
   await page.locator('[data-role="sessions-mobile-picker-trigger"]').click();
   await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-2"]').click();
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Mobile follow-up session");
+  await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Mobile follow-up session");
+  await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
 });
 
 test("sessions secondary nav width is resizable and persists", async ({ page }) => {

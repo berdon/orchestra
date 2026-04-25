@@ -178,7 +178,7 @@ interface SessionChatPanelProps {
   emptyStateTitle?: string;
   emptyStateDescription?: string;
   emptyStateLoading?: boolean;
-  surface?: "default" | "chat-page";
+  surface?: "default" | "page-mobile-detail";
 }
 
 interface SessionComposerProps {

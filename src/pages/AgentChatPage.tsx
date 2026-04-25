@@ -244,7 +244,7 @@ export function AgentChatPage({
           emptyStateTitle={emptyStateTitle}
           emptyStateDescription={emptyStateDescription}
           emptyStateLoading={emptyStateLoading}
-          surface="chat-page"
+          surface="page-mobile-detail"
         />
       </div>
     </section>
