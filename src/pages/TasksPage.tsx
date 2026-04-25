@@ -729,6 +729,14 @@ export function TasksPage({
     setSavingTask(false);
   }
 
+  function handleCancelDetailEdit() {
+    if (!taskDetail) {
+      return;
+    }
+    setTaskDraft(taskToDraft(taskDetail));
+    setTaskDraftDirty(false);
+  }
+
   async function handleSaveTaskScheduleDetail() {
     if (route.kind !== "schedule") {
       return;
@@ -1458,6 +1466,7 @@ export function TasksPage({
           onCommentDraftChange={setCommentDraft}
           onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
           onComplete={(outcome) => void handleCompleteLane(outcome)}
+          onCancelEdit={handleCancelDetailEdit}
           onClose={(reason) => void handleCloseDetailTask(reason)}
           onDelete={() => void handleDeleteDetailTask()}
           onDispatch={() => void handleDispatchTaskLane()}

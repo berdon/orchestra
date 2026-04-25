@@ -3746,13 +3746,13 @@ strong {
 .task-detail-tabs-panel {
   display: grid;
   gap: 18px;
-  padding: 0 0 112px;
+  padding: 0 0 168px;
   background: transparent;
 }
 
 .task-page.task-detail-page.panel {
   position: relative;
-  padding: 0 0 112px;
+  padding: 0 0 168px;
   background: transparent;
 }
 
@@ -3821,7 +3821,7 @@ strong {
 .task-detail-floating-header,
 .task-detail-tab-dock {
   position: fixed;
-  z-index: 12;
+  z-index: 18;
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   background: color-mix(in srgb, var(--color-toolbar-background) 96%, transparent);
   backdrop-filter: blur(16px);
@@ -3877,6 +3877,30 @@ strong {
   bottom: 16px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   border-radius: 14px;
+}
+
+.task-detail-edit-fab {
+  position: fixed;
+  right: max(18px, calc(env(safe-area-inset-right, 0px) + 18px));
+  bottom: max(112px, calc(env(safe-area-inset-bottom, 0px) + 112px));
+  z-index: 19;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-toolbar-background) 94%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.2);
+}
+
+.task-detail-edit-fab__button {
+  min-height: 44px;
+  padding-inline: 18px;
+  border-radius: 999px;
 }
 
 .task-detail-shell {
@@ -5873,6 +5897,19 @@ strong {
 
   .command-palette__header {
     grid-template-columns: 1fr;
+  }
+
+  .task-detail-edit-fab {
+    right: max(12px, calc(env(safe-area-inset-right, 0px) + 12px));
+    bottom: max(120px, calc(env(safe-area-inset-bottom, 0px) + 120px));
+    max-width: calc(100vw - 24px);
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .task-detail-edit-fab__button {
+    min-height: 42px;
+    padding-inline: 14px;
   }
 
   .task-detail-tab-dock .task-detail-tabs--dock {
