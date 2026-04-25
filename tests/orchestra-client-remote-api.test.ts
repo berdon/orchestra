@@ -63,6 +63,7 @@ function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_
       sharedTasks: true,
       sharedInbox: true,
       sharedSessions: true,
+      sharedSkills: true,
       taskSchedules: true,
       sessionStreaming: true,
       sessionControls: true,
@@ -91,6 +92,14 @@ function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_
         channels: { availability: "available" },
         modelCatalog: { availability: "available" },
         piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+      },
+      skills: {
+        read: { availability: "available" },
+        create: { availability: "available" },
+        update: { availability: "available" },
+        archive: { availability: "available" },
+        delete: { availability: "available" },
+        assign: { availability: "available" },
       },
       tasks: {
         read: { availability: "available" },
@@ -183,6 +192,28 @@ describe("remote api orchestra client", () => {
     expect(FakeWebSocket.instances[0]?.url).toBe("wss://orchestra.example.test/api/v1/ws?token=token-123");
     FakeWebSocket.instances[0]?.emitConnected();
     await expect(subscribePromise).resolves.toEqual(expect.any(Function));
+  });
+
+  test("routes shared managed-skills methods through the remote API surface", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://orchestra.example.test/api/v1/skills?includeArchived=true") {
+        expect(init?.method ?? "GET").toBe("GET");
+        return jsonResponse([]);
+      }
+      if (url === "https://orchestra.example.test/api/v1/skills/skill-1") {
+        expect(init?.method).toBe("PATCH");
+        return jsonResponse({ id: "skill-1", sourceKind: "local", bindings: [], bindingSummary: { totalCount: 0, scopeCounts: [] } });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl,
+    });
+
+    await expect(binding.client.skills.listSkills(true)).resolves.toEqual([]);
+    await expect(binding.client.skills.updateLocalSkill("skill-1", { name: "Skill", slug: "skill", markdownBody: "# Skill" })).resolves.toMatchObject({ id: "skill-1" });
   });
 
   test("normalizes HTTP authorization failures", async () => {

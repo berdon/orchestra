@@ -39,6 +39,26 @@ export interface SkillBindingDraft {
   workflowLaneBindings: SkillBindingDraftLaneRow[];
 }
 
+export interface SkillCapabilityAccess {
+  create: boolean;
+  update: boolean;
+  archive: boolean;
+  delete: boolean;
+  assign: boolean;
+}
+
+export interface SkillActionState {
+  canCreateLocalSkill: boolean;
+  canSaveLocalSkill: boolean;
+  canRefreshExternalSkills: boolean;
+  canArchiveSkill: boolean;
+  canDeleteSkill: boolean;
+  canEditAssignments: boolean;
+  localEditorReadOnly: boolean;
+  localEditorReason: string | null;
+  assignmentEditorReason: string | null;
+}
+
 export function createBlankLocalSkillDraft(): LocalSkillUpsertInput {
   return {
     name: "",
@@ -479,4 +499,37 @@ export function getSkillStatusFilterLabel(status: SkillStatus) {
     return "invalid";
   }
   return status;
+}
+
+export function resolveSkillActionState(input: {
+  sourceKind: SkillDetail["sourceKind"] | null;
+  isCreatingLocalSkill: boolean;
+  capabilities: SkillCapabilityAccess;
+}): SkillActionState {
+  const { sourceKind, isCreatingLocalSkill, capabilities } = input;
+  const localEditorReadOnly = isCreatingLocalSkill
+    ? !capabilities.create
+    : sourceKind !== "local" || !capabilities.update;
+  const localEditorReason = isCreatingLocalSkill
+    ? (capabilities.create ? null : "Creating local skills requires skills.create.")
+    : sourceKind !== "local"
+      ? "External skills come from ~/.agents/skills and remain read-only in Orchestra Settings."
+      : (capabilities.update ? null : "Editing local skills requires skills.update.");
+  const assignmentEditorReason = capabilities.assign
+    ? null
+    : "Skill assignments are inspect-only with the current permissions; editing bindings requires skills.assign.";
+
+  return {
+    canCreateLocalSkill: capabilities.create,
+    canSaveLocalSkill: isCreatingLocalSkill
+      ? capabilities.create
+      : sourceKind === "local" && capabilities.update,
+    canRefreshExternalSkills: capabilities.update,
+    canArchiveSkill: sourceKind === "local" && capabilities.archive,
+    canDeleteSkill: sourceKind === "local" && capabilities.delete,
+    canEditAssignments: capabilities.assign,
+    localEditorReadOnly,
+    localEditorReason,
+    assignmentEditorReason,
+  };
 }

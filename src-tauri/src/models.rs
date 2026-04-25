@@ -231,6 +231,7 @@ pub struct OrchestraClientFeatureFlags {
     pub shared_tasks: bool,
     pub shared_inbox: bool,
     pub shared_sessions: bool,
+    pub shared_skills: bool,
     pub task_schedules: bool,
     pub session_streaming: bool,
     pub session_controls: bool,
@@ -267,6 +268,17 @@ pub struct OrchestraClientAdminCapabilities {
     pub channels: OrchestraCapabilityDescriptor,
     pub model_catalog: OrchestraCapabilityDescriptor,
     pub pi_executable_diagnostic: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientSkillCapabilities {
+    pub read: OrchestraCapabilityDescriptor,
+    pub create: OrchestraCapabilityDescriptor,
+    pub update: OrchestraCapabilityDescriptor,
+    pub archive: OrchestraCapabilityDescriptor,
+    pub delete: OrchestraCapabilityDescriptor,
+    pub assign: OrchestraCapabilityDescriptor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +332,7 @@ pub struct OrchestraClientCapabilities {
     pub app: OrchestraClientAppCapabilities,
     pub catalog: OrchestraClientCatalogCapabilities,
     pub admin: OrchestraClientAdminCapabilities,
+    pub skills: OrchestraClientSkillCapabilities,
     pub tasks: OrchestraClientTaskCapabilities,
     pub inbox: OrchestraClientInboxCapabilities,
     pub sessions: OrchestraClientSessionCapabilities,

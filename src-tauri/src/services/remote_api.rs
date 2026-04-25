@@ -38,26 +38,29 @@ use crate::{
         channels as channel_commands, messages as message_commands, policies as policy_commands,
         project_settings as project_setting_commands, projects as project_commands,
         role_dispatch as role_dispatch_commands, role_runtime as role_runtime_commands,
-        roles as role_commands, sessions as session_commands,
+        roles as role_commands, sessions as session_commands, skills as skill_commands,
         task_schedules as task_schedule_commands, tasks as task_commands,
         workflows as workflow_commands,
     },
     models::{
         AgentQueueEntryInput, AgentUpsertInput, AppInfo, ArchiveMailboxMessagesInput,
-        ChannelUpsertInput, MailboxMessage, MarkMailboxMessagesReadInput,
-        OrchestraCapabilityAvailability, OrchestraCapabilityDescriptor,
-        OrchestraClientAdminCapabilities, OrchestraClientAppCapabilities, OrchestraClientAuthMode,
-        OrchestraClientBootstrap, OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
+        AuthorizationContext, ChannelUpsertInput, LocalSkillUpsertInput, MailboxMessage,
+        MarkMailboxMessagesReadInput, OrchestraCapabilityAvailability,
+        OrchestraCapabilityDescriptor, OrchestraClientAdminCapabilities,
+        OrchestraClientAppCapabilities, OrchestraClientAuthMode, OrchestraClientBootstrap,
+        OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
         OrchestraClientFeatureFlags, OrchestraClientHostCapabilities, OrchestraClientHostKind,
         OrchestraClientInboxCapabilities, OrchestraClientSessionCapabilities,
-        OrchestraClientTaskCapabilities, OrchestraClientTransportUrls, ProjectUpsertInput,
-        QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse,
-        RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
+        OrchestraClientSkillCapabilities, OrchestraClientTaskCapabilities,
+        OrchestraClientTransportUrls, ProjectUpsertInput, QueuedSessionMessage,
+        RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse, RemoteDeviceRecord,
+        RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
         RepositoryRemoteInput, RepositoryUpsertInput, RoleQueueEntryInput, RoleUpsertInput,
-        SendMailboxMessageInput, SessionRecord, TaskAttachmentInput, TaskCommentInput,
-        TaskCommentUpdateInput, TaskDetail, TaskFileReferenceInput, TaskScheduleUpsertInput,
-        TaskSummary, TaskTodoInput, TaskUpsertInput, WorkflowLaneInput, WorkflowLanePatchInput,
-        WorkflowLaneReorderInput, WorkflowUpsertInput,
+        SendMailboxMessageInput, SessionRecord, SkillBindingInput, TaskAttachmentInput,
+        TaskCommentInput, TaskCommentUpdateInput, TaskDetail, TaskFileReferenceInput,
+        TaskScheduleUpsertInput, TaskSummary, TaskTodoInput, TaskUpsertInput,
+        WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
+        WorkflowUpsertInput,
     },
     services::{
         agent_dispatch, app_events, database, messages, notifications,
@@ -379,6 +382,58 @@ fn require_remote_auth_only(
     headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     require_remote_device(app, headers).map(|_| ())
+}
+
+fn parse_test_remote_authorization_header(
+    headers: &HeaderMap,
+) -> Result<Option<AuthorizationContext>, (StatusCode, Json<ApiError>)> {
+    headers
+        .get("x-orchestra-test-authorization")
+        .map(|value| {
+            let raw = value
+                .to_str()
+                .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid test authorization header"))?
+                .trim()
+                .to_string();
+            let (actor_type, actor_id) = raw.split_once(':').ok_or_else(|| {
+                api_error(
+                    StatusCode::BAD_REQUEST,
+                    "Test authorization header must use actor_type:actor_id format",
+                )
+            })?;
+            if actor_type.trim().is_empty() || actor_id.trim().is_empty() {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    "Test authorization header must include both actor type and actor id",
+                ));
+            }
+            Ok(AuthorizationContext {
+                actor_type: actor_type.trim().to_string(),
+                actor_id: actor_id.trim().to_string(),
+            })
+        })
+        .transpose()
+}
+
+fn remote_authorization_context(
+    device: &ResolvedRemoteAuth,
+    headers: &HeaderMap,
+) -> Result<Option<AuthorizationContext>, (StatusCode, Json<ApiError>)> {
+    if std::env::var_os("ORCHESTRA_ENABLE_TEST_AUTHORIZATION").is_some() {
+        if let Some(authorization) = parse_test_remote_authorization_header(headers)? {
+            return Ok(Some(authorization));
+        }
+    }
+
+    #[cfg(test)]
+    if let Some(authorization) = parse_test_remote_authorization_header(headers)? {
+        return Ok(Some(authorization));
+    }
+
+    Ok(Some(AuthorizationContext {
+        actor_type: "user".into(),
+        actor_id: device.device.id.clone(),
+    }))
 }
 
 fn split_tag_filters(raw: Option<&str>) -> Option<Vec<String>> {
@@ -729,7 +784,7 @@ mod tests {
         body::{to_bytes, Body},
         http::Request,
     };
-    use std::{path::PathBuf, process::Command, sync::Mutex};
+    use std::{env, fs, path::PathBuf, process::Command, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
     use tower::ServiceExt;
 
     struct RemoteApiParityFixture {
@@ -765,11 +820,48 @@ mod tests {
         auth_header: &str,
         uri: &str,
     ) -> Result<Value, String> {
+        let (status, body) = perform_authenticated_json_request_with_options(
+            app,
+            auth_header,
+            "GET",
+            uri,
+            &[],
+            None,
+        )?;
+        if status != StatusCode::OK {
+            return Err(format!(
+                "remote API parity request {uri} returned status {}",
+                status
+            ));
+        }
+        Ok(body)
+    }
+
+    fn perform_authenticated_json_request_with_options(
+        app: &tauri::App,
+        auth_header: &str,
+        method: &str,
+        uri: &str,
+        extra_headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Result<(StatusCode, Value), String> {
         let router = build_remote_api_context(app.handle().clone());
-        let request = Request::builder()
-            .uri(uri)
-            .header(header::AUTHORIZATION, auth_header)
-            .body(Body::empty())
+        let mut request = Request::builder().method(method).uri(uri);
+        request = request.header(header::AUTHORIZATION, auth_header);
+        for (name, value) in extra_headers {
+            request = request.header(*name, *value);
+        }
+        let request_body = if let Some(body) = body {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+            Body::from(
+                serde_json::to_vec(&body)
+                    .map_err(|error| format!("failed to encode remote API parity JSON body {uri}: {error}"))?,
+            )
+        } else {
+            Body::empty()
+        };
+        let request = request
+            .body(request_body)
             .map_err(|error| format!("failed to build remote API parity request {uri}: {error}"))?;
         let response = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -781,12 +873,7 @@ mod tests {
                     .await
                     .map_err(|error| format!("remote API parity request {uri} failed: {error}"))
             })?;
-        if response.status() != StatusCode::OK {
-            return Err(format!(
-                "remote API parity request {uri} returned status {}",
-                response.status()
-            ));
-        }
+        let status = response.status();
         let body = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -798,8 +885,45 @@ mod tests {
                         format!("failed to read remote API parity response body {uri}: {error}")
                     })
             })?;
-        serde_json::from_slice(&body)
-            .map_err(|error| format!("failed to decode remote API parity JSON {uri}: {error}"))
+        let json_body = serde_json::from_slice(&body)
+            .map_err(|error| format!("failed to decode remote API parity JSON {uri}: {error}"))?;
+        Ok((status, json_body))
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!(
+            "orchestra-remote-api-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir should be creatable");
+        dir
+    }
+
+    fn create_test_role_with_permissions(
+        connection: &mut rusqlite::Connection,
+        name: &str,
+        permissions: Vec<String>,
+    ) -> Result<String, String> {
+        let role = crate::services::roles::create_role(
+            connection,
+            crate::models::RoleUpsertInput {
+                name: name.into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: permissions,
+            },
+        )?;
+        Ok(role.id)
     }
 
     fn run_production_route_probe(case: &str, extra_env: &[(&str, &str)]) -> Result<(), String> {
@@ -1052,6 +1176,27 @@ mod tests {
         run_production_route_probe("sessions_parity", &[])
             .expect("sessions production parity probe should pass");
     }
+
+    #[test]
+    fn skills_routes_match_skill_commands_when_authorized() {
+        let _probe_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("skills_parity", &[])
+            .expect("skills production parity probe should pass");
+    }
+
+    #[test]
+    fn skills_routes_return_forbidden_without_required_permissions() {
+        let _probe_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe(
+            "skills_permissions",
+            &[("ORCHESTRA_ENABLE_TEST_AUTHORIZATION", "1")],
+        )
+        .expect("skills permission production probe should pass");
+    }
 }
 
 fn detect_lan_base_url(port: u16) -> Option<String> {
@@ -1205,6 +1350,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             get(get_agent_permissions),
         )
         .route(
+            "/api/v1/agents/:agent_id/skills",
+            get(get_agent_skill_links_route),
+        )
+        .route(
             "/api/v1/agents/:agent_id/sessions/ensure",
             post(post_ensure_agent_session),
         )
@@ -1228,6 +1377,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route(
             "/api/v1/roles/:role_id/permissions",
             get(get_role_permissions),
+        )
+        .route(
+            "/api/v1/roles/:role_id/skills",
+            get(get_role_skill_links_route),
         )
         .route(
             "/api/v1/roles/:role_id/dispatch",
@@ -1273,6 +1426,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             post(post_duplicate_workflow),
         )
         .route(
+            "/api/v1/workflows/:workflow_id/skills",
+            get(get_workflow_skill_links_route),
+        )
+        .route(
             "/api/v1/workflows/:workflow_id/lanes",
             post(post_workflow_lane_create),
         )
@@ -1311,6 +1468,33 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route(
             "/api/v1/channels/:channel_id/activity",
             get(get_channel_activity),
+        )
+        .route("/api/v1/skills", get(get_skills).post(post_skill_create))
+        .route(
+            "/api/v1/skills/catalog-diagnostics",
+            get(get_skills_catalog_diagnostics_route),
+        )
+        .route(
+            "/api/v1/skills/refresh-external",
+            post(post_refresh_external_skills),
+        )
+        .route(
+            "/api/v1/skills/:skill_id",
+            get(get_skill_detail_route)
+                .patch(patch_skill_update)
+                .delete(delete_skill_record),
+        )
+        .route(
+            "/api/v1/skills/:skill_id/archive",
+            post(post_archive_skill),
+        )
+        .route(
+            "/api/v1/skills/:skill_id/unarchive",
+            post(post_unarchive_skill),
+        )
+        .route(
+            "/api/v1/skills/:skill_id/bindings",
+            post(post_skill_bindings),
         )
         .route("/api/v1/tasks", get(get_tasks).post(post_task_create))
         .route(
@@ -1631,7 +1815,10 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                         || unauthenticated_body["urls"]["websocketUrl"]
                             != "wss://orchestra.example.test/api/v1/ws"
                         || unauthenticated_body["featureFlags"]["sharedSessions"] != false
+                        || unauthenticated_body["featureFlags"]["sharedSkills"] != false
                         || unauthenticated_body["capabilities"]["sessions"]["write"]["availability"]
+                            != "unavailable"
+                        || unauthenticated_body["capabilities"]["skills"]["read"]["availability"]
                             != "unavailable"
                     {
                         return Err(format!(
@@ -1663,7 +1850,10 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                     })?;
                     if authenticated_body["authMode"] != "bearer_token"
                         || authenticated_body["featureFlags"]["sharedSessions"] != true
+                        || authenticated_body["featureFlags"]["sharedSkills"] != true
                         || authenticated_body["capabilities"]["sessions"]["write"]["availability"]
+                            != "available"
+                        || authenticated_body["capabilities"]["skills"]["read"]["availability"]
                             != "available"
                     {
                         return Err(format!(
@@ -1931,6 +2121,188 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                     if route_record_body != expected_record_body {
                         return Err(format!(
                             "sessions parity probe detail returned a different payload than the direct helper\nroute: {route_record_body}\nhelper: {expected_record_body}"
+                        ));
+                    }
+                    Ok(())
+                }
+                "skills_parity" => {
+                    let mut connection = database::open_connection().map_err(|error| {
+                        format!("skills parity probe could not open database: {error}")
+                    })?;
+                    let probe_id = uuid::Uuid::new_v4().simple().to_string();
+                    let root = std::env::temp_dir().join(format!(
+                        "orchestra-skills-parity-probe-{probe_id}",
+                    ));
+                    fs::create_dir_all(&root).map_err(|error| {
+                        format!("skills parity probe could not create skill root: {error}")
+                    })?;
+                    let skill_slug = format!("parity-skill-{probe_id}");
+                    let seeded_skill = crate::services::skills::create_local_skill(
+                        &mut connection,
+                        &root,
+                        crate::models::LocalSkillUpsertInput {
+                            name: "Parity Skill".into(),
+                            slug: Some(skill_slug),
+                            markdown_body: "# Parity Skill\n\nRemote parity test skill.".into(),
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("skills parity probe could not seed skill: {error}")
+                    })?;
+                    let expected_list = crate::commands::skills::list_skills(Some(true), None)
+                        .map_err(|error| {
+                            format!("skills parity probe could not list skills via command: {error}")
+                        })?;
+                    let route_list = client
+                        .get(format!("{base_url}/api/v1/skills?includeArchived=true"))
+                        .header("authorization", &auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| format!("skills parity probe list request failed: {error}"))?;
+                    if route_list.status() != StatusCode::OK {
+                        return Err(format!(
+                            "skills parity probe list returned {}",
+                            route_list.status()
+                        ));
+                    }
+                    let route_list_body: Value = route_list.json().await.map_err(|error| {
+                        format!("skills parity probe list body failed to deserialize: {error}")
+                    })?;
+                    let expected_list_body = serde_json::to_value(expected_list).map_err(|error| {
+                        format!("skills parity probe could not serialize command list response: {error}")
+                    })?;
+                    if route_list_body != expected_list_body {
+                        return Err(format!(
+                            "skills parity probe list returned a different payload than the command\nroute: {route_list_body}\ncommand: {expected_list_body}"
+                        ));
+                    }
+
+                    let expected_detail = crate::commands::skills::get_skill(seeded_skill.summary.id.clone(), None)
+                        .map_err(|error| {
+                            format!("skills parity probe could not load skill detail via command: {error}")
+                        })?;
+                    let route_detail = client
+                        .get(format!("{base_url}/api/v1/skills/{}", seeded_skill.summary.id))
+                        .header("authorization", &auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| format!("skills parity probe detail request failed: {error}"))?;
+                    if route_detail.status() != StatusCode::OK {
+                        return Err(format!(
+                            "skills parity probe detail returned {}",
+                            route_detail.status()
+                        ));
+                    }
+                    let route_detail_body: Value = route_detail.json().await.map_err(|error| {
+                        format!("skills parity probe detail body failed to deserialize: {error}")
+                    })?;
+                    let expected_detail_body = serde_json::to_value(expected_detail).map_err(|error| {
+                        format!("skills parity probe could not serialize command detail response: {error}")
+                    })?;
+                    if route_detail_body != expected_detail_body {
+                        return Err(format!(
+                            "skills parity probe detail returned a different payload than the command\nroute: {route_detail_body}\ncommand: {expected_detail_body}"
+                        ));
+                    }
+                    Ok(())
+                }
+                "skills_permissions" => {
+                    let mut connection = database::open_connection().map_err(|error| {
+                        format!("skills permissions probe could not open database: {error}")
+                    })?;
+                    let denied_role = crate::services::roles::create_role(
+                        &mut connection,
+                        crate::models::RoleUpsertInput {
+                            name: "Skills denied".into(),
+                            description: None,
+                            system_prompt: None,
+                            provider: None,
+                            model: None,
+                            thinking_level: Some("off".into()),
+                            capacity: 1,
+                            compaction_window: None,
+                            policy_ids: Vec::new(),
+                            direct_permissions: Vec::new(),
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("skills permissions probe could not create denied role: {error}")
+                    })?;
+                    let reader_role = crate::services::roles::create_role(
+                        &mut connection,
+                        crate::models::RoleUpsertInput {
+                            name: "Skills reader".into(),
+                            description: None,
+                            system_prompt: None,
+                            provider: None,
+                            model: None,
+                            thinking_level: Some("off".into()),
+                            capacity: 1,
+                            compaction_window: None,
+                            policy_ids: Vec::new(),
+                            direct_permissions: vec!["skills.read".into()],
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("skills permissions probe could not create reader role: {error}")
+                    })?;
+                    drop(connection);
+
+                    let denied_list = client
+                        .get(format!("{base_url}/api/v1/skills"))
+                        .header("authorization", &auth_header)
+                        .header("x-orchestra-test-authorization", format!("role:{}", denied_role.id))
+                        .send()
+                        .await
+                        .map_err(|error| format!("skills permissions probe list request failed: {error}"))?;
+                    if denied_list.status() != StatusCode::FORBIDDEN {
+                        return Err(format!(
+                            "skills permissions probe expected list 403 but received {}",
+                            denied_list.status()
+                        ));
+                    }
+                    let denied_list_body: Value = denied_list.json().await.map_err(|error| {
+                        format!("skills permissions probe list body failed to deserialize: {error}")
+                    })?;
+                    if !denied_list_body["error"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("skills.read")
+                    {
+                        return Err(format!(
+                            "skills permissions probe list returned unexpected error payload: {denied_list_body}"
+                        ));
+                    }
+
+                    let denied_create = client
+                        .post(format!("{base_url}/api/v1/skills"))
+                        .header("authorization", &auth_header)
+                        .header("x-orchestra-test-authorization", format!("role:{}", reader_role.id))
+                        .header("content-type", "application/json")
+                        .body(serde_json::json!({
+                            "name": "Restricted create",
+                            "slug": "restricted-create",
+                            "markdownBody": "# Restricted create\n\nShould be forbidden.",
+                        }).to_string())
+                        .send()
+                        .await
+                        .map_err(|error| format!("skills permissions probe create request failed: {error}"))?;
+                    if denied_create.status() != StatusCode::FORBIDDEN {
+                        return Err(format!(
+                            "skills permissions probe expected create 403 but received {}",
+                            denied_create.status()
+                        ));
+                    }
+                    let denied_create_body: Value = denied_create.json().await.map_err(|error| {
+                        format!("skills permissions probe create body failed to deserialize: {error}")
+                    })?;
+                    if !denied_create_body["error"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("skills.create")
+                    {
+                        return Err(format!(
+                            "skills permissions probe create returned unexpected error payload: {denied_create_body}"
                         ));
                     }
                     Ok(())
@@ -2701,6 +3073,7 @@ fn build_frontend_feature_flags(authenticated: bool) -> OrchestraClientFeatureFl
         shared_tasks: authenticated,
         shared_inbox: authenticated,
         shared_sessions: authenticated,
+        shared_skills: authenticated,
         task_schedules: authenticated,
         session_streaming: authenticated,
         session_controls: authenticated,
@@ -2765,6 +3138,38 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             ),
             pi_executable_diagnostic: unavailable_capability(
                 "Local Pi executable diagnostics are only available in the desktop app.",
+            ),
+        },
+        skills: OrchestraClientSkillCapabilities {
+            read: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote managed-skills read endpoints are unavailable.",
+            ),
+            create: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote managed-skills create endpoints are unavailable.",
+            ),
+            update: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote managed-skills update endpoints are unavailable.",
+            ),
+            archive: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote managed-skills archive endpoints are unavailable.",
+            ),
+            delete: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote managed-skills delete endpoints are unavailable.",
+            ),
+            assign: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote managed-skills assignment endpoints are unavailable.",
             ),
         },
         tasks: OrchestraClientTaskCapabilities {
@@ -3925,6 +4330,176 @@ async fn get_channel_activity(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     channel_commands::list_channel_activity(channel_id, query.limit)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_skills(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Query(query): Query<IncludeArchivedQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::list_skills(query.include_archived, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_skills_catalog_diagnostics_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::get_skills_catalog_diagnostics(authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_skill_detail_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::get_skill(skill_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_skill_create(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<LocalSkillUpsertInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::create_local_skill(context.app.state::<AppState>(), input, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn patch_skill_update(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+    Json(input): Json<LocalSkillUpsertInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::update_local_skill(
+        context.app.state::<AppState>(),
+        skill_id,
+        input,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_archive_skill(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::archive_local_skill(context.app.state::<AppState>(), skill_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_unarchive_skill(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::unarchive_local_skill(
+        context.app.state::<AppState>(),
+        skill_id,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn delete_skill_record(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::delete_local_skill(context.app.state::<AppState>(), skill_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_refresh_external_skills(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::refresh_external_skills(context.app.state::<AppState>(), authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_skill_bindings(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+    Json(bindings): Json<Vec<SkillBindingInput>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::set_skill_bindings(
+        context.app.state::<AppState>(),
+        skill_id,
+        bindings,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn get_role_skill_links_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(role_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::get_role_skill_links(role_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_agent_skill_links_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::get_agent_skill_links(agent_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_workflow_skill_links_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(workflow_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    skill_commands::get_workflow_skill_links(workflow_id, authorization)
         .map(Json)
         .map_err(command_api_error)
 }

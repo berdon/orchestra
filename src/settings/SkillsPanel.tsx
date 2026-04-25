@@ -28,6 +28,7 @@ import {
   localSkillDraftHasContent,
   normalizeLocalSkillDraftForSave,
   normalizeSkillBindingDraftForSave,
+  resolveSkillActionState,
   setSkillBindingDraftGlobal,
   skillBindingDraftHasChanges,
   validateSkillBindingDraft,
@@ -36,6 +37,7 @@ import {
   type SkillStatusFilter,
 } from "../lib/skillsUi";
 import { getWorkflow, listWorkflows } from "../lib/tauri";
+import { isCapabilityAvailable, useOrchestraBootstrap } from "../lib/orchestraClient";
 import type {
   AgentSummary,
   LocalSkillUpsertInput,
@@ -167,6 +169,14 @@ interface SkillsPanelProps {
 }
 
 export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
+  const orchestraBootstrap = useOrchestraBootstrap();
+  const skillsCapabilities = orchestraBootstrap.capabilities.skills;
+  const canCreateSkills = isCapabilityAvailable(skillsCapabilities.create);
+  const canUpdateSkills = isCapabilityAvailable(skillsCapabilities.update);
+  const canArchiveSkills = isCapabilityAvailable(skillsCapabilities.archive);
+  const canDeleteSkills = isCapabilityAvailable(skillsCapabilities.delete);
+  const canAssignSkills = isCapabilityAvailable(skillsCapabilities.assign);
+
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillDetail | null>(null);
@@ -215,6 +225,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   );
   const currentDetail = isCreatingLocalSkill ? null : selectedSkillDetail;
   const selectedLocalSkillHasBindings = (selectedLocalSkill?.bindingSummary.totalCount ?? 0) > 0;
+  const skillActionState = useMemo(() => resolveSkillActionState({
+    sourceKind: isCreatingLocalSkill ? "local" : currentDetail?.sourceKind ?? null,
+    isCreatingLocalSkill,
+    capabilities: {
+      create: canCreateSkills,
+      update: canUpdateSkills,
+      archive: canArchiveSkills,
+      delete: canDeleteSkills,
+      assign: canAssignSkills,
+    },
+  }), [canArchiveSkills, canAssignSkills, canCreateSkills, canDeleteSkills, canUpdateSkills, currentDetail?.sourceKind, isCreatingLocalSkill]);
   const bindingDraftIsDirty = useMemo(
     () => (!isCreatingLocalSkill && currentDetail ? skillBindingDraftHasChanges(bindingDraft, currentDetail) : false),
     [bindingDraft, currentDetail, isCreatingLocalSkill],
@@ -355,6 +376,10 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   }
 
   function beginCreateLocalSkill() {
+    if (!skillActionState.canCreateLocalSkill) {
+      setActionError(skillActionState.localEditorReason ?? "Creating local skills is unavailable with the current permissions.");
+      return;
+    }
     if (!confirmDiscardDirtyDraft()) {
       return;
     }
@@ -384,6 +409,10 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   }
 
   async function handleSaveSkill() {
+    if (!skillActionState.canSaveLocalSkill) {
+      setActionError(skillActionState.localEditorReason ?? "Saving skills is unavailable with the current permissions.");
+      return;
+    }
     const fieldErrors = Object.values(localDraftState.validationErrors).filter(Boolean);
     if (fieldErrors.length > 0) {
       setActionError(fieldErrors[0] ?? "Unable to save skill.");
@@ -421,6 +450,10 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
     if (!currentDetail) {
       return;
     }
+    if (!skillActionState.canEditAssignments) {
+      setActionError(skillActionState.assignmentEditorReason ?? "Editing skill assignments is unavailable with the current permissions.");
+      return;
+    }
 
     const validationErrors = validateSkillBindingDraft(bindingDraft);
     if (validationErrors.length > 0) {
@@ -446,6 +479,10 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
     if (!selectedLocalSkill) {
       return;
     }
+    if (!skillActionState.canArchiveSkill) {
+      setActionError("Archiving skills is unavailable with the current permissions.");
+      return;
+    }
 
     setSaving(true);
     setActionError(null);
@@ -465,6 +502,10 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
 
   async function handleDeleteSkill() {
     if (!selectedLocalSkill) {
+      return;
+    }
+    if (!skillActionState.canDeleteSkill) {
+      setActionError("Deleting skills is unavailable with the current permissions.");
       return;
     }
 
@@ -495,6 +536,10 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
   }
 
   async function handleRefreshExternalSkills() {
+    if (!skillActionState.canRefreshExternalSkills) {
+      setActionError("Refreshing external skills requires skills.update.");
+      return;
+    }
     setRefreshingExternal(true);
     setActionError(null);
     try {
@@ -646,7 +691,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
             <p className="eyebrow">Assignments</p>
             <h3>Scope bindings</h3>
           </div>
-          <button className="primary-button" data-role="save-skill-bindings" type="button" onClick={() => void handleSaveAssignments()} disabled={savingBindings || loadingDetail}>
+          <button className="primary-button" data-role="save-skill-bindings" type="button" onClick={() => void handleSaveAssignments()} disabled={savingBindings || loadingDetail || !skillActionState.canEditAssignments} title={!skillActionState.canEditAssignments ? skillActionState.assignmentEditorReason ?? undefined : undefined}>
             {savingBindings ? "Saving…" : "Save assignments"}
           </button>
         </div>
@@ -678,8 +723,9 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
         ) : null}
 
         <div className="skills-binding-editor">
+          {!skillActionState.canEditAssignments ? <p className="muted-copy">{skillActionState.assignmentEditorReason}</p> : null}
           <label className="checkbox-row skills-binding-global-toggle">
-            <input data-role="skill-binding-global-toggle" type="checkbox" checked={bindingDraft.global} onChange={(event) => handleGlobalToggle(event.target.checked)} />
+            <input data-role="skill-binding-global-toggle" type="checkbox" checked={bindingDraft.global} onChange={(event) => handleGlobalToggle(event.target.checked)} disabled={!skillActionState.canEditAssignments} />
             <span>
               <strong>Global assignment</strong>
               <span className="field-group__hint">Global is mutually exclusive with project, role, agent, workflow, and lane bindings.</span>
@@ -697,17 +743,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               </div>
               <label className="field-group field-group--compact">
                 <span className="field-group__label">Search projects</span>
-                <input className="text-input" data-role="skill-project-search" type="search" value={projectSearchQuery} onChange={(event) => setProjectSearchQuery(event.target.value)} />
+                <input className="text-input" data-role="skill-project-search" type="search" value={projectSearchQuery} onChange={(event) => setProjectSearchQuery(event.target.value)} disabled={!skillActionState.canEditAssignments} />
               </label>
               <div className="skills-binding-chip-list">
                 {selectedProjectEntries.length > 0 ? selectedProjectEntries.map((project) => (
                   <span className="task-tag-chip" key={project.id}>
                     <button className="task-tag-chip__action" type="button">{project.name}</button>
-                    <button className="task-tag-chip__remove" data-role={`remove-project-binding-${project.id}`} type="button" onClick={() => updateIdList("projectIds", project.id, "remove")} disabled={bindingDraft.global}>×</button>
+                    <button className="task-tag-chip__remove" data-role={`remove-project-binding-${project.id}`} type="button" onClick={() => updateIdList("projectIds", project.id, "remove")} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>×</button>
                   </span>
                 )) : <span className="muted-copy">No project bindings selected.</span>}
               </div>
-              {renderSelectorResults(projects, bindingDraft.projectIds, projectSearchQuery, (id) => updateIdList("projectIds", id, "add"), bindingDraft.global, "add-project-binding")}
+              {renderSelectorResults(projects, bindingDraft.projectIds, projectSearchQuery, (id) => updateIdList("projectIds", id, "add"), bindingDraft.global || !skillActionState.canEditAssignments, "add-project-binding")}
             </div>
 
             <div className="task-history-card skills-binding-card">
@@ -717,17 +763,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               </div>
               <label className="field-group field-group--compact">
                 <span className="field-group__label">Search roles</span>
-                <input className="text-input" data-role="skill-role-search" type="search" value={roleSearchQuery} onChange={(event) => setRoleSearchQuery(event.target.value)} />
+                <input className="text-input" data-role="skill-role-search" type="search" value={roleSearchQuery} onChange={(event) => setRoleSearchQuery(event.target.value)} disabled={!skillActionState.canEditAssignments} />
               </label>
               <div className="skills-binding-chip-list">
                 {selectedRoleEntries.length > 0 ? selectedRoleEntries.map((role) => (
                   <span className="task-tag-chip" key={role.id}>
                     <button className="task-tag-chip__action" type="button">{role.name}</button>
-                    <button className="task-tag-chip__remove" data-role={`remove-role-binding-${role.id}`} type="button" onClick={() => updateIdList("roleIds", role.id, "remove")} disabled={bindingDraft.global}>×</button>
+                    <button className="task-tag-chip__remove" data-role={`remove-role-binding-${role.id}`} type="button" onClick={() => updateIdList("roleIds", role.id, "remove")} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>×</button>
                   </span>
                 )) : <span className="muted-copy">No role bindings selected.</span>}
               </div>
-              {renderSelectorResults(roles, bindingDraft.roleIds, roleSearchQuery, (id) => updateIdList("roleIds", id, "add"), bindingDraft.global, "add-role-binding")}
+              {renderSelectorResults(roles, bindingDraft.roleIds, roleSearchQuery, (id) => updateIdList("roleIds", id, "add"), bindingDraft.global || !skillActionState.canEditAssignments, "add-role-binding")}
             </div>
 
             <div className="task-history-card skills-binding-card">
@@ -737,17 +783,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               </div>
               <label className="field-group field-group--compact">
                 <span className="field-group__label">Search agents</span>
-                <input className="text-input" data-role="skill-agent-search" type="search" value={agentSearchQuery} onChange={(event) => setAgentSearchQuery(event.target.value)} />
+                <input className="text-input" data-role="skill-agent-search" type="search" value={agentSearchQuery} onChange={(event) => setAgentSearchQuery(event.target.value)} disabled={!skillActionState.canEditAssignments} />
               </label>
               <div className="skills-binding-chip-list">
                 {selectedAgentEntries.length > 0 ? selectedAgentEntries.map((agent) => (
                   <span className="task-tag-chip" key={agent.id}>
                     <button className="task-tag-chip__action" type="button">{agent.name}</button>
-                    <button className="task-tag-chip__remove" data-role={`remove-agent-binding-${agent.id}`} type="button" onClick={() => updateIdList("agentIds", agent.id, "remove")} disabled={bindingDraft.global}>×</button>
+                    <button className="task-tag-chip__remove" data-role={`remove-agent-binding-${agent.id}`} type="button" onClick={() => updateIdList("agentIds", agent.id, "remove")} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>×</button>
                   </span>
                 )) : <span className="muted-copy">No agent bindings selected.</span>}
               </div>
-              {renderSelectorResults(agents, bindingDraft.agentIds, agentSearchQuery, (id) => updateIdList("agentIds", id, "add"), bindingDraft.global, "add-agent-binding")}
+              {renderSelectorResults(agents, bindingDraft.agentIds, agentSearchQuery, (id) => updateIdList("agentIds", id, "add"), bindingDraft.global || !skillActionState.canEditAssignments, "add-agent-binding")}
             </div>
 
             <div className="task-history-card skills-binding-card">
@@ -757,17 +803,17 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               </div>
               <label className="field-group field-group--compact">
                 <span className="field-group__label">Search workflows</span>
-                <input className="text-input" data-role="skill-workflow-search" type="search" value={workflowSearchQuery} onChange={(event) => setWorkflowSearchQuery(event.target.value)} />
+                <input className="text-input" data-role="skill-workflow-search" type="search" value={workflowSearchQuery} onChange={(event) => setWorkflowSearchQuery(event.target.value)} disabled={!skillActionState.canEditAssignments} />
               </label>
               <div className="skills-binding-chip-list">
                 {selectedWorkflowEntries.length > 0 ? selectedWorkflowEntries.map((workflow) => (
                   <span className="task-tag-chip" key={workflow.id}>
                     <button className="task-tag-chip__action" type="button">{workflow.name}</button>
-                    <button className="task-tag-chip__remove" data-role={`remove-workflow-binding-${workflow.id}`} type="button" onClick={() => updateIdList("workflowIds", workflow.id, "remove")} disabled={bindingDraft.global}>×</button>
+                    <button className="task-tag-chip__remove" data-role={`remove-workflow-binding-${workflow.id}`} type="button" onClick={() => updateIdList("workflowIds", workflow.id, "remove")} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>×</button>
                   </span>
                 )) : <span className="muted-copy">No workflow bindings selected.</span>}
               </div>
-              {renderSelectorResults(workflows, bindingDraft.workflowIds, workflowSearchQuery, (id) => updateIdList("workflowIds", id, "add"), bindingDraft.global, "add-workflow-binding")}
+              {renderSelectorResults(workflows, bindingDraft.workflowIds, workflowSearchQuery, (id) => updateIdList("workflowIds", id, "add"), bindingDraft.global || !skillActionState.canEditAssignments, "add-workflow-binding")}
             </div>
           </div>
 
@@ -777,7 +823,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                 <p className="eyebrow">Workflow lanes</p>
                 <h4>Lane scope</h4>
               </div>
-              <button className="secondary-button secondary-button--compact" data-role="add-lane-binding" type="button" onClick={addLaneBindingRow} disabled={bindingDraft.global}>
+              <button className="secondary-button secondary-button--compact" data-role="add-lane-binding" type="button" onClick={addLaneBindingRow} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>
                 Add lane binding
               </button>
             </div>
@@ -789,7 +835,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                     <div className="skills-lane-binding-row" data-role="skill-lane-binding-row" key={`${index}-${row.workflowId}-${row.workflowLaneId}`}>
                       <label className="field-group field-group--compact">
                         <span className="field-group__label">Workflow</span>
-                        <select className="select-input" data-role={`lane-binding-workflow-${index}`} value={row.workflowId} onChange={(event) => updateLaneBinding(index, { workflowId: event.target.value })} disabled={bindingDraft.global}>
+                        <select className="select-input" data-role={`lane-binding-workflow-${index}`} value={row.workflowId} onChange={(event) => updateLaneBinding(index, { workflowId: event.target.value })} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>
                           <option value="">Select a workflow</option>
                           {workflows.map((workflow) => (
                             <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
@@ -798,14 +844,14 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                       </label>
                       <label className="field-group field-group--compact">
                         <span className="field-group__label">Lane</span>
-                        <select className="select-input" data-role={`lane-binding-lane-${index}`} value={row.workflowLaneId} onChange={(event) => updateLaneBinding(index, { workflowLaneId: event.target.value })} disabled={bindingDraft.global || !row.workflowId}>
+                        <select className="select-input" data-role={`lane-binding-lane-${index}`} value={row.workflowLaneId} onChange={(event) => updateLaneBinding(index, { workflowLaneId: event.target.value })} disabled={bindingDraft.global || !row.workflowId || !skillActionState.canEditAssignments}>
                           <option value="">Select a lane</option>
                           {laneOptions.map((lane) => (
                             <option key={lane.id} value={lane.id}>{lane.name || lane.key}</option>
                           ))}
                         </select>
                       </label>
-                      <button className="secondary-button secondary-button--danger secondary-button--compact" data-role={`remove-lane-binding-${index}`} type="button" onClick={() => removeLaneBindingRow(index)} disabled={bindingDraft.global}>
+                      <button className="secondary-button secondary-button--danger secondary-button--compact" data-role={`remove-lane-binding-${index}`} type="button" onClick={() => removeLaneBindingRow(index)} disabled={bindingDraft.global || !skillActionState.canEditAssignments}>
                         Remove
                       </button>
                     </div>
@@ -853,14 +899,23 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               <h3>Skills</h3>
             </div>
             <div className="action-cluster action-cluster--wrap">
-              <button className="secondary-button" data-role="refresh-external-skills" type="button" onClick={() => void handleRefreshExternalSkills()} disabled={refreshingExternal || saving || savingBindings}>
+              <button className="secondary-button" data-role="refresh-external-skills" type="button" onClick={() => void handleRefreshExternalSkills()} disabled={refreshingExternal || saving || savingBindings || !skillActionState.canRefreshExternalSkills} title={!skillActionState.canRefreshExternalSkills ? "Refreshing external skills requires skills.update." : undefined}>
                 {refreshingExternal ? "Refreshing…" : "Refresh external"}
               </button>
-              <button className="primary-button" data-role="new-skill" type="button" onClick={beginCreateLocalSkill} disabled={saving || savingBindings}>
+              <button className="primary-button" data-role="new-skill" type="button" onClick={beginCreateLocalSkill} disabled={saving || savingBindings || !skillActionState.canCreateLocalSkill} title={!skillActionState.canCreateLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
                 New local skill
               </button>
             </div>
           </div>
+          {!canCreateSkills || !canUpdateSkills ? (
+            <p className="muted-copy">
+              {!canCreateSkills && !canUpdateSkills
+                ? "You can inspect the managed skills catalog, but creating or editing skills requires additional permissions."
+                : !canCreateSkills
+                  ? "Creating local skills is unavailable with the current permissions."
+                  : "Editing local skills and refreshing external discovery require skills.update."}
+            </p>
+          ) : null}
 
           <div className="skills-filter-grid">
             <label className="field-group field-group--compact">
@@ -982,11 +1037,13 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               </div>
               <div className="action-cluster action-cluster--wrap">
                 <span className="status-badge status-badge--accent">Local draft</span>
-                <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving}>
+                <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
                   {saving ? "Creating…" : "Create skill"}
                 </button>
               </div>
             </div>
+
+            {skillActionState.localEditorReason ? <p className="muted-copy">{skillActionState.localEditorReason}</p> : null}
 
             <section className="workflow-section skills-form-section">
               <div>
@@ -997,20 +1054,20 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               <div className="skills-form-grid">
                 <label className="field-group">
                   <span className="field-group__label">Skill name</span>
-                  <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} />
+                  <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
                   {localDraftState.validationErrors.name ? <span className="field-error">{localDraftState.validationErrors.name}</span> : null}
                 </label>
 
                 <label className="field-group">
                   <span className="field-group__label">Slug</span>
-                  <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} />
+                  <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
                   <span className="field-group__hint">{localDraftState.normalizedSlug ? `Saved as ${localDraftState.normalizedSlug}` : localDraftState.slugPreview ? `Will derive ${localDraftState.slugPreview}` : "A slug will be derived from the skill name."}</span>
                   {localDraftState.validationErrors.slug ? <span className="field-error">{localDraftState.validationErrors.slug}</span> : null}
                 </label>
 
                 <label className="field-group skills-form-grid__full">
                   <span className="field-group__label">Markdown body</span>
-                  <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} />
+                  <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
                   <span className="field-group__hint">The editor stays phase-1 scoped to name, slug, and markdown content only.</span>
                   {localDraftState.validationErrors.markdownBody ? <span className="field-error">{localDraftState.validationErrors.markdownBody}</span> : null}
                 </label>
@@ -1039,7 +1096,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                 <div className="action-cluster action-cluster--wrap">
                   <span className="status-badge status-badge--accent">Local</span>
                   {currentDetail.archived ? <span className="status-badge status-badge--neutral">Archived</span> : <span className={getSkillStatusBadgeClass(currentDetail.status)}>{getSkillStatusLabel(currentDetail.status)}</span>}
-                  <button className="secondary-button" data-role={currentDetail.archived ? "unarchive-skill" : "archive-skill"} type="button" onClick={() => void handleArchiveToggle(!currentDetail.archived)} disabled={saving || savingBindings}>
+                  <button className="secondary-button" data-role={currentDetail.archived ? "unarchive-skill" : "archive-skill"} type="button" onClick={() => void handleArchiveToggle(!currentDetail.archived)} disabled={saving || savingBindings || !skillActionState.canArchiveSkill} title={!skillActionState.canArchiveSkill ? "Archiving skills requires skills.archive." : undefined}>
                     {currentDetail.archived ? "Unarchive" : "Archive"}
                   </button>
                   <button
@@ -1047,18 +1104,19 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                     data-role="delete-skill"
                     type="button"
                     onClick={() => void handleDeleteSkill()}
-                    disabled={saving || savingBindings || selectedLocalSkillHasBindings}
-                    title={selectedLocalSkillHasBindings ? "Clear all scope bindings before deleting this skill." : undefined}
+                    disabled={saving || savingBindings || selectedLocalSkillHasBindings || !skillActionState.canDeleteSkill}
+                    title={selectedLocalSkillHasBindings ? "Clear all scope bindings before deleting this skill." : (!skillActionState.canDeleteSkill ? "Deleting skills requires skills.delete." : undefined)}
                   >
                     {deleteConfirmationRequired ? "Confirm delete" : "Delete"}
                   </button>
-                  <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || loadingDetail || savingBindings}>
+                  <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || loadingDetail || savingBindings || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
                     {saving ? "Saving…" : "Save changes"}
                   </button>
                 </div>
               </div>
 
               {loadingDetail ? <p className="muted-copy">Loading skill…</p> : null}
+              {skillActionState.localEditorReason ? <p className="muted-copy">{skillActionState.localEditorReason}</p> : null}
 
               {detailWarnings.length > 0 ? (
                 <div className="skills-warning-stack">
@@ -1080,20 +1138,20 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                 <div className="skills-form-grid">
                   <label className="field-group">
                     <span className="field-group__label">Skill name</span>
-                    <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} />
+                    <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
                     {localDraftState.validationErrors.name ? <span className="field-error">{localDraftState.validationErrors.name}</span> : null}
                   </label>
 
                   <label className="field-group">
                     <span className="field-group__label">Slug</span>
-                    <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} />
+                    <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
                     <span className="field-group__hint">{localDraftState.normalizedSlug ? `Saved as ${localDraftState.normalizedSlug}` : localDraftState.slugPreview ? `Will derive ${localDraftState.slugPreview}` : "A slug will be derived from the skill name."}</span>
                     {localDraftState.validationErrors.slug ? <span className="field-error">{localDraftState.validationErrors.slug}</span> : null}
                   </label>
 
                   <label className="field-group skills-form-grid__full">
                     <span className="field-group__label">Markdown body</span>
-                    <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} />
+                    <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
                     <span className="field-group__hint">The editor stays phase-1 scoped to name, slug, and markdown content only.</span>
                     {localDraftState.validationErrors.markdownBody ? <span className="field-error">{localDraftState.validationErrors.markdownBody}</span> : null}
                   </label>

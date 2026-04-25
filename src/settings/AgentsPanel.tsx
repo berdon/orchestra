@@ -85,7 +85,7 @@ function formatPiRuntimeDiagnostic(diagnostic: PiExecutableDiagnostic | null) {
   return `${diagnostic.source} runtime${version}: ${diagnostic.resolvedPath ?? "Unknown path"}`;
 }
 
-export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpenPiSettings, onOpenSkill }: { activeProjectId?: string | null; piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void }) {
+export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpenPiSettings, onOpenSkill, canReadSkills = false }: { activeProjectId?: string | null; piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void; canReadSkills?: boolean }) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -351,7 +351,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
   }, [selectedAgentSummary?.id, isCreatingAgent, loadedAgentId, activeProjectId]);
 
   useEffect(() => {
-    if (!onOpenSkill || isCreatingAgent || !selectedAgentSummary?.id) {
+    if (!canReadSkills || isCreatingAgent || !selectedAgentSummary?.id) {
       setSkillLinks(null);
       return;
     }
@@ -373,7 +373,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
     return () => {
       cancelled = true;
     };
-  }, [isCreatingAgent, onOpenSkill, selectedAgentSummary?.id]);
+  }, [canReadSkills, isCreatingAgent, selectedAgentSummary?.id]);
 
   async function refreshAgentValidation(nextDraft: AgentUpsertInput) {
     try {
@@ -765,7 +765,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
               onDirectPermissionsChange={(directPermissions) => updateAgentDraft((draft) => ({ ...draft, directPermissions }))}
             />
 
-            {onOpenSkill ? (
+            {canReadSkills ? (
               <section className="workflow-section">
                 <div>
                   <p className="eyebrow">Managed skills</p>
@@ -777,9 +777,15 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
                     {skillLinks?.directSkills.length ? (
                       <div className="skills-binding-chip-list">
                         {skillLinks.directSkills.map((skill) => (
-                          <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                            <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                          </button>
+                          onOpenSkill ? (
+                            <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </button>
+                          ) : (
+                            <span className="task-tag-chip" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </span>
+                          )
                         ))}
                       </div>
                     ) : (
@@ -792,9 +798,15 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
                       {skillLinks.inheritedRoleSkills.length ? (
                         <div className="skills-binding-chip-list">
                           {skillLinks.inheritedRoleSkills.map((skill) => (
-                            <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                            </button>
+                            onOpenSkill ? (
+                              <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                                <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                              </button>
+                            ) : (
+                              <span className="task-tag-chip" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId}>
+                                <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                              </span>
+                            )
                           ))}
                         </div>
                       ) : (
@@ -805,7 +817,15 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
                 </div>
                 <p className="muted-copy">Assignments remain editable only in Settings → Skills.</p>
               </section>
-            ) : null}
+            ) : (
+              <section className="workflow-section">
+                <div>
+                  <p className="eyebrow">Managed skills</p>
+                  <h3>Linked skills</h3>
+                </div>
+                <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+              </section>
+            )}
 
             {agentMemoryInfo ? (
               <section className="workflow-section">

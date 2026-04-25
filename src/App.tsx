@@ -31,6 +31,7 @@ import {
   supportsLogsWindow,
   supportsRemoteAccess,
   supportsRuntimeLogs,
+  supportsSkillsSettings,
   supportsSystemNotifications,
   retryOrchestraRead,
   useOrchestraBootstrap,
@@ -791,8 +792,9 @@ export function App() {
   const canManageRuntimeLogs = supportsRuntimeLogs(orchestraClient, orchestraBootstrap);
   const canManageBridgeDiagnostics = supportsBridgeDiagnostics(orchestraClient, orchestraBootstrap);
   const canManageHarnessSettings = supportsHarnessSettings(orchestraClient, orchestraBootstrap);
-  const canManageSkillsSettings = orchestraBootstrap.hostKind === "tauri";
+  const canManageSkillsSettings = supportsSkillsSettings(orchestraBootstrap);
   const canManageRemoteAccess = supportsRemoteAccess(orchestraClient, orchestraBootstrap);
+  const canReadManagedSkills = canManageSkillsSettings;
   const canManageSystemNotifications = supportsSystemNotifications(orchestraClient);
 
   const [activePage, setActivePage] = useState<PrimaryPage>(initialRouteState.page);
@@ -3996,11 +3998,11 @@ export function App() {
           activeSettingsTab === "projects" ? (
             <ProjectsPanel />
           ) : activeSettingsTab === "agents" ? (
-            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} onOpenSkill={canManageSkillsSettings ? navigateToSkill : undefined} />
+            <AgentsPanel activeProjectId={activeProject?.id ?? null} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} onOpenSkill={canReadManagedSkills ? navigateToSkill : undefined} canReadSkills={canReadManagedSkills} />
           ) : activeSettingsTab === "roles" ? (
-            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} onOpenSkill={canManageSkillsSettings ? navigateToSkill : undefined} />
+            <RolesPanel selectionRequest={rolesSelectionRequest} piSetupState={piSetupState} onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined} onOpenSkill={canReadManagedSkills ? navigateToSkill : undefined} canReadSkills={canReadManagedSkills} />
           ) : activeSettingsTab === "workflows" ? (
-            <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} onOpenSkill={canManageSkillsSettings ? navigateToSkill : undefined} />
+            <WorkflowsPanel activeProjectId={activeProject?.id ?? null} selectionRequest={workflowsSelectionRequest} onOpenSkill={canReadManagedSkills ? navigateToSkill : undefined} canReadSkills={canReadManagedSkills} />
           ) : activeSettingsTab === "skills" ? (
             <SkillsPanel selectionRequest={skillsSelectionRequest} />
           ) : activeSettingsTab === "channels" ? (

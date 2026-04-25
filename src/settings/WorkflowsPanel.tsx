@@ -150,9 +150,10 @@ interface WorkflowsPanelProps {
   activeProjectId?: string | null;
   selectionRequest?: { workflowId: string; token: number } | null;
   onOpenSkill?: (skillId: string) => void;
+  canReadSkills?: boolean;
 }
 
-export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null, onOpenSkill }: WorkflowsPanelProps) {
+export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null, onOpenSkill, canReadSkills = false }: WorkflowsPanelProps) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [selectedLaneId, setSelectedLaneId] = useState<string | null>(null);
@@ -307,7 +308,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
   }, [selectionRequest]);
 
   useEffect(() => {
-    if (!onOpenSkill || isCreatingWorkflow || !selectedWorkflowSummary?.id) {
+    if (!canReadSkills || isCreatingWorkflow || !selectedWorkflowSummary?.id) {
       setSkillLinks(null);
       return;
     }
@@ -329,7 +330,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
     return () => {
       cancelled = true;
     };
-  }, [isCreatingWorkflow, onOpenSkill, selectedWorkflowSummary?.id]);
+  }, [canReadSkills, isCreatingWorkflow, selectedWorkflowSummary?.id]);
 
   async function refreshWorkflowValidation(nextDraft: WorkflowUpsertInput) {
     try {
@@ -671,7 +672,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
               </div>
             </section>
 
-            {onOpenSkill ? (
+            {canReadSkills ? (
               <section className="workflow-section workflow-section--compact">
                 <div>
                   <p className="eyebrow">Managed skills</p>
@@ -680,16 +681,30 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                 {skillLinks?.workflowSkills.length ? (
                   <div className="skills-binding-chip-list">
                     {skillLinks.workflowSkills.map((skill) => (
-                      <button className="task-tag-chip task-tag-chip--interactive" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                        <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                      </button>
+                      onOpenSkill ? (
+                        <button className="task-tag-chip task-tag-chip--interactive" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                        </button>
+                      ) : (
+                        <span className="task-tag-chip" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId}>
+                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                        </span>
+                      )
                     ))}
                   </div>
                 ) : (
                   <p className="muted-copy">No workflow-scoped skills are linked here. Edit assignments in Settings → Skills.</p>
                 )}
               </section>
-            ) : null}
+            ) : (
+              <section className="workflow-section workflow-section--compact">
+                <div>
+                  <p className="eyebrow">Managed skills</p>
+                  <h4>Workflow-linked skills</h4>
+                </div>
+                <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+              </section>
+            )}
 
             {selectedLane ? (
               <section className="workflow-section">
@@ -751,19 +766,27 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                   </div>
                 </div>
 
-                {onOpenSkill ? (
+                {canReadSkills ? (
                   selectedLaneSkillLinks?.skills.length ? (
                     <div className="skills-binding-chip-list">
                       {selectedLaneSkillLinks.skills.map((skill) => (
-                        <button className="task-tag-chip task-tag-chip--interactive" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                        </button>
+                        onOpenSkill ? (
+                          <button className="task-tag-chip task-tag-chip--interactive" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                            <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                          </button>
+                        ) : (
+                          <span className="task-tag-chip" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId}>
+                            <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                          </span>
+                        )
                       ))}
                     </div>
                   ) : (
                     <p className="muted-copy">No lane-scoped skills are linked to this lane. Edit assignments in Settings → Skills.</p>
                   )
-                ) : null}
+                ) : (
+                  <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+                )}
 
                 <div className="workflow-form-grid">
                   <label className="field-group">

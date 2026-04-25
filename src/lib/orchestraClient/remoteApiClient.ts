@@ -5,6 +5,7 @@ import type {
   AgentOperationsSnapshot,
   AgentQueueEntry,
   AgentQueueEntryInput,
+  AgentSkillLinks,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationResult,
@@ -14,6 +15,7 @@ import type {
   ChannelDetail,
   ChannelSummary,
   ChannelUpsertInput,
+  LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
   PiExecutableDiagnostic,
@@ -36,6 +38,7 @@ import type {
   RoleOperationsSnapshot,
   RoleQueueEntry,
   RoleQueueEntryInput,
+  RoleSkillLinks,
   RoleSummary,
   RoleUpsertInput,
   RoleValidationResult,
@@ -45,6 +48,10 @@ import type {
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
+  SkillBindingInput,
+  SkillDetail,
+  SkillSummary,
+  SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
   TaskAttachmentInput,
@@ -68,6 +75,7 @@ import type {
   TelegramChatCandidate,
   WorkflowDefinition,
   WorkflowDeleteImpact,
+  WorkflowSkillLinks,
   WorkflowSummary,
   WorkflowUpsertInput,
   WorkflowValidationResult,
@@ -723,6 +731,99 @@ export function createRemoteApiOrchestraClientBinding(
             botToken,
             apiBaseUrl: apiBaseUrl ?? null,
           },
+        });
+      },
+    },
+    skills: {
+      listSkills: (includeArchived = false) => {
+        transport.assertCapability("skills.listSkills", bootstrap.capabilities.skills.read);
+        return transport.requestJson<SkillSummary[]>("skills.listSkills", {
+          path: "/api/v1/skills",
+          query: {
+            includeArchived,
+          },
+        });
+      },
+      getSkill: (skillId) => {
+        transport.assertCapability("skills.getSkill", bootstrap.capabilities.skills.read);
+        return transport.requestJson<SkillDetail>("skills.getSkill", {
+          path: `/api/v1/skills/${encodeURIComponent(skillId)}`,
+        });
+      },
+      getCatalogDiagnostics: () => {
+        transport.assertCapability("skills.getCatalogDiagnostics", bootstrap.capabilities.skills.read);
+        return transport.requestJson<SkillsCatalogDiagnostics>("skills.getCatalogDiagnostics", {
+          path: "/api/v1/skills/catalog-diagnostics",
+        });
+      },
+      createLocalSkill: (input: LocalSkillUpsertInput) => {
+        transport.assertCapability("skills.createLocalSkill", bootstrap.capabilities.skills.create);
+        return transport.requestJson<SkillDetail>("skills.createLocalSkill", {
+          method: "POST",
+          path: "/api/v1/skills",
+          body: input,
+        });
+      },
+      updateLocalSkill: (skillId, input: LocalSkillUpsertInput) => {
+        transport.assertCapability("skills.updateLocalSkill", bootstrap.capabilities.skills.update);
+        return transport.requestJson<SkillDetail>("skills.updateLocalSkill", {
+          method: "PATCH",
+          path: `/api/v1/skills/${encodeURIComponent(skillId)}`,
+          body: input,
+        });
+      },
+      archiveLocalSkill: (skillId) => {
+        transport.assertCapability("skills.archiveLocalSkill", bootstrap.capabilities.skills.archive);
+        return transport.requestJson<SkillDetail>("skills.archiveLocalSkill", {
+          method: "POST",
+          path: `/api/v1/skills/${encodeURIComponent(skillId)}/archive`,
+        });
+      },
+      unarchiveLocalSkill: (skillId) => {
+        transport.assertCapability("skills.unarchiveLocalSkill", bootstrap.capabilities.skills.archive);
+        return transport.requestJson<SkillDetail>("skills.unarchiveLocalSkill", {
+          method: "POST",
+          path: `/api/v1/skills/${encodeURIComponent(skillId)}/unarchive`,
+        });
+      },
+      deleteLocalSkill: (skillId) => {
+        transport.assertCapability("skills.deleteLocalSkill", bootstrap.capabilities.skills.delete);
+        return transport.requestJson<SkillDetail>("skills.deleteLocalSkill", {
+          method: "DELETE",
+          path: `/api/v1/skills/${encodeURIComponent(skillId)}`,
+        });
+      },
+      refreshExternalSkills: () => {
+        transport.assertCapability("skills.refreshExternalSkills", bootstrap.capabilities.skills.update);
+        return transport.requestJson<SkillSummary[]>("skills.refreshExternalSkills", {
+          method: "POST",
+          path: "/api/v1/skills/refresh-external",
+        });
+      },
+      setSkillBindings: (skillId, bindings: SkillBindingInput[]) => {
+        transport.assertCapability("skills.setSkillBindings", bootstrap.capabilities.skills.assign);
+        return transport.requestJson<SkillDetail>("skills.setSkillBindings", {
+          method: "POST",
+          path: `/api/v1/skills/${encodeURIComponent(skillId)}/bindings`,
+          body: bindings,
+        });
+      },
+      getRoleSkillLinks: (roleId) => {
+        transport.assertCapability("skills.getRoleSkillLinks", bootstrap.capabilities.skills.read);
+        return transport.requestJson<RoleSkillLinks>("skills.getRoleSkillLinks", {
+          path: `/api/v1/roles/${encodeURIComponent(roleId)}/skills`,
+        });
+      },
+      getAgentSkillLinks: (agentId) => {
+        transport.assertCapability("skills.getAgentSkillLinks", bootstrap.capabilities.skills.read);
+        return transport.requestJson<AgentSkillLinks>("skills.getAgentSkillLinks", {
+          path: `/api/v1/agents/${encodeURIComponent(agentId)}/skills`,
+        });
+      },
+      getWorkflowSkillLinks: (workflowId) => {
+        transport.assertCapability("skills.getWorkflowSkillLinks", bootstrap.capabilities.skills.read);
+        return transport.requestJson<WorkflowSkillLinks>("skills.getWorkflowSkillLinks", {
+          path: `/api/v1/workflows/${encodeURIComponent(workflowId)}/skills`,
         });
       },
     },

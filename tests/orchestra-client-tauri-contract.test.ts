@@ -139,6 +139,7 @@ function createStubServices(): {
       workflows: {} as OrchestraClientServiceBindings["workflows"],
       policies: {} as OrchestraClientServiceBindings["policies"],
       channels: {} as OrchestraClientServiceBindings["channels"],
+      skills: {} as OrchestraClientServiceBindings["skills"],
       tasks: {
         list: vi.fn(async (options?: TaskListOptions) => {
           taskListCalls.push(options ?? {});

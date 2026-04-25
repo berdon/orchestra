@@ -17,6 +17,7 @@ export interface OrchestraClientFeatureFlags {
   sharedTasks: boolean;
   sharedInbox: boolean;
   sharedSessions: boolean;
+  sharedSkills: boolean;
   taskSchedules: boolean;
   sessionStreaming: boolean;
   sessionControls: boolean;
@@ -46,6 +47,14 @@ export interface OrchestraClientCapabilities {
     channels: OrchestraCapabilityDescriptor;
     modelCatalog: OrchestraCapabilityDescriptor;
     piExecutableDiagnostic: OrchestraCapabilityDescriptor;
+  };
+  skills: {
+    read: OrchestraCapabilityDescriptor;
+    create: OrchestraCapabilityDescriptor;
+    update: OrchestraCapabilityDescriptor;
+    archive: OrchestraCapabilityDescriptor;
+    delete: OrchestraCapabilityDescriptor;
+    assign: OrchestraCapabilityDescriptor;
   };
   tasks: {
     read: OrchestraCapabilityDescriptor;

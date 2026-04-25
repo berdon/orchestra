@@ -10,6 +10,7 @@ import {
   filterSkillBindingTargets,
   filterSkills,
   normalizeSkillBindingDraftForSave,
+  resolveSkillActionState,
   setSkillBindingDraftGlobal,
   skillBindingDraftHasChanges,
   validateSkillBindingDraft,
@@ -194,5 +195,63 @@ describe("skillsUi helpers", () => {
 
     expect(filterSkillBindingTargets(roles, "qa").map((role) => role.id)).toEqual(["role-2"]);
     expect(filterSkillBindingTargets(roles, "review").map((role) => role.id)).toEqual(["role-1"]);
+  });
+
+  it("resolves permission-sensitive skill action states", () => {
+    expect(resolveSkillActionState({
+      sourceKind: "local",
+      isCreatingLocalSkill: false,
+      capabilities: { create: false, update: false, archive: false, delete: false, assign: false },
+    })).toMatchObject({
+      canCreateLocalSkill: false,
+      canSaveLocalSkill: false,
+      canRefreshExternalSkills: false,
+      canArchiveSkill: false,
+      canDeleteSkill: false,
+      canEditAssignments: false,
+      localEditorReadOnly: true,
+    });
+
+    expect(resolveSkillActionState({
+      sourceKind: "local",
+      isCreatingLocalSkill: false,
+      capabilities: { create: true, update: true, archive: true, delete: true, assign: false },
+    })).toMatchObject({
+      canSaveLocalSkill: true,
+      canEditAssignments: false,
+      assignmentEditorReason: expect.stringContaining("skills.assign"),
+    });
+
+    expect(resolveSkillActionState({
+      sourceKind: "local",
+      isCreatingLocalSkill: false,
+      capabilities: { create: false, update: false, archive: false, delete: false, assign: true },
+    })).toMatchObject({
+      canSaveLocalSkill: false,
+      canEditAssignments: true,
+      assignmentEditorReason: null,
+    });
+
+    expect(resolveSkillActionState({
+      sourceKind: "local",
+      isCreatingLocalSkill: true,
+      capabilities: { create: true, update: true, archive: true, delete: true, assign: true },
+    })).toMatchObject({
+      canCreateLocalSkill: true,
+      canSaveLocalSkill: true,
+      localEditorReadOnly: false,
+      canEditAssignments: true,
+    });
+
+    expect(resolveSkillActionState({
+      sourceKind: "external",
+      isCreatingLocalSkill: false,
+      capabilities: { create: true, update: true, archive: true, delete: true, assign: true },
+    })).toMatchObject({
+      canSaveLocalSkill: false,
+      localEditorReadOnly: true,
+      localEditorReason: expect.stringContaining("read-only"),
+      canEditAssignments: true,
+    });
   });
 });
