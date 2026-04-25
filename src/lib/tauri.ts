@@ -1671,6 +1671,9 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
     if (task.status !== "blocked") {
       continue;
     }
+    if (task.activeLaneAssignment?.status === "active") {
+      continue;
+    }
 
     let changed = false;
     const affectedAgentIds = new Set<string>();
@@ -4105,7 +4108,7 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
 }
 
 function closeMockTaskSessionIfNeeded(task: TaskDetail, nextStatus: string, updatedAt: string) {
-  if (!["completed", "canceled"].includes(nextStatus) || !task.activeLaneAssignment?.sessionId) {
+  if (!["completed", "canceled", "blocked"].includes(nextStatus) || !task.activeLaneAssignment?.sessionId) {
     return;
   }
 
@@ -4295,6 +4298,45 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
     throw new Error(
       `Task ${taskId} still has ${unfinishedLaneTodos.length} unfinished todo item(s) for lane ${lane.id}. Finish or reopen them before using a completion tool.`,
     );
+  }
+
+  if (task.status === "blocked" || task.dependencyBlocked) {
+    if (!task.activeLaneAssignment) {
+      throw new Error(`Task ${taskId} is blocked by unresolved dependencies or unfinished subtasks and cannot progress until those blockers are resolved.`);
+    }
+
+    saveMockTasks(tasks.map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            status: "blocked",
+            activeLaneAssignment: null,
+            laneRuns: entry.laneRuns.map((run, index, allRuns) =>
+              index === allRuns.length - 1 && run.completedAt == null
+                ? { ...run, result: "blocked" as const, notes: normalizedNotes ?? run.notes ?? null, completedAt: updatedAt }
+                : run,
+            ),
+            updatedAt,
+          }
+        : entry,
+    ));
+
+    syncMockSessionTaskActivity(task.activeLaneAssignment, null);
+    finalizeMockAgentState(
+      {
+        ...task,
+        activeLaneAssignment: task.activeLaneAssignment
+          ? { ...task.activeLaneAssignment, completionNotes: normalizedNotes }
+          : null,
+      },
+      "success",
+      updatedAt,
+      null,
+    );
+    closeMockTaskSessionIfNeeded(task, "blocked", updatedAt);
+    appendMockLog("info", "task.transition", `Stopped blocked task ${taskId} at transition time`);
+    emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.blocked" });
+    return getTask(taskId);
   }
 
   if (
