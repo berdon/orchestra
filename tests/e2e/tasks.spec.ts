@@ -4101,6 +4101,114 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
 });
 
+test("task detail edit mode exposes bottom-right Save and Cancel FABs on mobile", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTasksOverviewOnMobile(page);
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await expect(page.locator('[data-role="task-detail-panel"]')).toBeVisible();
+
+  await page.getByRole("button", { name: "Overview actions" }).click();
+  await page.getByRole("button", { name: "Edit Task" }).click();
+
+  const editFab = page.locator('[data-role="task-detail-edit-fab"]');
+  const cancelButton = page.locator('[data-role="cancel-task-edit"]');
+  const saveButton = page.locator('[data-role="save-task"]');
+  await expect(editFab).toBeVisible();
+  await expect(cancelButton).toBeVisible();
+  await expect(saveButton).toBeVisible();
+  await expect(saveButton).toHaveText("Save");
+
+  const geometry = await page.evaluate(() => {
+    const fab = document.querySelector('[data-role="task-detail-edit-fab"]') as HTMLElement | null;
+    const dock = document.querySelector('[data-role="task-detail-tab-dock"]') as HTMLElement | null;
+    if (!fab || !dock) {
+      throw new Error("Expected edit FAB and tab dock to be rendered");
+    }
+    const fabRect = fab.getBoundingClientRect();
+    const dockRect = dock.getBoundingClientRect();
+    return {
+      fabRightGap: Math.round(window.innerWidth - fabRect.right),
+      fabBottom: Math.round(fabRect.bottom),
+      dockTop: Math.round(dockRect.top),
+    };
+  });
+  expect(geometry.fabRightGap).toBeLessThanOrEqual(24);
+  expect(geometry.fabBottom).toBeLessThanOrEqual(geometry.dockTop - 8);
+
+  await page.locator('[data-role="task-title"]').fill("Unsaved mobile edit title");
+  await cancelButton.click();
+
+  await expect(editFab).toHaveCount(0);
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Implement task foundation shell");
+  await expect(page.locator('[data-role="task-title-heading"]')).not.toContainText("Unsaved mobile edit title");
+});
+
+test("task detail compact header stays below the mobile topbar while scrolling", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTasksOverviewOnMobile(page);
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected seeded task was not found");
+    }
+    target.description = Array.from({ length: 80 }, (_, index) => `Mobile compact header line ${index + 1}`).join("\n\n");
+    target.updatedAt = new Date().toISOString();
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: {
+        taskIds: [target.id],
+        reason: "task.updated",
+      },
+    }));
+  });
+
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    return Boolean(content && content.scrollHeight > content.clientHeight + 500);
+  });
+
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = 1400;
+      content.dispatchEvent(new Event('scroll'));
+      return;
+    }
+    window.scrollTo({ top: 1400, behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+
+  const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
+  await expect(compactHeader).toBeVisible();
+  const headerGeometry = await page.evaluate(() => {
+    const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
+    const compact = document.querySelector('[data-role="task-detail-compact-header"]') as HTMLElement | null;
+    if (!topbar || !compact) {
+      throw new Error("Expected mobile topbar and compact task header to be rendered");
+    }
+    const topbarRect = topbar.getBoundingClientRect();
+    const compactRect = compact.getBoundingClientRect();
+    return {
+      topbarBottom: Math.round(topbarRect.bottom),
+      compactTop: Math.round(compactRect.top),
+    };
+  });
+  expect(headerGeometry.compactTop).toBeGreaterThanOrEqual(headerGeometry.topbarBottom + 8);
+});
+
 test("task detail refreshes from backend task-change events without waiting on polling", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

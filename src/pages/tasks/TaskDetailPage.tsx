@@ -67,6 +67,7 @@ interface TaskDetailPageProps {
   onCommentDraftChange: (draft: TaskCommentInput) => void;
   onCommentsTabViewed: () => void;
   onSave: () => void;
+  onCancelEdit: () => void;
   onPublish: () => void;
   onClose: (reason?: string) => void;
   onDelete: () => void;
@@ -292,6 +293,7 @@ export function TaskDetailPage({
   onCommentDraftChange,
   onCommentsTabViewed,
   onSave,
+  onCancelEdit,
   onPublish,
   onClose,
   onDelete,
@@ -496,6 +498,7 @@ export function TaskDetailPage({
       currentAncestor = currentAncestor.parentElement;
     }
     const contentRoot = detailPage.closest(".content") as HTMLElement | null;
+    const mobileTopbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
     scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
     window.scrollTo({ top: 0, behavior: "auto" });
     setCompactHeaderVisible(false);
@@ -508,7 +511,8 @@ export function TaskDetailPage({
       frameId = window.requestAnimationFrame(() => {
         const detailRect = detailPage.getBoundingClientRect();
         const contentRect = contentRoot?.getBoundingClientRect() ?? null;
-        const pinnedTop = Math.max(contentRect?.top ?? 0, 0) + 10;
+        const topbarRect = mobileTopbar?.getBoundingClientRect() ?? null;
+        const pinnedTop = Math.max(contentRect?.top ?? 0, topbarRect?.bottom ?? 0, 0) + 10;
         const nextLayout = detailRect.width > 0 && detailRect.bottom > pinnedTop + 72
           ? {
               left: Math.max(detailRect.left, 12),
@@ -720,6 +724,11 @@ export function TaskDetailPage({
   function openReplyComposer(comment: TaskComment) {
     setReplyTargetCommentId(comment.id);
     setReplyDraft(createReplyDraft(commentDraft.author, comment.id));
+  }
+
+  function handleCancelEdit() {
+    onCancelEdit();
+    setIsEditing(false);
   }
 
   async function handleAddTopLevelComment() {
@@ -1606,7 +1615,7 @@ export function TaskDetailPage({
                   {
                     id: "done-editing",
                     label: "Done editing",
-                    onClick: () => setIsEditing(false),
+                    onClick: handleCancelEdit,
                     variant: "secondary",
                     dataRole: "close-edit-task",
                   },
@@ -1626,7 +1635,6 @@ export function TaskDetailPage({
                     onClick: onSave,
                     disabled: saving || loading || !draft.title.trim(),
                     variant: "primary",
-                    dataRole: "save-task",
                   },
                   ...(canClose
                     ? [{
@@ -1939,6 +1947,29 @@ export function TaskDetailPage({
             </div>
           </div>
           {renderHeaderActions(true)}
+        </div>
+      ) : null}
+
+      {isEditing ? (
+        <div className="task-detail-edit-fab" data-role="task-detail-edit-fab" aria-label="Task edit actions">
+          <button
+            className="secondary-button task-detail-edit-fab__button"
+            data-role="cancel-task-edit"
+            type="button"
+            disabled={saving || publishing || Boolean(pendingActionId)}
+            onClick={handleCancelEdit}
+          >
+            Cancel
+          </button>
+          <button
+            className={`primary-button task-detail-edit-fab__button${saving || pendingActionId === "save" ? " task-action-button--pending" : ""}`}
+            data-role="save-task"
+            type="button"
+            disabled={saving || publishing || loading || Boolean(pendingActionId) || !draft.title.trim()}
+            onClick={onSave}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
         </div>
       ) : null}
 
