@@ -3734,6 +3734,18 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
     window.scrollTo({ top: 1200, behavior: 'auto' });
     window.dispatchEvent(new Event('scroll'));
   });
+  await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'hidden');
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = Math.max(content.scrollTop - 80, 0);
+      content.dispatchEvent(new Event('scroll'));
+      return;
+    }
+    window.scrollTo({ top: Math.max(window.scrollY - 80, 0), behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'visible');
   await expect(page.locator('[data-role="task-detail-compact-header"]')).toBeVisible();
 
   const compactHeaderLayout = await readHeaderActionLayout('[data-role="task-detail-compact-actions"]');
@@ -4190,7 +4202,8 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
     return Boolean((content && content.scrollTop > 500) || window.scrollY > 500);
   });
 
-  await expect(page.locator('.task-detail-floating-header')).toBeVisible();
+  await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'hidden');
+  await expect(page.locator('[data-role="task-detail-tab-dock"]')).toBeVisible();
   await tabDock.getByRole('button', { name: 'Task details' }).click();
   await page.waitForFunction(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -4202,6 +4215,78 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
   await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
 
+});
+
+test("task detail compact header follows scroll direction without jitter", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected seeded task was not found");
+    }
+    target.description = Array.from({ length: 90 }, (_, index) => `Scroll-direction detail line ${index + 1}`).join("\n\n");
+    target.updatedAt = new Date().toISOString();
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: {
+        taskIds: [target.id],
+        reason: "task.updated",
+      },
+    }));
+  });
+
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    const documentElement = document.documentElement;
+    return Boolean(
+      (content && content.scrollHeight > content.clientHeight + 500)
+      || documentElement.scrollHeight > window.innerHeight + 500,
+    );
+  });
+
+  const scrollTaskDetailTo = async (top: number) => {
+    await page.evaluate((nextTop) => {
+      const content = document.querySelector('.content') as HTMLElement | null;
+      if (content && content.scrollHeight > content.clientHeight) {
+        content.scrollTop = nextTop;
+        content.dispatchEvent(new Event('scroll'));
+        return;
+      }
+      window.scrollTo({ top: nextTop, behavior: 'auto' });
+      window.dispatchEvent(new Event('scroll'));
+    }, top);
+  };
+
+  const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
+  await scrollTaskDetailTo(1400);
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
+  await expect(page.locator('[data-role="task-detail-tab-dock"]')).toBeVisible();
+
+  await scrollTaskDetailTo(1332);
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
+  await expect(compactHeader).toBeVisible();
+
+  await scrollTaskDetailTo(1337);
+  await scrollTaskDetailTo(1332);
+  await scrollTaskDetailTo(1336);
+  await scrollTaskDetailTo(1333);
+  await page.waitForTimeout(220);
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
+  await expect(compactHeader).toBeVisible();
+
+  await scrollTaskDetailTo(1372);
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
+  await expect(compactHeader).toBeHidden();
 });
 
 test("task detail on mobile uses a section select for tab panels", async ({ page }) => {
@@ -4323,7 +4408,27 @@ test("task detail compact header stays below the mobile topbar while scrolling",
   });
 
   const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = 1320;
+      content.dispatchEvent(new Event('scroll'));
+      return;
+    }
+    window.scrollTo({ top: 1320, behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
   await expect(compactHeader).toBeVisible();
+  await page.waitForFunction(() => {
+    const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
+    const compact = document.querySelector('[data-role="task-detail-compact-header"]') as HTMLElement | null;
+    if (!topbar || !compact) {
+      return false;
+    }
+    return compact.getBoundingClientRect().top >= topbar.getBoundingClientRect().bottom + 8;
+  });
   const headerGeometry = await page.evaluate(() => {
     const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
     const compact = document.querySelector('[data-role="task-detail-compact-header"]') as HTMLElement | null;
