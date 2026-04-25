@@ -83,6 +83,15 @@ export function TasksOverviewPage({
     done: tagScopedTasks.filter((task) => task.status === "completed" || task.status === "canceled").length,
     epics: tagScopedTasks.filter((task) => task.type === "epic").length,
   };
+  const boardFilterOptions = [
+    ["all", "All", filterCounts.all],
+    ["attention", "Attention", filterCounts.attention],
+    ["review", "Needs review", filterCounts.review],
+    ["blocked", "Blocked", filterCounts.blocked],
+    ["active", "Active", filterCounts.active],
+    ["done", "Done", filterCounts.done],
+    ["epics", "Epics", filterCounts.epics],
+  ] as Array<[TaskOverviewState["boardFilter"], string, number]>;
 
   const canToggleTagMatch = overviewState.tags.length > 1;
   const availableTagSet = new Set(availableTags);
@@ -107,15 +116,7 @@ export function TasksOverviewPage({
       <section className="tasks-overview-stack">
         <div className="task-overview-controls">
           <div className="task-nav-filters task-nav-filters--horizontal" data-role="task-nav-filters">
-            {([
-              ["all", "All", filterCounts.all],
-              ["attention", "Attention", filterCounts.attention],
-              ["review", "Needs review", filterCounts.review],
-              ["blocked", "Blocked", filterCounts.blocked],
-              ["active", "Active", filterCounts.active],
-              ["done", "Done", filterCounts.done],
-              ["epics", "Epics", filterCounts.epics],
-            ] as Array<[TaskOverviewState["boardFilter"], string, number]>).map(([key, label, count]) => (
+            {boardFilterOptions.map(([key, label, count]) => (
               <button
                 key={key}
                 className={overviewState.boardFilter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
@@ -128,6 +129,23 @@ export function TasksOverviewPage({
               </button>
             ))}
           </div>
+
+          <label className="task-overview-controls__mobile-filter">
+            <span className="task-overview-controls__mobile-filter-label">Filter</span>
+            <select
+              className="select-input task-overview-controls__mobile-filter-select"
+              data-role="task-filter-select-mobile"
+              value={overviewState.boardFilter}
+              onChange={(event) => updateOverviewState((current) => ({
+                ...current,
+                boardFilter: event.target.value as TaskOverviewState["boardFilter"],
+              }))}
+            >
+              {boardFilterOptions.map(([key, label, count]) => (
+                <option key={key} value={key}>{label} ({count})</option>
+              ))}
+            </select>
+          </label>
 
           <div className="task-view-toggle" data-role="task-view-toggle">
             <button

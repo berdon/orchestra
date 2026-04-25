@@ -3310,6 +3310,23 @@ strong {
   align-items: start;
 }
 
+.task-overview-controls__mobile-filter {
+  display: none;
+}
+
+.task-overview-controls__mobile-filter-label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.task-overview-controls__mobile-filter-select {
+  width: 100%;
+  min-width: 0;
+}
+
 .task-overview-filters {
   display: grid;
   gap: 12px;
@@ -4967,8 +4984,7 @@ strong {
   .task-dependency-grid,
   .task-comment-composer__grid,
   .workflow-form-grid,
-  .workflow-form-grid--compact,
-  .task-overview-controls {
+  .workflow-form-grid--compact {
     grid-template-columns: 1fr;
   }
 
@@ -4986,6 +5002,31 @@ strong {
 }
 
 @media (max-width: 900px) {
+  .task-overview-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .task-overview-controls__mobile-filter {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .task-overview-controls .task-nav-filters {
+    display: none;
+  }
+
+  .task-overview-controls .task-view-toggle {
+    justify-self: end;
+  }
+
+  .task-overview-controls .task-view-toggle__button {
+    padding-inline: 8px;
+  }
+
   .app-shell,
   .app-shell[data-sidebar-collapsed="true"] {
     --sidebar-width: 100%;

@@ -17,6 +17,135 @@ async function getElementHeight(locator: Locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
 }
 
+async function seedMobileTaskOverviewControlsData(page: Page) {
+  await page.addInitScript(() => {
+    if (window.localStorage.getItem("orchestra.mock.mobile-overview-controls-seeded") === "true") {
+      return;
+    }
+    window.localStorage.clear();
+    window.localStorage.setItem("orchestra.mock.mobile-overview-controls-seeded", "true");
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-mobile-overview-controls",
+          slug: "mobile-overview-controls",
+          name: "Mobile Overview Controls Flow",
+          description: "Flow used to verify the mobile task overview controls row.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-implement",
+              key: "implement",
+              name: "Implement",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: "Build it.",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    const buildTask = (overrides: Record<string, unknown>) => ({
+      projectId: "orchestra",
+      description: null,
+      type: "task",
+      status: "ready",
+      priority: "P2",
+      workflowId: "workflow-mobile-overview-controls",
+      currentLaneId: "lane-implement",
+      assigneeType: "role",
+      assigneeId: "developer",
+      repositoryId: null,
+      repositoryIds: [],
+      parentTaskId: null,
+      archived: false,
+      tags: [],
+      commentCount: 0,
+      laneRunCount: 0,
+      childCount: 0,
+      completedChildCount: 0,
+      inProgressChildCount: 0,
+      blockedChildCount: 0,
+      blockedByCount: 0,
+      blockingCount: 0,
+      attachmentCount: 0,
+      dependencyBlocked: false,
+      readyForDispatch: false,
+      parent: null,
+      lineage: [],
+      children: [],
+      blockedBy: [],
+      blocking: [],
+      attachments: [],
+      taskRepositories: [],
+      fileReferences: [],
+      comments: [],
+      todos: [],
+      laneRuns: [],
+      activeLaneAssignment: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      ...overrides,
+    });
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        buildTask({
+          id: "task-mobile-ready",
+          number: "ORC-M1",
+          title: "Ready mobile task",
+          status: "ready",
+          readyForDispatch: true,
+        }),
+        buildTask({
+          id: "task-mobile-completed",
+          number: "ORC-M2",
+          title: "Completed mobile task",
+          status: "completed",
+          currentLaneId: null,
+          laneRunCount: 1,
+        }),
+        buildTask({
+          id: "task-mobile-blocked",
+          number: "ORC-M3",
+          title: "Blocked mobile task",
+          status: "blocked",
+        }),
+        buildTask({
+          id: "task-mobile-review",
+          number: "ORC-M4",
+          title: "Review mobile task",
+          status: "in_review",
+        }),
+        buildTask({
+          id: "task-mobile-epic",
+          number: "ORC-M5",
+          title: "Epic mobile task",
+          type: "epic",
+          readyForDispatch: true,
+        }),
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.task-schedules", JSON.stringify([]));
+  });
+}
+
+async function openTasksOverviewOnMobile(page: Page) {
+  await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await page.getByRole("button", { name: "Tasks" }).click();
+}
+
 async function seedClickableTagNavigationData(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -521,6 +650,61 @@ test("tasks overview keeps collapsed filters compact while showing active filter
   await expect(page.locator('[data-role="task-overview-filters-summary"]')).toContainText("Sort: Title · Ascending");
   await expect(page.locator('[data-role="task-overview-filters-active-count"]')).toHaveText("2 active");
   expect(await getElementHeight(page.locator('[data-role="task-overview-filters-card"]'))).toBeLessThan(100);
+});
+
+test("tasks overview mobile row combines board filter select with the view toggle", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedMobileTaskOverviewControlsData(page);
+  await openTasksOverviewOnMobile(page);
+
+  const mobileFilterSelect = page.locator('[data-role="task-filter-select-mobile"]');
+  await expect(mobileFilterSelect).toBeVisible();
+  await expect(mobileFilterSelect).toHaveValue("all");
+  await expect(page.locator('[data-role="task-nav-filters"]')).toBeHidden();
+  await expect(page.locator('[data-role="task-view-toggle"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-view-cards"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-view-table"]')).toBeVisible();
+
+  const controlsLayout = await page.locator(".task-overview-controls").evaluate((element) => {
+    const mobileFilter = element.querySelector(".task-overview-controls__mobile-filter");
+    const viewToggle = element.querySelector('[data-role="task-view-toggle"]');
+    if (!(mobileFilter instanceof HTMLElement) || !(viewToggle instanceof HTMLElement)) {
+      throw new Error("Expected mobile filter and view toggle inside task overview controls");
+    }
+    const mobileFilterRect = mobileFilter.getBoundingClientRect();
+    const viewToggleRect = viewToggle.getBoundingClientRect();
+    return {
+      verticalCenterDelta: Math.abs(
+        (mobileFilterRect.top + mobileFilterRect.height / 2) - (viewToggleRect.top + viewToggleRect.height / 2),
+      ),
+      viewToggleStartsToTheRight: viewToggleRect.left > mobileFilterRect.left,
+    };
+  });
+  expect(controlsLayout.verticalCenterDelta).toBeLessThan(24);
+  expect(controlsLayout.viewToggleStartsToTheRight).toBe(true);
+});
+
+test("tasks overview mobile board filter select preserves filtering and table view switching", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedMobileTaskOverviewControlsData(page);
+  await openTasksOverviewOnMobile(page);
+
+  const mobileFilterSelect = page.locator('[data-role="task-filter-select-mobile"]');
+  await mobileFilterSelect.selectOption("done");
+  await expect(mobileFilterSelect).toHaveValue("done");
+  await expect(page.locator('[data-role="workflow-done-grid"]')).toContainText("Completed mobile task");
+  await expect(page.locator('[data-role="workflow-task-section"]')).not.toContainText("Ready mobile task");
+
+  await page.locator('[data-role="task-view-table"]').click();
+  await expect(page.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-role="task-table"]')).toContainText("Completed mobile task");
+  await expect(page.locator('[data-role="task-table"]')).not.toContainText("Ready mobile task");
+
+  await page.reload();
+  await expect(mobileFilterSelect).toBeVisible();
+  await expect(mobileFilterSelect).toHaveValue("done");
+  await expect(page.locator('[data-role="task-view-table"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-role="task-table"]')).toContainText("Completed mobile task");
 });
 
 test("clicking a task detail tag chip returns to tasks overview filtered by that tag", async ({ page }) => {
