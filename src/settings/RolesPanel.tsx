@@ -71,7 +71,7 @@ interface RolesPanelProps {
   selectionRequest?: { roleId: string; token: number } | null;
 }
 
-export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpenPiSettings, onOpenSkill }: RolesPanelProps & { piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void }) {
+export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpenPiSettings, onOpenSkill, canReadSkills = false }: RolesPanelProps & { piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void; canReadSkills?: boolean }) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [roleDraft, setRoleDraft] = useState<RoleUpsertInput>(createBlankRoleDraft);
@@ -247,7 +247,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
   }, [selectedRoleSummary?.id, isCreatingRole, loadedRoleId]);
 
   useEffect(() => {
-    if (!onOpenSkill || isCreatingRole || !selectedRoleSummary?.id) {
+    if (!canReadSkills || isCreatingRole || !selectedRoleSummary?.id) {
       setSkillLinks(null);
       return;
     }
@@ -269,7 +269,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
     return () => {
       cancelled = true;
     };
-  }, [isCreatingRole, onOpenSkill, selectedRoleSummary?.id]);
+  }, [canReadSkills, isCreatingRole, selectedRoleSummary?.id]);
 
   useEffect(() => {
     if (!selectionRequest || selectionRequest.token === selectionRequestTokenRef.current) {
@@ -612,7 +612,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
 
             <p className="muted-copy">Permissions assigned here are inherited by role instances spawned from this role.</p>
 
-            {onOpenSkill ? (
+            {canReadSkills ? (
               <section className="workflow-section">
                 <div>
                   <p className="eyebrow">Managed skills</p>
@@ -621,16 +621,30 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
                 {skillLinks?.skills.length ? (
                   <div className="skills-binding-chip-list">
                     {skillLinks.skills.map((skill) => (
-                      <button className="task-tag-chip task-tag-chip--interactive" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                        <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                      </button>
+                      onOpenSkill ? (
+                        <button className="task-tag-chip task-tag-chip--interactive" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                        </button>
+                      ) : (
+                        <span className="task-tag-chip" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId}>
+                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                        </span>
+                      )
                     ))}
                   </div>
                 ) : (
                   <p className="muted-copy">No skills are directly bound to this role. Edit assignments in Settings → Skills.</p>
                 )}
               </section>
-            ) : null}
+            ) : (
+              <section className="workflow-section">
+                <div>
+                  <p className="eyebrow">Managed skills</p>
+                  <h3>Linked skills</h3>
+                </div>
+                <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+              </section>
+            )}
 
             {validationSummary.length > 0 ? (
               <section className="workflow-section">

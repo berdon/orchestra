@@ -86,6 +86,7 @@ const bootstrap: OrchestraClientBootstrap = {
     sharedTasks: true,
     sharedInbox: true,
     sharedSessions: true,
+    sharedSkills: true,
     taskSchedules: true,
     sessionStreaming: true,
     sessionControls: true,
@@ -114,6 +115,14 @@ const bootstrap: OrchestraClientBootstrap = {
       channels: { availability: "available" },
       modelCatalog: { availability: "available" },
       piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+    },
+    skills: {
+      read: { availability: "available" },
+      create: { availability: "available" },
+      update: { availability: "available" },
+      archive: { availability: "available" },
+      delete: { availability: "available" },
+      assign: { availability: "available" },
     },
     tasks: {
       read: { availability: "available" },

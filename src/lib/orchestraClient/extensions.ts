@@ -146,3 +146,7 @@ export function supportsRemoteAccess(
 ) {
   return Boolean(client.hostAdmin) && isCapabilityAvailable(bootstrap.capabilities.host.remoteAccess);
 }
+
+export function supportsSkillsSettings(bootstrap: OrchestraClientBootstrap) {
+  return isCapabilityAvailable(bootstrap.capabilities.skills.read);
+}

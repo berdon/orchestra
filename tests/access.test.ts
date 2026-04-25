@@ -47,6 +47,8 @@ describe("access helpers", () => {
 
   test("filters and groups permissions for the catalog", () => {
     expect(filterPermissionOptions("dispatch").map((option) => option.key)).toContain("roles.dispatch");
+    expect(filterPermissionOptions("skill").map((option) => option.key)).toContain("skills.read");
     expect(groupPermissionOptions("session").some((group) => group.group === "Sessions")).toBe(true);
+    expect(groupPermissionOptions("skill").some((group) => group.group === "Skills" && group.options.some((option) => option.key === "skills.assign"))).toBe(true);
   });
 });

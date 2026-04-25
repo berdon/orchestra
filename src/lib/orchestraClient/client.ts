@@ -5,6 +5,7 @@ import type {
   AgentOperationsSnapshot,
   AgentQueueEntry,
   AgentQueueEntryInput,
+  AgentSkillLinks,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationResult,
@@ -14,6 +15,7 @@ import type {
   ChannelDetail,
   ChannelSummary,
   ChannelUpsertInput,
+  LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
   PiExecutableDiagnostic,
@@ -36,6 +38,7 @@ import type {
   RoleOperationsSnapshot,
   RoleQueueEntry,
   RoleQueueEntryInput,
+  RoleSkillLinks,
   RoleSummary,
   RoleUpsertInput,
   RoleValidationResult,
@@ -45,6 +48,10 @@ import type {
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
+  SkillBindingInput,
+  SkillDetail,
+  SkillSummary,
+  SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
   TaskAttachmentInput,
@@ -68,6 +75,7 @@ import type {
   TelegramChatCandidate,
   WorkflowDefinition,
   WorkflowDeleteImpact,
+  WorkflowSkillLinks,
   WorkflowSummary,
   WorkflowUpsertInput,
   WorkflowValidationResult,
@@ -88,6 +96,7 @@ export type {
   AgentOperationsSnapshot,
   AgentQueueEntry,
   AgentQueueEntryInput,
+  AgentSkillLinks,
   AgentSummary,
   AgentUpsertInput,
   AgentValidationResult,
@@ -97,6 +106,7 @@ export type {
   ChannelDetail,
   ChannelSummary,
   ChannelUpsertInput,
+  LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
   PiExecutableDiagnostic,
@@ -119,6 +129,7 @@ export type {
   RoleOperationsSnapshot,
   RoleQueueEntry,
   RoleQueueEntryInput,
+  RoleSkillLinks,
   RoleSummary,
   RoleUpsertInput,
   RoleValidationResult,
@@ -128,6 +139,10 @@ export type {
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
+  SkillBindingInput,
+  SkillDetail,
+  SkillSummary,
+  SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
   TaskAttachmentInput,
@@ -151,6 +166,7 @@ export type {
   TelegramChatCandidate,
   WorkflowDefinition,
   WorkflowDeleteImpact,
+  WorkflowSkillLinks,
   WorkflowSummary,
   WorkflowUpsertInput,
   WorkflowValidationResult,
@@ -267,6 +283,22 @@ export interface OrchestraChannelService {
   listTelegramChatCandidates(botToken: string, apiBaseUrl?: string | null): Promise<TelegramChatCandidate[]>;
 }
 
+export interface OrchestraSkillsService {
+  listSkills(includeArchived?: boolean): Promise<SkillSummary[]>;
+  getSkill(skillId: string): Promise<SkillDetail>;
+  getCatalogDiagnostics(): Promise<SkillsCatalogDiagnostics>;
+  createLocalSkill(input: LocalSkillUpsertInput): Promise<SkillDetail>;
+  updateLocalSkill(skillId: string, input: LocalSkillUpsertInput): Promise<SkillDetail>;
+  archiveLocalSkill(skillId: string): Promise<SkillDetail>;
+  unarchiveLocalSkill(skillId: string): Promise<SkillDetail>;
+  deleteLocalSkill(skillId: string): Promise<SkillDetail>;
+  refreshExternalSkills(): Promise<SkillSummary[]>;
+  setSkillBindings(skillId: string, bindings: SkillBindingInput[]): Promise<SkillDetail>;
+  getRoleSkillLinks(roleId: string): Promise<RoleSkillLinks>;
+  getAgentSkillLinks(agentId: string): Promise<AgentSkillLinks>;
+  getWorkflowSkillLinks(workflowId: string): Promise<WorkflowSkillLinks>;
+}
+
 export interface OrchestraTaskService {
   list(options?: TaskListOptions): Promise<TaskSummary[]>;
   get(taskId: string): Promise<TaskDetail>;
@@ -354,6 +386,7 @@ export interface OrchestraClient {
   readonly workflows: OrchestraWorkflowService;
   readonly policies: OrchestraPolicyService;
   readonly channels: OrchestraChannelService;
+  readonly skills: OrchestraSkillsService;
   readonly tasks: OrchestraTaskService;
   readonly inbox: OrchestraInboxService;
   readonly sessions: OrchestraSessionService;

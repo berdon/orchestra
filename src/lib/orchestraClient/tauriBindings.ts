@@ -78,20 +78,27 @@ import {
 import { getPiExecutableDiagnostic, listPiModels } from "../tauri";
 import { normalizeTaskTags } from "../taskTags";
 import type {
+  AgentSkillLinks,
   AgentSummary,
   AppInfo,
   ArchiveMailboxMessagesInput,
+  LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
   ProjectDetail,
   ProjectSummary,
   QueuedSessionMessage,
+  RoleSkillLinks,
   RoleSummary,
   SendMailboxMessageInput,
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
+  SkillBindingInput,
+  SkillDetail,
+  SkillSummary,
+  SkillsCatalogDiagnostics,
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
@@ -111,6 +118,7 @@ import type {
   TaskTodoInput,
   TaskUpsertInput,
   WorkflowDefinition,
+  WorkflowSkillLinks,
   WorkflowSummary,
 } from "../../types";
 import type { OrchestraTaskCompletionOutcome } from "./client";
@@ -273,6 +281,21 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     deleteChannel,
     validateTelegramBot,
     listTelegramChatCandidates,
+  },
+  skills: {
+    listSkills: (includeArchived = false) => invokeTauri<SkillSummary[]>("list_skills", { includeArchived }),
+    getSkill: (skillId) => invokeTauri<SkillDetail>("get_skill", { skillId }),
+    getCatalogDiagnostics: () => invokeTauri<SkillsCatalogDiagnostics>("get_skills_catalog_diagnostics"),
+    createLocalSkill: (input: LocalSkillUpsertInput) => invokeTauri<SkillDetail>("create_local_skill", { input }),
+    updateLocalSkill: (skillId, input: LocalSkillUpsertInput) => invokeTauri<SkillDetail>("update_local_skill", { skillId, input }),
+    archiveLocalSkill: (skillId) => invokeTauri<SkillDetail>("archive_local_skill", { skillId }),
+    unarchiveLocalSkill: (skillId) => invokeTauri<SkillDetail>("unarchive_local_skill", { skillId }),
+    deleteLocalSkill: (skillId) => invokeTauri<SkillDetail>("delete_local_skill", { skillId }),
+    refreshExternalSkills: () => invokeTauri<SkillSummary[]>("refresh_external_skills"),
+    setSkillBindings: (skillId, bindings: SkillBindingInput[]) => invokeTauri<SkillDetail>("set_skill_bindings", { skillId, bindings }),
+    getRoleSkillLinks: (roleId) => invokeTauri<RoleSkillLinks>("get_role_skill_links", { roleId }),
+    getAgentSkillLinks: (agentId) => invokeTauri<AgentSkillLinks>("get_agent_skill_links", { agentId }),
+    getWorkflowSkillLinks: (workflowId) => invokeTauri<WorkflowSkillLinks>("get_workflow_skill_links", { workflowId }),
   },
   tasks: {
     list: async (options) => {

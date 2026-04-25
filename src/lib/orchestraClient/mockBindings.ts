@@ -176,6 +176,10 @@ async function completeTask(
   }
 }
 
+function unsupportedManagedSkillsError() {
+  return new Error("Managed skills are unavailable in the mock host.");
+}
+
 export const mockOrchestraClientServiceBindings: OrchestraClientServiceBindings = {
   app: {
     getInfo: getAppInfo,
@@ -265,6 +269,21 @@ export const mockOrchestraClientServiceBindings: OrchestraClientServiceBindings 
     deleteChannel,
     validateTelegramBot,
     listTelegramChatCandidates,
+  },
+  skills: {
+    listSkills: async () => { throw unsupportedManagedSkillsError(); },
+    getSkill: async () => { throw unsupportedManagedSkillsError(); },
+    getCatalogDiagnostics: async () => { throw unsupportedManagedSkillsError(); },
+    createLocalSkill: async () => { throw unsupportedManagedSkillsError(); },
+    updateLocalSkill: async () => { throw unsupportedManagedSkillsError(); },
+    archiveLocalSkill: async () => { throw unsupportedManagedSkillsError(); },
+    unarchiveLocalSkill: async () => { throw unsupportedManagedSkillsError(); },
+    deleteLocalSkill: async () => { throw unsupportedManagedSkillsError(); },
+    refreshExternalSkills: async () => { throw unsupportedManagedSkillsError(); },
+    setSkillBindings: async () => { throw unsupportedManagedSkillsError(); },
+    getRoleSkillLinks: async () => { throw unsupportedManagedSkillsError(); },
+    getAgentSkillLinks: async () => { throw unsupportedManagedSkillsError(); },
+    getWorkflowSkillLinks: async () => { throw unsupportedManagedSkillsError(); },
   },
   tasks: {
     list: listTasks,

@@ -95,6 +95,51 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "workflows.read",
     ),
     ("delete_workflow", "Delete a workflow", "workflows.delete"),
+    ("list_skills", "List managed skills", "skills.read"),
+    ("get_skill", "Get a managed skill", "skills.read"),
+    (
+        "get_skills_catalog_diagnostics",
+        "Inspect managed-skills catalog diagnostics",
+        "skills.read",
+    ),
+    ("create_local_skill", "Create a local managed skill", "skills.create"),
+    ("update_local_skill", "Update a local managed skill", "skills.update"),
+    (
+        "archive_local_skill",
+        "Archive a local managed skill",
+        "skills.archive",
+    ),
+    (
+        "unarchive_local_skill",
+        "Unarchive a local managed skill",
+        "skills.archive",
+    ),
+    ("delete_local_skill", "Delete a local managed skill", "skills.delete"),
+    (
+        "refresh_external_skills",
+        "Refresh discovered external managed skills",
+        "skills.update",
+    ),
+    (
+        "set_skill_bindings",
+        "Update managed-skill scope bindings",
+        "skills.assign",
+    ),
+    (
+        "get_role_skill_links",
+        "Inspect skills linked to a role",
+        "skills.read",
+    ),
+    (
+        "get_agent_skill_links",
+        "Inspect skills linked to an agent",
+        "skills.read",
+    ),
+    (
+        "get_workflow_skill_links",
+        "Inspect skills linked to a workflow",
+        "skills.read",
+    ),
     ("list_policies", "List policies", "policies.read"),
     ("get_policy", "Get a policy", "policies.read"),
     (

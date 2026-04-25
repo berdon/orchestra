@@ -42,6 +42,7 @@ function resolveFeatureFlags(hostKind: OrchestraClientHostKind): OrchestraClient
     sharedTasks: true,
     sharedInbox: true,
     sharedSessions: true,
+    sharedSkills: hostKind !== "mock",
     taskSchedules: true,
     sessionStreaming: true,
     sessionControls: true,
@@ -54,8 +55,11 @@ function resolveFeatureFlags(hostKind: OrchestraClientHostKind): OrchestraClient
 
 function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClientCapabilities {
   const desktopOnlyReason = "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.";
+  const mockSkillsReason = "Managed skills are unavailable in the mock host.";
   const available = availableCapability();
   const hostExtensionAvailable = hostKind !== "remote_api";
+  const skillsAvailable = hostKind !== "mock";
+  const skillsCapability = skillsAvailable ? available : unavailableCapability(mockSkillsReason);
 
   return {
     app: {
@@ -77,6 +81,14 @@ function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClient
       channels: available,
       modelCatalog: available,
       piExecutableDiagnostic: hostExtensionAvailable ? available : unavailableCapability(desktopOnlyReason),
+    },
+    skills: {
+      read: skillsCapability,
+      create: skillsCapability,
+      update: skillsCapability,
+      archive: skillsCapability,
+      delete: skillsCapability,
+      assign: skillsCapability,
     },
     tasks: {
       read: available,
