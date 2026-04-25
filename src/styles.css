@@ -1411,10 +1411,16 @@ strong {
 
 .page-mobile-switcher {
   display: none;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .page-mobile-switcher__trigger {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -1447,6 +1453,9 @@ strong {
   left: 0;
   right: 0;
   z-index: 12;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow: hidden;
   border-radius: 14px;
   box-shadow: var(--shadow);
@@ -1454,6 +1463,10 @@ strong {
 
 .sessions-mobile-picker {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
   gap: 12px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
@@ -1472,11 +1485,18 @@ strong {
 
 .page-mobile-switcher__list {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 6px;
 }
 
 .page-mobile-switcher__item {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
@@ -2004,12 +2024,16 @@ strong {
 }
 
 .session-list-scroll {
+  min-width: 0;
   min-height: 0;
+  max-width: 100%;
   overflow-y: auto;
 }
 
 .session-list {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 4px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -5010,14 +5034,24 @@ strong {
     display: none;
   }
 
+  .sessions-page.panel-stack--sessions-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+  }
+
   .page-mobile-switcher--sessions {
     position: relative;
     display: grid;
+    min-width: 0;
+    max-width: 100%;
     gap: 8px;
   }
 
   .session-shell.resizable-sidebar-layout {
     grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
   }
 
   .session-list-panel--desktop {
@@ -5231,11 +5265,23 @@ strong {
   .page-mobile-switcher--sessions {
     position: relative;
     display: grid;
+    min-width: 0;
+    max-width: 100%;
     gap: 8px;
   }
 
   .page-mobile-switcher__sheet {
     max-height: min(60vh, 460px);
+  }
+
+  .session-shell.resizable-sidebar-layout {
+    overflow: hidden;
+  }
+
+  .session-shell .session-detail-column,
+  .agent-chat-page .session-detail-column--standalone {
+    height: 100%;
+    overflow: hidden;
   }
 
   .session-chat-panel > .panel__header,
@@ -5309,32 +5355,26 @@ strong {
     align-content: stretch;
   }
 
-  .agent-chat-page .session-detail-column--standalone {
-    overflow: hidden;
-  }
-
-  .agent-chat-page .session-chat-panel[data-surface="page-mobile-detail"] {
+  .session-chat-panel[data-surface="page-mobile-detail"] {
     display: flex;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
     height: 100%;
   }
 
-  .agent-chat-page .session-chat-panel[data-surface="page-mobile-detail"] .session-stats-strip {
+  .session-chat-panel[data-surface="page-mobile-detail"] .session-stats-strip {
     flex: 0 0 auto;
   }
 
-  .agent-chat-page .session-chat-panel[data-surface="page-mobile-detail"] .session-transcript {
+  .session-chat-panel[data-surface="page-mobile-detail"] .session-transcript {
     flex: 1 1 auto;
     min-height: 0;
   }
 
   .session-chat-panel[data-surface="page-mobile-detail"] .composer {
-    padding: 0 14px 14px;
-  }
-
-  .agent-chat-page .session-chat-panel[data-surface="page-mobile-detail"] .composer {
     flex: 0 0 auto;
+    min-width: 0;
     padding: 0 14px calc(14px + env(safe-area-inset-bottom, 0px));
   }
 
@@ -5345,7 +5385,8 @@ strong {
 
   .session-chat-panel[data-surface="page-mobile-detail"] .composer__actions {
     width: 100%;
-    grid-template-columns: 42px minmax(0, 112px) 56px 56px;
+    min-width: 0;
+    grid-template-columns: 42px minmax(0, 1fr) minmax(44px, auto) minmax(44px, auto);
   }
 
   .field-group--composer {
@@ -5375,8 +5416,9 @@ strong {
   }
 
   .session-chat-panel[data-surface="page-mobile-detail"] .session-model-field--composer {
-    width: 112px;
-    flex: 0 0 112px;
+    min-width: 0;
+    width: auto;
+    flex: 1 1 0;
   }
 
   .session-chat-panel[data-surface="page-mobile-detail"] .session-model-field--composer .select-input {

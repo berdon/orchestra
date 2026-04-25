@@ -18,8 +18,13 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
     const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
     const composerFooter = document.querySelector('.composer__footer') as HTMLDivElement | null;
+    const sendButton = document.querySelector('[data-role="send-message"]') as HTMLButtonElement | null;
+    const modelSelect = document.querySelector('.session-model-field--composer .select-input') as HTMLSelectElement | null;
     const panelHeader = panel?.querySelector('.panel__header') as HTMLElement | null;
     const mobileSessionPicker = document.querySelector('[data-role="sessions-mobile-switcher"]') as HTMLElement | null;
+    const mobilePickerTrigger = document.querySelector('[data-role="sessions-mobile-picker-trigger"]') as HTMLElement | null;
+    const mobilePickerCurrent = document.querySelector('.page-mobile-switcher--sessions .page-mobile-switcher__current') as HTMLElement | null;
+    const mobilePickerSheet = document.querySelector('[data-role="sessions-mobile-picker"]') as HTMLElement | null;
 
     if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
       return null;
@@ -30,9 +35,16 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const transcriptRect = transcript.getBoundingClientRect();
     const composerRect = composerInput.getBoundingClientRect();
     const composerFooterRect = composerFooter?.getBoundingClientRect() ?? null;
+    const sendRect = sendButton?.getBoundingClientRect() ?? null;
+    const modelRect = modelSelect?.getBoundingClientRect() ?? null;
+    const triggerRect = mobilePickerTrigger?.getBoundingClientRect() ?? null;
+    const sheetRect = mobilePickerSheet?.getBoundingClientRect() ?? null;
+    const pickerCurrentStyle = mobilePickerCurrent ? window.getComputedStyle(mobilePickerCurrent) : null;
 
     return {
+      viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
+      documentScrollWidth: document.documentElement.scrollWidth,
       contentBodyHeight: contentBody.getBoundingClientRect().height,
       stackHeight: stack.getBoundingClientRect().height,
       shellGridColumns: shell ? window.getComputedStyle(shell).gridTemplateColumns : null,
@@ -51,6 +63,14 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       composerInputWidth: composerRect.width,
       composerFooterWidth: composerFooterRect?.width ?? 0,
       composerBottom: composerRect.bottom,
+      sendBottom: sendRect?.bottom ?? null,
+      sendDisabled: sendButton?.disabled ?? null,
+      modelWidth: modelRect?.width ?? null,
+      mobilePickerRight: triggerRect?.right ?? null,
+      mobilePickerSheetRight: sheetRect?.right ?? null,
+      mobilePickerCurrentOverflow: pickerCurrentStyle?.overflow ?? null,
+      mobilePickerCurrentTextOverflow: pickerCurrentStyle?.textOverflow ?? null,
+      mobilePickerCurrentWhiteSpace: pickerCurrentStyle?.whiteSpace ?? null,
       panelResize: window.getComputedStyle(panel).resize,
       composerResize: window.getComputedStyle(composerInput).resize,
     };
@@ -363,7 +383,7 @@ test("sessions mobile mirrors chat with a lightweight page-local session picker 
     );
   }, { nextTimestamp: timestamp });
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 375, height: 667 });
   await page.goto("/");
 
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toBeVisible();
@@ -388,14 +408,85 @@ test("sessions mobile mirrors chat with a lightweight page-local session picker 
   expect(mobileLayout?.panelTop ?? 999).toBeLessThan(330);
   expect(mobileLayout?.mobilePickerTop ?? 999).toBeLessThan(mobileLayout?.panelTop ?? 999);
   expect(mobileLayout?.panelHeaderVisible).toBe(false);
-  expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(140);
+  expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(120);
+  expect(mobileLayout?.transcriptTop ?? 999).toBeLessThan((mobileLayout?.viewportHeight ?? 0) - 180);
   expect(Math.abs((mobileLayout?.composerFooterWidth ?? 0) - (mobileLayout?.composerInputWidth ?? 0))).toBeLessThanOrEqual(2);
   expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+  expect(mobileLayout?.sendBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
+  expect(mobileLayout?.sendDisabled).toBe(false);
+  expect(mobileLayout?.modelWidth ?? 999).toBeLessThan((mobileLayout?.composerInputWidth ?? 0) * 0.6);
+  expect(mobileLayout?.documentScrollWidth ?? 999).toBeLessThanOrEqual(mobileLayout?.viewportWidth ?? 0);
 
   await page.locator('[data-role="sessions-mobile-picker-trigger"]').click();
   await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-2"]').click();
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Mobile follow-up session");
   await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
+});
+
+test("sessions mobile truncates long session labels without horizontal overflow or hidden controls", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+  const longTitle = `Mobile overflow regression ${"session ".repeat(18)}${"X".repeat(120)}`;
+
+  await page.addInitScript(({ nextTimestamp, nextLongTitle }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-mobile-long-label",
+          title: nextLongTitle,
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "mobile-long-label-event-1",
+              kind: "assistant",
+              message: "Long-label mobile transcript entry.",
+              timestamp: nextTimestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  }, { nextTimestamp: timestamp, nextLongTitle: longTitle });
+
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("/");
+
+  const trigger = page.locator('[data-role="sessions-mobile-picker-trigger"]');
+  await expect(trigger).toBeVisible();
+
+  if ((await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id")) !== "session-mobile-long-label") {
+    await trigger.click();
+    await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-long-label"]').click();
+  }
+
+  await expect(trigger).toContainText("Mobile overflow regression");
+  await page.locator('[data-role="composer-input"]').fill("Reply after long label");
+  await page.locator('[data-role="send-message"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Reply after long label", { timeout: 10_000 });
+
+  const closedLayout = await measureSessionLayout(page);
+  expect(closedLayout).not.toBeNull();
+  expect(closedLayout?.documentScrollWidth ?? 999).toBeLessThanOrEqual(closedLayout?.viewportWidth ?? 0);
+  expect(closedLayout?.mobilePickerRight ?? 999).toBeLessThanOrEqual(closedLayout?.viewportWidth ?? 0);
+  expect(closedLayout?.mobilePickerCurrentOverflow).toBe("hidden");
+  expect(closedLayout?.mobilePickerCurrentTextOverflow).toBe("ellipsis");
+  expect(closedLayout?.mobilePickerCurrentWhiteSpace).toBe("nowrap");
+  expect(closedLayout?.transcriptHeight ?? 0).toBeGreaterThan(80);
+  expect(closedLayout?.composerBottom ?? 999).toBeLessThanOrEqual((closedLayout?.viewportHeight ?? 0) - 8);
+  expect(closedLayout?.sendBottom ?? 999).toBeLessThanOrEqual((closedLayout?.viewportHeight ?? 0) - 8);
+  expect(closedLayout?.sendDisabled).toBe(false);
+
+  await trigger.click();
+  await expect(page.locator('[data-role="sessions-mobile-picker"]')).toBeVisible();
+
+  const openLayout = await measureSessionLayout(page);
+  expect(openLayout).not.toBeNull();
+  expect(openLayout?.documentScrollWidth ?? 999).toBeLessThanOrEqual(openLayout?.viewportWidth ?? 0);
+  expect(openLayout?.mobilePickerSheetRight ?? 999).toBeLessThanOrEqual(openLayout?.viewportWidth ?? 0);
 });
 
 test("sessions secondary nav width is resizable and persists", async ({ page }) => {
