@@ -9944,7 +9944,7 @@ mod tests {
             },
         )
         .expect("task should create");
-        let session_dir = pi_sessions::detect_session_context(Some("project-blocked-active-stale"))
+        let session_dir = pi_sessions::detect_session_context(Some("orchestra"))
             .expect("session context should resolve")
             .session_dir;
         fs::create_dir_all(&session_dir).expect("session dir should create");
