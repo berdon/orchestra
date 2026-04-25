@@ -58,13 +58,13 @@ use crate::{
         RepositoryRemoteInput, RepositoryUpsertInput, RoleQueueEntryInput, RoleUpsertInput,
         SendMailboxMessageInput, SessionRecord, SkillBindingInput, TaskAttachmentInput,
         TaskCommentInput, TaskCommentUpdateInput, TaskDetail, TaskFileReferenceInput,
-        TaskScheduleUpsertInput, TaskSummary, TaskTodoInput, TaskUpsertInput,
-        WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
-        WorkflowUpsertInput,
+        TaskScheduleUpsertInput, TaskSummary, TaskTodoInput, TaskUpsertInput, WorkflowLaneInput,
+        WorkflowLanePatchInput, WorkflowLaneReorderInput, WorkflowUpsertInput,
     },
     services::{
-        agent_dispatch, app_events, database, messages, notifications,
-        orchestra_paths::discover_dev_checkout_root, pi_sessions, projects, remote_access, tasks,
+        agent_dispatch, app_events, database, harness_settings, messages, notifications,
+        orchestra_paths::discover_dev_checkout_root, pi_oauth, pi_runtime, pi_sessions, pi_setup,
+        projects, remote_access, tasks,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle},
 };
@@ -215,6 +215,52 @@ struct SessionCompactInput {
 struct SourceControlSettingsPatchInput {
     git_user_name_template: Option<String>,
     git_email_template: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiRuntimeSettingsPatchInput {
+    extra_extensions: Vec<String>,
+    default_compaction_window: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiModelsJsonInput {
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiProviderApiKeyInput {
+    provider_id: String,
+    api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiLegacyImportInput {
+    replace_existing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiLegacyConfigurationImportInput {
+    import_auth: bool,
+    import_models: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiOAuthStartInput {
+    provider_id: String,
+    method_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PiOAuthInput {
+    value: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1271,6 +1317,52 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route("/api/v1/pair/complete", post(post_pair_complete))
         .route("/api/v1/models", get(get_pi_model_catalog))
         .route(
+            "/api/v1/harness/runtime-settings",
+            get(get_pi_runtime_settings_route).patch(patch_pi_runtime_settings_route),
+        )
+        .route("/api/v1/harness/setup-state", get(get_pi_setup_state_route))
+        .route(
+            "/api/v1/harness/models-json",
+            get(get_pi_models_json_route).post(post_pi_models_json_route),
+        )
+        .route(
+            "/api/v1/harness/provider-api-key",
+            post(post_pi_provider_api_key_route),
+        )
+        .route(
+            "/api/v1/harness/providers/:provider_id/credential",
+            delete(delete_pi_provider_credential_route),
+        )
+        .route(
+            "/api/v1/harness/legacy/import",
+            post(post_pi_legacy_import_route),
+        )
+        .route(
+            "/api/v1/harness/legacy/dismiss",
+            post(post_pi_legacy_dismiss_route),
+        )
+        .route(
+            "/api/v1/harness/legacy-configuration/import",
+            post(post_legacy_pi_configuration_import_route),
+        )
+        .route("/api/v1/harness/oauth-flow", get(get_pi_oauth_flow_route))
+        .route(
+            "/api/v1/harness/oauth/start",
+            post(post_pi_oauth_start_route),
+        )
+        .route(
+            "/api/v1/harness/oauth/input",
+            post(post_pi_oauth_input_route),
+        )
+        .route(
+            "/api/v1/harness/oauth/cancel",
+            post(post_pi_oauth_cancel_route),
+        )
+        .route(
+            "/api/v1/harness/oauth/dismiss",
+            post(post_pi_oauth_dismiss_route),
+        )
+        .route(
             "/api/v1/settings/source-control",
             get(get_global_source_control_settings).patch(patch_global_source_control_settings),
         )
@@ -1820,6 +1912,8 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                             != "unavailable"
                         || unauthenticated_body["capabilities"]["skills"]["read"]["availability"]
                             != "unavailable"
+                        || unauthenticated_body["capabilities"]["host"]["harnessSettings"]["availability"]
+                            != "unavailable"
                     {
                         return Err(format!(
                             "frontend bootstrap unauthenticated probe returned unexpected payload: {}",
@@ -1854,6 +1948,8 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                         || authenticated_body["capabilities"]["sessions"]["write"]["availability"]
                             != "available"
                         || authenticated_body["capabilities"]["skills"]["read"]["availability"]
+                            != "available"
+                        || authenticated_body["capabilities"]["host"]["harnessSettings"]["availability"]
                             != "available"
                     {
                         return Err(format!(
@@ -3212,8 +3308,10 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             runtime_logs: unavailable_capability(
                 "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
             ),
-            harness_settings: unavailable_capability(
-                "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
+            harness_settings: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote Harness settings endpoints are unavailable without remote authentication.",
             ),
             remote_access: unavailable_capability(
                 "This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.",
@@ -3423,6 +3521,228 @@ async fn get_pi_model_catalog(
     require_remote_auth_only(&context.app, &headers)?;
     list_pi_models(context.app.state::<AppState>())
         .await
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+fn emit_pi_setup_change(app: &AppHandle, reason: &str, extra: Value) {
+    let mut payload = serde_json::Map::new();
+    payload.insert("reason".into(), Value::String(reason.into()));
+    if let Value::Object(extra) = extra {
+        for (key, value) in extra {
+            payload.insert(key, value);
+        }
+    }
+    let _ =
+        app_events::emit_window_event(app, "orchestra:pi-setup-change", &Value::Object(payload));
+}
+
+async fn get_pi_runtime_settings_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    harness_settings::get_pi_runtime_settings()
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn patch_pi_runtime_settings_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiRuntimeSettingsPatchInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let result = harness_settings::update_pi_runtime_settings(
+        input.extra_extensions,
+        input.default_compaction_window,
+    )
+    .map_err(command_api_error)?;
+    context.app.state::<AppState>().log(
+        "info",
+        "pi.runtime.settings.saved",
+        "Saved Orchestra-managed Harness runtime settings from the remote API",
+    );
+    emit_pi_setup_change(&context.app, "pi.runtime.settings.saved", json!({}));
+    Ok(Json(result))
+}
+
+async fn get_pi_setup_state_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_setup::get_pi_setup_state()
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_pi_models_json_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_setup::get_models_json()
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_pi_models_json_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiModelsJsonInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let result = pi_setup::save_models_json(&input.content).map_err(command_api_error)?;
+    context.app.state::<AppState>().log(
+        "info",
+        "pi.setup.models.saved",
+        "Saved Orchestra-managed Pi models.json from the remote API",
+    );
+    emit_pi_setup_change(&context.app, "pi.setup.models.saved", json!({}));
+    Ok(Json(result))
+}
+
+async fn post_pi_provider_api_key_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiProviderApiKeyInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let result = pi_setup::set_provider_api_key(&input.provider_id, &input.api_key)
+        .map_err(command_api_error)?;
+    context.app.state::<AppState>().log(
+        "info",
+        "pi.setup.api_key.saved",
+        &format!(
+            "Saved Orchestra-managed API key for provider {} from the remote API",
+            input.provider_id
+        ),
+    );
+    emit_pi_setup_change(
+        &context.app,
+        "pi.setup.api_key.saved",
+        json!({ "providerId": input.provider_id }),
+    );
+    Ok(Json(result))
+}
+
+async fn delete_pi_provider_credential_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(provider_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let result = pi_setup::remove_provider_credential(&provider_id).map_err(command_api_error)?;
+    pi_oauth::clear_finished_flow_for_provider(&context.app, &provider_id)
+        .map_err(command_api_error)?;
+    context.app.state::<AppState>().log(
+        "info",
+        "pi.setup.credential.removed",
+        &format!(
+            "Removed Orchestra-managed Pi credential for provider {} from the remote API",
+            provider_id
+        ),
+    );
+    emit_pi_setup_change(
+        &context.app,
+        "pi.setup.credential.removed",
+        json!({ "providerId": provider_id }),
+    );
+    Ok(Json(result))
+}
+
+async fn post_pi_legacy_import_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiLegacyImportInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let result = pi_setup::import_legacy_config(input.replace_existing.unwrap_or(false))
+        .map_err(command_api_error)?;
+    context.app.state::<AppState>().log(
+        "info",
+        "pi.setup.legacy.imported",
+        "Imported legacy ~/.pi/agent config into Orchestra-managed Pi storage from the remote API",
+    );
+    emit_pi_setup_change(&context.app, "pi.setup.legacy.imported", json!({}));
+    Ok(Json(result))
+}
+
+async fn post_pi_legacy_dismiss_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let result = pi_setup::dismiss_legacy_import().map_err(command_api_error)?;
+    context.app.state::<AppState>().log(
+        "info",
+        "pi.setup.legacy.dismissed",
+        "Dismissed the legacy Pi import prompt for Orchestra-managed Pi setup from the remote API",
+    );
+    emit_pi_setup_change(&context.app, "pi.setup.legacy.dismissed", json!({}));
+    Ok(Json(result))
+}
+
+async fn post_legacy_pi_configuration_import_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiLegacyConfigurationImportInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_runtime::import_legacy_pi_configuration(input.import_auth, input.import_models)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_pi_oauth_flow_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_oauth::get_flow_state()
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_pi_oauth_start_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiOAuthStartInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_oauth::start_flow(context.app, &input.provider_id, input.method_id.as_deref())
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_pi_oauth_input_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<PiOAuthInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_oauth::submit_flow_input(context.app, &input.value)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_pi_oauth_cancel_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_oauth::cancel_flow(context.app)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_pi_oauth_dismiss_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    pi_oauth::dismiss_flow(context.app)
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4418,13 +4738,9 @@ async fn post_unarchive_skill(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let device = resolve_remote_auth(&context.app, &headers, None)?;
     let authorization = remote_authorization_context(&device, &headers)?;
-    skill_commands::unarchive_local_skill(
-        context.app.state::<AppState>(),
-        skill_id,
-        authorization,
-    )
-    .map(Json)
-    .map_err(command_api_error)
+    skill_commands::unarchive_local_skill(context.app.state::<AppState>(), skill_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
 }
 
 async fn delete_skill_record(

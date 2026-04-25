@@ -154,7 +154,7 @@ const bootstrap: OrchestraClientBootstrap = {
       systemNotifications: { availability: "unavailable", reason: "Desktop only" },
       bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
       runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
-      harnessSettings: { availability: "unavailable", reason: "Desktop only" },
+      harnessSettings: { availability: "available" },
       remoteAccess: { availability: "unavailable", reason: "Desktop only" },
     },
   },

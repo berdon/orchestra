@@ -131,7 +131,7 @@ function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_
         systemNotifications: { availability: "unavailable", reason: "Desktop only" },
         bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
         runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
-        harnessSettings: { availability: "unavailable", reason: "Desktop only" },
+        harnessSettings: { availability: "available" },
         remoteAccess: { availability: "unavailable", reason: "Desktop only" },
       },
     },
@@ -214,6 +214,54 @@ describe("remote api orchestra client", () => {
 
     await expect(binding.client.skills.listSkills(true)).resolves.toEqual([]);
     await expect(binding.client.skills.updateLocalSkill("skill-1", { name: "Skill", slug: "skill", markdownBody: "# Skill" })).resolves.toMatchObject({ id: "skill-1" });
+  });
+
+  test("routes hosted-web Harness host-admin methods through the remote API surface", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as unknown : undefined;
+
+      if (url === "https://orchestra.example.test/api/v1/harness/runtime-settings" && method === "GET") {
+        return jsonResponse({ extraExtensions: [], defaultCompactionWindow: "10%", updatedAt: null });
+      }
+      if (url === "https://orchestra.example.test/api/v1/harness/runtime-settings" && method === "PATCH") {
+        expect(body).toEqual({ extraExtensions: ["./mobile.ts"], defaultCompactionWindow: "16000" });
+        return jsonResponse({ extraExtensions: ["./mobile.ts"], defaultCompactionWindow: "16000", updatedAt: "now" });
+      }
+      if (url === "https://orchestra.example.test/api/v1/harness/setup-state" && method === "GET") {
+        return jsonResponse({ status: "ready", availableProviders: [] });
+      }
+      if (url === "https://orchestra.example.test/api/v1/harness/provider-api-key" && method === "POST") {
+        expect(body).toEqual({ providerId: "anthropic", apiKey: "sk-test" });
+        return jsonResponse({ status: "ready", availableProviders: [{ id: "anthropic", connected: true }] });
+      }
+      if (url === "https://orchestra.example.test/api/v1/harness/models-json" && method === "GET") {
+        return jsonResponse("{\"providers\":[]}");
+      }
+      if (url === "https://orchestra.example.test/api/v1/harness/models-json" && method === "POST") {
+        expect(body).toEqual({ content: "{}" });
+        return jsonResponse({ status: "ready", availableProviders: [] });
+      }
+      if (url === "https://orchestra.example.test/api/v1/harness/oauth/start" && method === "POST") {
+        expect(body).toEqual({ providerId: "github-copilot", methodId: "device" });
+        return jsonResponse({ providerId: "github-copilot", status: "running" });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl,
+    });
+
+    expect(binding.client.hostAdmin?.harness.getSetupState).toBeDefined();
+    await expect(binding.client.hostAdmin!.harness.getRuntimeSettings()).resolves.toMatchObject({ defaultCompactionWindow: "10%" });
+    await expect(binding.client.hostAdmin!.harness.updateRuntimeSettings({ extraExtensions: ["./mobile.ts"], defaultCompactionWindow: "16000" })).resolves.toMatchObject({ extraExtensions: ["./mobile.ts"] });
+    await expect(binding.client.hostAdmin!.harness.getSetupState()).resolves.toMatchObject({ status: "ready" });
+    await expect(binding.client.hostAdmin!.harness.setProviderApiKey("anthropic", "sk-test")).resolves.toMatchObject({ status: "ready" });
+    await expect(binding.client.hostAdmin!.harness.getModelsJson()).resolves.toBe("{\"providers\":[]}");
+    await expect(binding.client.hostAdmin!.harness.saveModelsJson("{}")).resolves.toMatchObject({ status: "ready" });
+    await expect(binding.client.hostAdmin!.harness.startOAuthFlow("github-copilot", "device")).resolves.toMatchObject({ providerId: "github-copilot" });
   });
 
   test("normalizes HTTP authorization failures", async () => {

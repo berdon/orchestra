@@ -19,6 +19,10 @@ import type {
   MailboxMessage,
   MarkMailboxMessagesReadInput,
   PiExecutableDiagnostic,
+  PiImportLegacyResult,
+  PiOAuthFlowState,
+  PiRuntimeSettings,
+  PiSetupState,
   PolicyDefinition,
   PolicySummary,
   ProjectDetail,
@@ -92,6 +96,7 @@ import type {
   OrchestraTaskCompletionOutcome,
 } from "./client";
 import { createLocalNotificationsExtension } from "./localNotificationsExtension";
+import type { OrchestraHostAdminExtension } from "./extensions";
 import { RemoteApiEventManager } from "./remoteApiEvents";
 import {
   createRemoteApiTaskListQuery,
@@ -99,6 +104,7 @@ import {
   describeRemoteApiError,
   fetchRemoteApiAppInfo,
   type RemoteApiOrchestraClientOptions,
+  type RemoteApiTransport,
 } from "./remoteApiTransport";
 
 interface NotesInput {
@@ -107,6 +113,150 @@ interface NotesInput {
 
 function createNotesBody(notes?: string): NotesInput | undefined {
   return notes ? { notes } : undefined;
+}
+
+function createUnsupportedRemoteHostAdminMethod(name: string) {
+  return async () => {
+    throw new Error(`${name} is only available in the Tauri desktop shell.`);
+  };
+}
+
+function createRemoteApiHostAdminExtension(
+  transport: RemoteApiTransport,
+  bootstrap: OrchestraClientBootstrap,
+): OrchestraHostAdminExtension {
+  const assertHarness = (operation: string) => {
+    transport.assertCapability(operation, bootstrap.capabilities.host.harnessSettings);
+  };
+
+  return {
+    bridge: {
+      getDiagnostics: createUnsupportedRemoteHostAdminMethod("Bridge diagnostics"),
+      cleanupStaleInstances: createUnsupportedRemoteHostAdminMethod("Bridge cleanup"),
+    },
+    logs: {
+      list: createUnsupportedRemoteHostAdminMethod("Runtime logs"),
+      clear: createUnsupportedRemoteHostAdminMethod("Runtime log clearing"),
+      exportBundle: createUnsupportedRemoteHostAdminMethod("Runtime log export"),
+    },
+    notifications: createLocalNotificationsExtension(),
+    harness: {
+      getSetupState: () => {
+        assertHarness("hostAdmin.harness.getSetupState");
+        return transport.requestJson<PiSetupState>("hostAdmin.harness.getSetupState", {
+          path: "/api/v1/harness/setup-state",
+        });
+      },
+      getRuntimeSettings: () => {
+        assertHarness("hostAdmin.harness.getRuntimeSettings");
+        return transport.requestJson<PiRuntimeSettings>("hostAdmin.harness.getRuntimeSettings", {
+          path: "/api/v1/harness/runtime-settings",
+        });
+      },
+      updateRuntimeSettings: (input) => {
+        assertHarness("hostAdmin.harness.updateRuntimeSettings");
+        return transport.requestJson<PiRuntimeSettings>("hostAdmin.harness.updateRuntimeSettings", {
+          method: "PATCH",
+          path: "/api/v1/harness/runtime-settings",
+          body: input,
+        });
+      },
+      getOAuthFlowState: () => {
+        assertHarness("hostAdmin.harness.getOAuthFlowState");
+        return transport.requestJson<PiOAuthFlowState | null>("hostAdmin.harness.getOAuthFlowState", {
+          path: "/api/v1/harness/oauth-flow",
+        });
+      },
+      getModelsJson: () => {
+        assertHarness("hostAdmin.harness.getModelsJson");
+        return transport.requestJson<string>("hostAdmin.harness.getModelsJson", {
+          path: "/api/v1/harness/models-json",
+        });
+      },
+      saveModelsJson: (content) => {
+        assertHarness("hostAdmin.harness.saveModelsJson");
+        return transport.requestJson<PiSetupState>("hostAdmin.harness.saveModelsJson", {
+          method: "POST",
+          path: "/api/v1/harness/models-json",
+          body: { content },
+        });
+      },
+      setProviderApiKey: (providerId, apiKey) => {
+        assertHarness("hostAdmin.harness.setProviderApiKey");
+        return transport.requestJson<PiSetupState>("hostAdmin.harness.setProviderApiKey", {
+          method: "POST",
+          path: "/api/v1/harness/provider-api-key",
+          body: { providerId, apiKey },
+        });
+      },
+      removeProviderCredential: (providerId) => {
+        assertHarness("hostAdmin.harness.removeProviderCredential");
+        return transport.requestJson<PiSetupState>("hostAdmin.harness.removeProviderCredential", {
+          method: "DELETE",
+          path: `/api/v1/harness/providers/${encodeURIComponent(providerId)}/credential`,
+        });
+      },
+      importLegacyConfig: (replaceExisting = false) => {
+        assertHarness("hostAdmin.harness.importLegacyConfig");
+        return transport.requestJson<PiSetupState>("hostAdmin.harness.importLegacyConfig", {
+          method: "POST",
+          path: "/api/v1/harness/legacy/import",
+          body: { replaceExisting },
+        });
+      },
+      dismissLegacyImport: () => {
+        assertHarness("hostAdmin.harness.dismissLegacyImport");
+        return transport.requestJson<PiSetupState>("hostAdmin.harness.dismissLegacyImport", {
+          method: "POST",
+          path: "/api/v1/harness/legacy/dismiss",
+        });
+      },
+      importLegacyConfiguration: (input) => {
+        assertHarness("hostAdmin.harness.importLegacyConfiguration");
+        return transport.requestJson<PiImportLegacyResult>("hostAdmin.harness.importLegacyConfiguration", {
+          method: "POST",
+          path: "/api/v1/harness/legacy-configuration/import",
+          body: input,
+        });
+      },
+      startOAuthFlow: (providerId, methodId = null) => {
+        assertHarness("hostAdmin.harness.startOAuthFlow");
+        return transport.requestJson<PiOAuthFlowState>("hostAdmin.harness.startOAuthFlow", {
+          method: "POST",
+          path: "/api/v1/harness/oauth/start",
+          body: { providerId, methodId },
+        });
+      },
+      submitOAuthFlowInput: (value) => {
+        assertHarness("hostAdmin.harness.submitOAuthFlowInput");
+        return transport.requestJson<PiOAuthFlowState>("hostAdmin.harness.submitOAuthFlowInput", {
+          method: "POST",
+          path: "/api/v1/harness/oauth/input",
+          body: { value },
+        });
+      },
+      cancelOAuthFlow: () => {
+        assertHarness("hostAdmin.harness.cancelOAuthFlow");
+        return transport.requestJson<PiOAuthFlowState | null>("hostAdmin.harness.cancelOAuthFlow", {
+          method: "POST",
+          path: "/api/v1/harness/oauth/cancel",
+        });
+      },
+      dismissOAuthFlow: () => {
+        assertHarness("hostAdmin.harness.dismissOAuthFlow");
+        return transport.requestJson<PiOAuthFlowState | null>("hostAdmin.harness.dismissOAuthFlow", {
+          method: "POST",
+          path: "/api/v1/harness/oauth/dismiss",
+        });
+      },
+    },
+    remoteAccess: {
+      getStatus: createUnsupportedRemoteHostAdminMethod("Remote access administration"),
+      updateSettings: createUnsupportedRemoteHostAdminMethod("Remote access administration"),
+      createPairingCode: createUnsupportedRemoteHostAdminMethod("Remote access administration"),
+      revokeDevice: createUnsupportedRemoteHostAdminMethod("Remote access administration"),
+    },
+  };
 }
 
 export function createRemoteApiOrchestraClientBinding(
@@ -1337,6 +1487,9 @@ export function createRemoteApiOrchestraClientBinding(
     },
     connection: connectionController,
     notifications: createLocalNotificationsExtension(),
+    ...(bootstrap.capabilities.host.harnessSettings.availability === "available"
+      ? { hostAdmin: createRemoteApiHostAdminExtension(transport, bootstrap) }
+      : {}),
   };
 
   return {

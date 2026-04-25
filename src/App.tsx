@@ -3974,7 +3974,7 @@ export function App() {
               <strong>PI auth setup required.</strong> {appInfo.piRuntimeDiagnostics.auth.message}
             </div>
             {canManageHarnessSettings ? (
-              <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
+              <button className="secondary-button" type="button" onClick={navigateToHarnessSettings}>
                 Open Harness settings
               </button>
             ) : null}
@@ -3987,7 +3987,7 @@ export function App() {
               <strong>Unsupported packaged-mode PI add-ons.</strong> {appInfo.piRuntimeDiagnostics.addOns.message}
             </div>
             {canManageHarnessSettings ? (
-              <button className="secondary-button" type="button" onClick={() => setSettingsTab("harness")}>
+              <button className="secondary-button" type="button" onClick={navigateToHarnessSettings}>
                 Review Harness settings
               </button>
             ) : null}
