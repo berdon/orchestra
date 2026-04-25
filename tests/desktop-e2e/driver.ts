@@ -213,6 +213,20 @@ export async function navigateTo(sessionId: string, url: string) {
   }
 }
 
+export async function setWindowRect(sessionId: string, rect: { width?: number; height?: number; x?: number; y?: number }) {
+  const response = await webdriverRequest(`/session/${sessionId}/window/rect`, {
+    method: "POST",
+    body: JSON.stringify(rect),
+  });
+
+  const errorMessage = String(response?.value?.message ?? response?.value?.error ?? "");
+  if (errorMessage) {
+    throw new Error(`Unable to resize window: ${JSON.stringify(response)}`);
+  }
+
+  return response?.value as { x: number; y: number; width: number; height: number };
+}
+
 export async function waitForSelector(sessionId: string, selector: string, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let lastState: unknown;

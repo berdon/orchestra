@@ -11,6 +11,7 @@ import {
   ensureReactReady,
   executeScript,
   setInputValue,
+  setWindowRect,
   sleep,
   waitForSelector,
   waitForText,
@@ -50,6 +51,36 @@ async function bodyText(sessionId: string) {
 }
 
 describe("desktop skills settings", () => {
+  it.skipIf(!isDesktopE2E)("keeps Skills reachable from the mobile navigation flow", async () => {
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+      await setWindowRect(sessionId, { width: 390, height: 844 });
+      await expect.poll(async () => executeScript<number>(sessionId, "return window.innerWidth;")).toBeLessThanOrEqual(900);
+
+      await clickSelector(sessionId, '[data-role="toggle-mobile-navigation"]');
+      await waitForSelector(sessionId, '[data-role="mobile-navigation-sheet"]');
+      await clickByText(sessionId, 'button', 'Settings');
+
+      await waitForSelector(sessionId, '[data-role="settings-sections-subnav"]');
+      await expect.poll(async () => executeScript(sessionId, `
+        const sheet = document.querySelector('[data-role="mobile-navigation-sheet"]');
+        const skillsTab = document.querySelector('[data-role="settings-tab-skills"]');
+        return {
+          navOpen: Boolean(sheet),
+          skillsVisible: skillsTab instanceof HTMLElement && skillsTab.offsetParent !== null,
+        };
+      `)).toEqual({ navOpen: true, skillsVisible: true });
+
+      await clickSelector(sessionId, '[data-role="settings-tab-skills"]');
+      await expect.poll(async () => executeScript<boolean>(sessionId, "return Boolean(document.querySelector('[data-role=\"mobile-navigation-sheet\"]')); ")).toBe(false);
+      await waitForText(sessionId, 'Managed skills catalog');
+    } finally {
+      await deleteWebdriverSession(sessionId);
+      await sleep(250);
+    }
+  }, 120_000);
+
   it.skipIf(!isDesktopE2E)("manages local skills and renders external source and status details", async () => {
     expect(testHome).toBeTruthy();
     resetSkillsFixture(testHome!);
