@@ -74,9 +74,9 @@ use commands::{
     },
     skills::{
         archive_local_skill, create_local_skill, delete_local_skill, get_agent_skill_links,
-        get_role_skill_links, get_skill, get_skills_catalog_diagnostics,
-        get_workflow_skill_links, list_skills, refresh_external_skills, set_skill_bindings,
-        unarchive_local_skill, update_local_skill,
+        get_role_skill_links, get_skill, get_skills_catalog_diagnostics, get_workflow_skill_links,
+        list_skills, refresh_external_skills, set_skill_bindings, unarchive_local_skill,
+        update_local_skill,
     },
     task_schedules::{
         create_task_schedule, delete_task_schedule, get_task_schedule, list_task_schedules,

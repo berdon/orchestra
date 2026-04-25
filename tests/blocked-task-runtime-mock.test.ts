@@ -28,7 +28,7 @@ describe("blocked task runtime mock parity", () => {
     });
   });
 
-  test("mock mode clears active lane assignments when a task becomes blocked", async () => {
+  test("mock mode preserves an active lane assignment when a task becomes blocked", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");
     const { createWorkflow, createTask, dispatchTaskLane, getTask, updateTask } = await import("../src/lib/tauri");
@@ -94,8 +94,78 @@ describe("blocked task runtime mock parity", () => {
 
     const blocked = await getTask(task.id);
     expect(blocked.status).toBe("blocked");
-    expect(blocked.activeLaneAssignment).toBeNull();
+    expect(blocked.activeLaneAssignment?.status).toBe("active");
+    expect(blocked.activeLaneAssignment?.sessionId).toBeTruthy();
     expect(blocked.readyForDispatch).toBe(false);
+  });
+
+  test("mock mode stops a blocked active task when it tries to transition and leaves it blocked", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const { createWorkflow, createTask, dispatchTaskLane, getTask, updateTask, completeLaneAsSuccess } = await import("../src/lib/tauri");
+
+    await createProject({ name: "Blocked Transition Mock Project", description: "mock project", taskPrefix: "BTM" });
+    const role = await createRole({
+      name: "Mock Blocked Transition Role",
+      description: "Role for blocked transition mock coverage.",
+      systemPrompt: "Work the task.",
+      capacity: 1,
+    });
+    const workflow = await createWorkflow({
+      name: "Mock Blocked Transition Flow",
+      description: "Single role lane flow.",
+      lanes: [
+        {
+          id: "lane-implement",
+          key: "implement",
+          name: "Implement",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Implement the work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+    const task = await createTask({
+      title: "Mock blocked transition task",
+      description: "Dispatch me, block me, then attempt completion.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow.id,
+      currentLaneId: "lane-implement",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    const dispatched = await dispatchTaskLane(task.id);
+    await updateTask(task.id, {
+      title: dispatched.title,
+      description: dispatched.description,
+      type: dispatched.type,
+      status: "blocked",
+      priority: dispatched.priority,
+      workflowId: dispatched.workflowId,
+      currentLaneId: dispatched.currentLaneId,
+      assigneeType: dispatched.assigneeType,
+      assigneeId: dispatched.assigneeId,
+      repositoryId: dispatched.repositoryId,
+      repositoryIds: dispatched.repositoryIds,
+      parentTaskId: dispatched.parentTaskId,
+      archived: dispatched.archived,
+    });
+
+    const blocked = await completeLaneAsSuccess(task.id, "Tried to finish while blocked.");
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.activeLaneAssignment).toBeNull();
+    expect(blocked.currentLaneId).toBe("lane-implement");
+    expect(blocked.laneRuns.at(-1)?.result).toBe("blocked");
   });
 
   test("mock mode rejects dispatch for initially blocked tasks", async () => {

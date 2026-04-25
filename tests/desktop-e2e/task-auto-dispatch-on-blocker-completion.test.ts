@@ -37,7 +37,7 @@ async function waitForCondition<T>(
 }
 
 describe("desktop auto dispatch on blocker completion", () => {
-  it.skipIf(!isDesktopE2E)("cancels an already dispatched task when a new dependency blocks it", async () => {
+  it.skipIf(!isDesktopE2E)("keeps an already dispatched task running until it next transitions after a new dependency blocks it", async () => {
     expect(testHome).toBeTruthy();
 
     const repoPath = join(testHome!, "workspace", "dependency-blocks-active-task", "repository");
@@ -57,7 +57,7 @@ describe("desktop auto dispatch on blocker completion", () => {
         input: {
           name: "Dependency Blocks Active Task",
           taskPrefix: "DBA",
-          description: "Ensure blocked tasks cannot keep running after a dependency is added.",
+          description: "Ensure blocked tasks keep their active session until transition time after a dependency is added.",
         },
       });
       const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
@@ -179,14 +179,23 @@ describe("desktop auto dispatch on blocker completion", () => {
 
       const blockedTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: activeTask.id }),
-        (task) => task.status === "blocked" && task.dependencyBlocked === true && task.activeLaneAssignment == null,
+        (task) => task.status === "blocked" && task.dependencyBlocked === true && task.activeLaneAssignment?.status === "active",
         30_000,
       );
       expect(blockedTask.readyForDispatch).toBe(false);
+      expect(blockedTask.activeLaneAssignment?.sessionId).toBeTruthy();
 
       await expect(
         invokeCommand(sessionId, "dispatch_task_lane", { taskId: activeTask.id }),
       ).rejects.toThrow(/blocked and cannot be dispatched|blocked by unresolved dependencies|unfinished subtasks|cannot be dispatched until it becomes runnable/);
+
+      const stoppedBlockedTask = await invokeCommand<any>(sessionId, "complete_lane_as_success", {
+        taskId: activeTask.id,
+        notes: "Tried to finish while blocked in desktop test.",
+      });
+      expect(stoppedBlockedTask.status).toBe("blocked");
+      expect(stoppedBlockedTask.activeLaneAssignment).toBeNull();
+      expect(stoppedBlockedTask.currentLaneId).toBe("lane-implement");
     } finally {
       await deleteWebdriverSession(sessionId);
     }

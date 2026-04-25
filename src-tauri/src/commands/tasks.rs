@@ -96,6 +96,13 @@ fn cleanup_blocked_task_runtime_claims(
         if task.status != "blocked" {
             continue;
         }
+        if task
+            .active_lane_assignment
+            .as_ref()
+            .is_some_and(|assignment| assignment.status == "active")
+        {
+            continue;
+        }
 
         let cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
             connection,

@@ -495,7 +495,10 @@ fn apply_runtime_warning_annotations(
 ) -> Result<(), String> {
     let warnings_by_skill_id = build_runtime_warning_map(connection, skills)?;
     for skill in skills {
-        skill.runtime_warnings = warnings_by_skill_id.get(&skill.id).cloned().unwrap_or_default();
+        skill.runtime_warnings = warnings_by_skill_id
+            .get(&skill.id)
+            .cloned()
+            .unwrap_or_default();
     }
     Ok(())
 }
@@ -597,25 +600,34 @@ fn build_slug_conflict_summaries(
     let mut grouped = BTreeMap::<String, SkillSlugConflictSummary>::new();
 
     for skill in skills {
-        let Some(slug) = skill.slug.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+        let Some(slug) = skill
+            .slug
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
             continue;
         };
         if skill.archived || !is_runtime_loadable_skill(skill) {
             continue;
         }
 
-        let entry = grouped.entry(slug.to_string()).or_insert_with(|| SkillSlugConflictSummary {
-            slug: slug.to_string(),
-            ambient_skill_ids: Vec::new(),
-            scoped_skill_ids: Vec::new(),
-            ambient_sources: Vec::new(),
-            scoped_scopes: Vec::new(),
-        });
+        let entry = grouped
+            .entry(slug.to_string())
+            .or_insert_with(|| SkillSlugConflictSummary {
+                slug: slug.to_string(),
+                ambient_skill_ids: Vec::new(),
+                scoped_skill_ids: Vec::new(),
+                ambient_sources: Vec::new(),
+                scoped_scopes: Vec::new(),
+            });
         let presence = binding_presence.get(&skill.id).cloned().unwrap_or_default();
 
         if skill.source_kind == SKILL_SOURCE_EXTERNAL {
             entry.ambient_skill_ids.push(skill.id.clone());
-            entry.ambient_sources.push("default ~/.agents/skills ambient discovery".into());
+            entry
+                .ambient_sources
+                .push("default ~/.agents/skills ambient discovery".into());
         }
         if presence.global {
             entry.ambient_skill_ids.push(skill.id.clone());
@@ -623,7 +635,9 @@ fn build_slug_conflict_summaries(
         }
         if !presence.scoped_scopes.is_empty() {
             entry.scoped_skill_ids.push(skill.id.clone());
-            entry.scoped_scopes.extend(presence.scoped_scopes.into_iter());
+            entry
+                .scoped_scopes
+                .extend(presence.scoped_scopes.into_iter());
         }
     }
 
@@ -660,8 +674,8 @@ fn load_skill_binding_presence(
 
     let mut presence_by_skill_id = BTreeMap::<String, SkillBindingPresence>::new();
     for row in rows {
-        let (skill_id, scope_kind) = row
-            .map_err(|error| format!("Unable to read skill binding diagnostics row: {error}"))?;
+        let (skill_id, scope_kind) =
+            row.map_err(|error| format!("Unable to read skill binding diagnostics row: {error}"))?;
         let entry = presence_by_skill_id.entry(skill_id).or_default();
         if scope_kind == "global" {
             entry.global = true;
@@ -1631,14 +1645,20 @@ mod tests {
             .expect("local shared skill should exist");
         let external_with_warning = skills
             .iter()
-            .find(|skill| skill.source_kind == SKILL_SOURCE_EXTERNAL && skill.slug.as_deref() == Some("shared"))
+            .find(|skill| {
+                skill.source_kind == SKILL_SOURCE_EXTERNAL
+                    && skill.slug.as_deref() == Some("shared")
+            })
             .expect("external shared skill should exist");
         assert_eq!(local_with_warning.runtime_warnings.len(), 1);
         assert_eq!(external_with_warning.runtime_warnings.len(), 1);
-        assert_eq!(local_with_warning.runtime_warnings[0].code, "ambient_collision");
+        assert_eq!(
+            local_with_warning.runtime_warnings[0].code,
+            "ambient_collision"
+        );
 
-        let diagnostics = get_skills_catalog_diagnostics(&connection)
-            .expect("catalog diagnostics should load");
+        let diagnostics =
+            get_skills_catalog_diagnostics(&connection).expect("catalog diagnostics should load");
         assert!(diagnostics.has_discovered_external_skills);
         assert_eq!(diagnostics.external_status_summary.shadowed, 1);
         assert_eq!(diagnostics.scoped_ambient_conflict_count, 1);

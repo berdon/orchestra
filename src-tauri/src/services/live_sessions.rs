@@ -1260,7 +1260,9 @@ pub fn ensure_runtime(
     session_dir: PathBuf,
     session_id: &str,
 ) -> Result<Arc<SessionRuntime>, String> {
-    let desired_skill_launch_plan = match runtime_skills::resolve_managed_pi_skill_launch_plan(session_id) {
+    let desired_skill_launch_plan = match runtime_skills::resolve_managed_pi_skill_launch_plan(
+        session_id,
+    ) {
         Ok(plan) => {
             app.state::<crate::state::AppState>().log(
                 "info",
@@ -2242,7 +2244,8 @@ mod tests {
                     warnings: Vec::new(),
                     error_message: None,
                 },
-            }.diagnostics,
+            }
+            .diagnostics,
             stdin: Mutex::new(None),
             child: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
@@ -2394,10 +2397,27 @@ mod tests {
     #[test]
     fn live_runtime_details_include_managed_skill_diagnostics() {
         let app_handle = test_app_handle();
-        let runtime = test_runtime(&app_handle, "session-diagnostics", "hash-diagnostics", false);
+        let runtime = test_runtime(
+            &app_handle,
+            "session-diagnostics",
+            "hash-diagnostics",
+            false,
+        );
         let details = runtime.runtime_details();
-        assert_eq!(details.managed_skills.as_ref().map(|value| value.context_hash.as_str()), Some("hash-diagnostics"));
-        assert_eq!(details.managed_skills.as_ref().map(|value| value.state.as_str()), Some("resolved"));
+        assert_eq!(
+            details
+                .managed_skills
+                .as_ref()
+                .map(|value| value.context_hash.as_str()),
+            Some("hash-diagnostics")
+        );
+        assert_eq!(
+            details
+                .managed_skills
+                .as_ref()
+                .map(|value| value.state.as_str()),
+            Some("resolved")
+        );
     }
 
     #[test]

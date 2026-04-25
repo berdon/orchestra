@@ -1123,7 +1123,9 @@ fn stale_assignment_reason(
     assignment: &TaskLaneAssignment,
 ) -> Result<Option<String>, String> {
     let task = tasks::get_task_context(connection, &assignment.task_id)?;
-    if task.status == "blocked" {
+    let blocked_active_assignment =
+        task.status == "blocked" && assignment.status == ASSIGNMENT_STATUS_ACTIVE;
+    if task.status == "blocked" && !blocked_active_assignment {
         return Ok(Some(
             "task is blocked and should not retain worker runtime".into(),
         ));
@@ -1132,12 +1134,14 @@ fn stale_assignment_reason(
     if matches!(
         assignment.status.as_str(),
         ASSIGNMENT_STATUS_QUEUED | ASSIGNMENT_STATUS_ACTIVE
-    ) && !task_lane_queue_source_is_valid(
-        connection,
-        &assignment.task_id,
-        Some(&assignment.workflow_id),
-        &assignment.lane_id,
-    )? {
+    ) && !blocked_active_assignment
+        && !task_lane_queue_source_is_valid(
+            connection,
+            &assignment.task_id,
+            Some(&assignment.workflow_id),
+            &assignment.lane_id,
+        )?
+    {
         return Ok(Some(
             "task is no longer runnable for the queued/active lane claim".into(),
         ));
@@ -1573,7 +1577,7 @@ fn auto_dispatchable_unblocked_dependents(
         }
 
         let project = projects::get_project(connection, &task.project_id)?;
-        let automation = project_settings::get_task_automation_settings(&project.slug)?;
+        let automation = task_automation_settings_for_project(connection, &project.slug)?;
         if !automation.auto_dispatch_on_blocker_completion {
             continue;
         }
@@ -1600,7 +1604,7 @@ fn auto_dispatchable_unblocked_parents(
         }
 
         let project = projects::get_project(connection, &task.project_id)?;
-        let automation = project_settings::get_task_automation_settings(&project.slug)?;
+        let automation = task_automation_settings_for_project(connection, &project.slug)?;
         if !automation.auto_dispatch_on_blocker_completion {
             continue;
         }
@@ -1609,6 +1613,18 @@ fn auto_dispatchable_unblocked_parents(
     }
 
     Ok(ready)
+}
+
+fn task_automation_settings_for_project(
+    connection: &Connection,
+    project_slug: &str,
+) -> Result<crate::models::ProjectTaskAutomationSettings, String> {
+    let orchestra_root = crate::services::orchestra_paths::default_orchestra_root().ok();
+    project_settings::get_task_automation_settings_with_connection(
+        connection,
+        orchestra_root.as_deref(),
+        project_slug,
+    )
 }
 
 fn read_task_whip_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskWhipCandidate> {
@@ -3078,16 +3094,50 @@ fn complete_lane(
         }
     }
 
-    if task.dependency_blocked {
-        return Err(format!(
-            "Task {task_id} is blocked by unresolved dependencies or unfinished subtasks and cannot progress until those blockers are resolved."
-        ));
+    if task.status == "blocked" || task.dependency_blocked {
+        if active_assignment.is_none() {
+            return Err(format!(
+                "Task {task_id} is blocked by unresolved dependencies or unfinished subtasks and cannot progress until those blockers are resolved."
+            ));
+        }
     }
 
     let now = now_iso();
     let normalized_notes = normalize_optional(notes);
 
     if let Some(assignment) = active_assignment.as_ref() {
+        if task.status == "blocked" || task.dependency_blocked {
+            update_open_lane_run(
+                connection,
+                task_id,
+                &assignment.lane_id,
+                assignment.session_id.as_deref(),
+                "blocked",
+                normalized_notes.clone(),
+                &now,
+            )?;
+            finalize_worker_assignment(
+                connection,
+                project_root,
+                session_dir,
+                &task,
+                assignment,
+                "success",
+                normalized_notes.clone(),
+                &now,
+            )?;
+            if task.status != "blocked" {
+                tasks::reconcile_dependency_statuses(connection, vec![task.id.clone()], &now)?;
+            }
+            let updated = tasks::get_task_context(connection, task_id)?;
+            let _ = session_list::auto_archive_session_for_task_status(
+                connection,
+                assignment,
+                &updated.status,
+            )?;
+            return Ok(updated);
+        }
+
         if outcome == "success"
             && lane.require_user_approval_on_success
             && matches!(assignment.worker_type.as_str(), "agent" | "role")
@@ -8849,6 +8899,338 @@ mod tests {
     }
 
     #[test]
+    fn blocker_completion_restores_a_dependency_blocked_task_to_ready() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Dependent Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let blocker_workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Blocker Review Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-blocker-review".into()),
+                    key: "review".into(),
+                    name: "Review".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "user".into(),
+                    assigned_entity_id: None,
+                    entry_prompt_template: Some("Review the blocker.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("blocker workflow should create");
+        let dependent_workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Dependent Role Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-dependent-implement".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the dependent task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("dependent workflow should create");
+        let root = init_test_repo("task-runtime-blocker-completion-unblocks-dependent");
+        insert_project_and_repository(
+            &connection,
+            "project-blocker-completion",
+            "project-blocker-completion",
+            "repo-blocker-completion",
+            "repo-blocker-completion",
+            "Blocker Completion Repo",
+            &root,
+        );
+
+        let blocker = tasks::create_task(
+            &mut connection,
+            Some("project-blocker-completion"),
+            TaskUpsertInput {
+                title: "Blocker task".into(),
+                description: Some("Completing this should unblock the dependent task.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_review".into(),
+                priority: "P1".into(),
+                workflow_id: Some(blocker_workflow.id.clone()),
+                current_lane_id: Some("lane-blocker-review".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: Some("repo-blocker-completion".into()),
+                repository_ids: vec!["repo-blocker-completion".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("blocker task should create");
+        let dependent = tasks::create_task(
+            &mut connection,
+            Some("project-blocker-completion"),
+            TaskUpsertInput {
+                title: "Dependent task".into(),
+                description: Some("Should return to ready once the blocker completes.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(dependent_workflow.id.clone()),
+                current_lane_id: Some("lane-dependent-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-blocker-completion".into()),
+                repository_ids: vec!["repo-blocker-completion".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("dependent task should create");
+        tasks::add_task_dependency(&mut connection, &blocker.id, &dependent.id)
+            .expect("dependency should add");
+
+        let blocked_dependent =
+            tasks::get_task(&connection, &dependent.id).expect("dependent should reload blocked");
+        assert_eq!(blocked_dependent.status, "blocked");
+        assert!(blocked_dependent.dependency_blocked);
+        assert!(!blocked_dependent.ready_for_dispatch);
+
+        let session_dir = root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let completed_blocker = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &blocker.id,
+            Some("Resolved the blocker".into()),
+            None,
+        )
+        .expect("blocker completion should succeed");
+        assert_eq!(completed_blocker.status, "completed");
+
+        let unblocked_dependent = tasks::get_task(&connection, &dependent.id)
+            .expect("dependent should reload ready after blocker completion");
+        assert_eq!(unblocked_dependent.status, "ready");
+        assert!(!unblocked_dependent.dependency_blocked);
+        assert!(unblocked_dependent.ready_for_dispatch);
+    }
+
+    #[test]
+    fn active_task_blocked_by_a_new_subtask_keeps_running_until_transition() {
+        let mut connection = in_memory_connection();
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Parent Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Parent Agent Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-parent-agent".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some("Implement the parent task.".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let root = init_test_repo("task-runtime-blocked-parent-subtask-mid-run");
+        insert_project_and_repository(
+            &connection,
+            "project-parent-subtask-mid-run",
+            "project-parent-subtask-mid-run",
+            "repo-parent-subtask-mid-run",
+            "repo-parent-subtask-mid-run",
+            "Parent Mid-run Repo",
+            &root,
+        );
+
+        let parent = tasks::create_task(
+            &mut connection,
+            Some("project-parent-subtask-mid-run"),
+            TaskUpsertInput {
+                title: "Parent task".into(),
+                description: Some("Creates a child while already running.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-parent-agent".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.id.clone()),
+                repository_id: Some("repo-parent-subtask-mid-run".into()),
+                repository_ids: vec!["repo-parent-subtask-mid-run".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("parent should create");
+        let session_dir = root.parent().unwrap().join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let session = pi_sessions::create_session_file(
+            &root,
+            &session_dir,
+            Some("parent mid-run session"),
+            false,
+        )
+        .expect("session should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-parent-mid-run', ?1, ?2, 'lane-parent-agent', 'agent', ?3, 'active', ?4, ?5, NULL, NULL, 'Prompt', 0, NULL, ?6, NULL, ?6, ?6)",
+                params![
+                    parent.id.as_str(),
+                    workflow.id.as_str(),
+                    agent.id.as_str(),
+                    session.record.id.as_str(),
+                    root.display().to_string(),
+                    now.as_str(),
+                ],
+            )
+            .expect("active assignment should insert");
+        ensure_lane_run(
+            &connection,
+            parent.id.as_str(),
+            "lane-parent-agent",
+            session.record.id.as_str(),
+            &now,
+        )
+        .expect("lane run should create");
+
+        let dispatched = get_current_lane_assignment(&connection, &parent.id)
+            .expect("current assignment should load")
+            .expect("active assignment should exist");
+        assert_eq!(dispatched.status, ASSIGNMENT_STATUS_ACTIVE);
+        assert!(dispatched.session_id.is_some());
+
+        let child = tasks::create_subtask(
+            &mut connection,
+            &parent.id,
+            TaskUpsertInput {
+                title: "Child task".into(),
+                description: Some("Blocks the parent until it is finished.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("child should create");
+
+        let blocked_parent =
+            tasks::get_task(&connection, &parent.id).expect("parent should reload blocked");
+        assert_eq!(blocked_parent.status, "blocked");
+        assert!(blocked_parent.dependency_blocked);
+        assert!(blocked_parent.active_lane_assignment.is_some());
+        assert_eq!(blocked_parent.blocked_child_count, 1);
+
+        let transitioned = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &parent.id,
+            Some("Tried to finish while child work remained open.".into()),
+            None,
+        )
+        .expect("blocked parent transition attempt should succeed by stopping the session");
+        assert_eq!(transitioned.status, "blocked");
+        assert!(transitioned.dependency_blocked);
+        assert!(transitioned.active_lane_assignment.is_none());
+        assert_eq!(
+            transitioned.current_lane_id.as_deref(),
+            Some("lane-parent-agent")
+        );
+        assert_eq!(transitioned.blocked_child_count, 1);
+        assert_eq!(
+            transitioned.lane_runs.last().map(|run| run.result.as_str()),
+            Some("blocked")
+        );
+
+        let assignment_status: String = connection
+            .query_row(
+                "SELECT status FROM task_lane_assignments WHERE id = ?1",
+                [dispatched.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("assignment should reload after blocked transition attempt");
+        assert_eq!(assignment_status, ASSIGNMENT_STATUS_COMPLETED);
+
+        let child_reloaded = tasks::get_task(&connection, &child.id).expect("child should reload");
+        assert_eq!(child_reloaded.status, "ready");
+    }
+
+    #[test]
     fn user_review_can_fail_without_an_active_assignment() {
         let mut connection = in_memory_connection();
         let agent = agents::create_agent(
@@ -9485,37 +9867,39 @@ mod tests {
     }
 
     #[test]
-    fn blocked_tasks_are_reported_as_stale_runtime_claims() {
+    fn blocked_active_tasks_are_not_reported_as_stale_runtime_claims() {
         let mut connection = in_memory_connection();
-        let role = roles::create_role(
+        let agent = agents::create_agent(
             &mut connection,
-            RoleUpsertInput {
-                name: "Stale Blocked Role".into(),
+            AgentUpsertInput {
+                name: "Stale Guard Agent".into(),
                 description: None,
                 system_prompt: None,
                 provider: None,
                 model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
                 thinking_level: Some("medium".into()),
-                capacity: 1,
                 compaction_window: None,
                 policy_ids: Vec::new(),
                 direct_permissions: Vec::new(),
             },
         )
-        .expect("role should create");
+        .expect("agent should create");
         let workflow = workflows::create_workflow(
             &mut connection,
             WorkflowUpsertInput {
-                name: "Blocked Stale Claim Flow".into(),
+                name: "Blocked Active Stale Guard Flow".into(),
                 description: None,
                 lanes: vec![WorkflowLaneInput {
-                    id: Some("lane-role".into()),
+                    id: Some("lane-agent".into()),
                     key: "implement".into(),
                     name: "Implement".into(),
                     description: None,
                     order: Some(0),
-                    assigned_entity_type: "role".into(),
-                    assigned_entity_id: Some(role.slug.clone()),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
                     entry_prompt_template: Some("Implement the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
@@ -9527,71 +9911,98 @@ mod tests {
             },
         )
         .expect("workflow should create");
-        let project_root = init_test_repo("task-runtime-blocked-stale-claim");
+        let project_root = init_test_repo("task-runtime-blocked-active-stale-guard");
         insert_project_and_repository(
             &connection,
-            "project-blocked-stale",
-            "project-blocked-stale",
-            "repo-blocked-stale",
-            "repo-blocked-stale",
-            "Blocked Stale Repo",
+            "project-blocked-active-stale",
+            "project-blocked-active-stale",
+            "repo-blocked-active-stale",
+            "repo-blocked-active-stale",
+            "Blocked Active Stale Repo",
             &project_root,
         );
 
         let task = tasks::create_task(
             &mut connection,
-            Some("project-blocked-stale"),
+            Some("project-blocked-active-stale"),
             TaskUpsertInput {
-                title: "Blocked stale task".into(),
-                description: None,
+                title: "Blocked active task".into(),
+                description: Some("Should stay active until it tries to transition.".into()),
                 task_type: "task".into(),
                 tags: Vec::new(),
-                status: "blocked".into(),
+                status: "in_progress".into(),
                 priority: "P2".into(),
                 workflow_id: Some(workflow.id.clone()),
-                current_lane_id: Some("lane-role".into()),
-                assignee_type: "role".into(),
-                assignee_id: Some(role.slug.clone()),
-                repository_id: Some("repo-blocked-stale".into()),
-                repository_ids: vec!["repo-blocked-stale".into()],
+                current_lane_id: Some("lane-agent".into()),
+                assignee_type: "agent".into(),
+                assignee_id: Some(agent.id.clone()),
+                repository_id: Some("repo-blocked-active-stale".into()),
+                repository_ids: vec!["repo-blocked-active-stale".into()],
                 parent_task_id: None,
                 whip_max_attempts: None,
                 archived: None,
             },
         )
         .expect("task should create");
+        let session_dir = pi_sessions::detect_session_context(Some("project-blocked-active-stale"))
+            .expect("session context should resolve")
+            .session_dir;
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let session = pi_sessions::create_session_file(
+            &project_root,
+            &session_dir,
+            Some("blocked active stale guard session"),
+            false,
+        )
+        .expect("session should create");
         let now = now_iso();
         connection
             .execute(
-                r#"
-                INSERT INTO task_lane_assignments (
-                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
-                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
-                    pending_outcome, completion_notes, whip_count, last_whip_at,
-                    started_at, completed_at, created_at, updated_at
-                ) VALUES (
-                    'assignment-blocked-stale', ?1, ?2, 'lane-role', 'role', ?3, 'active',
-                    'session-blocked-stale', NULL, NULL, NULL, 'Prompt',
-                    NULL, NULL, 0, NULL,
-                    ?4, NULL, ?4, ?4
-                )
-                "#,
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-blocked-active-stale', ?1, ?2, 'lane-agent', 'agent', ?3, 'active', ?4, ?5, NULL, NULL, 'Prompt', 0, NULL, ?6, NULL, ?6, ?6)",
                 params![
                     task.id.as_str(),
                     workflow.id.as_str(),
-                    role.id.as_str(),
-                    now.as_str()
+                    agent.id.as_str(),
+                    session.record.id.as_str(),
+                    project_root.display().to_string(),
+                    now.as_str(),
                 ],
             )
-            .expect("stale assignment should insert");
+            .expect("active assignment should insert");
+
+        let blocked = tasks::update_task(
+            &mut connection,
+            &task.id,
+            TaskUpsertInput {
+                title: task.title.clone(),
+                description: task.description.clone(),
+                task_type: task.task_type.clone(),
+                tags: task.tags.clone(),
+                status: "blocked".into(),
+                priority: task.priority.clone(),
+                workflow_id: task.workflow_id.clone(),
+                current_lane_id: task.current_lane_id.clone(),
+                assignee_type: task.assignee_type.clone(),
+                assignee_id: task.assignee_id.clone(),
+                repository_id: task.repository_id.clone(),
+                repository_ids: task.repository_ids.clone(),
+                parent_task_id: task.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("task should become blocked");
+        assert_eq!(blocked.status, "blocked");
+        assert!(blocked.active_lane_assignment.is_some());
 
         let candidates = find_stale_task_assignment_candidates(&connection)
             .expect("stale assignment candidates should load");
-        let candidate = candidates
-            .iter()
-            .find(|candidate| candidate.task_id == task.id)
-            .expect("blocked task should be reported as stale");
-        assert!(candidate.reason.contains("blocked"));
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| candidate.task_id != task.id),
+            "blocked active assignment should not be reported as stale"
+        );
     }
 
     #[test]

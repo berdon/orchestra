@@ -1452,7 +1452,7 @@ export interface TaskLaneRun {
   taskId: string;
   laneId: string;
   sessionId: string;
-  result: "success" | "failure" | "needs_user" | "canceled";
+  result: "success" | "failure" | "needs_user" | "canceled" | "blocked";
   notes?: string | null;
   startedAt: string;
   completedAt?: string | null;
