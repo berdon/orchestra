@@ -260,6 +260,8 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
 ];
 
 const DELETE_HOLD_MS = 2000;
+const COMPACT_HEADER_SCROLL_EPSILON = 2;
+const COMPACT_HEADER_DIRECTION_THRESHOLD = 28;
 
 interface FloatingTaskChromeLayout {
   left: number;
@@ -370,7 +372,8 @@ export function TaskDetailPage({
   const replyMessageRef = useRef<HTMLTextAreaElement | null>(null);
   const lastMarkedCommentsReadKeyRef = useRef<string | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
-  const [compactHeaderVisible, setCompactHeaderVisible] = useState(false);
+  const [compactHeaderEligible, setCompactHeaderEligible] = useState(false);
+  const [compactHeaderShown, setCompactHeaderShown] = useState(false);
   const getTooltipProps = useExplanatoryTooltipProps();
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
@@ -512,7 +515,8 @@ export function TaskDetailPage({
     const sentinel = compactHeaderSentinelRef.current;
     if (!detailPage || !primaryHeader || !sentinel || typeof window === "undefined") {
       setFloatingChromeLayout(null);
-      setCompactHeaderVisible(false);
+      setCompactHeaderEligible(false);
+      setCompactHeaderShown(false);
       return;
     }
 
@@ -530,8 +534,14 @@ export function TaskDetailPage({
     const mobileTopbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
     scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
     window.scrollTo({ top: 0, behavior: "auto" });
-    setCompactHeaderVisible(false);
+    setCompactHeaderEligible(false);
+    setCompactHeaderShown(false);
     let frameId: number | null = null;
+    const getScrollPosition = () => Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, detailPage.ownerDocument.documentElement.scrollTop);
+    let lastScrollPosition = getScrollPosition();
+    let accumulatedDirection: "up" | "down" | null = null;
+    let accumulatedDistance = 0;
+    let pendingScrollIntent: "up" | "down" | null = null;
 
     const updateFloatingChrome = () => {
       if (frameId !== null) {
@@ -549,8 +559,8 @@ export function TaskDetailPage({
               top: pinnedTop,
             }
           : null;
-        const scrollPosition = Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, detailPage.ownerDocument.documentElement.scrollTop);
-        const nextVisible = scrollPosition > 120 && sentinel.getBoundingClientRect().top <= pinnedTop + 4;
+        const scrollPosition = getScrollPosition();
+        const nextEligible = scrollPosition > 120 && sentinel.getBoundingClientRect().top <= pinnedTop + 4;
 
         setFloatingChromeLayout((current) => {
           if (!nextLayout && !current) {
@@ -567,22 +577,62 @@ export function TaskDetailPage({
           }
           return nextLayout;
         });
-        setCompactHeaderVisible((current) => (current === nextVisible ? current : nextVisible));
+
+        if (!nextLayout || !nextEligible) {
+          accumulatedDirection = null;
+          accumulatedDistance = 0;
+          pendingScrollIntent = null;
+          lastScrollPosition = scrollPosition;
+          setCompactHeaderEligible((current) => (current ? false : current));
+          setCompactHeaderShown((current) => (current ? false : current));
+          return;
+        }
+
+        setCompactHeaderEligible((current) => (current === nextEligible ? current : nextEligible));
+
+        if (pendingScrollIntent) {
+          const nextShown = pendingScrollIntent === "up";
+          pendingScrollIntent = null;
+          setCompactHeaderShown((current) => (current === nextShown ? current : nextShown));
+        }
       });
     };
 
     updateFloatingChrome();
-    scrollRoot?.addEventListener("scroll", updateFloatingChrome, { passive: true });
-    window.addEventListener("scroll", updateFloatingChrome, { passive: true });
-    window.addEventListener("resize", updateFloatingChrome);
+    const handleScroll = () => {
+      const scrollPosition = getScrollPosition();
+      const delta = scrollPosition - lastScrollPosition;
+      lastScrollPosition = scrollPosition;
+
+      if (Math.abs(delta) >= COMPACT_HEADER_SCROLL_EPSILON) {
+        const nextDirection = delta > 0 ? "down" : "up";
+        if (accumulatedDirection !== nextDirection) {
+          accumulatedDirection = nextDirection;
+          accumulatedDistance = Math.abs(delta);
+        } else {
+          accumulatedDistance += Math.abs(delta);
+        }
+
+        if (accumulatedDistance >= COMPACT_HEADER_DIRECTION_THRESHOLD) {
+          pendingScrollIntent = nextDirection;
+          accumulatedDistance = 0;
+        }
+      }
+
+      updateFloatingChrome();
+    };
+    const handleMeasure = () => updateFloatingChrome();
+    scrollRoot?.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleMeasure);
 
     return () => {
       if (frameId !== null) {
         window.cancelAnimationFrame(frameId);
       }
-      scrollRoot?.removeEventListener("scroll", updateFloatingChrome);
-      window.removeEventListener("scroll", updateFloatingChrome);
-      window.removeEventListener("resize", updateFloatingChrome);
+      scrollRoot?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleMeasure);
     };
   }, [task.id]);
 
@@ -1968,8 +2018,13 @@ export function TaskDetailPage({
         <div className="task-detail-tabs__body" ref={tabBodyRef}>{renderTabPanel()}</div>
       </section>
 
-      {!isEditing && compactHeaderVisible && stickyChromeStyle ? (
-        <div className="task-detail-floating-header" data-role="task-detail-compact-header" style={{ ...stickyChromeStyle, top: `${floatingChromeLayout?.top ?? 0}px` }}>
+      {!isEditing && compactHeaderEligible && stickyChromeStyle ? (
+        <div
+          className={`task-detail-floating-header${compactHeaderShown ? "" : " task-detail-floating-header--hidden"}`}
+          data-role="task-detail-compact-header"
+          data-scroll-state={compactHeaderShown ? "visible" : "hidden"}
+          style={{ ...stickyChromeStyle, top: `${floatingChromeLayout?.top ?? 0}px` }}
+        >
           <div className="task-detail-floating-header__copy">
             <div className="task-detail-floating-header__title-row">
               <span className="status-badge status-badge--neutral">{task.number}</span>
