@@ -351,6 +351,7 @@ export function TaskDetailPage({
   const [relaneNotes, setRelaneNotes] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [pendingScrollReferenceId, setPendingScrollReferenceId] = useState<string | null>(null);
+  const [pendingReplyFocusTargetId, setPendingReplyFocusTargetId] = useState<string | null>(null);
   const [historyLimit, setHistoryLimit] = useState<number>(() => {
     if (typeof window === "undefined") {
       return 5;
@@ -366,6 +367,7 @@ export function TaskDetailPage({
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const loadedFileContentPathRef = useRef<string | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
+  const replyMessageRef = useRef<HTMLTextAreaElement | null>(null);
   const lastMarkedCommentsReadKeyRef = useRef<string | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
   const [compactHeaderVisible, setCompactHeaderVisible] = useState(false);
@@ -409,6 +411,7 @@ export function TaskDetailPage({
   useEffect(() => {
     setReplyTargetCommentId(null);
     setReplyDraft(createReplyDraft(commentDraft.author));
+    setPendingReplyFocusTargetId(null);
     setMailDraft("");
     setMailInterrupt(false);
     setTodoDraftDescription("");
@@ -470,6 +473,32 @@ export function TaskDetailPage({
       }
     };
   }, [activeTab, pendingScrollReferenceId, selectedFileReference]);
+
+  useEffect(() => {
+    if (activeTab !== "comments" || !pendingReplyFocusTargetId || pendingReplyFocusTargetId !== replyTargetCommentId) {
+      return;
+    }
+
+    let timeoutId: number | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      const replyMessage = replyMessageRef.current;
+      if (!replyMessage) {
+        return;
+      }
+      replyMessage.scrollIntoView({ block: "center", behavior: "auto" });
+      timeoutId = window.setTimeout(() => {
+        replyMessage.focus();
+        setPendingReplyFocusTargetId(null);
+      }, 50);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [activeTab, pendingReplyFocusTargetId, replyTargetCommentId]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -721,9 +750,10 @@ export function TaskDetailPage({
     clearDeleteHold();
   }
 
-  function openReplyComposer(comment: TaskComment) {
-    setReplyTargetCommentId(comment.id);
-    setReplyDraft(createReplyDraft(commentDraft.author, comment.id));
+  function openReplyComposer(threadComment: TaskComment) {
+    setReplyTargetCommentId(threadComment.id);
+    setReplyDraft(createReplyDraft(commentDraft.author, threadComment.id));
+    setPendingReplyFocusTargetId(threadComment.id);
   }
 
   function handleCancelEdit() {
@@ -745,6 +775,7 @@ export function TaskDetailPage({
     }
     setReplyTargetCommentId(null);
     setReplyDraft(createReplyDraft(commentDraft.author));
+    setPendingReplyFocusTargetId(null);
   }
 
   async function handleSendRuntimeMail() {
@@ -1421,6 +1452,11 @@ export function TaskDetailPage({
                               onOpenRole={onOpenRole}
                             />
                             {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
+                            <div className="task-comment-thread__actions">
+                              <button className="secondary-button" data-role="reply-task-comment" data-comment-id={reply.id} data-parent-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
+                                Reply
+                              </button>
+                            </div>
                           </article>
                         ))}
                       </div>
@@ -1438,6 +1474,7 @@ export function TaskDetailPage({
                         interruptDataRole="task-reply-interrupt"
                         message={replyDraft.message}
                         messageDataRole="task-reply-message"
+                        messageRef={replyMessageRef}
                         messageLabel={`Reply to ${comment.author}`}
                         mentionListDataRole="task-reply-mention-list"
                         mentionOptionDataRole="task-reply-mention-option"
@@ -1445,6 +1482,7 @@ export function TaskDetailPage({
                         onCancel={() => {
                           setReplyTargetCommentId(null);
                           setReplyDraft(createReplyDraft(commentDraft.author));
+                          setPendingReplyFocusTargetId(null);
                         }}
                         onInterruptChange={(interruptAgent) => setReplyDraft({ ...replyDraft, interruptAgent })}
                         onMessageChange={(message) => setReplyDraft({ ...replyDraft, message })}

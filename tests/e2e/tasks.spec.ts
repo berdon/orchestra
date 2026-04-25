@@ -2396,6 +2396,7 @@ test("task comment composer autocompletes tasks, agents, and roles and renders t
   await page.locator('[data-role="task-title"]').fill("Mention target task");
   await page.locator('[data-role="save-task"]').click();
 
+  await page.getByRole("button", { name: "Tasks" }).click();
   await page.getByRole("button", { name: "New task" }).click();
   await page.locator('[data-role="task-title"]').fill("Mention source task");
   await page.locator('[data-role="save-task"]').click();
@@ -2545,6 +2546,136 @@ test("task detail renders markdown descriptions and comments with preserved line
   const commentHtml = await detailedComment.evaluate((node) => node.innerHTML);
   expect(commentHtml).toContain("<br");
   expect(commentHtml).toContain("<ol");
+});
+
+test("task comment reply actions scroll/focus composer and nested replies target the top-level thread", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const buildComment = (id: string, parentCommentId: string | null, author: string, message: string, offset: number) => ({
+      id,
+      taskId: "task-reply-scroll-focus",
+      parentCommentId,
+      author,
+      message,
+      interruptAgent: false,
+      repositoryId: null,
+      relativePath: null,
+      lineStart: null,
+      lineEnd: null,
+      columnStart: null,
+      columnEnd: null,
+      selectedText: null,
+      anchorCommitHash: null,
+      anchorHasUncommittedChanges: null,
+      createdAt: new Date(Date.parse(timestamp) + offset).toISOString(),
+      updatedAt: new Date(Date.parse(timestamp) + offset).toISOString(),
+    });
+    const comments = [
+      buildComment("thread-parent", null, "Reviewer", "Top-level thread that needs reply focus.", 0),
+      ...Array.from({ length: 18 }, (_, index) => buildComment(
+        `thread-reply-${index + 1}`,
+        "thread-parent",
+        "Worker",
+        `Nested reply ${index + 1} with enough thread content to push the inline composer away from the clicked action.`,
+        (index + 1) * 1000,
+      )),
+    ];
+
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-reply-scroll-focus",
+          projectId: "orchestra",
+          number: "ORC-301",
+          title: "Reply scroll focus task",
+          description: "Verify reply buttons move focus to the inline reply composer.",
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: comments.length,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments,
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Reply scroll focus task" }).first().click();
+  await page.locator('[data-role="task-detail-tab-comments"]').click();
+
+  const topLevelReplyButton = page.locator('[data-role="reply-task-comment"][data-comment-id="thread-parent"]');
+  await expect(topLevelReplyButton).toBeVisible();
+  await topLevelReplyButton.click();
+
+  const replyMessage = page.locator('[data-role="task-reply-message"]');
+  await expect(replyMessage).toBeVisible();
+  await expect(replyMessage).toBeFocused();
+  await expect.poll(() => replyMessage.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= window.innerHeight;
+  })).toBe(true);
+
+  await page.locator('[data-role="cancel-task-reply"]').click();
+  await expect(replyMessage).toHaveCount(0);
+
+  const nestedReplyButton = page
+    .locator('[data-role="task-comment-reply"]')
+    .filter({ hasText: "Nested reply 1" })
+    .locator('[data-role="reply-task-comment"][data-comment-id="thread-reply-1"]');
+  await expect(nestedReplyButton).toBeVisible();
+  await expect(nestedReplyButton).toHaveAttribute("data-parent-comment-id", "thread-parent");
+  await nestedReplyButton.click();
+
+  await expect(replyMessage).toBeVisible();
+  await expect(replyMessage).toBeFocused();
+  await expect.poll(() => replyMessage.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= window.innerHeight;
+  })).toBe(true);
+
+  await replyMessage.fill("Reply from a nested comment button.");
+  await replyMessage.press("Control+Enter");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Reply from a nested comment button.");
+  await expect.poll(() => page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]") as Array<{ id: string; comments: Array<{ message: string; parentCommentId?: string | null }> }>;
+    const task = tasks.find((entry) => entry.id === "task-reply-scroll-focus");
+    return task?.comments.find((comment) => comment.message === "Reply from a nested comment button.")?.parentCommentId ?? null;
+  })).toBe("thread-parent");
 });
 
 test("task detail supports attachments, comments, timeline, and review inbox filtering", async ({ page }) => {

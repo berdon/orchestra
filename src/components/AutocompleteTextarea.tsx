@@ -105,9 +105,15 @@ export function AutocompleteTextarea({
   );
 
   useEffect(() => {
-    if (textareaRef) {
-      textareaRef.current = internalRef.current;
+    if (!textareaRef) {
+      return;
     }
+    textareaRef.current = internalRef.current;
+    return () => {
+      if (textareaRef.current === internalRef.current) {
+        textareaRef.current = null;
+      }
+    };
   }, [textareaRef]);
 
   useEffect(() => {
