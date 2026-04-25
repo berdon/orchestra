@@ -5970,3 +5970,46 @@ strong {
     display: block;
   }
 }
+
+/* Mobile Harness settings should remain touch-friendly and avoid horizontal overflow. */
+.app-shell[data-mobile-navigation="true"] .panel,
+.app-shell[data-mobile-navigation="true"] .panel-stack,
+.app-shell[data-mobile-navigation="true"] .general-panel,
+.app-shell[data-mobile-navigation="true"] .task-section,
+.app-shell[data-mobile-navigation="true"] .field-group,
+.app-shell[data-mobile-navigation="true"] .workflow-validation-list,
+.app-shell[data-mobile-navigation="true"] .task-section__header > * {
+  min-width: 0;
+}
+
+.app-shell[data-mobile-navigation="true"] .task-section__header {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.app-shell[data-mobile-navigation="true"] .action-cluster {
+  width: 100%;
+  align-items: stretch;
+}
+
+.app-shell[data-mobile-navigation="true"] .action-cluster .secondary-button,
+.app-shell[data-mobile-navigation="true"] .action-cluster .primary-button,
+.app-shell[data-mobile-navigation="true"] .pi-oauth-method-menu,
+.app-shell[data-mobile-navigation="true"] .pi-oauth-method-menu__group {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.app-shell[data-mobile-navigation="true"] .workflow-validation-list p,
+.app-shell[data-mobile-navigation="true"] .muted-copy,
+.app-shell[data-mobile-navigation="true"] .supporting-copy,
+.app-shell[data-mobile-navigation="true"] .field-group__hint,
+.app-shell[data-mobile-navigation="true"] code {
+  overflow-wrap: anywhere;
+}
+
+.app-shell[data-mobile-navigation="true"] .text-input,
+.app-shell[data-mobile-navigation="true"] .text-area,
+.app-shell[data-mobile-navigation="true"] .select-input {
+  min-width: 0;
+}

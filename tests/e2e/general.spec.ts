@@ -233,6 +233,34 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
 });
 
+test("mobile navigation exposes usable Harness configuration", async ({ page }) => {
+  await page.addInitScript(seedGeneralAndHarnessSettings);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  await page.locator('[data-role="nav-item-settings"]').click();
+  await expect(page.locator('[data-role="settings-tab-harness"]')).toBeVisible();
+  await page.locator('[data-role="settings-tab-harness"]').click();
+
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
+  await expect(page.locator('[data-role="pi-runtime-default-compaction-window"]')).toBeVisible();
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toBeVisible();
+  await page.locator('[data-role="pi-runtime-default-compaction-window"]').fill("16000");
+  await page.locator('[data-role="pi-runtime-extensions"]').fill("./extensions/mobile-extra.ts");
+  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.harness-settings"))).toContain("./extensions/mobile-extra.ts");
+  await page.locator('[data-role="reset-pi-runtime-extensions"]').click();
+  await page.locator('[data-role="save-pi-runtime-extensions"]').click();
+  await expect(page.locator('[data-role="pi-runtime-default-compaction-window"]')).toHaveValue("10%");
+  await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("");
+
+  const viewportWidth = page.viewportSize()?.width ?? 390;
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewportWidth);
+});
+
 test("settings sub-navigation scrolls and keeps a deep-linked Harness tab visible", async ({ page }) => {
   await page.addInitScript(seedGeneralAndHarnessSettings);
   await page.setViewportSize({ width: 1280, height: 420 });
