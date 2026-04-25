@@ -752,6 +752,9 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 project_id TEXT NOT NULL,
                 blocker_task_id TEXT NOT NULL,
                 blocked_task_id TEXT NOT NULL,
+                blocker_workflow_id TEXT,
+                blocker_lane_id TEXT,
+                blocker_lane_order INTEGER,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(blocker_task_id) REFERENCES tasks(id) ON DELETE CASCADE,
                 FOREIGN KEY(blocked_task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -984,6 +987,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_roles_slug_index(connection)?;
     ensure_skills_tables(connection)?;
     ensure_tasks_table_columns(connection)?;
+    ensure_task_dependencies_table_columns(connection)?;
     ensure_task_tag_tables(connection)?;
     ensure_task_comments_table_columns(connection)?;
     ensure_session_list_entry_columns(connection)?;
@@ -1720,6 +1724,49 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
         .map_err(|error| {
             format!("Unable to create tasks source_schedule_id index: {error}")
         })?;
+
+    Ok(())
+}
+
+fn ensure_task_dependencies_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "task_dependencies")?;
+
+    if !columns.contains("blocker_workflow_id") {
+        connection
+            .execute(
+                "ALTER TABLE task_dependencies ADD COLUMN blocker_workflow_id TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add blocker_workflow_id column to task_dependencies table: {error}"
+                )
+            })?;
+    }
+
+    if !columns.contains("blocker_lane_id") {
+        connection
+            .execute(
+                "ALTER TABLE task_dependencies ADD COLUMN blocker_lane_id TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add blocker_lane_id column to task_dependencies table: {error}")
+            })?;
+    }
+
+    if !columns.contains("blocker_lane_order") {
+        connection
+            .execute(
+                "ALTER TABLE task_dependencies ADD COLUMN blocker_lane_order INTEGER",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add blocker_lane_order column to task_dependencies table: {error}"
+                )
+            })?;
+    }
 
     Ok(())
 }
