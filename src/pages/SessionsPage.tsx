@@ -393,8 +393,10 @@ export function SessionsPage({
     setRuntimeDetailsError(null);
   }
 
+  const selectedSessionPickerLabel = selectedSession ? getSessionListTitle(selectedSession) : `Choose ${sessionFilter} session`;
+
   return (
-    <section className="panel-stack panel-stack--sessions panel-stack--sessions-layout">
+    <section className="panel-stack panel-stack--sessions panel-stack--sessions-layout sessions-page">
       <div className="page-mobile-switcher page-mobile-switcher--sessions" data-role="sessions-mobile-switcher">
         <button
           className="page-mobile-switcher__trigger"
@@ -404,8 +406,8 @@ export function SessionsPage({
           aria-expanded={mobileSessionPickerOpen}
           onClick={() => setMobileSessionPickerOpen((current) => !current)}
         >
-          <span className="page-mobile-switcher__current">
-            {selectedSession ? getSessionListTitle(selectedSession) : `Choose ${sessionFilter} session`}
+          <span className="page-mobile-switcher__current" title={selectedSessionPickerLabel}>
+            {selectedSessionPickerLabel}
           </span>
           <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
         </button>
