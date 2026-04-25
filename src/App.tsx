@@ -2999,6 +2999,13 @@ export function App() {
     } else {
       setActivePage(page);
     }
+
+    if (isMobileNavigation && page === "settings") {
+      shouldRestoreMobileNavigationFocusRef.current = false;
+      setIsMobileNavigationOpen(true);
+      return;
+    }
+
     closeMobileNavigation({ restoreFocus: false });
   }
 

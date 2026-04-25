@@ -128,7 +128,7 @@ test("mobile navigation uses a hamburger dialog, ignores desktop collapse state,
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
 });
 
-test("mobile navigation closes after destination changes and keeps settings sub-navigation reachable", async ({ page }) => {
+test("mobile navigation keeps Settings open long enough to expose settings sections, then closes after a section is chosen", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -138,10 +138,12 @@ test("mobile navigation closes after destination changes and keeps settings sub-
 
   await openMobileNavigation(page);
   await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+  await expect(page.locator('[data-role="settings-sections-subnav"]')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Projects' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'General' })).toBeVisible();
 
-  await openMobileNavigation(page);
   await page.getByRole('tab', { name: 'General' }).click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Theme' })).toBeVisible();
