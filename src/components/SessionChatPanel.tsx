@@ -509,45 +509,18 @@ const SessionTranscript = memo(function SessionTranscript({
   getEventTone,
 }: SessionTranscriptProps) {
   const [wrapTranscript, setWrapTranscript] = useState(true);
-  const [transcriptScrollMetrics, setTranscriptScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
-
-  const transcriptScrollIndicator = useMemo(() => {
-    const { scrollTop, scrollHeight, clientHeight } = transcriptScrollMetrics;
-    if (scrollHeight <= clientHeight) {
-      return { visible: false, heightPercent: 100, offsetPercent: 0 };
-    }
-
-    const heightPercent = Math.max((clientHeight / scrollHeight) * 100, 12);
-    const maxOffset = Math.max(100 - heightPercent, 0);
-    const scrollRange = Math.max(scrollHeight - clientHeight, 1);
-    const offsetPercent = Math.min((scrollTop / scrollRange) * maxOffset, maxOffset);
-
-    return { visible: true, heightPercent, offsetPercent };
-  }, [transcriptScrollMetrics]);
 
   useEffect(() => {
     const node = transcriptRef.current;
     if (!node) {
       return;
     }
-
-    setTranscriptScrollMetrics({
-      scrollTop: node.scrollTop,
-      scrollHeight: node.scrollHeight,
-      clientHeight: node.clientHeight,
-    });
   }, [displayedEvents, sessionId, transcriptRef, wrapTranscript]);
 
   function handleTranscriptScroll(event: UIEvent<HTMLDivElement>) {
     const node = event.currentTarget;
     const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
     const nextLockedState = distanceFromBottom <= 24;
-
-    setTranscriptScrollMetrics({
-      scrollTop: node.scrollTop,
-      scrollHeight: node.scrollHeight,
-      clientHeight: node.clientHeight,
-    });
 
     if (nextLockedState !== scrollState.lockedToBottom) {
       onScrollLockChange(nextLockedState);
@@ -562,11 +535,6 @@ const SessionTranscript = memo(function SessionTranscript({
 
     if (nextLockedState && node) {
       node.scrollTop = node.scrollHeight;
-      setTranscriptScrollMetrics({
-        scrollTop: node.scrollTop,
-        scrollHeight: node.scrollHeight,
-        clientHeight: node.clientHeight,
-      });
     }
 
     onScrollLockChange(nextLockedState);
@@ -631,16 +599,6 @@ const SessionTranscript = memo(function SessionTranscript({
           />
         ))}
       </div>
-      {transcriptScrollIndicator.visible ? (
-        <div
-          className="session-transcript-scroll-indicator"
-          aria-hidden="true"
-          style={{
-            height: `${transcriptScrollIndicator.heightPercent}%`,
-            transform: `translateY(${transcriptScrollIndicator.offsetPercent}%)`,
-          }}
-        />
-      ) : null}
     </div>
   );
 });

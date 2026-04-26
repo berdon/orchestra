@@ -2045,16 +2045,6 @@ strong {
   border-top: 1px solid var(--border);
 }
 
-.session-transcript-scroll-indicator {
-  position: absolute;
-  right: 10px;
-  top: 48px;
-  width: 4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 25%, transparent);
-  pointer-events: none;
-}
-
 .filter-chip-row {
   display: flex;
   flex-wrap: wrap;
