@@ -288,6 +288,7 @@ pub struct OrchestraClientTaskCapabilities {
     pub write: OrchestraCapabilityDescriptor,
     pub review: OrchestraCapabilityDescriptor,
     pub comments: OrchestraCapabilityDescriptor,
+    pub comment_delete_impact: OrchestraCapabilityDescriptor,
     pub todos: OrchestraCapabilityDescriptor,
     pub dependencies: OrchestraCapabilityDescriptor,
     pub attachments: OrchestraCapabilityDescriptor,
@@ -1789,6 +1790,17 @@ pub struct TaskComment {
     pub anchor_has_uncommitted_changes: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentDeleteImpact {
+    pub comment_id: String,
+    pub task_id: String,
+    pub reply_count: i64,
+    pub attachment_count: i64,
+    pub file_reference_count: i64,
+    pub cascade_deleted_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

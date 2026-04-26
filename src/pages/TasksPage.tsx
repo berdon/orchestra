@@ -215,6 +215,11 @@ export function TasksPage({
   const [taskMessages, setTaskMessages] = useState<MailboxMessage[]>([]);
   const [taskDraftDirty, setTaskDraftDirty] = useState(false);
   const [taskActionError, setTaskActionError] = useState<UiErrorState | null>(null);
+  const [showDeleteCommentConfirm, setShowDeleteCommentConfirm] = useState(false);
+  const [pendingDeleteCommentId, setPendingDeleteCommentId] = useState<string | null>(null);
+  const [deleteCommentImpact, setDeleteCommentImpact] = useState<import("../types").TaskCommentDeleteImpact | null>(null);
+  const [loadingDeleteCommentImpact, setLoadingDeleteCommentImpact] = useState(false);
+  const [deletingComment, setDeletingComment] = useState(false);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [refreshingTasks, setRefreshingTasks] = useState(false);
   const [loadingTaskDetail, setLoadingTaskDetail] = useState(false);
@@ -1052,14 +1057,49 @@ export function TasksPage({
     }
     setTaskActionError(null);
     try {
+      // Fetch delete impact first
+      setLoadingDeleteCommentImpact(true);
+      const impact = await orchestraClient.tasks.getCommentDeleteImpact(commentId);
+      setDeleteCommentImpact(impact);
+      setPendingDeleteCommentId(commentId);
+      setShowDeleteCommentConfirm(true);
+      return false; // Don't auto-delete; let the user confirm in the modal
+    } catch (error) {
+      setTaskActionError(toUiErrorState(error, "Unable to load delete impact."));
+      return false;
+    } finally {
+      setLoadingDeleteCommentImpact(false);
+    }
+  }
+
+  async function handleConfirmDeleteComment(): Promise<boolean> {
+    const commentId = pendingDeleteCommentId;
+    if (!commentId || route.kind !== "detail") {
+      setShowDeleteCommentConfirm(false);
+      return false;
+    }
+    setDeletingComment(true);
+    setTaskActionError(null);
+    try {
       await orchestraClient.tasks.deleteComment(commentId);
       await loadTasksData({ silent: true });
       await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
+      setShowDeleteCommentConfirm(false);
+      setPendingDeleteCommentId(null);
+      setDeleteCommentImpact(null);
       return true;
     } catch (error) {
       setTaskActionError(toUiErrorState(error, "Unable to delete comment."));
       return false;
+    } finally {
+      setDeletingComment(false);
     }
+  }
+
+  async function handleCancelDeleteComment(): Promise<void> {
+    setShowDeleteCommentConfirm(false);
+    setPendingDeleteCommentId(null);
+    setDeleteCommentImpact(null);
   }
 
   async function handleSendTaskMail(body: string, interrupt: boolean) {
@@ -1542,6 +1582,56 @@ export function TasksPage({
             <span className="page-fab__icon" aria-hidden="true">+</span>
             <span className="page-fab__label">New task</span>
           </button>
+        </div>
+      ) : null}
+
+      {showDeleteCommentConfirm && pendingDeleteCommentId ? (
+        <div className="quick-chat-overlay" data-role="task-comment-delete-confirm-overlay" onClick={() => !deletingComment && handleCancelDeleteComment()}>
+          <section className="quick-chat-modal panel task-comment-delete-confirm" data-role="task-comment-delete-confirm" onClick={(event) => event.stopPropagation()}>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Delete comment</p>
+                <h3>Delete this comment?</h3>
+              </div>
+            </div>
+            <p>
+              This will permanently delete the comment and all related data. This action cannot be undone.
+            </p>
+            {deleteCommentImpact && (
+              <div className="task-comment-delete-impact">
+                <p className="eyebrow">Impact</p>
+                <ul>
+                  <li><strong>{deleteCommentImpact.replyCount}</strong> reply{deleteCommentImpact.replyCount !== 1 ? "ies" : "y"} will be deleted</li>
+                  {deleteCommentImpact.attachmentCount > 0 && (
+                    <li><strong>{deleteCommentImpact.attachmentCount}</strong> attachment{deleteCommentImpact.attachmentCount !== 1 ? "s" : ""} will be deleted</li>
+                  )}
+                  {deleteCommentImpact.fileReferenceCount > 0 && (
+                    <li><strong>{deleteCommentImpact.fileReferenceCount}</strong> file reference{deleteCommentImpact.fileReferenceCount !== 1 ? "s" : ""} will be deleted</li>
+                  )}
+                  <li><strong>Total records affected:</strong> {deleteCommentImpact.cascadeDeletedCount}</li>
+                </ul>
+              </div>
+            )}
+            <div className="action-cluster action-cluster--wrap">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={deletingComment || loadingDeleteCommentImpact}
+                onClick={handleCancelDeleteComment}
+              >
+                Cancel
+              </button>
+              <button
+                className="secondary-button secondary-button--danger"
+                data-role="confirm-delete-comment"
+                type="button"
+                disabled={deletingComment || loadingDeleteCommentImpact}
+                onClick={handleConfirmDeleteComment}
+              >
+                {deletingComment ? "Deleting…" : "Delete comment"}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
     </section>

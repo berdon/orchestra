@@ -52,6 +52,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   { key: "tasks.update", group: "Tasks", label: "Edit tasks", description: "Update task fields and metadata." },
   { key: "tasks.delete", group: "Tasks", label: "Delete tasks", description: "Permanently delete tasks and their related records.", risk: "sensitive" },
   { key: "tasks.comment", group: "Tasks", label: "Comment on tasks", description: "Add comments to tasks." },
+  { key: "tasks.comment.delete", group: "Tasks", label: "Delete task comments", description: "Permanently delete task comments and their child replies, attachments, and file references." , risk: "sensitive" },
   { key: "tasks.review", group: "Tasks", label: "Review paused task lanes", description: "Approve review-paused work or mark it as needing more work.", risk: "sensitive" },
   { key: "tasks.control", group: "Tasks", label: "Control active task work", description: "Pause, resume, or stop task activity on behalf of a user.", risk: "sensitive" },
   { key: "tasks.transition", group: "Tasks", label: "Advance task lanes", description: "Dispatch and transition workflow lanes.", risk: "sensitive" },

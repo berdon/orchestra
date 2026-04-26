@@ -8,7 +8,10 @@ use tauri::Manager;
 
 use crate::{
     commands::tasks as task_commands,
-    models::{TaskComment, TaskCommentInput, TaskDetail, TaskSummary, TaskUpsertInput},
+    models::{
+        TaskComment, TaskCommentDeleteImpact, TaskCommentInput, TaskDetail, TaskSummary,
+        TaskUpsertInput,
+    },
     services::{backend_bootstrap::CliBackend, database, domain_events, task_runtime, tasks},
 };
 
@@ -32,6 +35,8 @@ pub enum TaskCommand {
     Comment(TaskCommentArgs),
     /// List task comments.
     Comments(TaskCommentsArgs),
+    /// Delete a task comment (and all its descendant replies) with cascade impact reporting.
+    CommentDelete(TaskCommentDeleteArgs),
     /// Approve a review-paused task.
     Approve(TaskTargetArgs),
     /// Send a review-paused task back for more work.
@@ -320,6 +325,23 @@ pub struct TaskCommentsArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct TaskCommentDeleteArgs {
+    /// Task id, task number (e.g. ORC-67), or numeric shorthand in the selected/default project.
+    pub task: String,
+
+    /// The comment id to delete. The comment and all its descendant replies will be cascade-deleted.
+    pub comment_id: String,
+
+    /// Emit structured JSON instead of human-readable terminal output.
+    #[arg(long = "json")]
+    pub json: bool,
+
+    /// Skip the confirmation prompt. Use with caution — this will delete the comment and all descendant replies.
+    #[arg(long = "force")]
+    pub force: bool,
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedTaskTarget {
     task_id: String,
@@ -338,6 +360,7 @@ pub fn run(
         TaskCommand::Update(args) => run_update(args, backend, requested_project),
         TaskCommand::Comment(args) => run_comment(args, backend, requested_project),
         TaskCommand::Comments(args) => run_comments(args, requested_project),
+        TaskCommand::CommentDelete(args) => run_comment_delete(args, backend, requested_project),
         TaskCommand::Approve(args) => run_approve(args, backend, requested_project),
         TaskCommand::NeedsWork(args) => run_needs_work(args, backend, requested_project),
         TaskCommand::Pause(args) => run_pause(args, backend, requested_project),
@@ -581,6 +604,107 @@ fn run_comments(args: TaskCommentsArgs, requested_project: Option<&str>) -> Resu
     }
 
     Ok(0)
+}
+
+fn run_comment_delete(
+    args: TaskCommentDeleteArgs,
+    backend: &CliBackend,
+    requested_project: Option<&str>,
+) -> Result<i32, String> {
+    let connection = database::open_connection()?;
+    let target = resolve_task_target(&connection, requested_project, &args.task)?;
+    let comment_id = args.comment_id.clone();
+
+    // Fetch delete impact to show the user what will be destroyed
+    let impact = match tasks::get_task_comment_delete_impact(&connection, &comment_id) {
+        Ok(impact) => impact,
+        Err(error) => {
+            return Err(format!(
+                "Unable to inspect delete impact for comment {}: {}",
+                comment_id, error
+            ));
+        }
+    };
+
+    // Display impact summary before deletion (human-readable mode)
+    if !args.json {
+        println!(
+            "Delete comment {} on task {}:",
+            comment_id, target.number
+        );
+        println!("  Reply count: {}", impact.reply_count);
+        println!(
+            "  Attachment count: {}",
+            impact.attachment_count
+        );
+        println!(
+            "  File reference count: {}",
+            impact.file_reference_count
+        );
+        println!(
+            "  Total cascade-deleted: {}",
+            impact.cascade_deleted_count
+        );
+        if impact.reply_count > 0 {
+            println!(
+                "  ⚠ This will also delete {} descendant reply/replies.",
+                impact.reply_count
+            );
+        }
+        if !args.force {
+            std::io::Write::write_all(
+                &mut std::io::stdout(),
+                b"Continue? [y/N]: ",
+            )
+            .map_err(|e| format!("Unable to flush prompt: {e}"))?;
+            let mut input = String::new();
+            std::io::stdin()
+                .read_line(&mut input)
+                .map_err(|e| format!("Unable to read input: {e}"))?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Deletion cancelled.");
+                return Ok(0);
+            }
+        }
+    }
+
+    // Perform cascade deletion through Tauri command
+    // We need the app handle and state for the Tauri command
+    let app = backend.app_handle();
+    let app_for_state = app.clone();
+    let state = app_for_state.state::<crate::state::AppState>();
+
+    // Drop the DB connection before calling the Tauri command (it opens its own)
+    drop(connection);
+
+    // Clone for display after deletion (comment_id is moved into delete_task_comment)
+    let display_comment_id = comment_id.clone();
+
+    let result = task_commands::delete_task_comment(
+        app,
+        state,
+        comment_id,
+    );
+
+    match result {
+        Ok(comment) => {
+            if args.json {
+                print_json(&impact)?;
+            } else {
+                println!(
+                    "Deleted comment {} from task {}. {} total entities cascade-deleted.",
+                    display_comment_id,
+                    comment.task_id,
+                    impact.cascade_deleted_count
+                );
+            }
+            Ok(0)
+        }
+        Err(error) => Err(format!(
+            "Failed to delete comment {}: {}",
+            display_comment_id, error
+        )),
+    }
 }
 
 fn run_approve(

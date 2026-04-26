@@ -56,6 +56,7 @@ import type {
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
+  TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -147,6 +148,7 @@ export type {
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
+  TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -315,6 +317,7 @@ export interface OrchestraTaskService {
   comment(taskId: string, input: TaskCommentInput): Promise<TaskComment>;
   updateComment(commentId: string, input: TaskCommentUpdateInput): Promise<TaskComment>;
   deleteComment(commentId: string): Promise<TaskComment>;
+  getCommentDeleteImpact(commentId: string): Promise<TaskCommentDeleteImpact>;
   markCommentsRead(taskId: string): Promise<TaskDetail>;
   searchCommentFileMentions(taskId: string, query: string, limit?: number): Promise<TaskCommentFileMentionCandidate[]>;
   listMessages(taskId: string): Promise<MailboxMessage[]>;

@@ -5,10 +5,10 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::{
     models::{
-        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentFileMentionCandidate,
-        TaskCommentInput, TaskCommentUpdateInput, TaskDependency, TaskDetail, TaskFileReference,
-        TaskFileReferenceInput, TaskRepository, TaskSummary, TaskTodo, TaskTodoInput,
-        TaskUpsertInput,
+        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentDeleteImpact,
+        TaskCommentFileMentionCandidate, TaskCommentInput, TaskCommentUpdateInput, TaskDependency,
+        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
+        TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         app_events, database, domain_events, pi_sessions, pi_setup, task_attachments,
@@ -713,6 +713,24 @@ pub fn delete_task_comment(
     }
     emit_task_change(&app, "task.comment.deleted", [comment.task_id.clone()]);
     Ok(comment)
+}
+
+#[tauri::command]
+pub fn get_task_comment_delete_impact(
+    state: State<'_, AppState>,
+    comment_id: String,
+) -> Result<TaskCommentDeleteImpact, String> {
+    let connection = database::open_connection()?;
+    let impact = tasks::get_task_comment_delete_impact(&connection, &comment_id)?;
+    state.log_authorized_action(
+        "auth.audit",
+        "get_task_comment_delete_impact",
+        None,
+        None,
+        &comment_id,
+        "success",
+    );
+    Ok(impact)
 }
 
 #[tauri::command]

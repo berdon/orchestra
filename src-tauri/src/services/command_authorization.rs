@@ -332,6 +332,8 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("update_task", "Update a task", "tasks.update"),
     ("delete_task", "Delete a task", "tasks.delete"),
     ("comment_on_task", "Comment on a task", "tasks.comment"),
+    ("get_task_comment_delete_impact", "Get task comment delete impact", "tasks.comment"),
+    ("delete_task_comment", "Delete a task comment", "tasks.comment.delete"),
     (
         "dispatch_task_lane",
         "Dispatch the current task lane",
