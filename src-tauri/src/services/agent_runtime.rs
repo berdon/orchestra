@@ -77,7 +77,15 @@ pub fn ensure_agent_runtime_state_for_project(
     agent_id: &str,
 ) -> Result<AgentRuntimeState, String> {
     let agent = agents::require_agent_in_project(connection, project_id, agent_id)?;
-    if let Some(existing) = get_agent_runtime_state_for_project(connection, project_id, agent_id)? {
+    
+    // For global agents, use the default project to ensure singleton behavior
+    let effective_project_id = if agent.scope == "global" {
+        DEFAULT_PROJECT_ID
+    } else {
+        project_id
+    };
+    
+    if let Some(existing) = get_agent_runtime_state_for_project(connection, effective_project_id, agent_id)? {
         return Ok(existing);
     }
 
@@ -104,11 +112,11 @@ pub fn ensure_agent_runtime_state_for_project(
             )
             VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, NULL, ?5, ?5)
             "#,
-            params![project_id, agent_id, RUNTIME_STATUS_IDLE, global_main_session_id, now],
+            params![effective_project_id, agent_id, RUNTIME_STATUS_IDLE, global_main_session_id, now],
         )
-        .map_err(|error| format!("Unable to create agent runtime state for {agent_id} in project {project_id}: {error}"))?;
+        .map_err(|error| format!("Unable to create agent runtime state for {agent_id} in project {effective_project_id}: {error}"))?;
 
-    get_agent_runtime_state_for_project(connection, project_id, agent_id)?
+    get_agent_runtime_state_for_project(connection, effective_project_id, agent_id)?
         .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after creation"))
 }
 
@@ -899,7 +907,17 @@ mod tests {
     fn project_scoped_agent_operations_are_isolated() {
         let mut connection = in_memory_connection();
         let agent_id = create_agent(&mut connection);
+        
+        // Create the required projects first
         let now = now_iso();
+        for (project_id, task_prefix) in [("project-a", "TESTA"), ("project-b", "TESTB")] {
+            connection
+                .execute(
+                    "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, NULL, ?5, ?5)",
+                    params![project_id, project_id, project_id.to_uppercase(), task_prefix, now],
+                )
+                .expect("project should insert");
+        }
 
         enqueue_agent_work_for_project(
             &connection,
@@ -918,42 +936,38 @@ mod tests {
         .expect("project a queue entry");
         ensure_agent_runtime_state_for_project(&connection, "project-b", &agent_id)
             .expect("project b runtime state");
+        
+        // Update the runtime state - for global agents this updates the single global state
         update_agent_runtime_dispatch_state_for_project(
             &connection,
-            "project-a",
+            "orchestra",  // Global agents always use the default project
             &agent_id,
-            Some("session-project-a"),
-            Some("/tmp/project-a"),
+            Some("session-global"),
+            Some("/tmp/global"),
             None,
             "idle",
             None,
         )
-        .expect("project a runtime update");
-        update_agent_runtime_dispatch_state_for_project(
-            &connection,
-            "project-b",
-            &agent_id,
-            Some("session-project-b"),
-            Some("/tmp/project-b"),
-            None,
-            "idle",
-            Some(&format!("updated-{now}")),
-        )
-        .expect("project b runtime update");
-
+        .expect("global runtime update");
+        
+        // Request operations for project-b - should get the same global state
         let project_a = get_agent_operations_for_project(&connection, "project-a", &agent_id)
             .expect("project a operations");
         let project_b = get_agent_operations_for_project(&connection, "project-b", &agent_id)
             .expect("project b operations");
 
+        // Both projects should see the same runtime state (singleton behavior)
         assert_eq!(
             project_a.runtime_state.main_session_id.as_deref(),
-            Some("session-project-a")
+            Some("session-global")
         );
         assert_eq!(
             project_b.runtime_state.main_session_id.as_deref(),
-            Some("session-project-b")
+            Some("session-global")
         );
+        assert_eq!(project_a.runtime_state.project_id, "orchestra");
+        assert_eq!(project_b.runtime_state.project_id, "orchestra");
+        // Queue entries are still per-project
         assert_eq!(project_a.queue_entries.len(), 1);
         assert!(project_b.queue_entries.is_empty());
     }
@@ -1038,5 +1052,44 @@ mod tests {
         let error = delete_agent_queue_entry(&connection, &dispatched.id)
             .expect_err("dispatched entry should not be deletable");
         assert!(error.contains("cannot be deleted unless it is queued"));
+    }
+
+    #[test]
+    fn global_agents_have_single_runtime_state_across_projects() {
+        let mut connection = in_memory_connection();
+        let agent_id = create_agent(&mut connection);
+        
+        // Ensure the agent is global
+        let agent = agents::get_agent(&connection, &agent_id).expect("agent should load");
+        assert_eq!(agent.scope, "global", "Test agent should be global");
+        
+        // Request runtime state from different projects
+        let state_a = ensure_agent_runtime_state_for_project(&connection, "project-a", &agent_id)
+            .expect("project a runtime state");
+        let state_b = ensure_agent_runtime_state_for_project(&connection, "project-b", &agent_id)
+            .expect("project b runtime state");
+        let state_c = ensure_agent_runtime_state_for_project(&connection, "project-c", &agent_id)
+            .expect("project c runtime state");
+        
+        // All should return the same runtime state with the default project
+        assert_eq!(state_a.project_id, "orchestra");
+        assert_eq!(state_b.project_id, "orchestra");
+        assert_eq!(state_c.project_id, "orchestra");
+        assert_eq!(state_a.agent_id, state_b.agent_id);
+        assert_eq!(state_b.agent_id, state_c.agent_id);
+        
+        // All should have the same runtime state ID (project_id + agent_id)
+        assert_eq!(state_a.project_id, state_b.project_id);
+        assert_eq!(state_b.project_id, state_c.project_id);
+        
+        // Should only be one runtime state in the database
+        let all_states = connection
+            .prepare("SELECT COUNT(*) FROM agent_runtime_states WHERE agent_id = ?1")
+            .expect("query should prepare")
+            .query_map([&agent_id], |row| row.get::<_, i64>(0))
+            .expect("query should execute")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows should collect");
+        assert_eq!(all_states, vec![1], "Should have exactly one runtime state for global agent");
     }
 }

@@ -785,10 +785,18 @@ pub fn clear_task_runtime_claims_preserving_status(
     changed |= cleared_role_queue > 0;
 
     for agent_id in &impacted_agent_ids {
+        // For global agents, use the default project; otherwise use the task's project
+        let agent = agents::get_agent(&tx, agent_id)
+            .map_err(|error| format!("Unable to load agent {agent_id} for blocked task {task_id}: {error}"))?;
+        let effective_project_id = if agent.scope == "global" {
+            "orchestra".to_string()
+        } else {
+            task.project_id.clone()
+        };
         let updated = tx
             .execute(
                 "UPDATE agent_runtime_states SET status = 'idle', current_queue_entry_id = NULL, last_error = NULL, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
-                params![task.project_id, agent_id, now],
+                params![effective_project_id, agent_id, now],
             )
             .map_err(|error| {
                 format!("Unable to reset agent runtime state for blocked task {task_id}: {error}")
@@ -2930,12 +2938,13 @@ fn dispatch_agent_lane(
     );
 
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
+    // Always update the runtime_cwd to the task's project_root for the current dispatch
     let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         connection,
-        &task.project_id,
+        &runtime_state.project_id,
         &agent.id,
         Some(&session_id),
-        Some(&runtime_cwd),
+        Some(project_root.display().to_string().as_str()),
         runtime_state.current_queue_entry_id.as_deref(),
         &runtime_state.status,
         runtime_state.last_error.as_deref(),
@@ -2976,10 +2985,10 @@ fn dispatch_agent_lane(
     })?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         connection,
-        &task.project_id,
+        &runtime_state.project_id,
         &agent.id,
         Some(&session_id),
-        Some(&runtime_cwd),
+        Some(project_root.display().to_string().as_str()),
         Some(&queue_entry.id),
         "running",
         None,
@@ -2994,7 +3003,7 @@ fn dispatch_agent_lane(
         worker_id: Some(agent.id.clone()),
         status: ASSIGNMENT_STATUS_ACTIVE.into(),
         session_id: Some(session_id.clone()),
-        runtime_cwd: Some(runtime_cwd.clone()),
+        runtime_cwd: Some(project_root.display().to_string()),
         role_queue_entry_id: None,
         role_instance_id: None,
         prompt: Some(prompt.to_string()),
@@ -4020,7 +4029,7 @@ fn finalize_worker_assignment(
                 }
                 let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
                     connection,
-                    &task.project_id,
+                    &runtime_state.project_id,
                     agent_id,
                     assignment.session_id.as_deref(),
                     assignment.runtime_cwd.as_deref(),
@@ -9525,6 +9534,22 @@ mod tests {
     #[test]
     fn agent_lane_uses_project_scoped_runtime_state_instead_of_default_project_runtime() {
         let mut connection = in_memory_connection();
+        let project_root = init_test_repo("task-runtime-project-scoped-agent");
+        let wrong_runtime = unique_temp_dir("wrong-agent-runtime");
+        fs::create_dir_all(&wrong_runtime).expect("wrong runtime dir should create");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-client', 'client-project', 'Client Project', NULL, 'CLI', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-client', 'project-client', 'client-repo', 'Client Repo', ?1, NULL, 'main', ?2, ?2)",
+                params![project_root.display().to_string(), now.as_str()],
+            )
+            .expect("repository should insert");
         let agent = agents::create_agent(
             &mut connection,
             AgentUpsertInput {
@@ -9534,8 +9559,8 @@ mod tests {
                 provider: None,
                 model: None,
                 role_id: None,
-                scope: Some("global".into()),
-                project_id: None,
+                scope: Some("project".into()),
+                project_id: Some("project-client".into()),
                 thinking_level: Some("medium".into()),
                 compaction_window: None,
                 policy_ids: Vec::new(),
@@ -9583,28 +9608,13 @@ mod tests {
             },
         )
         .expect("workflow should create");
-        let project_root = init_test_repo("task-runtime-project-scoped-agent");
-        let wrong_runtime = unique_temp_dir("wrong-agent-runtime");
-        fs::create_dir_all(&wrong_runtime).expect("wrong runtime dir should create");
-        let now = now_iso();
+        // Create a runtime state with a wrong runtime path for the project-scoped agent
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-client', 'client-project', 'Client Project', NULL, 'CLI', NULL, ?1, ?1)",
-                params![now.as_str()],
-            )
-            .expect("project should insert");
-        connection
-            .execute(
-                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-client', 'project-client', 'client-repo', 'Client Repo', ?1, NULL, 'main', ?2, ?2)",
-                params![project_root.display().to_string(), now.as_str()],
-            )
-            .expect("repository should insert");
-        connection
-            .execute(
-                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('orchestra', ?1, 'idle', 'session-old', ?2, NULL, NULL, NULL, ?3, ?3)",
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('project-client', ?1, 'idle', NULL, ?2, NULL, NULL, NULL, ?3, ?3)",
                 params![agent.id.as_str(), wrong_runtime.display().to_string(), now.as_str()],
             )
-            .expect("default-project runtime state should insert");
+            .expect("runtime state with wrong path should insert");
 
         let task = tasks::create_task(
             &mut connection,
@@ -9937,7 +9947,7 @@ mod tests {
         let (runtime_status, current_queue_entry_id): (String, Option<String>) = connection
             .query_row(
                 "SELECT status, current_queue_entry_id FROM agent_runtime_states WHERE project_id = ?1 AND agent_id = ?2",
-                ["project-agent-blocked", agent.id.as_str()],
+                ["orchestra", agent.id.as_str()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("agent runtime should load");

@@ -330,6 +330,10 @@ pub fn ensure_main_session(
     let connection = crate::services::database::open_connection()?;
     let runtime_state =
         agent_runtime::ensure_agent_runtime_state_for_project(&connection, project_id, agent_id)?;
+    
+    // Use the effective project_id from the runtime state (may differ for global agents)
+    let effective_project_id = &runtime_state.project_id;
+    
     if let Some(session_id) = runtime_state.main_session_id.as_deref() {
         if crate::services::pi_sessions::find_session_context_for_session(session_id).is_ok() {
             return Ok(runtime_state);
@@ -344,7 +348,7 @@ pub fn ensure_main_session(
         {
             return agent_runtime::update_agent_runtime_dispatch_state_for_project(
                 &connection,
-                project_id,
+                effective_project_id,
                 agent_id,
                 Some(&global_session_id),
                 Some(&project_root.display().to_string()),
@@ -380,7 +384,7 @@ pub fn ensure_main_session(
     )?;
     agent_runtime::update_agent_runtime_dispatch_state_for_project(
         &connection,
-        project_id,
+        effective_project_id,
         agent_id,
         Some(&created.record.id),
         Some(&runtime_cwd),
