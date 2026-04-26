@@ -5547,9 +5547,12 @@ export async function getTaskCommentDeleteImpact(commentId: string): Promise<Tas
       throw new Error(`Task comment ${commentId} was not found`);
     }
 
+    // TS doesn't narrow task through nested function closures, so use non-null assertion
+    const taskRef = task;
+
     // Recursively count all descendant replies
     function countDescendants(parentId: string): number {
-      const children = task.comments.filter((c) => c.parentCommentId === parentId);
+      const children = taskRef.comments.filter((c) => c.parentCommentId === parentId);
       let total = children.length;
       for (const child of children) {
         total += countDescendants(child.id);
@@ -5561,7 +5564,7 @@ export async function getTaskCommentDeleteImpact(commentId: string): Promise<Tas
     // Count attachments and file references on the comment and its descendants
     const allAffectedIds = new Set([commentId]);
     function collectDescendants(parentId: string) {
-      const children = task.comments.filter((c) => c.parentCommentId === parentId);
+      const children = taskRef.comments.filter((c) => c.parentCommentId === parentId);
       for (const child of children) {
         allAffectedIds.add(child.id);
         collectDescendants(child.id);
