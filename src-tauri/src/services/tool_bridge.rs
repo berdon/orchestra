@@ -168,6 +168,8 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "delete_task_todo",
     "update_task",
     "comment_on_task",
+    "get_task_comment_delete_impact",
+    "delete_task_comment",
     "dispatch_task_lane",
     "complete_lane_as_success",
     "complete_lane_as_failure",
@@ -1649,6 +1651,26 @@ fn invoke_bridge_command(
             }
             serde_json::to_value(comment)
                 .map_err(|error| format!("Unable to serialize task comment: {error}"))
+        }
+        "get_task_comment_delete_impact" => {
+            let comment_id = require_string(&payload, "commentId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.comment")?;
+            let impact =
+                tasks::get_task_comment_delete_impact(connection, &comment_id)?;
+            serde_json::to_value(impact)
+                .map_err(|error| format!("Unable to serialize comment delete impact: {error}"))
+        }
+        "delete_task_comment" => {
+            let comment_id = require_string(&payload, "commentId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.comment.delete",
+            )?;
+            let mut writable = database::open_connection()?;
+            let comment = tasks::delete_task_comment(&mut writable, &comment_id)?;
+            serde_json::to_value(comment)
+                .map_err(|error| format!("Unable to serialize deleted comment: {error}"))
         }
         "dispatch_task_lane" => {
             let task_id = require_string(&payload, "taskId")?;

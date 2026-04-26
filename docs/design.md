@@ -713,3 +713,92 @@ The biggest design opportunities are:
 - separating global definitions from project-scoped runtime state
 - keeping workflow state transitions centralized and auditable
 - focusing the UI on operational visibility rather than generic dashboards
+
+---
+
+# Task Comment Deletion (ORC-171)
+
+## Summary
+
+Adds support for deleting task comments with cascade deletion of reply threads, attachments, and file references.
+
+## Design Decisions
+
+### 1. Permission Model
+
+A **new dedicated permission** `tasks.comment.delete` was added to the permissions model (not `tasks.delete`). This is a `risk: "sensitive"` permission, consistent with other destructive operations.
+
+- `tasks.comment` — grants ability to add comments (read-write for creating)
+- `tasks.comment.delete` — grants ability to delete comments and cascade-delete their descendants
+
+Rationale: Separating delete from create gives fine-grained control. Not everyone who can add comments should be able to delete them.
+
+### 2. Cascade Deletion Model
+
+Deleting a task comment **always succeeds** by cascading — there are no blockers. The comment and all its descendant replies, plus any attachments and file references tied to those comments, are deleted atomically in a single database transaction.
+
+Cascade scope:
+- The target comment itself
+- All descendant reply threads (recursive, via `parent_comment_id`)
+- Attachments associated with the target and descendant comments
+- File references associated with the target and descendant comments
+
+### 3. Impact Inspection
+
+Before deletion, the UI fetches `get_task_comment_delete_impact` which returns:
+- `commentId` — the target comment ID
+- `taskId` — the task the comment belongs to
+- `replyCount` — number of descendant replies
+- `attachmentCount` — number of attachments on affected comments
+- `fileReferenceCount` — number of file references on affected comments
+- `cascadeDeletedCount` — total records that will be destroyed (1 + replyCount)
+
+### 4. UI Confirmation Flow
+
+1. User clicks "Delete" on a comment
+2. System fetches delete impact (loads reply/attachment/reference counts)
+3. Confirmation modal shows:
+   - "Delete this comment?" heading
+   - Impact details: reply count, attachment count, file reference count, total
+   - Warning: "This will permanently delete the comment and all related data."
+4. User clicks "Delete comment" (always enabled — no blockers)
+5. System performs cascade delete
+6. UI refreshes to reflect deletion
+
+### 5. Transport Layer Coverage
+
+| Layer | Command/API | Authorization |
+|-------|------------|---------------|
+| Tauri command | `get_task_comment_delete_impact` | `tasks.comment` |
+| Tauri command | `delete_task_comment` | `tasks.comment.delete` |
+| Remote API GET | `/api/v1/task-comments/:id/delete-impact` | Remote auth |
+| Remote API DELETE | `/api/v1/task-comments/:id` | Remote auth |
+| Tool bridge | `get_task_comment_delete_impact` | `tasks.comment` |
+| Tool bridge | `delete_task_comment` | `tasks.comment.delete` |
+| Client bindings | `getCommentDeleteImpact(commentId)` | — |
+| Client bindings | `deleteComment(commentId)` | — |
+| Mock bindings | `getCommentDeleteImpact` | — |
+
+### 6. Database Implementation
+
+The `delete_task_comment` service function:
+1. Loads the target comment to get its task_id
+2. Recursively collects all descendant comment IDs (target + replies)
+3. Begins a database transaction
+4. Deletes all comments in the cascade via `WHERE id IN (...)`
+5. Deletes all attachments tied to those comment IDs
+6. Deletes all file references tied to those comment IDs
+7. Commits the transaction
+
+The `get_task_comment_delete_impact` service function:
+1. Validates the comment exists
+2. Recursively counts all descendant replies
+3. Counts attachments and file references on affected comments
+4. Returns the impact report without performing any deletions
+
+### 7. Test Coverage
+
+- Playwright test: comment deletion impact modal with reply count display
+- Playwright test: cancel confirmation preserves the comment
+- Backend: cascade deletion removes all descendant comments atomically
+- Backend: impact inspection returns accurate counts

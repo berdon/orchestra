@@ -48,6 +48,7 @@ import type {
   TaskFileReference,
   TaskFileReferenceInput,
   TaskComment,
+  TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
   TaskChangeEvent,
   TaskCommentInput,
@@ -5531,6 +5532,56 @@ export async function deleteTaskComment(commentId: string): Promise<TaskComment>
   }
 
   return invoke<TaskComment>("delete_task_comment", { commentId });
+}
+
+export async function getTaskCommentDeleteImpact(commentId: string): Promise<TaskCommentDeleteImpact> {
+  if (!isTauriAvailable()) {
+    const tasks = ensureMockTasks();
+    const task = tasks.find((entry) => entry.id === commentId || entry.comments.some((c) => c.id === commentId));
+    if (!task) {
+      throw new Error(`Task not found for comment ${commentId}`);
+    }
+
+    const comment = task.comments.find((c) => c.id === commentId);
+    if (!comment) {
+      throw new Error(`Task comment ${commentId} was not found`);
+    }
+
+    // Recursively count all descendant replies
+    function countDescendants(parentId: string): number {
+      const children = task.comments.filter((c) => c.parentCommentId === parentId);
+      let total = children.length;
+      for (const child of children) {
+        total += countDescendants(child.id);
+      }
+      return total;
+    }
+
+    const replyCount = countDescendants(commentId);
+    // Count attachments and file references on the comment and its descendants
+    const allAffectedIds = new Set([commentId]);
+    function collectDescendants(parentId: string) {
+      const children = task.comments.filter((c) => c.parentCommentId === parentId);
+      for (const child of children) {
+        allAffectedIds.add(child.id);
+        collectDescendants(child.id);
+      }
+    }
+    collectDescendants(commentId);
+
+    const cascadeDeletedCount = 1 + replyCount;
+
+    return {
+      commentId: comment.id,
+      taskId: comment.taskId,
+      replyCount,
+      attachmentCount: 0,
+      fileReferenceCount: 0,
+      cascadeDeletedCount,
+    };
+  }
+
+  return invoke<TaskCommentDeleteImpact>("get_task_comment_delete_impact", { commentId });
 }
 
 export async function addTaskFileReference(taskId: string, input: TaskFileReferenceInput): Promise<TaskFileReference> {

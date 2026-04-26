@@ -102,6 +102,7 @@ import type {
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
+  TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -329,6 +330,7 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     comment: (taskId, input: TaskCommentInput) => invokeTauri<TaskComment>("comment_on_task", { taskId, input }),
     updateComment: (commentId, input: TaskCommentUpdateInput) => invokeTauri<TaskComment>("update_task_comment", { commentId, input }),
     deleteComment: (commentId) => invokeTauri<TaskComment>("delete_task_comment", { commentId }),
+    getCommentDeleteImpact: (commentId) => invokeTauri<TaskCommentDeleteImpact>("get_task_comment_delete_impact", { commentId }),
     markCommentsRead: (taskId) => invokeTauri<TaskDetail>("mark_task_comments_read_for_user", { taskId }),
     searchCommentFileMentions: (taskId, query, limit = 10) =>
       invokeTauri<TaskCommentFileMentionCandidate[]>("search_task_comment_file_mentions", { taskId, query, limit }),

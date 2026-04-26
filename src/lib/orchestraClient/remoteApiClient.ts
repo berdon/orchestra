@@ -60,6 +60,7 @@ import type {
   TaskAttachment,
   TaskAttachmentInput,
   TaskComment,
+  TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -1088,6 +1089,13 @@ export function createRemoteApiOrchestraClientBinding(
         return transport.requestJson<TaskComment>("tasks.deleteComment", {
           method: "DELETE",
           path: `/api/v1/task-comments/${encodeURIComponent(commentId)}`,
+        });
+      },
+      getCommentDeleteImpact: (commentId) => {
+        transport.assertCapability("tasks.commentDeleteImpact", bootstrap.capabilities.tasks.comments);
+        return transport.requestJson<TaskCommentDeleteImpact>("tasks.commentDeleteImpact", {
+          method: "GET",
+          path: `/api/v1/task-comments/${encodeURIComponent(commentId)}/delete-impact`,
         });
       },
       markCommentsRead: (taskId) => {

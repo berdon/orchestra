@@ -1635,6 +1635,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             "/api/v1/task-comments/:comment_id",
             patch(patch_task_comment).delete(delete_task_comment_record),
         )
+        .route(
+            "/api/v1/task-comments/:comment_id/delete-impact",
+            get(get_task_comment_delete_impact),
+        )
         .route("/api/v1/tasks/:task_id/messages", get(get_task_messages))
         .route(
             "/api/v1/task-dependencies",
@@ -3273,6 +3277,7 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             write: auth_guarded_capability(authenticated, true, "Remote task mutation endpoints are unavailable."),
             review: auth_guarded_capability(authenticated, true, "Remote task review endpoints are unavailable."),
             comments: auth_guarded_capability(authenticated, true, "Remote task comment endpoints are unavailable."),
+            comment_delete_impact: auth_guarded_capability(authenticated, true, "Remote task comment delete impact endpoints are unavailable."),
             todos: auth_guarded_capability(authenticated, true, "Remote task todo endpoints are unavailable."),
             dependencies: auth_guarded_capability(authenticated, true, "Remote task dependency endpoints are unavailable."),
             attachments: auth_guarded_capability(authenticated, true, "Remote task attachment endpoints are unavailable."),
@@ -5126,6 +5131,19 @@ async fn delete_task_comment_record(
     )
     .map(Json)
     .map_err(command_api_error)
+}
+
+async fn get_task_comment_delete_impact(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(comment_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let connection = database::open_connection()
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    tasks::get_task_comment_delete_impact(&connection, &comment_id)
+        .map(Json)
+        .map_err(command_api_error)
 }
 
 async fn get_task_messages(

@@ -1762,6 +1762,15 @@ export interface WorkflowDeleteImpact {
   blockerMessages: string[];
 }
 
+export interface TaskCommentDeleteImpact {
+  commentId: string;
+  taskId: string;
+  replyCount: number;
+  attachmentCount: number;
+  fileReferenceCount: number;
+  cascadeDeletedCount: number;
+}
+
 export interface WorkflowLaneInput {
   id?: string;
   key: string;

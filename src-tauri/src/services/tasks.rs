@@ -13,9 +13,9 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, TaskComment, TaskCommentInput, TaskCommentReceipt, TaskDependency,
-        TaskDetail, TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskTodo, TaskTodoInput,
-        TaskUpsertInput,
+        AuthorizationContext, TaskComment, TaskCommentDeleteImpact, TaskCommentInput,
+        TaskCommentReceipt, TaskDependency, TaskDetail, TaskLaneAssignment, TaskLaneRun,
+        TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -1294,17 +1294,118 @@ pub fn update_task_comment(
     })
 }
 
+/// Get the delete impact for a task comment: counts replies, attachments, file references,
+/// and the total cascade deletion count (comment + all descendant replies).
+pub fn get_task_comment_delete_impact(
+    connection: &Connection,
+    comment_id: &str,
+) -> Result<TaskCommentDeleteImpact, String> {
+    // Load the target comment to get its task_id
+    let _comment = load_task_comment(connection, comment_id)
+        .map_err(|error| format!("Comment {comment_id} not found: {error}"))?;
+
+    // Recursively count all descendant replies
+    fn count_descendants(connection: &Connection, parent_id: &str) -> Result<i64, String> {
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM task_comments WHERE parent_comment_id = ?1",
+                [parent_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Unable to count descendants: {e}"))?;
+        let mut total = count;
+        // Recurse into each child
+        let children = connection
+            .prepare("SELECT id FROM task_comments WHERE parent_comment_id = ?1")
+            .map_err(|e| format!("Unable to prepare child query: {e}"))?
+            .query_map([parent_id], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Unable to list children: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Unable to collect children: {e}"))?;
+        for child_id in children {
+            total += count_descendants(connection, &child_id)?;
+        }
+        Ok(total)
+    }
+
+    let reply_count = count_descendants(connection, comment_id)?;
+
+    // task_attachments and task_file_references are task-level entities (they only have
+    // task_id, not comment_id), so there are zero comment-scoped attachments or file refs.
+    let attachment_count: i64 = 0;
+    let file_ref_count: i64 = 0;
+
+    let cascade_deleted_count = 1 + reply_count;
+
+    // We need the task_id from the comment
+    let task_id: String = connection
+        .query_row(
+            "SELECT task_id FROM task_comments WHERE id = ?1",
+            [comment_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Unable to get comment task_id: {e}"))?;
+
+    Ok(TaskCommentDeleteImpact {
+        comment_id: comment_id.to_string(),
+        task_id,
+        reply_count,
+        attachment_count,
+        file_reference_count: file_ref_count,
+        cascade_deleted_count,
+    })
+}
+
+/// Collect all comment IDs (target + descendants) for cascade operations.
+fn collect_comment_ids_descendants(
+    connection: &Connection,
+    comment_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut result = vec![comment_id.to_string()];
+    let children = connection
+        .prepare("SELECT id FROM task_comments WHERE parent_comment_id = ?1")
+        .map_err(|e| format!("Unable to prepare child query: {e}"))?
+        .query_map([comment_id], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Unable to list children: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Unable to collect children: {e}"))?;
+    for child_id in children {
+        result.extend(collect_comment_ids_descendants(connection, &child_id)?);
+    }
+    Ok(result)
+}
+
 pub fn delete_task_comment(
     connection: &mut Connection,
     comment_id: &str,
 ) -> Result<TaskComment, String> {
     let comment = load_task_comment(connection, comment_id)?;
-    let deleted = connection
-        .execute("DELETE FROM task_comments WHERE id = ?1", [comment_id])
-        .map_err(|error| format!("Unable to delete task comment {comment_id}: {error}"))?;
-    if deleted == 0 {
-        return Err(format!("Task comment {comment_id} was not found"));
-    }
+
+    // Collect all affected comment IDs (target + all descendants)
+    let all_ids = collect_comment_ids_descendants(connection, comment_id)?;
+
+    // Begin a transaction for atomic cascade deletion.
+    // Note: task_comments.parent_comment_id has ON DELETE CASCADE, so child comments are
+    // automatically deleted when the parent is deleted. Similarly, task_comment_receipts
+    // and task_comment_user_receipts have comment_id FK with ON DELETE CASCADE.
+    // task_attachments and task_file_references are task-level entities (no comment_id),
+    // so they are NOT deleted by comment deletion.
+    let tx = connection
+        .transaction()
+        .map_err(|e| format!("Unable to begin transaction: {e}"))?;
+
+    // Delete the target comment and all descendant replies.
+    // The FK cascade on parent_comment_id (ON DELETE CASCADE) handles child comments.
+    let placeholders: String = (0..all_ids.len()).map(|i| format!("?{}", i + 1)).collect::<Vec<_>>().join(",");
+    tx.execute(
+        &format!("DELETE FROM task_comments WHERE id IN ({})", placeholders),
+        params_from_iter(&all_ids),
+    )
+    .map_err(|e| format!("Unable to cascade delete comments: {e}"))?;
+
+    tx.commit()
+        .map_err(|e| format!("Unable to commit cascade delete: {e}"))?;
+
     Ok(comment)
 }
 
