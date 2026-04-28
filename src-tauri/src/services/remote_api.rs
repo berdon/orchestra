@@ -439,7 +439,9 @@ fn parse_test_remote_authorization_header(
         .map(|value| {
             let raw = value
                 .to_str()
-                .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid test authorization header"))?
+                .map_err(|_| {
+                    api_error(StatusCode::BAD_REQUEST, "Invalid test authorization header")
+                })?
                 .trim()
                 .to_string();
             let (actor_type, actor_id) = raw.split_once(':').ok_or_else(|| {
@@ -831,7 +833,13 @@ mod tests {
         body::{to_bytes, Body},
         http::Request,
     };
-    use std::{env, fs, path::PathBuf, process::Command, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        env, fs,
+        path::PathBuf,
+        process::Command,
+        sync::Mutex,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     use tower::ServiceExt;
 
     struct RemoteApiParityFixture {
@@ -900,10 +908,9 @@ mod tests {
         }
         let request_body = if let Some(body) = body {
             request = request.header(header::CONTENT_TYPE, "application/json");
-            Body::from(
-                serde_json::to_vec(&body)
-                    .map_err(|error| format!("failed to encode remote API parity JSON body {uri}: {error}"))?,
-            )
+            Body::from(serde_json::to_vec(&body).map_err(|error| {
+                format!("failed to encode remote API parity JSON body {uri}: {error}")
+            })?)
         } else {
             Body::empty()
         };
@@ -1577,10 +1584,7 @@ fn build_remote_api_context(app: AppHandle) -> Router {
                 .patch(patch_skill_update)
                 .delete(delete_skill_record),
         )
-        .route(
-            "/api/v1/skills/:skill_id/archive",
-            post(post_archive_skill),
-        )
+        .route("/api/v1/skills/:skill_id/archive", post(post_archive_skill))
         .route(
             "/api/v1/skills/:skill_id/unarchive",
             post(post_unarchive_skill),

@@ -38,6 +38,7 @@ pub mod runtime_skills;
 pub mod session_attachments;
 pub mod session_compaction;
 pub mod session_list;
+pub mod session_management;
 pub mod skill_bindings;
 pub mod skills;
 pub mod startup_resume;

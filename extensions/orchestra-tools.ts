@@ -1272,6 +1272,128 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       },
     };
   }
+
+  if (tool.name === "list_sessions") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query/task/worker filters plus hidden, dismissed, catalog/file state, and limit controls.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the session inventory." })),
+        projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope the session inventory." })),
+        sessionIds: Type.Optional(Type.Array(Type.String({ description: "Exact session id to include." }))),
+        query: Type.Optional(Type.String({ description: "Optional title/id/task/worker substring query." })),
+        status: Type.Optional(Type.String({ description: "Optional session status filter such as active, idle, closed, or unknown." })),
+        taskId: Type.Optional(Type.String({ description: "Optional linked task id filter." })),
+        taskNumber: Type.Optional(Type.String({ description: "Optional linked task number filter, e.g. ORC-176." })),
+        workerType: Type.Optional(Type.String({ description: "Optional worker type filter such as role or agent." })),
+        workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
+        hidden: Type.Optional(Type.Boolean({ description: "Whether to include only hidden or only visible sessions." })),
+        dismissed: Type.Optional(Type.Boolean({ description: "Whether to include only user-dismissed or non-dismissed sessions." })),
+        catalogPresent: Type.Optional(Type.Boolean({ description: "Filter on whether a session_catalog row exists." })),
+        fileExists: Type.Optional(Type.Boolean({ description: "Filter on whether the transcript file exists." })),
+        limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to return." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const payload = { ...params };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_session_diagnostics") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide sessionId to inspect catalog, transcript, list-entry, run-origin, and runtime diagnostics.`,
+      parameters: Type.Object({
+        sessionId: Type.String({ description: "Canonical Orchestra session id to inspect." }),
+      }),
+      async execute(_toolCallId: string, params: { sessionId: string }) {
+        const payload = { sessionId: params.sessionId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (["hide_sessions", "restore_sessions", "delete_sessions"].includes(tool.name)) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide explicit session filters. Destructive execution defaults to dryRun=true and requires confirm=true when dryRun=false. delete_sessions also supports stopActiveRuntimes and may additionally require sessions.stop.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the target sessions." })),
+        projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope the target sessions." })),
+        sessionIds: Type.Optional(Type.Array(Type.String({ description: "Exact session id to target." }))),
+        query: Type.Optional(Type.String({ description: "Optional title/id/task/worker substring query." })),
+        status: Type.Optional(Type.String({ description: "Optional session status filter." })),
+        taskId: Type.Optional(Type.String({ description: "Optional linked task id filter." })),
+        taskNumber: Type.Optional(Type.String({ description: "Optional linked task number filter." })),
+        workerType: Type.Optional(Type.String({ description: "Optional worker type filter." })),
+        workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
+        hidden: Type.Optional(Type.Boolean({ description: "Optional hidden-state filter." })),
+        dismissed: Type.Optional(Type.Boolean({ description: "Optional user-dismissed-state filter." })),
+        catalogPresent: Type.Optional(Type.Boolean({ description: "Optional session_catalog presence filter." })),
+        fileExists: Type.Optional(Type.Boolean({ description: "Optional transcript file existence filter." })),
+        limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to match." })),
+        reason: Type.Optional(Type.String({ description: "Optional hide reason. hide_sessions defaults to user_dismissed when omitted." })),
+        dryRun: Type.Optional(Type.Boolean({ description: "Whether to preview the change without executing it. Defaults to true." })),
+        confirm: Type.Optional(Type.Boolean({ description: "Must be true when dryRun is false." })),
+        stopActiveRuntimes: Type.Optional(Type.Boolean({ description: "For delete_sessions only: stop active runtimes before deleting them. Requires sessions.stop when true." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const payload = { ...params };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "reconcile_sessions") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query filters. Execution defaults to dryRun=true and requires confirm=true when dryRun=false.`,
+      parameters: Type.Object({
+        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope reconciliation." })),
+        projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope reconciliation." })),
+        sessionIds: Type.Optional(Type.Array(Type.String({ description: "Optional exact session ids to reconcile." }))),
+        query: Type.Optional(Type.String({ description: "Optional title/id/task/worker substring query." })),
+        status: Type.Optional(Type.String({ description: "Optional session status filter." })),
+        taskId: Type.Optional(Type.String({ description: "Optional linked task id filter." })),
+        taskNumber: Type.Optional(Type.String({ description: "Optional linked task number filter." })),
+        workerType: Type.Optional(Type.String({ description: "Optional worker type filter." })),
+        workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
+        hidden: Type.Optional(Type.Boolean({ description: "Optional hidden-state filter." })),
+        dismissed: Type.Optional(Type.Boolean({ description: "Optional user-dismissed-state filter." })),
+        catalogPresent: Type.Optional(Type.Boolean({ description: "Optional session_catalog presence filter." })),
+        fileExists: Type.Optional(Type.Boolean({ description: "Optional transcript file existence filter." })),
+        limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to inspect." })),
+        dryRun: Type.Optional(Type.Boolean({ description: "Whether to preview the reconciliation without executing it. Defaults to true." })),
+        confirm: Type.Optional(Type.Boolean({ description: "Must be true when dryRun is false." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const payload = { ...params };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
   return {
     name: tool.name,
     label: `Orchestra · ${tool.name}`,

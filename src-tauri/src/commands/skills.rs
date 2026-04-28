@@ -3,8 +3,7 @@ use tauri::State;
 use crate::{
     models::{
         AgentSkillLinks, AuthorizationContext, LocalSkillUpsertInput, RoleSkillLinks,
-        SkillBindingInput, SkillDetail, SkillSummary, SkillsCatalogDiagnostics,
-        WorkflowSkillLinks,
+        SkillBindingInput, SkillDetail, SkillSummary, SkillsCatalogDiagnostics, WorkflowSkillLinks,
     },
     services::{command_authorization, database, skill_bindings, skills},
     state::AppState,
@@ -46,7 +45,11 @@ pub fn create_local_skill(
     authorization: Option<AuthorizationContext>,
 ) -> Result<SkillDetail, String> {
     let mut connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.create")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.create",
+    )?;
     let orchestra_root = skills::default_orchestra_root_for_skills()?;
     let skill = skills::create_local_skill(&mut connection, &orchestra_root, input)?;
     state.log(
@@ -73,7 +76,11 @@ pub fn update_local_skill(
     authorization: Option<AuthorizationContext>,
 ) -> Result<SkillDetail, String> {
     let mut connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.update")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.update",
+    )?;
     let orchestra_root = skills::default_orchestra_root_for_skills()?;
     let skill = skills::update_local_skill(&mut connection, &orchestra_root, &skill_id, input)?;
     state.log(
@@ -99,7 +106,11 @@ pub fn archive_local_skill(
     authorization: Option<AuthorizationContext>,
 ) -> Result<SkillDetail, String> {
     let connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.archive")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.archive",
+    )?;
     let skill = skills::set_local_skill_archived(&connection, &skill_id, true)?;
     state.log(
         "info",
@@ -124,7 +135,11 @@ pub fn unarchive_local_skill(
     authorization: Option<AuthorizationContext>,
 ) -> Result<SkillDetail, String> {
     let connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.archive")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.archive",
+    )?;
     let skill = skills::set_local_skill_archived(&connection, &skill_id, false)?;
     state.log(
         "info",
@@ -149,7 +164,11 @@ pub fn delete_local_skill(
     authorization: Option<AuthorizationContext>,
 ) -> Result<SkillDetail, String> {
     let connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.delete")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.delete",
+    )?;
     let skill = skills::delete_local_skill(&connection, &skill_id)?;
     state.log(
         "info",
@@ -173,7 +192,11 @@ pub fn refresh_external_skills(
     authorization: Option<AuthorizationContext>,
 ) -> Result<Vec<SkillSummary>, String> {
     let mut connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.update")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.update",
+    )?;
     let external_root = skills::default_external_skills_dir()?;
     let refreshed = skills::refresh_external_skills(&mut connection, &external_root)?;
     state.log(
@@ -200,7 +223,11 @@ pub fn set_skill_bindings(
     authorization: Option<AuthorizationContext>,
 ) -> Result<SkillDetail, String> {
     let mut connection = database::open_connection()?;
-    command_authorization::require_permission(&connection, authorization.as_ref(), "skills.assign")?;
+    command_authorization::require_permission(
+        &connection,
+        authorization.as_ref(),
+        "skills.assign",
+    )?;
     skill_bindings::set_skill_bindings(&mut connection, &skill_id, bindings)?;
     let skill = skills::get_skill(&connection, &skill_id)?;
     state.log(

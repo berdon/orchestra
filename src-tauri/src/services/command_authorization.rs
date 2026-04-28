@@ -102,8 +102,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Inspect managed-skills catalog diagnostics",
         "skills.read",
     ),
-    ("create_local_skill", "Create a local managed skill", "skills.create"),
-    ("update_local_skill", "Update a local managed skill", "skills.update"),
+    (
+        "create_local_skill",
+        "Create a local managed skill",
+        "skills.create",
+    ),
+    (
+        "update_local_skill",
+        "Update a local managed skill",
+        "skills.update",
+    ),
     (
         "archive_local_skill",
         "Archive a local managed skill",
@@ -114,7 +122,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Unarchive a local managed skill",
         "skills.archive",
     ),
-    ("delete_local_skill", "Delete a local managed skill", "skills.delete"),
+    (
+        "delete_local_skill",
+        "Delete a local managed skill",
+        "skills.delete",
+    ),
     (
         "refresh_external_skills",
         "Refresh discovered external managed skills",
@@ -157,7 +169,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Resolve effective permissions for a role instance",
         "policies.read",
     ),
-    ("list_sessions", "List sessions", "sessions.read"),
+    (
+        "list_sessions",
+        "List and filter Orchestra sessions",
+        "sessions.read",
+    ),
+    (
+        "get_session_diagnostics",
+        "Inspect detailed Orchestra session diagnostics",
+        "sessions.read",
+    ),
     ("create_session", "Create a session", "sessions.create"),
     ("resume_session", "Resume a session", "sessions.read"),
     (
@@ -171,6 +192,26 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "sessions.read",
     ),
     ("delete_session", "Delete a session", "sessions.delete"),
+    (
+        "hide_sessions",
+        "Hide or dismiss sessions from the session list",
+        "sessions.delete",
+    ),
+    (
+        "restore_sessions",
+        "Restore user-dismissed sessions to the session list",
+        "sessions.delete",
+    ),
+    (
+        "delete_sessions",
+        "Hard-delete sessions and associated state",
+        "sessions.delete",
+    ),
+    (
+        "reconcile_sessions",
+        "Reconcile orphaned or stale session catalog/list/origin state",
+        "sessions.delete",
+    ),
     (
         "send_session_message",
         "Send a message to a session",
@@ -332,8 +373,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("update_task", "Update a task", "tasks.update"),
     ("delete_task", "Delete a task", "tasks.delete"),
     ("comment_on_task", "Comment on a task", "tasks.comment"),
-    ("get_task_comment_delete_impact", "Get task comment delete impact", "tasks.comment"),
-    ("delete_task_comment", "Delete a task comment", "tasks.comment.delete"),
+    (
+        "get_task_comment_delete_impact",
+        "Get task comment delete impact",
+        "tasks.comment",
+    ),
+    (
+        "delete_task_comment",
+        "Delete a task comment",
+        "tasks.comment.delete",
+    ),
     (
         "dispatch_task_lane",
         "Dispatch the current task lane",
@@ -568,6 +617,9 @@ mod tests {
 
         assert!(tools.iter().any(|tool| tool.name == "list_agents"));
         assert!(tools.iter().any(|tool| tool.name == "list_sessions"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name == "get_session_diagnostics"));
         assert!(!tools.iter().any(|tool| tool.name == "create_role"));
     }
 

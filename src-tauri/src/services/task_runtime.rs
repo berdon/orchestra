@@ -786,8 +786,9 @@ pub fn clear_task_runtime_claims_preserving_status(
 
     for agent_id in &impacted_agent_ids {
         // For global agents, use the default project; otherwise use the task's project
-        let agent = agents::get_agent(&tx, agent_id)
-            .map_err(|error| format!("Unable to load agent {agent_id} for blocked task {task_id}: {error}"))?;
+        let agent = agents::get_agent(&tx, agent_id).map_err(|error| {
+            format!("Unable to load agent {agent_id} for blocked task {task_id}: {error}")
+        })?;
         let effective_project_id = if agent.scope == "global" {
             "orchestra".to_string()
         } else {

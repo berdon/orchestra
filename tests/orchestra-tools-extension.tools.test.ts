@@ -80,6 +80,36 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "projects.update",
       },
       {
+        name: "list_sessions",
+        description: "List and filter Orchestra sessions",
+        requiredPermission: "sessions.read",
+      },
+      {
+        name: "get_session_diagnostics",
+        description: "Inspect detailed Orchestra session diagnostics",
+        requiredPermission: "sessions.read",
+      },
+      {
+        name: "hide_sessions",
+        description: "Hide or dismiss sessions from the session list",
+        requiredPermission: "sessions.delete",
+      },
+      {
+        name: "restore_sessions",
+        description: "Restore user-dismissed sessions to the session list",
+        requiredPermission: "sessions.delete",
+      },
+      {
+        name: "delete_sessions",
+        description: "Hard-delete sessions and associated state",
+        requiredPermission: "sessions.delete",
+      },
+      {
+        name: "reconcile_sessions",
+        description: "Reconcile orphaned or stale session catalog/list/origin state",
+        requiredPermission: "sessions.delete",
+      },
+      {
         name: "list_projects",
         description: "List Orchestra projects",
         requiredPermission: "projects.read",
@@ -256,6 +286,12 @@ describe("orchestra tools extension bridge tool setup", () => {
         "create_task",
         "get_worker_overlay",
         "update_worker_overlay",
+        "list_sessions",
+        "get_session_diagnostics",
+        "hide_sessions",
+        "restore_sessions",
+        "delete_sessions",
+        "reconcile_sessions",
         "list_projects",
         "get_project",
         "create_project",
@@ -605,6 +641,75 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(attachRepositoryRemoteResult.content[0]?.text).toContain("attach_repository_remote");
     expect(setProjectDefaultRepositoryResult.details.command).toBe("set_project_default_repository");
     expect(setProjectDefaultRepositoryResult.content[0]?.text).toContain("set_project_default_repository");
+  });
+
+  test("exposes typed session management tools", async () => {
+    const registeredTools: Array<any> = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            echoedCommand: JSON.parse(String(init?.body)).command,
+            echoedPayload: JSON.parse(String(init?.body)).payload,
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand() {},
+    } as any);
+
+    const listSessionsTool = registeredTools.find((tool) => tool.name === "list_sessions");
+    expect(listSessionsTool.parameters.properties.projectId).toBeTruthy();
+    expect(listSessionsTool.parameters.properties.query).toBeTruthy();
+    expect(listSessionsTool.parameters.properties.catalogPresent).toBeTruthy();
+    expect(listSessionsTool.parameters.properties.inputJson).toBeUndefined();
+
+    const deleteSessionsTool = registeredTools.find((tool) => tool.name === "delete_sessions");
+    expect(deleteSessionsTool.parameters.properties.sessionIds).toBeTruthy();
+    expect(deleteSessionsTool.parameters.properties.dryRun).toBeTruthy();
+    expect(deleteSessionsTool.parameters.properties.stopActiveRuntimes).toBeTruthy();
+
+    await listSessionsTool.execute("tool-call-list-sessions", {
+      projectId: "project-1",
+      query: "Larry main session",
+      hidden: true,
+      limit: 5,
+    });
+    const deleteResult = await deleteSessionsTool.execute("tool-call-delete-sessions", {
+      query: "Larry main session",
+      hidden: true,
+      dryRun: false,
+      confirm: true,
+      stopActiveRuntimes: true,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const listRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(listRequest.command).toBe("list_sessions");
+    expect(listRequest.payload).toEqual({
+      projectId: "project-1",
+      query: "Larry main session",
+      hidden: true,
+      limit: 5,
+    });
+    const deleteRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(deleteRequest.command).toBe("delete_sessions");
+    expect(deleteRequest.payload).toEqual({
+      query: "Larry main session",
+      hidden: true,
+      dryRun: false,
+      confirm: true,
+      stopActiveRuntimes: true,
+    });
+    expect(deleteResult.details.command).toBe("delete_sessions");
   });
 
   test("exposes workflow and lane tools with explicit parameters", async () => {
