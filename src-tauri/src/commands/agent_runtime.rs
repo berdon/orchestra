@@ -6,7 +6,7 @@ use crate::{
     commands::sessions::load_detail_session_record_for_state,
     models::{
         AgentOperationsDetail, AgentOperationsSnapshot, AgentQueueEntry, AgentQueueEntryInput,
-        SessionRecord,
+        AgentRuntimeState, SessionRecord,
     },
     services::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
@@ -154,6 +154,19 @@ pub async fn ensure_agent_session(
         .main_session_id
         .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
 
+    state.log(
+        "info",
+        "agent.session.ensure",
+        &format!(
+            "ensure_agent_session agent={} requested_project={} runtime_project={} main_session_id={} runtime_cwd={}",
+            agent_id,
+            resolved_project_id,
+            runtime_state.project_id,
+            session_id,
+            runtime_state.runtime_cwd.as_deref().unwrap_or("<none>"),
+        ),
+    );
+
     let session_context = find_session_context_for_session(&session_id)?;
 
     if session_has_terminal_attachment(&state, &session_id)? {
@@ -163,6 +176,14 @@ pub async fn ensure_agent_session(
             &session_id,
             false,
         )?;
+        state.log(
+            "info",
+            "agent.session.loaded",
+            &format!(
+                "Loaded attached agent session {} for agent {} in project {}",
+                record.id, agent_id, resolved_project_id,
+            ),
+        );
         let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
         return Ok(record);
     }
@@ -183,6 +204,14 @@ pub async fn ensure_agent_session(
         &session_id,
         true,
     )?;
+    state.log(
+        "info",
+        "agent.session.loaded",
+        &format!(
+            "Loaded agent session {} for agent {} in project {}",
+            record.id, agent_id, resolved_project_id,
+        ),
+    );
     let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
     Ok(record)
 }
@@ -399,6 +428,38 @@ pub fn get_agent_terminal_buffer(
         return Ok(String::new());
     };
     session.buffer()
+}
+
+#[tauri::command]
+pub async fn update_agent_main_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    agent_id: String,
+    project_id: Option<String>,
+    main_session_id: Option<String>,
+) -> Result<AgentRuntimeState, String> {
+    let _ = app;
+    let _ = state;
+    let connection = database::open_connection()?;
+    let resolved_project_id = if let Some(pid) = project_id {
+        pid
+    } else {
+        crate::services::projects::require_requested_or_default_project_id(
+            &connection,
+            None,
+            "Create a project first before managing agent sessions.",
+        )?
+    };
+    agent_runtime::update_agent_runtime_dispatch_state_for_project(
+        &connection,
+        &resolved_project_id,
+        &agent_id,
+        main_session_id.as_deref(),
+        None, // Don't update runtime_cwd
+        None, // Don't update current_queue_entry_id
+        "",   // Don't change status
+        None, // Don't change last_error
+    )
 }
 
 #[tauri::command]

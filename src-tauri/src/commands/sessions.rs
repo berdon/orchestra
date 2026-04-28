@@ -14,7 +14,7 @@ use crate::{
         SessionModelState, SessionRecord, SessionRuntimeDetails, SessionStats,
     },
     services::{
-        agent_runtime, agents, app_events, database, domain_events,
+        agent_dispatch, agent_runtime, agents, app_events, database, domain_events,
         live_sessions::{
             ensure_runtime, get_session_control_snapshot, is_unknown_command_error,
             maybe_auto_compact, maybe_runtime, perform_session_compaction, perform_session_reload,
@@ -48,6 +48,36 @@ fn record_session_domain_event(
             payload,
         },
     );
+}
+
+fn update_agent_main_session_for_created_session(
+    connection: &rusqlite::Connection,
+    requested_project_id: Option<&str>,
+    agent_id: &str,
+    session_id: &str,
+) -> Result<(), String> {
+    let resolved_project_id = if let Some(project_id) = requested_project_id {
+        project_id.to_string()
+    } else {
+        crate::services::projects::require_requested_or_default_project_id(
+            connection,
+            None,
+            "Create a project first before managing agent sessions.",
+        )?
+    };
+
+    agent_runtime::update_agent_runtime_dispatch_state_for_project(
+        connection,
+        &resolved_project_id,
+        agent_id,
+        Some(session_id),
+        None,
+        None,
+        "",
+        None,
+    )?;
+
+    Ok(())
 }
 
 fn session_project_id(connection: &rusqlite::Connection, session_id: &str) -> Option<String> {
@@ -777,6 +807,7 @@ pub async fn create_session(
     state: State<'_, AppState>,
     title: Option<String>,
     project_slug: Option<String>,
+    agent_id: Option<String>,
 ) -> Result<SessionRecord, String> {
     state
         .sync_pi_runtime_health()
@@ -786,6 +817,7 @@ pub async fn create_session(
     })?;
     let title_for_task = title.clone();
     let project_slug_for_task = project_slug.clone();
+    let agent_id_for_task = agent_id.clone();
     let (project_root, session_dir, created) = spawn_blocking(move || {
         let context = detect_session_context(project_slug_for_task.as_deref())?;
         let created = create_session_file(
@@ -816,6 +848,18 @@ pub async fn create_session(
             created.path.display()
         ),
     );
+    if let Some(agent_id) = agent_id.as_deref() {
+        state.log(
+            "info",
+            "agent.session.create",
+            &format!(
+                "Created agent session {} for agent {} in project slug {}",
+                created.record.id,
+                agent_id,
+                project_slug.as_deref().unwrap_or("<default>"),
+            ),
+        );
+    }
     if let Ok(connection) = database::open_connection() {
         let project_id = project_slug.as_deref().and_then(|slug| {
             connection
@@ -832,12 +876,28 @@ pub async fn create_session(
             &connection,
             &created.record.id,
             "session.created",
-            project_id,
+            project_id.clone(),
             json!({
                 "sessionId": created.record.id.clone(),
                 "title": created.record.title.clone(),
             }),
         );
+        if let Some(ref agent_id_str) = agent_id_for_task {
+            let agent = agents::get_agent(&connection, agent_id_str)?;
+            agent_dispatch::seed_direct_agent_session_context(
+                &connection,
+                &session_dir,
+                &created.record.id,
+                &agent,
+                project_id.as_deref(),
+            )?;
+            update_agent_main_session_for_created_session(
+                &connection,
+                project_id.as_deref(),
+                agent_id_str,
+                &created.record.id,
+            )?;
+        }
     }
     let _ = app_events::emit_session_change(&app, "sessions.create", [created.record.id.clone()]);
 
@@ -854,6 +914,17 @@ pub async fn create_session(
     .await
     .map_err(|error| format!("Unable to join create_session record task: {error}"))??;
 
+    if let Some(agent_id) = agent_id.as_deref() {
+        state.log(
+            "info",
+            "agent.session.create",
+            &format!(
+                "Returning created agent session {} (title={}) for agent {}",
+                decorated_record.id, decorated_record.title, agent_id,
+            ),
+        );
+    }
+
     attach_session_control_metadata(state.inner(), decorated_record)
 }
 
@@ -863,6 +934,7 @@ pub async fn create_contextual_session(
     state: State<'_, AppState>,
     session_id: String,
     project_slug: Option<String>,
+    agent_id: Option<String>,
 ) -> Result<SessionRecord, String> {
     state.sync_pi_runtime_health().map_err(|error| {
         format!("Unable to create a new session because PI is unavailable: {error}")
@@ -879,6 +951,7 @@ pub async fn create_contextual_session(
 
     let session_id_for_task = session_id.clone();
     let project_slug_for_task = project_slug.clone();
+    let agent_id_for_task = agent_id.clone();
     let prepared = spawn_blocking(move || {
         let mut connection = database::open_connection()?;
         let old_context = find_session_context_for_session(&session_id_for_task)?;
@@ -1035,51 +1108,30 @@ pub async fn create_contextual_session(
             });
         }
 
-        let scoped_project_id = project_slug_for_task
-            .as_deref()
-            .and_then(|slug| project_id_for_slug(&connection, slug))
-            .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
-        let agent_runtime_row = if let Some(project_id) = scoped_project_id.as_deref() {
-            connection
-                .query_row(
-                    r#"
-                    SELECT project_id, agent_id
-                    FROM agent_runtime_states
-                    WHERE main_session_id = ?1 AND project_id = ?2
-                    LIMIT 1
-                    "#,
-                    params![session_id_for_task.as_str(), project_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        let agent_runtime_row = connection
+            .query_row(
+                r#"
+                SELECT project_id, agent_id
+                FROM agent_runtime_states
+                WHERE main_session_id = ?1
+                LIMIT 1
+                "#,
+                [session_id_for_task.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to resolve agent runtime for session {}: {error}",
+                    session_id_for_task
                 )
-                .optional()
-                .map_err(|error| {
-                    format!(
-                        "Unable to resolve scoped agent runtime for session {}: {error}",
-                        session_id_for_task
-                    )
-                })?
-        } else {
-            connection
-                .query_row(
-                    r#"
-                    SELECT project_id, agent_id
-                    FROM agent_runtime_states
-                    WHERE main_session_id = ?1
-                    LIMIT 1
-                    "#,
-                    [session_id_for_task.as_str()],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()
-                .map_err(|error| {
-                    format!(
-                        "Unable to resolve agent runtime for session {}: {error}",
-                        session_id_for_task
-                    )
-                })?
-        };
+            })?;
 
         if let Some((project_id, agent_id)) = agent_runtime_row {
+            let chat_context_project_id = project_slug_for_task
+                .as_deref()
+                .and_then(|slug| project_id_for_slug(&connection, slug))
+                .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
             let runtime_state = agent_runtime::get_agent_runtime_state_for_project(
                 &connection,
                 &project_id,
@@ -1114,6 +1166,13 @@ pub async fn create_contextual_session(
                     &old_context.session_dir,
                     &created.record.id,
                     &agent,
+                )?;
+                agent_dispatch::seed_direct_agent_session_context(
+                    &connection,
+                    &old_context.session_dir,
+                    &created.record.id,
+                    &agent,
+                    chat_context_project_id.as_deref(),
                 )?;
                 let tx = connection.transaction().map_err(|error| {
                     format!(
@@ -1305,18 +1364,39 @@ pub async fn create_contextual_session(
             decorated_record.id, session_id
         ),
     );
+    if let Some(agent_id) = agent_id.as_deref() {
+        state.log(
+            "info",
+            "agent.session.create",
+            &format!(
+                "Created contextual agent session {} from {} for agent {} in project slug {}",
+                decorated_record.id,
+                session_id,
+                agent_id,
+                project_slug.as_deref().unwrap_or("<default>"),
+            ),
+        );
+    }
     if let Ok(connection) = database::open_connection() {
         record_session_domain_event(
             &connection,
             &decorated_record.id,
             "session.created",
-            project_id,
+            project_id.clone(),
             json!({
                 "sessionId": decorated_record.id.clone(),
                 "title": decorated_record.title.clone(),
                 "replacedSessionId": rotated_from_session_id.clone(),
             }),
         );
+        if let Some(ref agent_id_str) = agent_id_for_task {
+            update_agent_main_session_for_created_session(
+                &connection,
+                project_id.as_deref(),
+                agent_id_str,
+                &decorated_record.id,
+            )?;
+        }
     }
 
     let changed_session_ids = rotated_from_session_id
@@ -1327,6 +1407,17 @@ pub async fn create_contextual_session(
         app_events::emit_session_change(&app, "sessions.create_contextual", changed_session_ids);
     if let Some(task_id) = affected_task_id {
         let _ = app_events::emit_task_change(&app, "task.assignment.session_rotated", [task_id]);
+    }
+
+    if let Some(agent_id) = agent_id.as_deref() {
+        state.log(
+            "info",
+            "agent.session.create",
+            &format!(
+                "Returning contextual agent session {} (title={}) for agent {}",
+                decorated_record.id, decorated_record.title, agent_id,
+            ),
+        );
     }
 
     attach_session_control_metadata(state.inner(), decorated_record)
@@ -1672,8 +1763,25 @@ pub async fn set_session_model(
         "info",
         "sessions.model",
         &format!(
-            "Changed session {} to {}/{}",
-            session_id, provider, model_id
+            "Changed session {} to {}/{} (resolved state: provider={} model={} name={})",
+            session_id,
+            provider,
+            model_id,
+            result
+                .current_model
+                .as_ref()
+                .map(|model| model.provider.as_str())
+                .unwrap_or("<none>"),
+            result
+                .current_model
+                .as_ref()
+                .map(|model| model.id.as_str())
+                .unwrap_or("<none>"),
+            result
+                .current_model
+                .as_ref()
+                .map(|model| model.name.as_str())
+                .unwrap_or("<none>"),
         ),
     );
     state.log_authorized_action(

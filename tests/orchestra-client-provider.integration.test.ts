@@ -75,6 +75,7 @@ function createServices(overrides?: Partial<OrchestraClientServiceBindings>): Or
       listAgentOperations: vi.fn(async () => []),
       getAgentOperations: vi.fn(async () => { throw new Error("unused"); }),
       ensureAgentSession: vi.fn(async () => { throw new Error("unused"); }),
+      updateAgentMainSession: vi.fn(async () => { throw new Error("unused"); }),
       enqueueAgentWork: vi.fn(async () => { throw new Error("unused"); }),
       deleteAgentQueueEntry: vi.fn(async () => { throw new Error("unused"); }),
       getAgentPermissions: vi.fn(async () => ({ actorType: "agent", actorId: "agent", inheritedRoleId: null, policyIds: [], permissions: [], grantsFullAccess: false })),

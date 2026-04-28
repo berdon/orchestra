@@ -40,6 +40,7 @@ import {
   getAgentOperations,
   listAgentOperations,
   updateAgent,
+  updateAgentMainSession,
   validateAgent,
 } from "../agents";
 import {
@@ -242,6 +243,7 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     listAgentOperations,
     getAgentOperations,
     ensureAgentSession,
+    updateAgentMainSession,
     enqueueAgentWork,
     deleteAgentQueueEntry,
     getAgentPermissions,
@@ -385,9 +387,10 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     getRuntimeDetails: (sessionId) =>
       invokeTauri<SessionRuntimeDetails>("get_session_runtime_details", { sessionId }),
     getStats: (sessionId) => invokeTauri<SessionStats>("get_session_stats", { sessionId }),
-    create: (title, projectSlug) => invokeTauri<SessionRecord>("create_session", { title, projectSlug }),
-    createContextual: (sessionId, projectSlug) =>
-      invokeTauri<SessionRecord>("create_contextual_session", { sessionId, projectSlug }),
+    create: (title, projectSlug, agentId) =>
+      invokeTauri<SessionRecord>("create_session", { title, projectSlug, agentId: agentId ?? null }),
+    createContextual: (sessionId, projectSlug, agentId) =>
+      invokeTauri<SessionRecord>("create_contextual_session", { sessionId, projectSlug, agentId: agentId ?? null }),
     remove: (sessionId) => invokeTauri<void>("delete_session", { sessionId }),
     resume: (sessionId) => invokeTauri<SessionRecord>("resume_session", { sessionId }),
     subscribe: (sessionId) => invokeTauri<SessionRecord>("subscribe_session", { sessionId }),

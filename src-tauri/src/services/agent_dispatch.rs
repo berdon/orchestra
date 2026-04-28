@@ -5,10 +5,75 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::{
-    models::{AgentQueueEntry, AgentRuntimeState},
-    services::{agent_runtime, agents, live_sessions, messages, pi_sessions},
+    models::{AgentDefinition, AgentQueueEntry, AgentRuntimeState},
+    services::{agent_runtime, agents, live_sessions, messages, pi_sessions, projects, roles},
     state::{generate_id, AppState},
 };
+
+pub fn build_direct_agent_session_context(
+    connection: &rusqlite::Connection,
+    agent: &AgentDefinition,
+    active_project_id: Option<&str>,
+) -> Result<String, String> {
+    let mut sections = vec![
+        format!("You are {} ({}) inside Orchestra.", agent.name, agent.slug),
+        "This is your direct agent chat session. There is no active task assignment unless the user explicitly provides one or asks you to fetch one.".to_string(),
+    ];
+
+    if let Some(description) = agent.description.as_deref().filter(|value| !value.trim().is_empty()) {
+        sections.push(format!("Agent description:\n{}", description.trim()));
+    }
+
+    if let Some(project_id) = active_project_id {
+        let project = projects::get_project(connection, project_id)?;
+        sections.push(format!(
+            "Current Orchestra project context: {} ({}, id={}). Use this as the default projectId for project-scoped Orchestra tool calls unless the user explicitly asks for a different project.",
+            project.name,
+            project.slug,
+            project.id,
+        ));
+    }
+
+    if let Some(role_id) = agent.role_id.as_deref() {
+        let role = roles::get_role(connection, role_id)?;
+        sections.push(format!("Assigned role: {} ({})", role.name, role.slug));
+        if let Some(role_prompt) = role.system_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+            sections.push(format!("Role prompt:\n{}", role_prompt.trim()));
+        }
+    }
+
+    if let Some(system_prompt) = agent.system_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+        sections.push(format!("Agent prompt:\n{}", system_prompt.trim()));
+    }
+
+    if !agent.direct_permissions.is_empty() {
+        sections.push(format!(
+            "Direct Orchestra permissions: {}",
+            agent.direct_permissions.join(", ")
+        ));
+    }
+
+    Ok(sections.join("\n\n"))
+}
+
+pub fn seed_direct_agent_session_context(
+    connection: &rusqlite::Connection,
+    session_dir: &Path,
+    session_id: &str,
+    agent: &AgentDefinition,
+    active_project_id: Option<&str>,
+) -> Result<(), String> {
+    let context = build_direct_agent_session_context(connection, agent, active_project_id)?;
+    pi_sessions::append_session_system_message(session_dir, session_id, &context)?;
+    pi_sessions::append_session_assistant_message(
+        session_dir,
+        session_id,
+        &format!(
+            "[DEBUG seeded direct agent context for validation — this will be hidden again later]\n\n{}",
+            context,
+        ),
+    )
+}
 
 pub fn dispatch_all_agent_queues(
     app: AppHandle,
@@ -381,6 +446,13 @@ pub fn ensure_main_session(
         session_dir,
         &created.record.id,
         &agent.thinking_level,
+    )?;
+    seed_direct_agent_session_context(
+        &connection,
+        session_dir,
+        &created.record.id,
+        &agent,
+        Some(project_id),
     )?;
     agent_runtime::update_agent_runtime_dispatch_state_for_project(
         &connection,

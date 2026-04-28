@@ -2794,7 +2794,7 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
   return nextSession;
 }
 
-export async function createSession(title?: string, projectSlug?: string | null): Promise<SessionRecord> {
+export async function createSession(title?: string, projectSlug?: string | null, agentId?: string | null): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const timestamp = nowIso();
     const session: SessionRecord = {
@@ -2813,20 +2813,49 @@ export async function createSession(title?: string, projectSlug?: string | null)
     ensureMockSessionModel(session.id);
     const updated = sortSessions([session, ...ensureMockSessions()]);
     saveMockSessions(updated);
+    if (agentId) {
+      const projectId = DEFAULT_INSTALL_BASELINE_PROJECT_ID;
+      const runtimes = getStoredMockAgentRuntimes();
+      const matchingRuntimeExists = runtimes.some((entry) => entry.agentId === agentId && entry.projectId === projectId);
+      saveStoredMockAgentRuntimes(
+        matchingRuntimeExists
+          ? runtimes.map((entry) =>
+              entry.agentId === agentId && entry.projectId === projectId
+                ? { ...entry, mainSessionId: session.id, updatedAt: timestamp }
+                : entry,
+            )
+          : [
+              ...runtimes,
+              {
+                projectId,
+                agentId,
+                status: "idle",
+                mainSessionId: session.id,
+                runtimeCwd: getProjectRuntimeCwd(projectId),
+                currentQueueEntryId: null,
+                lastDispatchAt: null,
+                lastError: null,
+                terminalAttached: false,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+              },
+            ],
+      );
+    }
     appendMockLog("info", "sessions.create", `Created session ${session.id}`);
     emitMockSessionChange({ sessionIds: [session.id], reason: "sessions.create" });
     return session;
   }
 
-  return invoke<SessionRecord>("create_session", { title, projectSlug });
+  return invoke<SessionRecord>("create_session", { title, projectSlug, agentId });
 }
 
-export async function createContextualSession(sessionId: string, projectSlug?: string | null): Promise<SessionRecord> {
+export async function createContextualSession(sessionId: string, projectSlug?: string | null, agentId?: string | null): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     return createMockContextualSession(sessionId, projectSlug);
   }
 
-  return invoke<SessionRecord>("create_contextual_session", { sessionId, projectSlug });
+  return invoke<SessionRecord>("create_contextual_session", { sessionId, projectSlug, agentId });
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

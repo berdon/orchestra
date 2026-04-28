@@ -5,6 +5,7 @@ import type {
   AgentOperationsSnapshot,
   AgentQueueEntry,
   AgentQueueEntryInput,
+  AgentRuntimeState,
   AgentSkillLinks,
   AgentSummary,
   AgentUpsertInput,
@@ -236,6 +237,11 @@ export interface OrchestraWorkerService {
   listAgentOperations(includeArchived?: boolean, projectId?: string | null): Promise<AgentOperationsSnapshot[]>;
   getAgentOperations(agentId: string, projectId?: string | null): Promise<AgentOperationsDetail>;
   ensureAgentSession(agentId: string, projectId?: string | null): Promise<SessionRecord>;
+  updateAgentMainSession(
+    agentId: string,
+    mainSessionId: string | null,
+    projectId?: string | null,
+  ): Promise<AgentRuntimeState>;
   enqueueAgentWork(input: AgentQueueEntryInput): Promise<AgentQueueEntry>;
   deleteAgentQueueEntry(queueEntryId: string): Promise<AgentQueueEntry>;
   getAgentPermissions(agentId: string): Promise<ResolvedPermissions>;
@@ -360,8 +366,8 @@ export interface OrchestraSessionService {
   get(sessionId: string): Promise<SessionRecord>;
   getRuntimeDetails(sessionId: string): Promise<SessionRuntimeDetails>;
   getStats(sessionId: string): Promise<SessionStats>;
-  create(title?: string, projectSlug?: string | null): Promise<SessionRecord>;
-  createContextual(sessionId: string, projectSlug?: string | null): Promise<SessionRecord>;
+  create(title?: string, projectSlug?: string | null, agentId?: string | null): Promise<SessionRecord>;
+  createContextual(sessionId: string, projectSlug?: string | null, agentId?: string | null): Promise<SessionRecord>;
   remove(sessionId: string): Promise<void>;
   resume(sessionId: string): Promise<SessionRecord>;
   subscribe(sessionId: string): Promise<SessionRecord>;

@@ -83,15 +83,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 ensure_preview_assets() {
-  if [[ -f "${ROOT_DIR}/dist/index.html" ]]; then
-    return
-  fi
-
-  echo "[desktop-e2e-suite] frontend dist missing; running npm run build:hosted-web" | tee -a "${SCRIPT_LOG}"
-  (
-    cd "${ROOT_DIR}"
-    npm run build:hosted-web
-  ) >>"${SCRIPT_LOG}" 2>&1
+  echo "[desktop-e2e-suite] ensuring hosted-web preview assets are current" | tee -a "${SCRIPT_LOG}"
+  bash "${ROOT_DIR}/scripts/ensure-desktop-e2e-preview-assets.sh" >>"${SCRIPT_LOG}" 2>&1
 }
 
 start_shared_preview() {

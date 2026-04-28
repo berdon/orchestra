@@ -334,21 +334,29 @@ function isAgentVisibleInProject(agent: Pick<AgentDefinition, "scope" | "project
   return agent.scope === "global" || (Boolean(projectId) && agent.projectId === projectId);
 }
 
-function ensureMockAgentRuntime(agentId: string) {
-  const projectId = activeProjectId();
+function effectiveMockRuntimeProjectId(agentId: string, projectId?: string | null) {
+  const agent = ensureMockAgents().find((entry) => entry.id === agentId);
+  if (agent?.scope === "global") {
+    return DEFAULT_PROJECT_ID;
+  }
+  return projectId ?? activeProjectId();
+}
+
+function ensureMockAgentRuntime(agentId: string, projectId?: string | null) {
+  const effectiveProjectId = effectiveMockRuntimeProjectId(agentId, projectId);
   const runtimes = getStoredAgentRuntimes();
-  const existing = runtimes.find((runtime) => runtime.agentId === agentId && runtime.projectId === projectId);
+  const existing = runtimes.find((runtime) => runtime.agentId === agentId && runtime.projectId === effectiveProjectId);
   if (existing) {
     return existing;
   }
 
   const globalMainSessionId = runtimes.find((runtime) => runtime.agentId === agentId && runtime.mainSessionId)?.mainSessionId ?? null;
   const created: AgentRuntimeState = {
-    projectId,
+    projectId: effectiveProjectId,
     agentId,
     status: "idle",
     mainSessionId: globalMainSessionId,
-    runtimeCwd: getProjectRuntimeCwd(projectId),
+    runtimeCwd: getProjectRuntimeCwd(effectiveProjectId),
     currentQueueEntryId: null,
     lastDispatchAt: null,
     lastError: null,
@@ -479,8 +487,8 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
     return hostedWebClient.workers.ensureAgentSession(agentId, projectId);
   }
   if (!isTauriAvailable()) {
-    const agent = await getAgent(agentId);
-    const runtime = ensureMockAgentRuntime(agentId);
+    const agent = await getAgent(agentId, projectId);
+    const runtime = ensureMockAgentRuntime(agentId, projectId ?? activeProjectId());
     const existingSession = runtime.mainSessionId
       ? getStoredSessions().find((session) => session.id === runtime.mainSessionId) ?? null
       : null;
@@ -530,6 +538,38 @@ export async function ensureAgentSession(agentId: string, projectId?: string | n
   }
 
   return invoke<SessionRecord>("ensure_agent_session", { agentId, projectId: projectId ?? null });
+}
+
+export async function updateAgentMainSession(
+  agentId: string,
+  mainSessionId: string | null,
+  projectId?: string | null,
+): Promise<AgentRuntimeState> {
+  const hostedWebClient = getHostedWebClient();
+  if (hostedWebClient) {
+    return hostedWebClient.workers.updateAgentMainSession(agentId, mainSessionId, projectId);
+  }
+  if (!isTauriAvailable()) {
+    const runtime = ensureMockAgentRuntime(agentId, projectId ?? activeProjectId());
+    const runtimes = getStoredAgentRuntimes();
+    const updated = runtimes.map((entry) =>
+      entry.agentId === agentId && entry.projectId === runtime.projectId
+        ? { ...entry, mainSessionId: mainSessionId ?? entry.mainSessionId, updatedAt: nowIso() }
+        : entry,
+    );
+    saveStoredAgentRuntimes(updated);
+    const updatedEntry = updated.find((entry) => entry.agentId === agentId);
+    if (!updatedEntry) {
+      throw new Error(`Agent runtime state for ${agentId} was not found`);
+    }
+    return updatedEntry;
+  }
+
+  return invoke<AgentRuntimeState>("update_agent_main_session", {
+    agentId,
+    projectId: projectId ?? null,
+    mainSessionId,
+  });
 }
 
 export async function openAgentSessionInTerminal(agentId: string, projectId?: string | null): Promise<SessionRecord> {

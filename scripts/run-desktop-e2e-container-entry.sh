@@ -39,10 +39,8 @@ if [[ -d /src/mobile/dist-web ]]; then
 else
   mkdir -p "${WORKSPACE_DIR}/mobile/dist-web"
 fi
-if [[ ! -f "${WORKSPACE_DIR}/dist/index.html" ]]; then
-  echo "[desktop-e2e] building hosted-web dist for remote browser coverage"
-  npm run build:hosted-web
-fi
+echo "[desktop-e2e] ensuring hosted-web dist is current for remote browser coverage"
+bash "${WORKSPACE_DIR}/scripts/ensure-desktop-e2e-preview-assets.sh"
 cp -a /src/src-tauri/Cargo.toml /src/src-tauri/Cargo.lock /src/src-tauri/build.rs /src/src-tauri/tauri.conf.json "${WORKSPACE_DIR}/src-tauri/"
 cp -a /src/src-tauri/src "${WORKSPACE_DIR}/src-tauri/src"
 cp -a /src/src-tauri/scripts "${WORKSPACE_DIR}/src-tauri/scripts"
@@ -176,5 +174,6 @@ export DISPLAY="${XVFB_DISPLAY}"
 export ORCHESTRA_TAURI_BINARY="${HOST_BINARY_PATH}"
 export ORCHESTRA_PROJECT_ROOT="${WORKSPACE_DIR}"
 export ORCHESTRA_PI_EXECUTABLE="/workspace/orchestra/node_modules/.bin/pi"
+export IS_DESKTOP_E2E=1
 echo "[desktop-e2e] launching isolated desktop harness with DISPLAY=${DISPLAY} binary=${ORCHESTRA_TAURI_BINARY} project_root=${ORCHESTRA_PROJECT_ROOT} pi=${ORCHESTRA_PI_EXECUTABLE}"
 ./scripts/run-desktop-e2e.sh "${TEST_FILE}"
