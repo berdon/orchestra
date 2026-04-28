@@ -10,6 +10,7 @@ import {
   listAgentOperations,
   listAgents,
   updateAgent,
+  updateAgentMainSession,
   validateAgent,
 } from "../agents";
 import {
@@ -229,7 +230,8 @@ export const mockOrchestraClientServiceBindings: OrchestraClientServiceBindings 
     getAgentMemoryInfo,
     listAgentOperations,
     getAgentOperations,
-    ensureAgentSession,
+   ensureAgentSession,
+    updateAgentMainSession,
     enqueueAgentWork,
     deleteAgentQueueEntry,
     getAgentPermissions,

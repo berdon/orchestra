@@ -12,7 +12,8 @@ use commands::{
     agent_runtime::{
         delete_agent_queue_entry, enqueue_agent_work, ensure_agent_session, get_agent_operations,
         get_agent_terminal_buffer, list_agent_operations, open_agent_session_terminal,
-        resize_agent_terminal, shutdown_agent_terminal_session, write_agent_terminal_input,
+        resize_agent_terminal, shutdown_agent_terminal_session, update_agent_main_session,
+        write_agent_terminal_input,
     },
     agents::{
         archive_agent, create_agent, get_agent, get_agent_memory_info, list_agents, update_agent,
@@ -244,6 +245,7 @@ pub fn run() {
             delete_agent_queue_entry,
             ensure_agent_session,
             open_agent_session_terminal,
+            update_agent_main_session,
             write_agent_terminal_input,
             resize_agent_terminal,
             get_agent_terminal_buffer,

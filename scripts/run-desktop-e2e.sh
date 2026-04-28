@@ -115,12 +115,7 @@ echo "[desktop-e2e-runner] webdriver_port=${WEBDRIVER_PORT} native_port=${NATIVE
 echo "[desktop-e2e-runner] preview_url=${PREVIEW_URL} reuse_preview=${REUSE_PREVIEW}"
 
 ensure_preview_assets() {
-  if [[ -f "${ROOT_DIR}/dist/index.html" ]]; then
-    return
-  fi
-
-  echo "[desktop-e2e-runner] frontend dist missing; running npm run build:hosted-web"
-  npm run build:hosted-web
+  bash "${ROOT_DIR}/scripts/ensure-desktop-e2e-preview-assets.sh"
 }
 
 run_inner() {
@@ -135,19 +130,26 @@ run_inner() {
   export NPM_CONFIG_CACHE="${TEST_HOME}/.npm"
   export ORCHESTRA_PROJECT_ROOT="${ROOT_DIR}"
   export ORCHESTRA_DESKTOP_E2E=1
+  export IS_DESKTOP_E2E=1
   export ORCHESTRA_ENABLE_WEBDRIVER_AUTOMATION=1
   export PATH="${REAL_HOME}/.cargo/bin:/workspace/orchestra/node_modules/.bin:${PATH}"
-  unset PI_CODING_AGENT_DIR PI_PACKAGE_DIR ORCHESTRA_PI_EXECUTABLE ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT
+  if [[ "${IS_DESKTOP_E2E}" != "1" ]]; then
+    unset PI_CODING_AGENT_DIR PI_PACKAGE_DIR ORCHESTRA_PI_EXECUTABLE ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT
+  fi
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
   ensure_preview_assets
   rm -rf "${TEST_HOME}/.pi"
   if [[ -d "${REAL_HOME}/.pi" ]]; then
     ln -s "${REAL_HOME}/.pi" "${TEST_HOME}/.pi"
   fi
+  rm -rf "${TEST_HOME}/.codex"
+  if [[ -d "${REAL_HOME}/.codex" ]]; then
+    ln -s "${REAL_HOME}/.codex" "${TEST_HOME}/.codex"
+  fi
 
   local managed_pi_dir="${TEST_HOME}/.orchestra/runtime/pi/agent"
   local legacy_pi_dir="${TEST_HOME}/.pi/agent"
-  local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-0}"
+  local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-1}"
   local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"
   if [[ -d "${legacy_pi_dir}" ]]; then
     mkdir -p "${managed_pi_dir}"
@@ -155,6 +157,7 @@ run_inner() {
 
     if [[ -f "${legacy_pi_dir}/auth.json" && ! -f "${managed_pi_dir}/auth.json" ]]; then
       install -m 600 "${legacy_pi_dir}/auth.json" "${managed_pi_dir}/auth.json"
+      echo "[desktop-e2e-runner] imported host Pi auth.json into managed runtime"
     fi
 
     if [[ "${import_legacy_settings}" == "1" ]]; then
@@ -168,9 +171,10 @@ run_inner() {
     if [[ "${import_legacy_models}" == "1" ]]; then
       if [[ -f "${legacy_pi_dir}/models.json" && ! -f "${managed_pi_dir}/models.json" ]]; then
         install -m 600 "${legacy_pi_dir}/models.json" "${managed_pi_dir}/models.json"
+        echo "[desktop-e2e-runner] imported host Pi models.json into managed runtime"
       fi
     elif [[ -f "${legacy_pi_dir}/models.json" ]]; then
-      echo "[desktop-e2e-runner] skipping legacy models.json import by default; set ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS=1 to opt in"
+      echo "[desktop-e2e-runner] skipping host Pi models.json import because ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS=0"
     fi
   fi
 

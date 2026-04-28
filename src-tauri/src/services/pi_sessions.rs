@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -746,6 +746,92 @@ pub fn delete_session_file(session_dir: &Path, session_id: &str) -> Result<(), S
             let _ = remove_session_catalog_entry(&connection, session_id);
         }
     }
+    Ok(())
+}
+
+pub fn append_session_system_message(
+    session_dir: &Path,
+    session_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let path = get_session_path(session_dir, session_id)?;
+    let timestamp = now_iso();
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("Unable to open session file {} for append: {error}", path.display()))?;
+
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "type": "message",
+            "id": random_entry_id(),
+            "timestamp": timestamp,
+            "message": {
+                "role": "system",
+                "content": [{ "type": "text", "text": text }],
+                "timestamp": DateTime::parse_from_rfc3339(&timestamp)
+                    .map(|value| value.timestamp_millis())
+                    .unwrap_or_else(|_| Utc::now().timestamp_millis()),
+            }
+        })
+    )
+    .map_err(|error| format!("Unable to append system message to {}: {error}", path.display()))?;
+
+    file.sync_all()
+        .map_err(|error| format!("Unable to flush session file {}: {error}", path.display()))?;
+
+    Ok(())
+}
+
+pub fn append_session_assistant_message(
+    session_dir: &Path,
+    session_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let path = get_session_path(session_dir, session_id)?;
+    let timestamp = now_iso();
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("Unable to open session file {} for append: {error}", path.display()))?;
+
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "type": "message",
+            "id": random_entry_id(),
+            "timestamp": timestamp,
+            "message": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": text }],
+                "usage": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "totalTokens": 0,
+                    "cost": {
+                        "input": 0,
+                        "output": 0,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                        "total": 0,
+                    }
+                },
+                "timestamp": DateTime::parse_from_rfc3339(&timestamp)
+                    .map(|value| value.timestamp_millis())
+                    .unwrap_or_else(|_| Utc::now().timestamp_millis()),
+            }
+        })
+    )
+    .map_err(|error| format!("Unable to append assistant message to {}: {error}", path.display()))?;
+
+    file.sync_all()
+        .map_err(|error| format!("Unable to flush session file {}: {error}", path.display()))?;
+
     Ok(())
 }
 

@@ -570,6 +570,8 @@ pub fn update_agent_runtime_dispatch_state_for_project(
     status: &str,
     last_error: Option<&str>,
 ) -> Result<AgentRuntimeState, String> {
+    let runtime_state = ensure_agent_runtime_state_for_project(connection, project_id, agent_id)?;
+    let effective_project_id = runtime_state.project_id;
     let now = now_iso();
 
     connection
@@ -586,7 +588,7 @@ pub fn update_agent_runtime_dispatch_state_for_project(
             WHERE project_id = ?1 AND agent_id = ?2
             "#,
             params![
-                project_id,
+                effective_project_id,
                 agent_id,
                 status,
                 session_id,
@@ -596,9 +598,9 @@ pub fn update_agent_runtime_dispatch_state_for_project(
                 last_error,
             ],
         )
-        .map_err(|error| format!("Unable to update agent runtime state for {agent_id} in project {project_id}: {error}"))?;
+        .map_err(|error| format!("Unable to update agent runtime state for {agent_id} in project {effective_project_id}: {error}"))?;
 
-    get_agent_runtime_state_for_project(connection, project_id, agent_id)?
+    get_agent_runtime_state_for_project(connection, &effective_project_id, agent_id)?
         .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after update"))
 }
 
@@ -1058,31 +1060,25 @@ mod tests {
     fn global_agents_have_single_runtime_state_across_projects() {
         let mut connection = in_memory_connection();
         let agent_id = create_agent(&mut connection);
-        
-        // Ensure the agent is global
+
         let agent = agents::get_agent(&connection, &agent_id).expect("agent should load");
         assert_eq!(agent.scope, "global", "Test agent should be global");
-        
-        // Request runtime state from different projects
+
         let state_a = ensure_agent_runtime_state_for_project(&connection, "project-a", &agent_id)
             .expect("project a runtime state");
         let state_b = ensure_agent_runtime_state_for_project(&connection, "project-b", &agent_id)
             .expect("project b runtime state");
         let state_c = ensure_agent_runtime_state_for_project(&connection, "project-c", &agent_id)
             .expect("project c runtime state");
-        
-        // All should return the same runtime state with the default project
+
         assert_eq!(state_a.project_id, "orchestra");
         assert_eq!(state_b.project_id, "orchestra");
         assert_eq!(state_c.project_id, "orchestra");
         assert_eq!(state_a.agent_id, state_b.agent_id);
         assert_eq!(state_b.agent_id, state_c.agent_id);
-        
-        // All should have the same runtime state ID (project_id + agent_id)
         assert_eq!(state_a.project_id, state_b.project_id);
         assert_eq!(state_b.project_id, state_c.project_id);
-        
-        // Should only be one runtime state in the database
+
         let all_states = connection
             .prepare("SELECT COUNT(*) FROM agent_runtime_states WHERE agent_id = ?1")
             .expect("query should prepare")
@@ -1091,5 +1087,32 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("rows should collect");
         assert_eq!(all_states, vec![1], "Should have exactly one runtime state for global agent");
+    }
+
+    #[test]
+    fn updating_global_agent_runtime_state_uses_singleton_runtime_row() {
+        let mut connection = in_memory_connection();
+        let agent_id = create_agent(&mut connection);
+
+        let updated = update_agent_runtime_dispatch_state_for_project(
+            &connection,
+            "project-a",
+            &agent_id,
+            Some("session-123"),
+            None,
+            None,
+            "",
+            None,
+        )
+        .expect("global runtime update should succeed");
+
+        assert_eq!(updated.project_id, "orchestra");
+        assert_eq!(updated.main_session_id.as_deref(), Some("session-123"));
+        assert!(
+            get_agent_runtime_state_for_project(&connection, "project-a", &agent_id)
+                .expect("project runtime lookup should succeed")
+                .is_none(),
+            "global agents should not get project-scoped runtime rows on update",
+        );
     }
 }

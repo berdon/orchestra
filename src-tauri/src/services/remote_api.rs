@@ -42,7 +42,7 @@ use crate::{
         task_schedules as task_schedule_commands, tasks as task_commands,
         workflows as workflow_commands,
     },
-    models::{
+     models::{
         AgentQueueEntryInput, AgentUpsertInput, AppInfo, ArchiveMailboxMessagesInput,
         AuthorizationContext, ChannelUpsertInput, LocalSkillUpsertInput, MailboxMessage,
         MarkMailboxMessagesReadInput, OrchestraCapabilityAvailability,
@@ -195,6 +195,7 @@ struct TaskDependencyInput {
 struct SessionCreateInput {
     title: Option<String>,
     project_slug: Option<String>,
+    agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5753,12 +5754,14 @@ async fn post_session_create(
         .unwrap_or(SessionCreateInput {
             title: None,
             project_slug: None,
+            agent_id: None,
         });
     session_commands::create_session(
         context.app.clone(),
         context.app.state::<AppState>(),
         input.title,
         input.project_slug,
+        input.agent_id,
     )
     .await
     .map(Json)
@@ -5824,12 +5827,14 @@ async fn post_contextual_session_create(
         .unwrap_or(SessionCreateInput {
             title: None,
             project_slug: None,
+            agent_id: None,
         });
     session_commands::create_contextual_session(
         context.app.clone(),
         context.app.state::<AppState>(),
         session_id,
         input.project_slug,
+        input.agent_id,
     )
     .await
     .map(Json)

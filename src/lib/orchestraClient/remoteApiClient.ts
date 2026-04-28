@@ -5,6 +5,7 @@ import type {
   AgentOperationsSnapshot,
   AgentQueueEntry,
   AgentQueueEntryInput,
+  AgentRuntimeState,
   AgentSkillLinks,
   AgentSummary,
   AgentUpsertInput,
@@ -615,6 +616,19 @@ export function createRemoteApiOrchestraClientBinding(
         return transport.requestJson<SessionRecord>("workers.ensureAgentSession", {
           method: "POST",
           path: `/api/v1/agents/${encodeURIComponent(agentId)}/sessions/ensure`,
+          query: {
+            projectId: projectId ?? undefined,
+          },
+        });
+      },
+      updateAgentMainSession: (agentId, mainSessionId, projectId) => {
+        transport.assertCapability("workers.updateAgentMainSession", bootstrap.capabilities.admin.workers);
+        return transport.requestJson<AgentRuntimeState>("workers.updateAgentMainSession", {
+          method: "PATCH",
+          path: `/api/v1/agents/${encodeURIComponent(agentId)}/main-session`,
+          body: {
+            mainSessionId,
+          },
           query: {
             projectId: projectId ?? undefined,
           },
@@ -1383,7 +1397,7 @@ export function createRemoteApiOrchestraClientBinding(
           path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/stats`,
         });
       },
-      create: (title, projectSlug) => {
+      create: (title, projectSlug, agentId) => {
         transport.assertCapability("sessions.create", bootstrap.capabilities.sessions.write);
         return transport.requestJson<SessionRecord>("sessions.create", {
           method: "POST",
@@ -1391,16 +1405,18 @@ export function createRemoteApiOrchestraClientBinding(
           body: {
             title,
             projectSlug,
+            agentId,
           },
         });
       },
-      createContextual: (sessionId, projectSlug) => {
+      createContextual: (sessionId, projectSlug, agentId) => {
         transport.assertCapability("sessions.createContextual", bootstrap.capabilities.sessions.write);
         return transport.requestJson<SessionRecord>("sessions.createContextual", {
           method: "POST",
           path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/contextual`,
           body: {
             projectSlug,
+            agentId,
           },
         });
       },

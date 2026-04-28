@@ -899,6 +899,11 @@ export function App() {
   const lastKnownChatSessionDraftRef = useRef("");
   const activePageRef = useRef(activePage);
   const activeProjectIdRef = useRef(activeProjectId);
+  const selectedSessionIdRef = useRef(selectedSessionId);
+  const chatSessionIdStateRef = useRef(chatSessionId);
+  const supervisorSessionIdRef = useRef(supervisorSessionId);
+  const pendingRunsRef = useRef(pendingRuns);
+  const pendingSessionOpenRequestRef = useRef(pendingSessionOpenRequest);
   const chatAgentLoadRequestIdRef = useRef(0);
   const latestForegroundChatAgentLoadRequestIdRef = useRef(0);
   const lastKnownSupervisorSessionRef = useRef<SessionRecord | null>(null);
@@ -920,6 +925,26 @@ export function App() {
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
+
+  useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    chatSessionIdStateRef.current = chatSessionId;
+  }, [chatSessionId]);
+
+  useEffect(() => {
+    supervisorSessionIdRef.current = supervisorSessionId;
+  }, [supervisorSessionId]);
+
+  useEffect(() => {
+    pendingRunsRef.current = pendingRuns;
+  }, [pendingRuns]);
+
+  useEffect(() => {
+    pendingSessionOpenRequestRef.current = pendingSessionOpenRequest;
+  }, [pendingSessionOpenRequest]);
 
   useEffect(() => {
     commandPaletteRequestIdRef.current += 1;
@@ -1889,22 +1914,23 @@ export function App() {
         reconcileListedSessions(sessionsRef.current, listedSessions, {
           preserveDetailedSessionIds: [
             viewedSessionIdRef.current,
-            selectedSessionId,
-            chatSessionId,
-            supervisorSessionId,
+            selectedSessionIdRef.current,
+            chatSessionIdStateRef.current,
+            supervisorSessionIdRef.current,
           ].filter((value): value is string => Boolean(value)),
           preserveMissingSessionIds: [
             viewedSessionIdRef.current,
-            supervisorSessionId,
+            supervisorSessionIdRef.current,
             ...Array.from(testPinnedSessionIdsRef.current),
           ].filter((value): value is string => Boolean(value)),
-          pendingSessionIds: Object.keys(pendingRuns),
+          pendingSessionIds: Object.keys(pendingRunsRef.current),
         }),
       );
 
       sessionsRef.current = nextSessions;
       setSessions((current) => (areSessionListsEqual(current, nextSessions) ? current : nextSessions));
       setSelectedSessionId((current) => {
+        const pendingSessionOpenRequest = pendingSessionOpenRequestRef.current;
         const requestedSessionId = pendingSessionOpenRequest?.projectId === activeProjectId
           ? pendingSessionOpenRequest.sessionId
           : null;
@@ -1920,11 +1946,9 @@ export function App() {
         const fallbackSessionId = nextSessions[0]?.id ?? null;
         return current === fallbackSessionId ? current : fallbackSessionId;
       });
-      const hasCurrentChatSession = Boolean(chatSessionId && nextSessions.some((session) => session.id === chatSessionId));
-      setChatSessionId((current) => (current && nextSessions.some((session) => session.id === current) ? current : null));
-      if (!hasCurrentChatSession) {
-        chatSessionAgentIdRef.current = null;
-      }
+      // Agent chat sessions are tracked independently from the project-scoped
+      // session list. Do not clear chat session state here just because the
+      // current project list doesn't contain it.
     } catch (error) {
       setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.load", error, "Unable to load sessions."));
     } finally {
@@ -1932,7 +1956,7 @@ export function App() {
       setRefreshingSessions(false);
       backgroundSessionRefreshInFlightRef.current = false;
     }
-  }, [activePage, activeProjectId, chatSessionId, orchestraClient, pendingRuns, pendingSessionOpenRequest, selectedSessionId, supervisorSessionId]);
+  }, [activePage, activeProjectId, orchestraClient]);
 
   const loadChatAgents = useCallback(async (options?: { background?: boolean }) => {
     const requestId = ++chatAgentLoadRequestIdRef.current;
@@ -2313,21 +2337,14 @@ export function App() {
     }
 
     try {
-      const parsed = JSON.parse(stored) as { sessionId?: string; draft?: string };
-      const restoredSessionId = parsed.sessionId ?? null;
+      const parsed = JSON.parse(stored) as { draft?: string };
       const restoredDraft = typeof parsed.draft === "string" ? parsed.draft : "";
       lastKnownSupervisorSessionRef.current = null;
-      lastKnownSupervisorSessionIdRef.current = restoredSessionId;
+      lastKnownSupervisorSessionIdRef.current = null;
       lastKnownSupervisorDraftRef.current = restoredDraft;
       supervisorSessionRecoveryMissRef.current = null;
       setSupervisorQuickChatStorageReadyProjectKey(projectKey);
-      setSupervisorSessionId(restoredSessionId);
-      if (restoredSessionId && restoredDraft) {
-        setDraftMessages((current) => ({
-          ...current,
-          [restoredSessionId]: restoredDraft,
-        }));
-      }
+      setSupervisorSessionId(null);
     } catch {
       lastKnownSupervisorSessionRef.current = null;
       lastKnownSupervisorSessionIdRef.current = null;
@@ -2351,10 +2368,10 @@ export function App() {
 
     const draft = supervisorSessionId
       ? draftMessages[supervisorSessionId] ?? lastKnownSupervisorDraftRef.current
-      : "";
+      : lastKnownSupervisorDraftRef.current;
     window.localStorage.setItem(
       supervisorQuickChatStorageKey(resolvedProjectId),
-      JSON.stringify({ sessionId: supervisorSessionId, draft }),
+      JSON.stringify({ draft }),
     );
   }, [activeProjectId, draftMessages, supervisorQuickChatStorageReadyProjectKey, supervisorSessionId]);
 
@@ -2371,7 +2388,12 @@ export function App() {
 
   useSessionEventRefresh({
     disabled: isDetachedWindow,
-    hasSession: (sessionId) => sessionsRef.current.some((session) => session.id === sessionId),
+    hasSession: (sessionId) => (
+      sessionsRef.current.some((session) => session.id === sessionId)
+      || chatSessionIdStateRef.current === sessionId
+      || supervisorSessionIdRef.current === sessionId
+      || viewedSessionIdRef.current === sessionId
+    ),
     onSessionStream: (_sessionId, payload) => {
       handleSessionStreamEvent(payload as SessionStreamEnvelope);
     },
@@ -2444,59 +2466,22 @@ export function App() {
       return;
     }
 
-    const cachedMainSessionId = selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null;
-    const cachedMainSession = cachedMainSessionId
-      ? sessions.find((session) => session.id === cachedMainSessionId) ?? null
-      : null;
-
-    if (!chatSessionId && cachedMainSession) {
-      setChatSessionId(cachedMainSession.id);
-      chatSessionAgentIdRef.current = selectedChatAgentId;
-      lastKnownChatSessionIdRef.current = cachedMainSession.id;
-      lastKnownChatSessionAgentIdRef.current = selectedChatAgentId;
-      chatSessionRecoveryMissRef.current = null;
-      return;
-    }
-
-    const hasLiveChatSessionInState = Boolean(
-      chatSessionId
-      && chatSessionAgentIdRef.current === selectedChatAgentId
-      && liveChatSession?.id === chatSessionId,
-    );
-    if (hasLiveChatSessionInState) {
-      chatSessionRecoveryMissRef.current = null;
-      return;
-    }
-
-    const missingChatSessionId = chatSessionId ?? cachedMainSessionId ?? lastKnownChatSessionIdRef.current;
-    const missingChatSessionAgentId = chatSessionAgentIdRef.current ?? lastKnownChatSessionAgentIdRef.current;
-    const missingChatDraft = missingChatSessionId
-      ? draftMessages[missingChatSessionId] ?? lastKnownChatSessionDraftRef.current
-      : lastKnownChatSessionDraftRef.current;
     let cancelled = false;
+    console.info("[orchestra][chat-load:start]", {
+      agentId: selectedChatAgentId,
+      activeProjectId: activeProject?.id ?? null,
+      activeProjectSlug: activeProject?.slug ?? null,
+      visibleChatSessionId: chatSessionId,
+      selectedSnapshotMainSessionId: selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
+    });
     setLoadingChatSessionAgentId(selectedChatAgentId);
     setSessionActionError(null);
 
     const recoverChatSession = async () => {
-      if (missingChatSessionId && missingChatSessionAgentId === selectedChatAgentId) {
-        try {
-          return await orchestraClient.sessions.get(missingChatSessionId);
-        } catch {
-          if (lastKnownChatSessionRef.current?.id === missingChatSessionId) {
-            const now = Date.now();
-            const existingMiss = chatSessionRecoveryMissRef.current;
-            if (!existingMiss || existingMiss.sessionId !== missingChatSessionId) {
-              chatSessionRecoveryMissRef.current = { sessionId: missingChatSessionId, startedAt: now };
-              return null;
-            }
-            if (now - existingMiss.startedAt < CHAT_SESSION_RECOVERY_GRACE_MS) {
-              return null;
-            }
-          }
-        }
-      }
-
-      return ensureAgentSession(selectedChatAgentId, activeProject?.id ?? null);
+      return ensureAgentSession(
+        selectedChatAgentId,
+        activeProject?.id ?? null,
+      );
     };
 
     void recoverChatSession()
@@ -2504,22 +2489,33 @@ export function App() {
         if (cancelled || !session) {
           return;
         }
+        console.info("[orchestra][chat-load:resolved]", {
+          agentId: selectedChatAgentId,
+          activeProjectId: activeProject?.id ?? null,
+          activeProjectSlug: activeProject?.slug ?? null,
+          loadedSessionId: session.id,
+          loadedSessionTitle: session.title,
+          previousVisibleChatSessionId: chatSessionId,
+          selectedSnapshotMainSessionId: selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
+        });
         chatSessionRecoveryMissRef.current = null;
         mergeSessionRecord(session, { select: false });
         setChatSessionId(session.id);
         chatSessionAgentIdRef.current = selectedChatAgentId;
+        lastKnownChatSessionRef.current = session;
         lastKnownChatSessionIdRef.current = session.id;
         lastKnownChatSessionAgentIdRef.current = selectedChatAgentId;
-        if (missingChatDraft.trim()) {
-          setDraftMessages((current) => ({
-            ...current,
-            [session.id]: current[session.id]?.trim() ? current[session.id] : missingChatDraft,
-          }));
-        }
-        lastKnownChatSessionDraftRef.current = missingChatDraft;
       })
       .catch((error) => {
         if (!cancelled) {
+          console.error("[orchestra][chat-load:error]", {
+            agentId: selectedChatAgentId,
+            activeProjectId: activeProject?.id ?? null,
+            activeProjectSlug: activeProject?.slug ?? null,
+            visibleChatSessionId: chatSessionId,
+            selectedSnapshotMainSessionId: selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
+            error,
+          });
           setSessionActionError(toUiErrorState(error, "Unable to open chat session."));
         }
       })
@@ -2532,50 +2528,21 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, activeProject?.id, chatSessionId, draftMessages, isDetachedWindow, liveChatSession?.id, mergeSessionRecord, selectedChatAgentId, selectedChatAgentSnapshot?.runtimeState.mainSessionId, sessions]);
+  }, [activePage, activeProject?.id, activeProject?.slug, isDetachedWindow, mergeSessionRecord, selectedChatAgentId]);
 
   useEffect(() => {
     if (isDetachedWindow || (!supervisorQuickChatOpen && !supervisorSessionId)) {
       return;
     }
 
-    const currentSupervisorSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
-    const hasLiveSupervisorSession = Boolean(
-      currentSupervisorSessionId
-      && liveSupervisorSession?.id === currentSupervisorSessionId,
-    );
-    if (hasLiveSupervisorSession) {
-      supervisorSessionRecoveryMissRef.current = null;
-      return;
-    }
-
-    const missingSupervisorSessionId = currentSupervisorSessionId;
-    const missingSupervisorDraft = missingSupervisorSessionId
-      ? draftMessages[missingSupervisorSessionId] ?? lastKnownSupervisorDraftRef.current
-      : lastKnownSupervisorDraftRef.current;
     let cancelled = false;
     setSessionActionError(null);
 
     const recoverSupervisorSession = async () => {
-      if (missingSupervisorSessionId) {
-        try {
-          return await orchestraClient.sessions.get(missingSupervisorSessionId);
-        } catch {
-          if (lastKnownSupervisorSessionRef.current?.id === missingSupervisorSessionId) {
-            const now = Date.now();
-            const existingMiss = supervisorSessionRecoveryMissRef.current;
-            if (!existingMiss || existingMiss.sessionId !== missingSupervisorSessionId) {
-              supervisorSessionRecoveryMissRef.current = { sessionId: missingSupervisorSessionId, startedAt: now };
-              return null;
-            }
-            if (now - existingMiss.startedAt < CHAT_SESSION_RECOVERY_GRACE_MS) {
-              return null;
-            }
-          }
-        }
-      }
-
-      return ensureAgentSession(SUPERVISOR_AGENT_ID, activeProject?.id ?? getActiveProjectId() ?? null);
+      return ensureAgentSession(
+        SUPERVISOR_AGENT_ID,
+        activeProject?.id ?? getActiveProjectId() ?? null,
+      );
     };
 
     void recoverSupervisorSession()
@@ -2586,14 +2553,14 @@ export function App() {
         supervisorSessionRecoveryMissRef.current = null;
         mergeSessionRecord(session, { select: false });
         setSupervisorSessionId((current) => (current === session.id ? current : session.id));
+        lastKnownSupervisorSessionRef.current = session;
         lastKnownSupervisorSessionIdRef.current = session.id;
-        if (missingSupervisorDraft.trim()) {
+        if (lastKnownSupervisorDraftRef.current.trim()) {
           setDraftMessages((current) => ({
             ...current,
-            [session.id]: current[session.id]?.trim() ? current[session.id] : missingSupervisorDraft,
+            [session.id]: current[session.id]?.trim() ? current[session.id] : lastKnownSupervisorDraftRef.current,
           }));
         }
-        lastKnownSupervisorDraftRef.current = missingSupervisorDraft;
       })
       .catch((error) => {
         if (!cancelled) {
@@ -2604,7 +2571,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeProject?.id, draftMessages, isDetachedWindow, liveSupervisorSession?.id, mergeSessionRecord, supervisorQuickChatOpen, supervisorSessionId]);
+  }, [activeProject?.id, isDetachedWindow, mergeSessionRecord, supervisorQuickChatOpen]);
 
   useEffect(() => {
     if (isDetachedWindow || activePage !== "settings" || activeSettingsTab !== "harness" || !canManageHarnessSettings) {
@@ -2911,18 +2878,41 @@ export function App() {
     setSessionActionError(null);
     setChangingModelSessionId(session.id);
 
+    console.info("[orchestra][session-model-change:start]", {
+      sessionId: session.id,
+      sessionTitle: session.title,
+      previousProvider: modelStates[session.id]?.currentModel?.provider ?? null,
+      previousModelId: modelStates[session.id]?.currentModel?.id ?? null,
+      nextProvider: provider,
+      nextModelId: modelId,
+      activePage,
+      activeProjectId,
+    });
+
     try {
       const state = await orchestraClient.sessions.setModel(session.id, provider, modelId);
       setModelStates((current) => ({
         ...current,
         [state.sessionId]: state,
       }));
+      console.info("[orchestra][session-model-change:success]", {
+        sessionId: state.sessionId,
+        provider: state.currentModel?.provider ?? null,
+        modelId: state.currentModel?.id ?? null,
+        modelName: state.currentModel?.name ?? null,
+      });
     } catch (error) {
+      console.error("[orchestra][session-model-change:error]", {
+        sessionId: session.id,
+        nextProvider: provider,
+        nextModelId: modelId,
+        error,
+      });
       setSessionActionError(toUiErrorState(error, "Unable to change models."));
     } finally {
       setChangingModelSessionId((current) => (current === session.id ? null : current));
     }
-  }, [sessions]);
+  }, [activePage, activeProjectId, modelStates, sessions]);
 
   function navigateToTask(taskId: string, projectId?: string | null) {
     const targetProjectId = projectId ?? activeProjectId;
@@ -2970,6 +2960,17 @@ export function App() {
   function navigateToChatAgent(agentId: string) {
     setActivePage("chat");
     setSelectedChatAgentId(agentId);
+    // Clear chat-specific view state so recovery reopens the tracked agent
+    // session instead of reusing stale UI state from the previously selected
+    // agent.
+    setChatSessionId(null);
+    chatSessionAgentIdRef.current = null;
+    lastKnownChatSessionRef.current = null;
+    lastKnownChatSessionIdRef.current = null;
+    lastKnownChatSessionAgentIdRef.current = null;
+    lastKnownChatSessionDraftRef.current = "";
+    // Reload session list for debugging surfaces that still reference it.
+    void loadSessions({ background: true });
   }
 
   function navigateToRole(roleId: string) {
@@ -3231,32 +3232,20 @@ export function App() {
     setCommandPaletteOpen(false);
     setSessionActionError(null);
 
-    let restoredSessionId = supervisorSessionId ?? lastKnownSupervisorSessionIdRef.current;
-    if (!restoredSessionId) {
+    if (!supervisorSessionId) {
       const stored = window.localStorage.getItem(supervisorQuickChatStorageKey(activeProjectId ?? getActiveProjectId()));
       if (stored) {
         try {
-          const parsed = JSON.parse(stored) as { sessionId?: string; draft?: string };
-          restoredSessionId = parsed.sessionId ?? null;
+          const parsed = JSON.parse(stored) as { draft?: string };
           const restoredDraft = typeof parsed.draft === "string" ? parsed.draft : "";
-          lastKnownSupervisorSessionIdRef.current = restoredSessionId;
           lastKnownSupervisorDraftRef.current = restoredDraft;
-          if (restoredSessionId) {
-            setSupervisorSessionId(restoredSessionId);
-            if (restoredDraft) {
-              setDraftMessages((current) => ({
-                ...current,
-                [restoredSessionId as string]: restoredDraft,
-              }));
-            }
-          }
         } catch {
-          restoredSessionId = null;
+          lastKnownSupervisorDraftRef.current = "";
         }
       }
     }
 
-    if (!restoredSessionId) {
+    if (!supervisorSessionId) {
       await handleOpenAgentSession(SUPERVISOR_AGENT_ID, { openQuickChat: true });
       return;
     }
@@ -3412,10 +3401,27 @@ export function App() {
     setIsSubmitting(true);
     setSessionActionError(null);
 
+    console.info("[orchestra][session-create:start]", {
+      sourceSessionId: sessionId ?? null,
+      chatAgentId: options?.chatAgentId ?? null,
+      activeProjectId: activeProject?.id ?? null,
+      activeProjectSlug: activeProject?.slug ?? null,
+      selectedChatAgentId,
+      currentChatSessionId: chatSessionId,
+    });
+
     try {
       const nextSession = sessionId
-        ? await orchestraClient.sessions.createContextual(sessionId, activeProject?.slug ?? null)
-        : await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null);
+        ? await orchestraClient.sessions.createContextual(sessionId, activeProject?.slug ?? null, options?.chatAgentId ?? null)
+        : await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null, options?.chatAgentId ?? null);
+      console.info("[orchestra][session-create:success]", {
+        sourceSessionId: sessionId ?? null,
+        createdSessionId: nextSession.id,
+        createdSessionTitle: nextSession.title,
+        chatAgentId: options?.chatAgentId ?? null,
+        activeProjectId: activeProject?.id ?? null,
+        activeProjectSlug: activeProject?.slug ?? null,
+      });
       mergeSessionRecord(nextSession, { select: false });
       setPendingSessionOpenRequest(null);
       if (!options?.chatAgentId) {
@@ -3424,12 +3430,21 @@ export function App() {
 
       if (options?.chatAgentId) {
         setChatSessionId(nextSession.id);
+        setSelectedChatAgentId(options.chatAgentId);
         chatSessionAgentIdRef.current = options.chatAgentId;
+        lastKnownChatSessionRef.current = nextSession;
         lastKnownChatSessionIdRef.current = nextSession.id;
         lastKnownChatSessionAgentIdRef.current = options.chatAgentId;
         void loadChatAgents({ background: true });
       }
     } catch (error) {
+      console.error("[orchestra][session-create:error]", {
+        sourceSessionId: sessionId ?? null,
+        chatAgentId: options?.chatAgentId ?? null,
+        activeProjectId: activeProject?.id ?? null,
+        activeProjectSlug: activeProject?.slug ?? null,
+        error,
+      });
       setSessionActionError(await reportUiError(orchestraClient, "ui.sessions.create_contextual", error, "Unable to create a new session."));
     } finally {
       setIsSubmitting(false);
