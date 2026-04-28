@@ -77,15 +77,17 @@ pub fn ensure_agent_runtime_state_for_project(
     agent_id: &str,
 ) -> Result<AgentRuntimeState, String> {
     let agent = agents::require_agent_in_project(connection, project_id, agent_id)?;
-    
+
     // For global agents, use the default project to ensure singleton behavior
     let effective_project_id = if agent.scope == "global" {
         DEFAULT_PROJECT_ID
     } else {
         project_id
     };
-    
-    if let Some(existing) = get_agent_runtime_state_for_project(connection, effective_project_id, agent_id)? {
+
+    if let Some(existing) =
+        get_agent_runtime_state_for_project(connection, effective_project_id, agent_id)?
+    {
         return Ok(existing);
     }
 
@@ -907,7 +909,7 @@ mod tests {
     fn project_scoped_agent_operations_are_isolated() {
         let mut connection = in_memory_connection();
         let agent_id = create_agent(&mut connection);
-        
+
         // Create the required projects first
         let now = now_iso();
         for (project_id, task_prefix) in [("project-a", "TESTA"), ("project-b", "TESTB")] {
@@ -936,11 +938,11 @@ mod tests {
         .expect("project a queue entry");
         ensure_agent_runtime_state_for_project(&connection, "project-b", &agent_id)
             .expect("project b runtime state");
-        
+
         // Update the runtime state - for global agents this updates the single global state
         update_agent_runtime_dispatch_state_for_project(
             &connection,
-            "orchestra",  // Global agents always use the default project
+            "orchestra", // Global agents always use the default project
             &agent_id,
             Some("session-global"),
             Some("/tmp/global"),
@@ -949,7 +951,7 @@ mod tests {
             None,
         )
         .expect("global runtime update");
-        
+
         // Request operations for project-b - should get the same global state
         let project_a = get_agent_operations_for_project(&connection, "project-a", &agent_id)
             .expect("project a operations");
@@ -1058,11 +1060,11 @@ mod tests {
     fn global_agents_have_single_runtime_state_across_projects() {
         let mut connection = in_memory_connection();
         let agent_id = create_agent(&mut connection);
-        
+
         // Ensure the agent is global
         let agent = agents::get_agent(&connection, &agent_id).expect("agent should load");
         assert_eq!(agent.scope, "global", "Test agent should be global");
-        
+
         // Request runtime state from different projects
         let state_a = ensure_agent_runtime_state_for_project(&connection, "project-a", &agent_id)
             .expect("project a runtime state");
@@ -1070,18 +1072,18 @@ mod tests {
             .expect("project b runtime state");
         let state_c = ensure_agent_runtime_state_for_project(&connection, "project-c", &agent_id)
             .expect("project c runtime state");
-        
+
         // All should return the same runtime state with the default project
         assert_eq!(state_a.project_id, "orchestra");
         assert_eq!(state_b.project_id, "orchestra");
         assert_eq!(state_c.project_id, "orchestra");
         assert_eq!(state_a.agent_id, state_b.agent_id);
         assert_eq!(state_b.agent_id, state_c.agent_id);
-        
+
         // All should have the same runtime state ID (project_id + agent_id)
         assert_eq!(state_a.project_id, state_b.project_id);
         assert_eq!(state_b.project_id, state_c.project_id);
-        
+
         // Should only be one runtime state in the database
         let all_states = connection
             .prepare("SELECT COUNT(*) FROM agent_runtime_states WHERE agent_id = ?1")
@@ -1090,6 +1092,10 @@ mod tests {
             .expect("query should execute")
             .collect::<Result<Vec<_>, _>>()
             .expect("rows should collect");
-        assert_eq!(all_states, vec![1], "Should have exactly one runtime state for global agent");
+        assert_eq!(
+            all_states,
+            vec![1],
+            "Should have exactly one runtime state for global agent"
+        );
     }
 }

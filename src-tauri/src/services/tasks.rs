@@ -1396,7 +1396,10 @@ pub fn delete_task_comment(
 
     // Delete the target comment and all descendant replies.
     // The FK cascade on parent_comment_id (ON DELETE CASCADE) handles child comments.
-    let placeholders: String = (0..all_ids.len()).map(|i| format!("?{}", i + 1)).collect::<Vec<_>>().join(",");
+    let placeholders: String = (0..all_ids.len())
+        .map(|i| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(",");
     tx.execute(
         &format!("DELETE FROM task_comments WHERE id IN ({})", placeholders),
         params_from_iter(&all_ids),

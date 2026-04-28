@@ -29,7 +29,7 @@ use crate::{
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
         pi_sessions, policies, project_settings, projects, reminders, role_runtime, roles,
-        task_attachments, task_file_references, task_runtime, tasks, workflows,
+        session_management, task_attachments, task_file_references, task_runtime, tasks, workflows,
     },
 };
 
@@ -179,6 +179,12 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "resume_task_lane",
     "pause_task_lane",
     "stop_task_activity",
+    "list_sessions",
+    "get_session_diagnostics",
+    "hide_sessions",
+    "restore_sessions",
+    "delete_sessions",
+    "reconcile_sessions",
     "stop_session_runtime",
     "reassign_task_to_lane",
     "add_task_dependency",
@@ -1206,6 +1212,137 @@ fn invoke_bridge_command(
             )?)
             .map_err(|error| format!("Unable to serialize project: {error}"))
         }
+        "list_sessions" => {
+            command_authorization::require_permission(connection, authorization, "sessions.read")?;
+            let query =
+                serde_json::from_value::<session_management::SessionManagementQuery>(payload)
+                    .map_err(|error| format!("Unable to parse list_sessions input: {error}"))?;
+            let app = config.clone_app_handle();
+            let state = app
+                .as_ref()
+                .map(|app| app.state::<crate::state::AppState>());
+            serde_json::to_value(session_management::list_sessions(
+                connection,
+                state.as_deref(),
+                query,
+            )?)
+            .map_err(|error| format!("Unable to serialize sessions: {error}"))
+        }
+        "get_session_diagnostics" => {
+            let session_id = require_string(&payload, "sessionId")?;
+            command_authorization::require_permission(connection, authorization, "sessions.read")?;
+            let app = config.clone_app_handle();
+            let state = app
+                .as_ref()
+                .map(|app| app.state::<crate::state::AppState>());
+            serde_json::to_value(session_management::get_session_diagnostics(
+                connection,
+                app.as_ref(),
+                state.as_deref(),
+                &session_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize session diagnostics: {error}"))
+        }
+        "hide_sessions" => {
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "sessions.delete",
+            )?;
+            let input = serde_json::from_value::<session_management::SessionMutationInput>(payload)
+                .map_err(|error| format!("Unable to parse hide_sessions input: {error}"))?;
+            let result = session_management::hide_sessions(connection, input)?;
+            if !result.dry_run {
+                if let Some(app) = config.clone_app_handle() {
+                    if !result.changed_session_ids.is_empty() {
+                        let _ = crate::services::app_events::emit_session_change(
+                            &app,
+                            "sessions.hide",
+                            result.changed_session_ids.clone(),
+                        );
+                    }
+                }
+            }
+            serde_json::to_value(result)
+                .map_err(|error| format!("Unable to serialize session hide result: {error}"))
+        }
+        "restore_sessions" => {
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "sessions.delete",
+            )?;
+            let input = serde_json::from_value::<session_management::SessionMutationInput>(payload)
+                .map_err(|error| format!("Unable to parse restore_sessions input: {error}"))?;
+            let result = session_management::restore_sessions(connection, input)?;
+            if !result.dry_run {
+                if let Some(app) = config.clone_app_handle() {
+                    if !result.changed_session_ids.is_empty() {
+                        let _ = crate::services::app_events::emit_session_change(
+                            &app,
+                            "sessions.restore",
+                            result.changed_session_ids.clone(),
+                        );
+                    }
+                }
+            }
+            serde_json::to_value(result)
+                .map_err(|error| format!("Unable to serialize session restore result: {error}"))
+        }
+        "delete_sessions" => {
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "sessions.delete",
+            )?;
+            let input = serde_json::from_value::<session_management::SessionMutationInput>(payload)
+                .map_err(|error| format!("Unable to parse delete_sessions input: {error}"))?;
+            if input.stop_active_runtimes {
+                command_authorization::require_permission(
+                    connection,
+                    authorization,
+                    "sessions.stop",
+                )?;
+            }
+            let app = config.clone_app_handle();
+            let state = app
+                .as_ref()
+                .map(|app| app.state::<crate::state::AppState>());
+            serde_json::to_value(session_management::delete_sessions(
+                connection,
+                app.as_ref(),
+                state.as_deref(),
+                input,
+                session_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize session delete result: {error}"))
+        }
+        "reconcile_sessions" => {
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "sessions.delete",
+            )?;
+            let input =
+                serde_json::from_value::<session_management::SessionReconcileInput>(payload)
+                    .map_err(|error| {
+                        format!("Unable to parse reconcile_sessions input: {error}")
+                    })?;
+            let result = session_management::reconcile_sessions(connection, input)?;
+            if !result.dry_run {
+                if let Some(app) = config.clone_app_handle() {
+                    if !result.changed_session_ids.is_empty() {
+                        let _ = crate::services::app_events::emit_session_change(
+                            &app,
+                            "sessions.reconcile",
+                            result.changed_session_ids.clone(),
+                        );
+                    }
+                }
+            }
+            serde_json::to_value(result)
+                .map_err(|error| format!("Unable to serialize session reconcile result: {error}"))
+        }
         "stop_session_runtime" => {
             let session_id = require_string(&payload, "sessionId")?;
             let notes = payload
@@ -1655,8 +1792,7 @@ fn invoke_bridge_command(
         "get_task_comment_delete_impact" => {
             let comment_id = require_string(&payload, "commentId")?;
             command_authorization::require_permission(connection, authorization, "tasks.comment")?;
-            let impact =
-                tasks::get_task_comment_delete_impact(connection, &comment_id)?;
+            let impact = tasks::get_task_comment_delete_impact(connection, &comment_id)?;
             serde_json::to_value(impact)
                 .map_err(|error| format!("Unable to serialize comment delete impact: {error}"))
         }
@@ -2413,7 +2549,7 @@ fn require_string(payload: &Value, key: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::{
-        models::{AgentUpsertInput, TaskUpsertInput},
+        models::{AgentUpsertInput, RoleUpsertInput, TaskUpsertInput},
         services::{agents, database, database::initialize_database_at, policies, tasks},
     };
     use rusqlite::params;
@@ -3705,6 +3841,129 @@ mod tests {
         )
         .expect("unread comments should reload through bridge");
         assert_eq!(unread_after.as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn bridge_session_management_commands_route_typed_payloads() {
+        with_temp_home("bridge-session-management", || {
+            let connection = open_test_connection("bridge-session-management");
+            let context = crate::services::pi_sessions::detect_session_context(Some("orchestra"))
+                .expect("context should resolve");
+            let session_id = "66666666-6666-6666-6666-666666666666";
+            let session_path = context
+                .session_dir
+                .join(format!("20260101_{session_id}.jsonl"));
+            std::fs::write(
+                &session_path,
+                format!(
+                    concat!(
+                        "{{\"type\":\"session\",\"id\":\"{session_id}\",\"timestamp\":\"2026-01-01T00:00:00Z\"}}\n",
+                        "{{\"type\":\"message\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"Larry main session\"}}]}}}}\n"
+                    ),
+                    session_id = session_id,
+                ),
+            )
+            .expect("session file should write");
+            let metadata =
+                std::fs::metadata(&session_path).expect("session file metadata should load");
+            let modified_ms = metadata
+                .modified()
+                .expect("modified time should load")
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("modified time should normalize")
+                .as_millis() as i64;
+            let now = crate::state::now_iso();
+            connection
+                .execute(
+                    r#"
+                    INSERT INTO session_catalog (
+                        session_id, project_slug, session_path, created_at, updated_at,
+                        title, status, file_size, file_mtime_ms, last_indexed_at
+                    )
+                    VALUES (?1, 'orchestra', ?2, ?3, ?3, 'Larry main session', 'idle', ?4, ?5, ?3)
+                    "#,
+                    params![
+                        session_id,
+                        session_path.display().to_string(),
+                        now,
+                        metadata.len() as i64,
+                        modified_ms,
+                    ],
+                )
+                .expect("catalog row should insert");
+
+            let config = dummy_bridge_config("session-management");
+            let listed = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_sessions",
+                None,
+                Some("worker-session"),
+                json!({ "query": "Larry main", "limit": 5 }),
+            )
+            .expect("sessions should list through bridge");
+            let listed_sessions = listed
+                .as_array()
+                .expect("listed sessions should be an array");
+            assert_eq!(listed_sessions.len(), 1);
+            assert_eq!(
+                listed_sessions[0].get("sessionId").and_then(Value::as_str),
+                Some(session_id)
+            );
+
+            let deleted = invoke_bridge_command(
+                &config,
+                &connection,
+                "delete_sessions",
+                None,
+                Some("worker-session"),
+                json!({ "query": "Larry main", "dryRun": true, "confirm": false }),
+            )
+            .expect("sessions should dry-run delete through bridge");
+            assert_eq!(deleted.get("dryRun").and_then(Value::as_bool), Some(true));
+            assert_eq!(deleted.get("matchedCount").and_then(Value::as_u64), Some(1));
+        });
+    }
+
+    #[test]
+    fn delete_sessions_requires_sessions_stop_permission_when_stop_is_requested() {
+        let mut connection = open_test_connection("bridge-session-delete-stop-auth");
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Session Cleaner".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["sessions.delete".into()],
+            },
+        )
+        .expect("role should create");
+
+        let config = dummy_bridge_config("session-delete-stop-auth");
+        let error = invoke_bridge_command(
+            &config,
+            &connection,
+            "delete_sessions",
+            Some(&AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: role.id,
+            }),
+            Some("worker-session"),
+            json!({
+                "query": "Larry main session",
+                "dryRun": true,
+                "confirm": false,
+                "stopActiveRuntimes": true,
+            }),
+        )
+        .expect_err("delete_sessions should require sessions.stop when stopActiveRuntimes=true");
+        assert!(error.contains("sessions.stop"));
     }
 
     #[test]

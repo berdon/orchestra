@@ -628,23 +628,11 @@ fn run_comment_delete(
 
     // Display impact summary before deletion (human-readable mode)
     if !args.json {
-        println!(
-            "Delete comment {} on task {}:",
-            comment_id, target.number
-        );
+        println!("Delete comment {} on task {}:", comment_id, target.number);
         println!("  Reply count: {}", impact.reply_count);
-        println!(
-            "  Attachment count: {}",
-            impact.attachment_count
-        );
-        println!(
-            "  File reference count: {}",
-            impact.file_reference_count
-        );
-        println!(
-            "  Total cascade-deleted: {}",
-            impact.cascade_deleted_count
-        );
+        println!("  Attachment count: {}", impact.attachment_count);
+        println!("  File reference count: {}", impact.file_reference_count);
+        println!("  Total cascade-deleted: {}", impact.cascade_deleted_count);
         if impact.reply_count > 0 {
             println!(
                 "  ⚠ This will also delete {} descendant reply/replies.",
@@ -652,11 +640,8 @@ fn run_comment_delete(
             );
         }
         if !args.force {
-            std::io::Write::write_all(
-                &mut std::io::stdout(),
-                b"Continue? [y/N]: ",
-            )
-            .map_err(|e| format!("Unable to flush prompt: {e}"))?;
+            std::io::Write::write_all(&mut std::io::stdout(), b"Continue? [y/N]: ")
+                .map_err(|e| format!("Unable to flush prompt: {e}"))?;
             let mut input = String::new();
             std::io::stdin()
                 .read_line(&mut input)
@@ -680,11 +665,7 @@ fn run_comment_delete(
     // Clone for display after deletion (comment_id is moved into delete_task_comment)
     let display_comment_id = comment_id.clone();
 
-    let result = task_commands::delete_task_comment(
-        app,
-        state,
-        comment_id,
-    );
+    let result = task_commands::delete_task_comment(app, state, comment_id);
 
     match result {
         Ok(comment) => {
@@ -693,9 +674,7 @@ fn run_comment_delete(
             } else {
                 println!(
                     "Deleted comment {} from task {}. {} total entities cascade-deleted.",
-                    display_comment_id,
-                    comment.task_id,
-                    impact.cascade_deleted_count
+                    display_comment_id, comment.task_id, impact.cascade_deleted_count
                 );
             }
             Ok(0)
