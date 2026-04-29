@@ -20,6 +20,26 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "tasks.transition",
       },
       {
+        name: "create_agent",
+        description: "Create an Orchestra agent",
+        requiredPermission: "agents.create",
+      },
+      {
+        name: "update_agent",
+        description: "Update an Orchestra agent",
+        requiredPermission: "agents.update",
+      },
+      {
+        name: "create_subtask",
+        description: "Create a subtask",
+        requiredPermission: "tasks.create",
+      },
+      {
+        name: "add_task_attachment",
+        description: "Add a task attachment",
+        requiredPermission: "tasks.attachments.write",
+      },
+      {
         name: "get_task_context",
         description: "Read task context",
         requiredPermission: "tasks.read",
@@ -322,8 +342,11 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
 
     const completionTool = registeredTools.find((tool) => tool.name === "complete_lane_as_success");
+    expect(completionTool.parameters.properties.taskId).toBeTruthy();
+    expect(completionTool.parameters.properties.inputJson).toBeUndefined();
     const result = await completionTool.execute("tool-call-1", {
-      inputJson: '{"taskId":"task-1","notes":"Ship it"}',
+      taskId: "task-1",
+      notes: "Ship it",
     });
 
     const relaneTool = registeredTools.find((tool) => tool.name === "reassign_task_to_lane");
@@ -996,5 +1019,109 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(helpResult.content[0]?.text).toContain('"command": "create_task"');
     expect(helpResult.content[0]?.text).toContain('"projectId"');
     expect(helpResult.content[0]?.text).toContain('"title"');
+  });
+
+  test("documents nested input structures and examples for wrapped Orchestra payloads", async () => {
+    const registeredTools: Array<any> = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            echoedCommand: JSON.parse(String(init?.body)).command,
+            echoedPayload: JSON.parse(String(init?.body)).payload,
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand() {},
+    } as any);
+
+    const createAgentTool = registeredTools.find((tool) => tool.name === "create_agent");
+    expect(createAgentTool.parameters.properties.input).toBeTruthy();
+    expect(createAgentTool.parameters.properties.inputJson).toBeUndefined();
+    await createAgentTool.execute("tool-call-1", {
+      input: {
+        name: "Planner",
+        scope: "project",
+        projectId: "project-1",
+        systemPrompt: "Plan carefully",
+        thinkingLevel: "medium",
+        policyIds: ["policy-1"],
+      },
+    });
+
+    const createSubtaskTool = registeredTools.find((tool) => tool.name === "create_subtask");
+    expect(createSubtaskTool.parameters.properties.parentTaskId).toBeTruthy();
+    expect(createSubtaskTool.parameters.properties.input).toBeTruthy();
+    await createSubtaskTool.execute("tool-call-2", {
+      parentTaskId: "task-parent",
+      input: {
+        title: "Write regression coverage",
+        description: "Add tests for the failing case",
+        priority: "P1",
+      },
+    });
+
+    const helpTool = registeredTools.find((tool) => tool.name === "orchestra_help");
+    const helpResult = await helpTool.execute("tool-call-3", { command: "create_agent" });
+    const parsedHelp = JSON.parse(helpResult.content[0]?.text ?? "{}");
+    const inputParameter = parsedHelp.parameters.find((parameter: any) => parameter.name === "input");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload).toEqual({
+      input: {
+        name: "Planner",
+        scope: "project",
+        projectId: "project-1",
+        systemPrompt: "Plan carefully",
+        thinkingLevel: "medium",
+        policyIds: ["policy-1"],
+      },
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload).toEqual({
+      parentTaskId: "task-parent",
+      input: {
+        title: "Write regression coverage",
+        description: "Add tests for the failing case",
+        type: "task",
+        status: "ready",
+        priority: "P1",
+        assigneeType: "unassigned",
+      },
+    });
+    expect(parsedHelp.command).toBe("create_agent");
+    expect(parsedHelp.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("top-level input property"),
+        expect.stringContaining("camelCase"),
+      ]),
+    );
+    expect(parsedHelp.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          input: expect.objectContaining({
+            name: "Planner",
+            systemPrompt: "You are a planning specialist.",
+          }),
+        }),
+      ]),
+    );
+    expect(inputParameter.description).toContain("top-level input");
+    expect(inputParameter.properties).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "name", required: true, type: "string" }),
+        expect.objectContaining({ name: "systemPrompt", required: false, type: "string" }),
+        expect.objectContaining({ name: "projectId", required: false, type: "string" }),
+        expect.objectContaining({ name: "policyIds", required: false, type: "array<string>" }),
+      ]),
+    );
   });
 });
