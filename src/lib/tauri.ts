@@ -262,12 +262,28 @@ function createEvent(kind: SessionEvent["kind"], message: string, overrides?: Pa
   };
 }
 
+function getDefaultMockPiPackageDiagnostics() {
+  return {
+    bun: {
+      available: false,
+      path: null,
+      message: "Browser-mode mock does not resolve Bun.",
+    },
+    sources: [],
+    blocking: false,
+    packageFreeProbeSucceeded: false,
+    packageFreeModelCount: 0,
+    message: "No package-based Pi sources are configured in browser-mode mock.",
+  };
+}
+
 function getStoredMockPiSetupState(): PiSetupState {
   return getStoredValue<PiSetupState>(PI_SETUP_STORAGE_KEY) ?? {
     status: "ready",
     agentDir: "/mock/.orchestra/runtime/pi/agent",
     authPath: "/mock/.orchestra/runtime/pi/agent/auth.json",
     modelsPath: "/mock/.orchestra/runtime/pi/agent/models.json",
+    settingsPath: "/mock/.orchestra/runtime/pi/agent/settings.json",
     legacyAgentDir: "/mock/.pi/agent",
     availableProviders: [
       {
@@ -315,6 +331,7 @@ function getStoredMockPiSetupState(): PiSetupState {
     issues: [],
     warnings: [],
     importState: { canImportLegacy: false, importedAt: null, dismissedAt: null },
+    packageDiagnostics: getDefaultMockPiPackageDiagnostics(),
   } satisfies PiSetupState;
 }
 

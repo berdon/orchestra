@@ -9,15 +9,17 @@ use serde_json::{Map, Value};
 
 use crate::{
     models::{
-        PiLegacyImportPreview, PiLegacyImportState, PiProviderAuthMethodSummary,
-        PiProviderSetupSummary, PiSetupIssue, PiSetupMetadata, PiSetupState,
+        PiLegacyImportPreview, PiLegacyImportState, PiPackageDiagnostics,
+        PiProviderAuthMethodSummary, PiProviderSetupSummary, PiSetupIssue, PiSetupMetadata,
+        PiSetupState,
     },
     services::{
         harness_settings,
         orchestra_paths::{
-            default_orchestra_root, legacy_pi_agent_dir, pi_agent_dir as orchestra_pi_agent_dir,
+            default_orchestra_root, legacy_pi_agent_dir, orchestra_pi_settings_path,
+            pi_agent_dir as orchestra_pi_agent_dir,
         },
-        pi_sessions,
+        pi_package_sources,
     },
 };
 
@@ -170,13 +172,14 @@ fn oauth_methods_for_provider(provider_id: &str) -> Option<Vec<PiProviderAuthMet
     })
 }
 
-fn orchestra_pi_paths() -> Result<(PathBuf, PathBuf, PathBuf), String> {
+fn orchestra_pi_paths() -> Result<(PathBuf, PathBuf, PathBuf, PathBuf), String> {
     let orchestra_root = default_orchestra_root()?;
     let agent_dir = orchestra_pi_agent_dir(&orchestra_root);
     Ok((
         agent_dir.clone(),
         agent_dir.join("auth.json"),
         agent_dir.join("models.json"),
+        orchestra_pi_settings_path(&orchestra_root),
     ))
 }
 
@@ -280,7 +283,7 @@ pub fn preview_legacy_import() -> Result<PiLegacyImportPreview, String> {
 }
 
 pub fn get_models_json() -> Result<String, String> {
-    let (_, _, models_path) = orchestra_pi_paths()?;
+    let (_, _, models_path, _) = orchestra_pi_paths()?;
     if !models_path.exists() {
         return Ok("{\n  \"providers\": {}\n}\n".into());
     }
@@ -303,7 +306,7 @@ pub fn save_models_json(content: &str) -> Result<PiSetupState, String> {
         return Err("models.json must contain a top-level JSON object.".into());
     }
 
-    let (_, _, models_path) = orchestra_pi_paths()?;
+    let (_, _, models_path, _) = orchestra_pi_paths()?;
     write_restricted_file(&models_path, &normalized)?;
     get_pi_setup_state()
 }
@@ -319,7 +322,7 @@ pub fn set_provider_api_key(provider_id: &str, api_key: &str) -> Result<PiSetupS
         return Err("API key is required.".into());
     }
 
-    let (_, auth_path, _) = orchestra_pi_paths()?;
+    let (_, auth_path, _, _) = orchestra_pi_paths()?;
     let mut auth = parse_json_object(&auth_path)?.unwrap_or_default();
     auth.insert(
         provider_id.to_string(),
@@ -339,7 +342,7 @@ pub fn remove_provider_credential(provider_id: &str) -> Result<PiSetupState, Str
         return Err("Provider id is required.".into());
     }
 
-    let (_, auth_path, _) = orchestra_pi_paths()?;
+    let (_, auth_path, _, _) = orchestra_pi_paths()?;
     let mut auth = parse_json_object(&auth_path)?.unwrap_or_default();
     auth.remove(provider_id);
     write_restricted_file(
@@ -362,7 +365,7 @@ pub fn import_legacy_config(replace_existing: bool) -> Result<PiSetupState, Stri
         return Err("No legacy Pi configuration was found in ~/.pi/agent.".into());
     }
 
-    let (agent_dir, auth_path, models_path) = orchestra_pi_paths()?;
+    let (agent_dir, auth_path, models_path, _) = orchestra_pi_paths()?;
     fs::create_dir_all(&agent_dir).map_err(|error| {
         format!(
             "Unable to create Orchestra Pi agent directory {}: {error}",
@@ -395,7 +398,7 @@ pub fn import_legacy_config(replace_existing: bool) -> Result<PiSetupState, Stri
 }
 
 pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
-    let (agent_dir, auth_path, models_path) = orchestra_pi_paths()?;
+    let (agent_dir, auth_path, models_path, settings_path) = orchestra_pi_paths()?;
     let legacy_preview = preview_legacy_import()?;
     let metadata = setup_metadata()?;
 
@@ -409,6 +412,9 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
                 message: error,
                 provider_id: None,
                 model_id: None,
+                source_kind: None,
+                source_path: None,
+                source_entries: None,
             });
             None
         }
@@ -421,6 +427,9 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
                 message: error,
                 provider_id: None,
                 model_id: None,
+                source_kind: None,
+                source_path: None,
+                source_entries: None,
             });
             None
         }
@@ -438,49 +447,70 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
         })
         .collect::<BTreeSet<_>>();
 
-    let available_models = match pi_sessions::list_available_models() {
-        Ok(models) => models,
-        Err(error) => {
-            if pi_sessions::classify_model_discovery_error(&error).is_some() {
-                let issue = PiSetupIssue {
-                    code: "package_source_bun_unavailable".into(),
-                    message: error,
-                    provider_id: None,
-                    model_id: None,
-                };
-                if models_path.exists() {
-                    issues.push(issue);
+    let available_models_probe =
+        match pi_package_sources::resolve_available_models_with_package_diagnostics() {
+            Ok(result) => Some(result),
+            Err(error) => {
+                if settings_path.exists() {
+                    issues.push(PiSetupIssue {
+                        code: "settings_json_invalid".into(),
+                        message: error,
+                        provider_id: None,
+                        model_id: None,
+                        source_kind: None,
+                        source_path: Some(settings_path.display().to_string()),
+                        source_entries: None,
+                    });
+                } else if models_path.exists() {
+                    issues.push(PiSetupIssue {
+                        code: "models_json_invalid".into(),
+                        message: format!(
+                            "Pi could not load Orchestra-managed models from {}: {error}",
+                            models_path.display()
+                        ),
+                        provider_id: None,
+                        model_id: None,
+                        source_kind: None,
+                        source_path: Some(models_path.display().to_string()),
+                        source_entries: None,
+                    });
                 } else {
-                    warnings.push(issue);
+                    warnings.push(PiSetupIssue {
+                        code: "no_available_models".into(),
+                        message: format!("No Pi models are currently available: {error}"),
+                        provider_id: None,
+                        model_id: None,
+                        source_kind: None,
+                        source_path: None,
+                        source_entries: None,
+                    });
                 }
-            } else if models_path.exists() {
-                issues.push(PiSetupIssue {
-                    code: "models_json_invalid".into(),
-                    message: format!(
-                        "Pi could not load Orchestra-managed models from {}: {error}",
-                        models_path.display()
-                    ),
-                    provider_id: None,
-                    model_id: None,
-                });
-            } else {
-                warnings.push(PiSetupIssue {
-                    code: "no_available_models".into(),
-                    message: format!("No Pi models are currently available: {error}"),
-                    provider_id: None,
-                    model_id: None,
-                });
+                None
             }
-            Vec::new()
-        }
-    };
+        };
+
+    let package_diagnostics = available_models_probe
+        .as_ref()
+        .map(|result| result.package_diagnostics.clone())
+        .unwrap_or_else(PiPackageDiagnostics::default);
+    let available_models = available_models_probe
+        .as_ref()
+        .map(|result| result.models.clone())
+        .unwrap_or_default();
+
+    if issues.is_empty() && package_diagnostics.blocking {
+        issues.push(package_source_issue_from_diagnostics(&package_diagnostics));
+    }
 
     if issues.is_empty() && available_models.is_empty() {
         warnings.push(PiSetupIssue {
             code: "no_available_models".into(),
-            message: "No Pi models are configured yet. Connect a provider or import an existing Pi setup in Settings → Pi.".into(),
+            message: "No Pi models are configured yet. Connect a provider or import an existing Pi setup in Settings → Harness.".into(),
             provider_id: None,
             model_id: None,
+            source_kind: None,
+            source_path: None,
+            source_entries: None,
         });
     }
 
@@ -519,7 +549,7 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
         .collect::<Vec<_>>();
 
     let can_import_legacy = legacy_preview.can_import;
-    let has_orchestra_config = auth_path.exists() || models_path.exists();
+    let has_orchestra_config = auth_path.exists() || models_path.exists() || settings_path.exists();
     let status = if !issues.is_empty() {
         "invalid"
     } else if !available_models.is_empty() {
@@ -539,6 +569,7 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
         agent_dir: agent_dir.display().to_string(),
         auth_path: auth_path.display().to_string(),
         models_path: models_path.display().to_string(),
+        settings_path: settings_path.display().to_string(),
         legacy_agent_dir: Some(legacy_preview.legacy_agent_dir),
         available_providers,
         available_models,
@@ -549,7 +580,21 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
             imported_at: metadata.imported_at,
             dismissed_at: metadata.dismissed_legacy_import_at,
         },
+        package_diagnostics,
     })
+}
+
+fn package_source_issue_from_diagnostics(diagnostics: &PiPackageDiagnostics) -> PiSetupIssue {
+    let primary_source = diagnostics.sources.iter().find(|source| source.active);
+    PiSetupIssue {
+        code: "package_sources_require_bun".into(),
+        message: diagnostics.message.clone(),
+        provider_id: None,
+        model_id: None,
+        source_kind: primary_source.map(|source| source.source_kind.clone()),
+        source_path: primary_source.map(|source| source.source_path.clone()),
+        source_entries: primary_source.map(|source| source.entries.clone()),
+    }
 }
 
 pub fn require_pi_setup_ready() -> Result<PiSetupState, String> {
@@ -566,28 +611,34 @@ pub fn block_message_for_state(state: &PiSetupState) -> String {
         match issue.code.as_str() {
             "auth_json_invalid" => {
                 return format!(
-                    "Pi auth is invalid. Fix {} in Settings → Pi before running Pi-backed work.",
+                    "Pi auth is invalid. Fix {} in Settings → Harness before running Pi-backed work.",
                     state.auth_path
                 );
             }
             "models_json_invalid" => {
                 return format!(
-                    "Pi models are invalid. Fix {} in Settings → Pi before running Pi-backed work.",
+                    "Pi models are invalid. Fix {} in Settings → Harness before running Pi-backed work.",
                     state.models_path
                 );
             }
-            "package_source_bun_unavailable" => {
-                return "Pi package-based model sources require Bun. Install Bun or remove package-based Pi sources in Settings → Pi before running Pi-backed work.".into();
+            "settings_json_invalid" => {
+                return format!(
+                    "Pi settings are invalid. Fix {} in Settings → Harness before running Pi-backed work.",
+                    state.settings_path
+                );
+            }
+            "package_sources_require_bun" => {
+                return issue.message.clone();
             }
             _ => {}
         }
     }
 
     if state.status == "legacy_import_available" {
-        return "Import your existing ~/.pi/agent setup or connect a provider in Settings → Pi before running Pi-backed work.".into();
+        return "Import your existing ~/.pi/agent setup or connect a provider in Settings → Harness before running Pi-backed work.".into();
     }
 
-    "No Pi models are configured yet. Connect a provider or import an existing Pi setup in Settings → Pi before running Pi-backed work.".into()
+    "No Pi models are configured yet. Connect a provider or import an existing Pi setup in Settings → Harness before running Pi-backed work.".into()
 }
 
 #[cfg(test)]
@@ -601,6 +652,7 @@ mod tests {
             agent_dir: "/tmp/orchestra/runtime/pi/agent".into(),
             auth_path: auth_path.into(),
             models_path: models_path.into(),
+            settings_path: "/tmp/orchestra/runtime/pi/agent/settings.json".into(),
             legacy_agent_dir: Some("/Users/test/.pi/agent".into()),
             available_providers: Vec::new(),
             available_models: Vec::new(),
@@ -609,6 +661,9 @@ mod tests {
                 message: "invalid".into(),
                 provider_id: None,
                 model_id: None,
+                source_kind: None,
+                source_path: None,
+                source_entries: None,
             }],
             warnings: Vec::new(),
             import_state: PiLegacyImportState {
@@ -616,6 +671,7 @@ mod tests {
                 imported_at: None,
                 dismissed_at: None,
             },
+            package_diagnostics: PiPackageDiagnostics::default(),
         }
     }
 
@@ -635,7 +691,7 @@ mod tests {
 
         let message = block_message_for_state(&state);
         assert!(message.contains("auth.json"));
-        assert!(message.contains("Settings → Pi"));
+        assert!(message.contains("Settings → Harness"));
     }
 
     #[test]
@@ -648,20 +704,22 @@ mod tests {
 
         let message = block_message_for_state(&state);
         assert!(message.contains("models.json"));
-        assert!(message.contains("Settings → Pi"));
+        assert!(message.contains("Settings → Harness"));
     }
 
     #[test]
-    fn block_message_mentions_bun_for_package_sources() {
-        let state = setup_state_with_issue(
-            "package_source_bun_unavailable",
+    fn block_message_returns_package_source_bun_issue_verbatim() {
+        let mut state = setup_state_with_issue(
+            "package_sources_require_bun",
             "/tmp/orchestra/runtime/pi/agent/auth.json",
             "/tmp/orchestra/runtime/pi/agent/models.json",
         );
+        state.issues[0].message = "Harness could not load package-based model sources because Bun is not available on PATH used for Orchestra subprocesses. Detected source: /tmp/orchestra/runtime/pi/agent/settings.json [npm:pi-subagents].".into();
 
         let message = block_message_for_state(&state);
-        assert!(message.contains("Install Bun"));
-        assert!(message.contains("Settings → Pi"));
+        assert!(message.contains("Bun is not available"));
+        assert!(message.contains("settings.json"));
+        assert!(message.contains("npm:pi-subagents"));
     }
 
     #[test]
@@ -671,6 +729,7 @@ mod tests {
             agent_dir: "/tmp/orchestra/runtime/pi/agent".into(),
             auth_path: "/tmp/orchestra/runtime/pi/agent/auth.json".into(),
             models_path: "/tmp/orchestra/runtime/pi/agent/models.json".into(),
+            settings_path: "/tmp/orchestra/runtime/pi/agent/settings.json".into(),
             legacy_agent_dir: Some("/Users/test/.pi/agent".into()),
             available_providers: Vec::new(),
             available_models: Vec::new(),
@@ -681,10 +740,11 @@ mod tests {
                 imported_at: None,
                 dismissed_at: None,
             },
+            package_diagnostics: PiPackageDiagnostics::default(),
         };
 
         let message = block_message_for_state(&state);
         assert!(message.contains("~/.pi/agent"));
-        assert!(message.contains("Settings → Pi"));
+        assert!(message.contains("Settings → Harness"));
     }
 }

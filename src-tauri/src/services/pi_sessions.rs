@@ -933,7 +933,11 @@ pub fn set_session_thinking_level(
 }
 
 pub fn list_available_models() -> Result<Vec<SessionModel>, String> {
-    list_available_models_with_executable(Path::new("pi"))
+    list_available_models_with_executable_and_agent_dir(Path::new("pi"), None)
+}
+
+pub fn list_available_models_for_agent_dir(agent_dir: &Path) -> Result<Vec<SessionModel>, String> {
+    list_available_models_with_executable_and_agent_dir(Path::new("pi"), Some(agent_dir))
 }
 
 pub fn resolve_pi_executable(preferred: Option<&Path>) -> Result<PathBuf, String> {
@@ -967,7 +971,11 @@ pub fn orchestra_pi_agent_dir_display() -> Result<String, String> {
 
 pub fn apply_orchestra_pi_environment(command: &mut Command) -> Result<(), String> {
     let agent_dir = orchestra_pi_agent_dir()?;
-    fs::create_dir_all(&agent_dir).map_err(|error| {
+    apply_pi_agent_environment(command, &agent_dir)
+}
+
+fn apply_pi_agent_environment(command: &mut Command, agent_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(agent_dir).map_err(|error| {
         format!(
             "Unable to create Orchestra Pi agent directory {}: {error}",
             agent_dir.display()
@@ -976,7 +984,7 @@ pub fn apply_orchestra_pi_environment(command: &mut Command) -> Result<(), Strin
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&agent_dir, fs::Permissions::from_mode(0o700));
+        let _ = fs::set_permissions(agent_dir, fs::Permissions::from_mode(0o700));
     }
     command.env("PI_CODING_AGENT_DIR", agent_dir.display().to_string());
     Ok(())
@@ -1716,6 +1724,7 @@ where
             }
             _ => {}
         },
+        None,
     )?;
 
     if let Some(error) = rpc_error {
@@ -1752,6 +1761,7 @@ fn get_session_model_state_with_executable(
             json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" }),
         ],
         |_| {},
+        None,
     )?;
 
     let state_payload = require_successful_response(&payloads, GET_STATE_REQUEST_ID, "get_state")?;
@@ -1884,6 +1894,7 @@ fn get_session_stats_with_executable(
         &stored.path,
         &[json!({ "id": GET_SESSION_STATS_REQUEST_ID, "type": "get_session_stats" })],
         |_| {},
+        None,
     )?;
 
     let stats_payload =
@@ -1917,6 +1928,7 @@ fn set_session_model_with_executable(
             json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" }),
         ],
         |_| {},
+        None,
     )?;
 
     require_successful_response(&payloads, SET_MODEL_REQUEST_ID, "set_model")?;
@@ -1971,6 +1983,7 @@ fn set_session_thinking_level_with_executable(
             json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" }),
         ],
         |_| {},
+        None,
     )?;
 
     require_successful_response(&payloads, "set-thinking-1", "set_thinking_level")?;
@@ -2003,6 +2016,13 @@ fn set_session_thinking_level_with_executable(
 }
 
 fn list_available_models_with_executable(executable: &Path) -> Result<Vec<SessionModel>, String> {
+    list_available_models_with_executable_and_agent_dir(executable, None)
+}
+
+fn list_available_models_with_executable_and_agent_dir(
+    executable: &Path,
+    agent_dir_override: Option<&Path>,
+) -> Result<Vec<SessionModel>, String> {
     let runtime = crate::services::pi_runtime::resolve_pi_runtime(Some(executable))?;
     let resolved_executable = runtime.executable_path.clone();
     let temp_root = std::env::temp_dir().join(format!("orchestra-models-{}", Uuid::new_v4()));
@@ -2026,6 +2046,7 @@ fn list_available_models_with_executable(executable: &Path) -> Result<Vec<Sessio
             &created.path,
             &[json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" })],
             |_| {},
+            agent_dir_override,
         )
         .map_err(|error| summarize_model_discovery_error(&error))?;
 
@@ -2052,6 +2073,7 @@ fn spawn_rpc_process(
     project_root: &Path,
     session_dir: &Path,
     session_path: &Path,
+    agent_dir_override: Option<&Path>,
 ) -> Result<
     (
         std::process::Child,
@@ -2074,8 +2096,16 @@ fn spawn_rpc_process(
     ];
     let mut command = Command::new(&runtime.executable_path);
     apply_user_shell_environment(&mut command);
-    crate::services::pi_runtime::apply_runtime_environment(&mut command, &runtime, None);
-    apply_orchestra_pi_environment(&mut command)?;
+    crate::services::pi_runtime::apply_runtime_environment(
+        &mut command,
+        &runtime,
+        agent_dir_override,
+    );
+    if let Some(agent_dir) = agent_dir_override {
+        apply_pi_agent_environment(&mut command, agent_dir)?;
+    } else {
+        apply_orchestra_pi_environment(&mut command)?;
+    }
     let mut child = command
         .args(&args)
         .current_dir(project_root)
@@ -2108,12 +2138,18 @@ fn run_rpc_process<F>(
     session_path: &Path,
     commands: &[Value],
     mut on_payload: F,
+    agent_dir_override: Option<&Path>,
 ) -> Result<Vec<Value>, String>
 where
     F: FnMut(&Value),
 {
-    let (mut child, mut stdin, stdout, stderr) =
-        spawn_rpc_process(executable, project_root, session_dir, session_path)?;
+    let (mut child, mut stdin, stdout, stderr) = spawn_rpc_process(
+        executable,
+        project_root,
+        session_dir,
+        session_path,
+        agent_dir_override,
+    )?;
 
     let stderr_handle = thread::spawn(move || -> String {
         let mut reader = BufReader::new(stderr);
@@ -2183,6 +2219,7 @@ fn run_rpc_query_process<F>(
     session_path: &Path,
     commands: &[Value],
     mut on_payload: F,
+    agent_dir_override: Option<&Path>,
 ) -> Result<Vec<Value>, String>
 where
     F: FnMut(&Value),
@@ -2197,8 +2234,13 @@ where
         })
         .collect::<HashSet<_>>();
 
-    let (mut child, mut stdin, stdout, stderr) =
-        spawn_rpc_process(executable, project_root, session_dir, session_path)?;
+    let (mut child, mut stdin, stdout, stderr) = spawn_rpc_process(
+        executable,
+        project_root,
+        session_dir,
+        session_path,
+        agent_dir_override,
+    )?;
 
     let stderr_handle = thread::spawn(move || -> String {
         let mut reader = BufReader::new(stderr);

@@ -22,6 +22,7 @@ pub mod notifications;
 pub mod orchestra_paths;
 pub mod pi_launch;
 pub mod pi_oauth;
+pub mod pi_package_sources;
 pub mod pi_runtime;
 pub mod pi_sessions;
 pub mod pi_setup;

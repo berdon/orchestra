@@ -427,6 +427,7 @@ export function PiPanel({
           <p>Agent dir: {piSetupState?.agentDir ?? "Loading…"}</p>
           <p>Auth file: {piSetupState?.authPath ?? "Loading…"}</p>
           <p>Models file: {piSetupState?.modelsPath ?? "Loading…"}</p>
+          <p>Settings file: {piSetupState?.settingsPath ?? "Loading…"}</p>
           {piSetupState?.legacyAgentDir ? <p>Legacy import source: {piSetupState.legacyAgentDir}</p> : null}
         </div>
         {(piSetupState?.issues.length || piSetupState?.warnings.length) ? (

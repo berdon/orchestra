@@ -81,6 +81,29 @@ export interface PiRuntimeDiagnostics {
   addOns: PiAddOnPolicyStatus;
 }
 
+export interface PiBunStatus {
+  available: boolean;
+  path?: string | null;
+  message: string;
+}
+
+export interface PiPackageSourceEntry {
+  sourceKind: string;
+  sourceScope: string;
+  sourcePath: string;
+  entries: string[];
+  active: boolean;
+}
+
+export interface PiPackageDiagnostics {
+  bun: PiBunStatus;
+  sources: PiPackageSourceEntry[];
+  blocking: boolean;
+  packageFreeProbeSucceeded: boolean;
+  packageFreeModelCount: number;
+  message: string;
+}
+
 export interface PiExecutableDiagnostic {
   source: string;
   mode: string;
@@ -710,6 +733,9 @@ export interface PiSetupIssue {
   message: string;
   providerId?: string | null;
   modelId?: string | null;
+  sourceKind?: string | null;
+  sourcePath?: string | null;
+  sourceEntries?: string[] | null;
 }
 
 export interface PiProviderAuthMethodSummary {
@@ -741,12 +767,14 @@ export interface PiSetupState {
   agentDir: string;
   authPath: string;
   modelsPath: string;
+  settingsPath: string;
   legacyAgentDir?: string | null;
   availableProviders: PiProviderSetupSummary[];
   availableModels: SessionModel[];
   issues: PiSetupIssue[];
   warnings: PiSetupIssue[];
   importState: PiLegacyImportState;
+  packageDiagnostics: PiPackageDiagnostics;
 }
 
 export interface PiLegacyImportPreview {

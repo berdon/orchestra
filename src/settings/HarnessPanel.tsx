@@ -25,6 +25,7 @@ export function HarnessPanel({
   onImportLegacyPiConfiguration,
   ...piPanelProps
 }: HarnessPanelProps) {
+  const packageDiagnostics = piPanelProps.piSetupState?.packageDiagnostics ?? null;
   const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
   const [defaultCompactionWindowDraft, setDefaultCompactionWindowDraft] = useState("10%");
 
@@ -76,6 +77,7 @@ export function HarnessPanel({
               <span className="field-group__hint">Runtime: {piRuntimeDiagnostics.runtime.message}</span>
               <span className="field-group__hint">Auth: {piRuntimeDiagnostics.auth.message}</span>
               <span className="field-group__hint">Agent dir: {piRuntimeDiagnostics.auth.agentDir}</span>
+              <span className="field-group__hint">Settings file: {piRuntimeDiagnostics.auth.settingsPath}</span>
               {piRuntimeDiagnostics.addOns.blockedExtensions.length ? (
                 <span className="field-error">Blocked packaged-mode add-ons: {piRuntimeDiagnostics.addOns.blockedExtensions.join(", ")}</span>
               ) : (
@@ -115,6 +117,26 @@ export function HarnessPanel({
                   ) : null}
                 </div>
               ) : null}
+            </div>
+          ) : null}
+          {packageDiagnostics ? (
+            <div className="field-group field-group--compact" data-role="pi-package-diagnostics-summary">
+              <span className="field-group__label">Package source + Bun status</span>
+              <span className={packageDiagnostics.bun.available ? "field-group__hint" : "field-error"}>
+                Bun: {packageDiagnostics.bun.message}
+              </span>
+              <span className="field-group__hint">Status: {packageDiagnostics.message}</span>
+              {packageDiagnostics.sources.length ? (
+                <div className="workflow-validation-list muted-copy">
+                  {packageDiagnostics.sources.map((source) => (
+                    <p key={`${source.sourceKind}-${source.sourcePath}`}>
+                      {source.active ? "Active" : "Legacy"} {source.sourcePath}: {source.entries.join(", ")}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <span className="field-group__hint">No package-based Pi sources are currently detected.</span>
+              )}
             </div>
           ) : null}
           <label className="field-group field-group--compact">

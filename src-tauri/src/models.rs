@@ -531,6 +531,35 @@ pub struct PiRuntimeDiagnostics {
     pub add_ons: PiAddOnPolicyStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PiBunStatus {
+    pub available: bool,
+    pub path: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiPackageSourceEntry {
+    pub source_kind: String,
+    pub source_scope: String,
+    pub source_path: String,
+    pub entries: Vec<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PiPackageDiagnostics {
+    pub bun: PiBunStatus,
+    pub sources: Vec<PiPackageSourceEntry>,
+    pub blocking: bool,
+    pub package_free_probe_succeeded: bool,
+    pub package_free_model_count: usize,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PiRuntimeStatus {
@@ -1165,6 +1194,9 @@ pub struct PiSetupIssue {
     pub message: String,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
+    pub source_kind: Option<String>,
+    pub source_path: Option<String>,
+    pub source_entries: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1182,12 +1214,14 @@ pub struct PiSetupState {
     pub agent_dir: String,
     pub auth_path: String,
     pub models_path: String,
+    pub settings_path: String,
     pub legacy_agent_dir: Option<String>,
     pub available_providers: Vec<PiProviderSetupSummary>,
     pub available_models: Vec<SessionModel>,
     pub issues: Vec<PiSetupIssue>,
     pub warnings: Vec<PiSetupIssue>,
     pub import_state: PiLegacyImportState,
+    pub package_diagnostics: PiPackageDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize)]
