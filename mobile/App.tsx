@@ -38,6 +38,7 @@ import {
   type TaskDetail,
   type TaskSummary,
 } from "./src/api";
+import { getEffectiveTaskReviewAssignmentStatus } from "../src/lib/taskReviewState";
 import { clearStoredConnection, loadStoredConnection, saveStoredConnection, type StoredConnection } from "./src/storage";
 
 type TabId = "tasks" | "inbox" | "chat" | "sessions" | "settings";
@@ -106,6 +107,10 @@ export default function App() {
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [projects, activeProjectId],
+  );
+  const selectedTaskAssignmentStatus = useMemo(
+    () => (selectedTask ? getEffectiveTaskReviewAssignmentStatus(selectedTask) : null),
+    [selectedTask],
   );
   const webDriverUrl = useMemo(() => currentWebDriverUrl(), []);
   const suggestedApiUrl = useMemo(() => defaultHostUrlDraft(), []);
@@ -531,7 +536,7 @@ export default function App() {
               <Text style={styles.cardMeta}>{selectedTask.status} · {selectedTask.priority}</Text>
               <Text style={styles.bodyText}>{selectedTask.description?.trim() || "No description."}</Text>
               <View style={styles.row}>
-                {selectedTask.activeLaneAssignment?.status === "awaiting_user_approval" ? (
+                {selectedTaskAssignmentStatus === "awaiting_user_approval" ? (
                   <>
                     <Pressable style={styles.secondaryButton} onPress={() => void handleApproveTask()}>
                       <Text style={styles.secondaryButtonText}>{busyAction === "approve" ? "Approving…" : "Approve"}</Text>
@@ -541,12 +546,12 @@ export default function App() {
                     </Pressable>
                   </>
                 ) : null}
-                {["awaiting_user_intervention", "paused_by_user"].includes(selectedTask.activeLaneAssignment?.status ?? "") ? (
+                {["awaiting_user_intervention", "paused_by_user"].includes(selectedTaskAssignmentStatus ?? "") ? (
                   <Pressable style={styles.secondaryButton} onPress={() => void handleResumeTask()}>
                     <Text style={styles.secondaryButtonText}>{busyAction === "resume" ? "Resuming…" : "Resume"}</Text>
                   </Pressable>
                 ) : null}
-                {["active", "queued"].includes(selectedTask.activeLaneAssignment?.status ?? "") ? (
+                {["active", "queued"].includes(selectedTaskAssignmentStatus ?? "") ? (
                   <Pressable style={styles.secondaryButton} onPress={() => void handlePauseTask()}>
                     <Text style={styles.secondaryButtonText}>{busyAction === "pause" ? "Pausing…" : "Pause"}</Text>
                   </Pressable>

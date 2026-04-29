@@ -57,6 +57,28 @@ fn session_context_for_task_id(task_id: &str) -> Result<pi_sessions::SessionCont
     pi_sessions::session_context_for_project_id(&task.project_id)
 }
 
+fn is_task_in_user_review_state(task: &TaskDetail) -> bool {
+    task.status == "in_review" && task.assignee_type == "user" && task.current_lane_id.is_some()
+}
+
+pub fn effective_task_review_assignment_status(
+    task: &TaskDetail,
+    assignment: &TaskLaneAssignment,
+) -> String {
+    if is_task_in_user_review_state(task) {
+        match assignment.pending_outcome.as_deref() {
+            Some("success") => return ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL.to_string(),
+            Some("needs_user") => {
+                return ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION.to_string()
+            }
+            Some("paused") => return ASSIGNMENT_STATUS_PAUSED_BY_USER.to_string(),
+            _ => {}
+        }
+    }
+
+    assignment.status.clone()
+}
+
 pub fn task_transition_event_reason(outcome: &str, task: &TaskDetail) -> &'static str {
     match task
         .active_lane_assignment
@@ -3245,11 +3267,12 @@ pub fn approve_task_review(
 ) -> Result<TaskDetail, String> {
     let assignment = get_current_lane_assignment(connection, task_id)?
         .ok_or_else(|| format!("Task {task_id} has no lane assignment awaiting approval"))?;
-    if assignment.status != ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL {
+    let task = tasks::get_task_context(connection, task_id)?;
+    if effective_task_review_assignment_status(&task, &assignment)
+        != ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+    {
         return Err(format!("Task {task_id} is not awaiting user approval"));
     }
-
-    let task = tasks::get_task_context(connection, task_id)?;
     let workflow = load_task_workflow(connection, &task)?;
     let lane = workflow
         .lanes
@@ -3406,7 +3429,9 @@ fn reactivate_task_lane_assignment(
 ) -> Result<TaskLaneAssignment, String> {
     let assignment = get_current_lane_assignment(connection, task_id)?
         .ok_or_else(|| missing_error.to_string())?;
-    if !allowed_statuses.contains(&assignment.status.as_str()) {
+    let task = tasks::get_task_context(connection, task_id)?;
+    let effective_status = effective_task_review_assignment_status(&task, &assignment);
+    if !allowed_statuses.contains(&effective_status.as_str()) {
         return Err(invalid_error.to_string());
     }
 
@@ -3740,7 +3765,8 @@ pub fn send_lane_back_for_work(
 ) -> Result<TaskLaneAssignment, String> {
     let assignment = get_current_lane_assignment(connection, task_id)?
         .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
-    match assignment.status.as_str() {
+    let task = tasks::get_task_context(connection, task_id)?;
+    match effective_task_review_assignment_status(&task, &assignment).as_str() {
         ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => mark_task_needs_work(connection, task_id),
         ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => resume_task_lane(connection, task_id),
         _ => Err(format!("Task {task_id} is not paused for user review")),
@@ -5158,8 +5184,8 @@ mod tests {
 
     use crate::{
         models::{
-            AgentUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput,
-            WorkflowUpsertInput,
+            AgentUpsertInput, RoleUpsertInput, TaskDetail, TaskLaneAssignment, TaskUpsertInput,
+            WorkflowLaneInput, WorkflowUpsertInput,
         },
         services::{
             agents, database, pi_sessions, projects, roles, session_list, tasks, workflows,
@@ -5241,6 +5267,87 @@ mod tests {
             .success());
 
         repo
+    }
+
+    fn build_test_task_detail(
+        status: &str,
+        assignee_type: &str,
+        current_lane_id: Option<&str>,
+    ) -> TaskDetail {
+        let now = now_iso();
+        TaskDetail {
+            id: "task-test".into(),
+            project_id: "project-test".into(),
+            number: "ORC-TEST".into(),
+            title: "Test task".into(),
+            description: None,
+            task_type: "task".into(),
+            tags: Vec::new(),
+            status: status.into(),
+            priority: "P2".into(),
+            workflow_id: Some("workflow-test".into()),
+            current_lane_id: current_lane_id.map(|value| value.to_string()),
+            assignee_type: assignee_type.into(),
+            assignee_id: None,
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            whip_max_attempts: 10,
+            archived: false,
+            comment_count: 0,
+            unread_comment_count: 0,
+            lane_run_count: 0,
+            child_count: 0,
+            completed_child_count: 0,
+            in_progress_child_count: 0,
+            blocked_child_count: 0,
+            blocked_by_count: 0,
+            blocking_count: 0,
+            attachment_count: 0,
+            dependency_blocked: false,
+            active_lane_assignment_status: None,
+            ready_for_dispatch: false,
+            parent: None,
+            lineage: Vec::new(),
+            children: Vec::new(),
+            blocked_by: Vec::new(),
+            blocking: Vec::new(),
+            attachments: Vec::new(),
+            task_repositories: Vec::new(),
+            file_references: Vec::new(),
+            comments: Vec::new(),
+            todos: Vec::new(),
+            lane_runs: Vec::new(),
+            active_lane_assignment: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    fn build_test_task_lane_assignment(status: &str, pending_outcome: Option<&str>) -> TaskLaneAssignment {
+        let now = now_iso();
+        TaskLaneAssignment {
+            id: "assignment-test".into(),
+            task_id: "task-test".into(),
+            workflow_id: "workflow-test".into(),
+            lane_id: "lane-test".into(),
+            worker_type: "role".into(),
+            worker_id: Some("developer".into()),
+            status: status.into(),
+            session_id: Some("session-test".into()),
+            runtime_cwd: None,
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: None,
+            pending_outcome: pending_outcome.map(|value| value.to_string()),
+            completion_notes: None,
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: now.clone(),
+            completed_at: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
     }
 
     fn create_workflow_with_lanes(
@@ -6103,6 +6210,39 @@ mod tests {
     }
 
     #[test]
+    fn derives_effective_review_assignment_status_from_pending_outcome() {
+        let approval_task = build_test_task_detail("in_review", "user", Some("lane-review"));
+        let paused_assignment = build_test_task_lane_assignment(
+            ASSIGNMENT_STATUS_PAUSED_BY_USER,
+            Some("success"),
+        );
+        assert_eq!(
+            effective_task_review_assignment_status(&approval_task, &paused_assignment),
+            ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+        );
+
+        let intervention_task = build_test_task_detail("in_review", "user", Some("lane-review"));
+        let approval_assignment = build_test_task_lane_assignment(
+            ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL,
+            Some("needs_user"),
+        );
+        assert_eq!(
+            effective_task_review_assignment_status(&intervention_task, &approval_assignment),
+            ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
+        );
+
+        let explicit_pause_task = build_test_task_detail("in_progress", "role", Some("lane-work"));
+        let explicit_pause_assignment = build_test_task_lane_assignment(
+            ASSIGNMENT_STATUS_PAUSED_BY_USER,
+            Some("paused"),
+        );
+        assert_eq!(
+            effective_task_review_assignment_status(&explicit_pause_task, &explicit_pause_assignment),
+            ASSIGNMENT_STATUS_PAUSED_BY_USER
+        );
+    }
+
+    #[test]
     fn approval_gated_lane_pauses_for_review_and_resumes_same_session_for_rework() {
         let mut connection = in_memory_connection();
         let role = roles::create_role(
@@ -6238,6 +6378,13 @@ mod tests {
             Some("waiting")
         );
 
+        connection
+            .execute(
+                "UPDATE task_lane_assignments SET status = ?2 WHERE task_id = ?1",
+                params![task.id, ASSIGNMENT_STATUS_PAUSED_BY_USER],
+            )
+            .expect("assignment status should simulate stale paused approval state");
+
         let reactivated_assignment = send_lane_back_for_work(&connection, &task.id)
             .expect("lane should reactivate for rework");
         assert_eq!(reactivated_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
@@ -6277,6 +6424,13 @@ mod tests {
                 .map(|entry| entry.status.as_str()),
             Some(ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL)
         );
+
+        connection
+            .execute(
+                "UPDATE task_lane_assignments SET status = ?2 WHERE task_id = ?1",
+                params![task.id, ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION],
+            )
+            .expect("assignment status should simulate stale intervention approval state");
 
         let approved =
             approve_pending_lane_completion(&mut connection, &project_root, &session_dir, &task.id)

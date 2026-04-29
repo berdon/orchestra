@@ -1470,7 +1470,8 @@ pub async fn send_lane_back_for_work(
     let connection = database::open_connection()?;
     let assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?
         .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
-    match assignment.status.as_str() {
+    let task = tasks::get_task_context(&connection, &task_id)?;
+    match task_runtime::effective_task_review_assignment_status(&task, &assignment).as_str() {
         "awaiting_user_approval" => mark_task_needs_work(app, state, task_id, None).await,
         "awaiting_user_intervention" => resume_task_lane(app, state, task_id, None).await,
         _ => Err(format!("Task {task_id} is not paused for user review")),

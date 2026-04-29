@@ -29,6 +29,7 @@ export interface TaskLaneAssignment {
   workerType?: string | null;
   workerId?: string | null;
   sessionId?: string | null;
+  pendingOutcome?: string | null;
   completionNotes?: string | null;
 }
 

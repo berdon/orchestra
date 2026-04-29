@@ -1180,7 +1180,8 @@ export function TasksPage({
     if (route.kind !== "detail") {
       return;
     }
-    const shouldResume = ["awaiting_user_intervention", "paused_by_user"].includes(taskDetail?.activeLaneAssignment?.status ?? "");
+    const effectiveAssignmentStatus = taskDetail ? getEffectiveTaskDetailAssignmentStatus(taskDetail) : null;
+    const shouldResume = ["awaiting_user_intervention", "paused_by_user"].includes(effectiveAssignmentStatus ?? "");
     const actionId = shouldResume ? "resume-pending" : "needs-work-pending";
     await runDetailAction(actionId, async () => {
       if (shouldResume) {

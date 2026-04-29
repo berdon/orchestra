@@ -3463,8 +3463,8 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   const initialSessionId = await page.locator('[data-role="task-runtime-assignment"]').textContent();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("agent");
 
-  const seedAwaitingApproval = async () => {
-    await page.evaluate(() => {
+  const seedAwaitingApproval = async (assignmentStatus = "awaiting_user_approval") => {
+    await page.evaluate((nextStatus) => {
       const key = "orchestra.mock.tasks";
       const raw = window.localStorage.getItem(key);
       const tasks = raw ? JSON.parse(raw) : [];
@@ -3478,7 +3478,7 @@ test("approval-gated lanes pause for review, resume the same session for rework,
       target.assigneeId = null;
       target.activeLaneAssignment = {
         ...target.activeLaneAssignment,
-        status: "awaiting_user_approval",
+        status: nextStatus,
         pendingOutcome: "success",
         completionNotes: null,
         updatedAt,
@@ -3488,12 +3488,13 @@ test("approval-gated lanes pause for review, resume the same session for rework,
       window.dispatchEvent(new CustomEvent("orchestra:task-change", {
         detail: { taskIds: [target.id], reason: "test.seed.awaiting-approval" },
       }));
-    });
+    }, assignmentStatus);
   };
 
-  await seedAwaitingApproval();
+  await seedAwaitingApproval("paused_by_user");
   await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
   await expect(page.locator('[data-role="send-task-back-for-work"]').first()).toBeVisible();
+  await expect(page.locator('[data-role="resume-task-lane"]')).toHaveCount(0);
   await expect(page.locator('[data-role="task-awaiting-approval-note"]').first()).toContainText("paused for user approval");
 
   await page.locator('[data-role="send-task-back-for-work"]').first().click();
@@ -3509,8 +3510,9 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   });
   expect(reworkPromptSeen).toBe(true);
 
-  await seedAwaitingApproval();
+  await seedAwaitingApproval("awaiting_user_intervention");
   await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
+  await expect(page.locator('[data-role="resume-task-lane"]')).toHaveCount(0);
   await page.locator('[data-role="approve-task-lane"]').first().click();
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toHaveCount(0);
   await page.locator('[data-role="task-detail-tab-timeline"]').click();

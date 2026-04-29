@@ -10,6 +10,7 @@ import { isTauriAvailable } from "./mockOrchestra/host";
 import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
 import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { getTaskTags } from "./taskListQuery";
+import { getEffectiveTaskReviewAssignmentStatus } from "./taskReviewState";
 import { normalizeTaskTags, TASK_TAG_COUNT_ERROR, validateTaskTag } from "./taskTags";
 import type {
   AgentSummary,
@@ -4627,7 +4628,7 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
-  if (!task || !task.workflowId || !task.currentLaneId || task.activeLaneAssignment?.status !== "awaiting_user_approval") {
+  if (!task || !task.workflowId || !task.currentLaneId || getEffectiveTaskReviewAssignmentStatus(task) !== "awaiting_user_approval") {
     throw new Error(`Task ${taskId} is not awaiting lane approval.`);
   }
 
@@ -4724,16 +4725,17 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
 async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
+  const effectiveStatus = task ? getEffectiveTaskReviewAssignmentStatus(task) : null;
   if (
     !task
     || !task.activeLaneAssignment?.sessionId
-    || !["awaiting_user_approval", "awaiting_user_intervention"].includes(task.activeLaneAssignment.status)
+    || !["awaiting_user_approval", "awaiting_user_intervention"].includes(effectiveStatus ?? "")
   ) {
     throw new Error(`Task ${taskId} is not paused for user review.`);
   }
 
   const updatedAt = nowIso();
-  const followUpPrompt = task.activeLaneAssignment.status === "awaiting_user_intervention"
+  const followUpPrompt = effectiveStatus === "awaiting_user_intervention"
     ? "The user has responded to your intervention request and resumed this lane. Reload the latest task context, comments, and mail before continuing."
     : "The user has requested more work be done on this lane. Reload the latest task context and comments before continuing.";
 
@@ -4951,7 +4953,7 @@ export async function approveLaneCompletion(taskId: string): Promise<TaskDetail>
 export async function markTaskNeedsWork(taskId: string, notes?: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
-    if (task.activeLaneAssignment?.status !== "awaiting_user_approval") {
+    if (getEffectiveTaskReviewAssignmentStatus(task) !== "awaiting_user_approval") {
       throw new Error(`Task ${taskId} is not awaiting user approval.`);
     }
     return sendMockLaneBackForWork(taskId);
@@ -4963,10 +4965,11 @@ export async function markTaskNeedsWork(taskId: string, notes?: string): Promise
 export async function resumeTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
-    if (!task.activeLaneAssignment || !["awaiting_user_intervention", "paused_by_user"].includes(task.activeLaneAssignment.status)) {
+    const effectiveStatus = getEffectiveTaskReviewAssignmentStatus(task);
+    if (!task.activeLaneAssignment || !["awaiting_user_intervention", "paused_by_user"].includes(effectiveStatus ?? "")) {
       throw new Error(`Task ${taskId} is not paused for user intervention or a user pause.`);
     }
-    return task.activeLaneAssignment.status === "paused_by_user"
+    return effectiveStatus === "paused_by_user"
       ? await (async () => {
           const updatedAt = nowIso();
           saveMockTasks(ensureMockTasks().map((entry) =>

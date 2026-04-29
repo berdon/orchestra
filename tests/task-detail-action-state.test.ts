@@ -34,6 +34,30 @@ describe("task detail action state", () => {
         }),
       ),
     ).toBe("awaiting_user_approval");
+    expect(
+      getEffectiveTaskDetailAssignmentStatus(
+        buildTask({
+          status: "in_review",
+          assigneeType: "user",
+          activeLaneAssignment: {
+            status: "paused_by_user",
+            pendingOutcome: "success",
+          },
+        }),
+      ),
+    ).toBe("awaiting_user_approval");
+    expect(
+      getEffectiveTaskDetailAssignmentStatus(
+        buildTask({
+          status: "in_review",
+          assigneeType: "user",
+          activeLaneAssignment: {
+            status: "awaiting_user_intervention",
+            pendingOutcome: "success",
+          },
+        }),
+      ),
+    ).toBe("awaiting_user_approval");
   });
 
   it("treats review-paused intervention work as awaiting user intervention even if the assignment status lags", () => {
@@ -44,6 +68,18 @@ describe("task detail action state", () => {
           assigneeType: "user",
           activeLaneAssignment: {
             status: "active",
+            pendingOutcome: "needs_user",
+          },
+        }),
+      ),
+    ).toBe("awaiting_user_intervention");
+    expect(
+      getEffectiveTaskDetailAssignmentStatus(
+        buildTask({
+          status: "in_review",
+          assigneeType: "user",
+          activeLaneAssignment: {
+            status: "awaiting_user_approval",
             pendingOutcome: "needs_user",
           },
         }),
@@ -60,6 +96,15 @@ describe("task detail action state", () => {
     expect(
       getEffectiveTaskDetailAssignmentStatus(
         buildTask({ activeLaneAssignment: { status: "paused_by_user", pendingOutcome: "paused" } }),
+      ),
+    ).toBe("paused_by_user");
+    expect(
+      getEffectiveTaskDetailAssignmentStatus(
+        buildTask({
+          status: "in_review",
+          assigneeType: "user",
+          activeLaneAssignment: { status: "awaiting_user_approval", pendingOutcome: "paused" },
+        }),
       ),
     ).toBe("paused_by_user");
   });
