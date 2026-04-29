@@ -34,6 +34,12 @@ const GET_STATE_REQUEST_ID: &str = "get-state-1";
 const GET_MODELS_REQUEST_ID: &str = "get-models-1";
 const GET_SESSION_STATS_REQUEST_ID: &str = "get-session-stats-1";
 const SET_MODEL_REQUEST_ID: &str = "set-model-1";
+const MISSING_BUN_MODEL_DISCOVERY_MESSAGE: &str = "Pi could not load package-based model sources because Bun is not available on PATH. Install Bun or remove package-based Pi sources in Settings → Pi.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelDiscoveryErrorKind {
+    MissingBun,
+}
 
 #[derive(Debug, Clone)]
 pub struct SessionContext {
@@ -759,7 +765,12 @@ pub fn append_session_system_message(
     let mut file = OpenOptions::new()
         .append(true)
         .open(&path)
-        .map_err(|error| format!("Unable to open session file {} for append: {error}", path.display()))?;
+        .map_err(|error| {
+            format!(
+                "Unable to open session file {} for append: {error}",
+                path.display()
+            )
+        })?;
 
     writeln!(
         file,
@@ -777,7 +788,12 @@ pub fn append_session_system_message(
             }
         })
     )
-    .map_err(|error| format!("Unable to append system message to {}: {error}", path.display()))?;
+    .map_err(|error| {
+        format!(
+            "Unable to append system message to {}: {error}",
+            path.display()
+        )
+    })?;
 
     file.sync_all()
         .map_err(|error| format!("Unable to flush session file {}: {error}", path.display()))?;
@@ -795,7 +811,12 @@ pub fn append_session_assistant_message(
     let mut file = OpenOptions::new()
         .append(true)
         .open(&path)
-        .map_err(|error| format!("Unable to open session file {} for append: {error}", path.display()))?;
+        .map_err(|error| {
+            format!(
+                "Unable to open session file {} for append: {error}",
+                path.display()
+            )
+        })?;
 
     writeln!(
         file,
@@ -827,7 +848,12 @@ pub fn append_session_assistant_message(
             }
         })
     )
-    .map_err(|error| format!("Unable to append assistant message to {}: {error}", path.display()))?;
+    .map_err(|error| {
+        format!(
+            "Unable to append assistant message to {}: {error}",
+            path.display()
+        )
+    })?;
 
     file.sync_all()
         .map_err(|error| format!("Unable to flush session file {}: {error}", path.display()))?;
@@ -954,6 +980,27 @@ pub fn apply_orchestra_pi_environment(command: &mut Command) -> Result<(), Strin
     }
     command.env("PI_CODING_AGENT_DIR", agent_dir.display().to_string());
     Ok(())
+}
+
+pub(crate) fn classify_model_discovery_error(error: &str) -> Option<ModelDiscoveryErrorKind> {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("bun pm bin -g")
+        || normalized.contains("executable not found in $path: \"bun\"")
+        || normalized.contains("failed to run bun")
+        || normalized.contains("resolvepackagesources")
+        || normalized.contains("package-based model sources because bun is not available on path")
+    {
+        return Some(ModelDiscoveryErrorKind::MissingBun);
+    }
+
+    None
+}
+
+fn summarize_model_discovery_error(error: &str) -> String {
+    match classify_model_discovery_error(error) {
+        Some(ModelDiscoveryErrorKind::MissingBun) => MISSING_BUN_MODEL_DISCOVERY_MESSAGE.into(),
+        None => error.trim().to_string(),
+    }
 }
 
 fn attach_run_id<F>(run_id: &str, mut on_stream_event: F) -> impl FnMut(PartialStreamEvent)
@@ -1961,37 +2008,43 @@ fn list_available_models_with_executable(executable: &Path) -> Result<Vec<Sessio
     let temp_root = std::env::temp_dir().join(format!("orchestra-models-{}", Uuid::new_v4()));
     fs::create_dir_all(&temp_root)
         .map_err(|error| format!("Unable to create temporary model query directory: {error}"))?;
-    let project_root = temp_root.join("project");
-    let session_dir = temp_root.join("sessions");
-    fs::create_dir_all(&project_root).map_err(|error| {
-        format!("Unable to create temporary model query project directory: {error}")
-    })?;
-    fs::create_dir_all(&session_dir).map_err(|error| {
-        format!("Unable to create temporary model query session directory: {error}")
-    })?;
+    let result = (|| {
+        let project_root = temp_root.join("project");
+        let session_dir = temp_root.join("sessions");
+        fs::create_dir_all(&project_root).map_err(|error| {
+            format!("Unable to create temporary model query project directory: {error}")
+        })?;
+        fs::create_dir_all(&session_dir).map_err(|error| {
+            format!("Unable to create temporary model query session directory: {error}")
+        })?;
 
-    let created = create_session_file(&project_root, &session_dir, Some("Model query"), false)?;
-    let payloads = run_rpc_query_process(
-        &resolved_executable,
-        &project_root,
-        &session_dir,
-        &created.path,
-        &[json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" })],
-        |_| {},
-    )?;
+        let created = create_session_file(&project_root, &session_dir, Some("Model query"), false)?;
+        let payloads = run_rpc_query_process(
+            &resolved_executable,
+            &project_root,
+            &session_dir,
+            &created.path,
+            &[json!({ "id": GET_MODELS_REQUEST_ID, "type": "get_available_models" })],
+            |_| {},
+        )
+        .map_err(|error| summarize_model_discovery_error(&error))?;
 
-    let models_payload =
-        require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")?;
-    let models = models_payload
-        .pointer("/data/models")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(parse_model_summary)
-        .collect();
+        let models_payload =
+            require_successful_response(&payloads, GET_MODELS_REQUEST_ID, "get_available_models")
+                .map_err(|error| summarize_model_discovery_error(&error))?;
+        let models = models_payload
+            .pointer("/data/models")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(parse_model_summary)
+            .collect();
+
+        Ok(models)
+    })();
 
     let _ = fs::remove_dir_all(&temp_root);
-    Ok(models)
+    result
 }
 
 fn spawn_rpc_process(
@@ -2882,6 +2935,103 @@ process.stdin.on('end', () => {
         }
     }
 
+    fn write_fake_missing_bun_query_pi_executable(path: &Path) {
+        let script = r#"#!/usr/bin/env node
+const rawError = [
+  'throw new Error(`Failed to run ${command2} ${args.join(" ")}: ${result.error?.message || result.stderr || result.stdout}`);',
+  '^',
+  'error: Failed to run bun pm bin -g: Executable not found in $PATH: "bun"',
+  'at runCommandSync (/$bunfs/root/pi:307493:13)',
+  'at getGlobalNpmRoot (/$bunfs/root/pi:307086:41)',
+  'at getNpmInstallPath (/$bunfs/root/pi:307101:40)',
+  'at resolvePackageSources (/$bunfs/root/pi:306553:53)',
+  'Bun v1.2.20 (macOS arm64)',
+].join('\n');
+
+let buffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  let newlineIndex;
+  while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const command = JSON.parse(line);
+    if (command.type === 'get_available_models') {
+      console.error(rawError);
+      process.exit(1);
+    }
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+"#;
+
+        fs::write(path, script).expect("missing bun fake pi script should be writable");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(path)
+                .expect("missing bun fake pi script metadata should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions)
+                .expect("missing bun fake pi script should be executable");
+        }
+    }
+
+    fn write_fake_npm_prefix_guarded_query_pi_executable(path: &Path) {
+        let script = r#"#!/usr/bin/env node
+const MODELS = [{
+  id: 'claude-sonnet-4-20250514',
+  name: 'Claude Sonnet 4',
+  api: 'anthropic-messages',
+  provider: 'anthropic',
+  reasoning: true,
+}];
+const rawError = 'error: Failed to run bun pm bin -g: Executable not found in $PATH: "bun"';
+
+let buffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  let newlineIndex;
+  while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    const command = JSON.parse(line);
+    if (command.type === 'get_available_models') {
+      if (!process.env.NPM_CONFIG_PREFIX || !process.env.npm_config_prefix) {
+        console.error(rawError);
+        process.exit(1);
+      }
+      process.stdout.write(JSON.stringify({
+        id: command.id,
+        type: 'response',
+        command: 'get_available_models',
+        success: true,
+        data: { models: MODELS },
+      }) + '\n');
+    }
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+"#;
+
+        fs::write(path, script).expect("npm prefix guarded fake pi script should be writable");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(path)
+                .expect("npm prefix guarded fake pi script metadata should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions)
+                .expect("npm prefix guarded fake pi script should be executable");
+        }
+    }
+
     #[test]
     fn creates_header_only_session_and_preserves_title() {
         let root = unique_temp_dir("orchestra-real-session-create");
@@ -3601,5 +3751,41 @@ process.stdin.on('end', () => {
             models.last().map(|model| model.id.as_str()),
             Some("huge-model-499")
         );
+    }
+
+    #[test]
+    fn classifies_missing_bun_model_discovery_failures() {
+        let root = unique_temp_dir("orchestra-real-session-missing-bun-models");
+        let project_root = root.join("project");
+        let fake_pi = root.join("fake-missing-bun-pi.mjs");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        write_fake_missing_bun_query_pi_executable(&fake_pi);
+
+        let error = list_available_models_with_executable(&fake_pi)
+            .expect_err("missing bun model discovery should fail");
+
+        assert_eq!(
+            classify_model_discovery_error(&error),
+            Some(ModelDiscoveryErrorKind::MissingBun)
+        );
+        assert!(error.contains("Bun is not available on PATH"));
+        assert!(error.contains("Settings → Pi"));
+        assert!(!error.contains("bun pm bin -g"));
+        assert!(!error.contains("resolvePackageSources"));
+    }
+
+    #[test]
+    fn list_available_models_sets_runtime_managed_npm_prefix() {
+        let root = unique_temp_dir("orchestra-real-session-models-prefix");
+        let project_root = root.join("project");
+        let fake_pi = root.join("fake-prefix-guarded-pi.mjs");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        write_fake_npm_prefix_guarded_query_pi_executable(&fake_pi);
+
+        let models = list_available_models_with_executable(&fake_pi)
+            .expect("model discovery should succeed when Orchestra provides npm prefix env");
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-sonnet-4-20250514");
     }
 }
