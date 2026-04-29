@@ -91,10 +91,10 @@ function createRuntimeDiagnostics(): PiRuntimeDiagnostics {
 }
 
 describe("HarnessPanel package diagnostics", () => {
-  test("renders Bun status and concrete package source details", () => {
-    const markup = renderToString(
+  function renderHarnessPanel(piSetupState: PiSetupState) {
+    return renderToString(
       <HarnessPanel
-        piSetupState={createSetupState()}
+        piSetupState={piSetupState}
         piOAuthFlowState={null}
         piModelsJson={'{\n  "providers": {}\n}\n'}
         loadingPiSetup={false}
@@ -119,11 +119,34 @@ describe("HarnessPanel package diagnostics", () => {
         onImportLegacyPiConfiguration={() => {}}
       />,
     );
+  }
+
+  test("renders Bun status and concrete package source details", () => {
+    const markup = renderHarnessPanel(createSetupState());
 
     expect(markup).toContain("Package source + Bun status");
     expect(markup).toContain("Bun is not available on the PATH Orchestra uses for runtime subprocesses.");
     expect(markup).toContain("/mock/.orchestra/runtime/pi/agent/settings.json");
     expect(markup).toContain("npm:pi-subagents");
     expect(markup).toContain("Settings → Harness");
+  });
+
+  test("renders bundled Bun availability when Orchestra ships Bun", () => {
+    const state = createSetupState();
+    state.status = "ready";
+    state.issues = [];
+    state.packageDiagnostics.bun = {
+      available: true,
+      path: "/mock/Orchestra.app/Contents/Resources/pi-runtime/bun/bin/bun",
+      message: "Bundled Bun is available at /mock/Orchestra.app/Contents/Resources/pi-runtime/bun/bin/bun and Orchestra will use it for Pi subprocesses.",
+    };
+    state.packageDiagnostics.sources = [];
+    state.packageDiagnostics.blocking = false;
+    state.packageDiagnostics.message = "No package-based Pi sources are currently detected.";
+
+    const markup = renderHarnessPanel(state);
+
+    expect(markup).toContain("Bundled Bun is available at /mock/Orchestra.app/Contents/Resources/pi-runtime/bun/bin/bun");
+    expect(markup).toContain("No package-based Pi sources are currently detected.");
   });
 });

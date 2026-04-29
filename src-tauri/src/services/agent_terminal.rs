@@ -94,6 +94,13 @@ impl AgentTerminalSession {
                 command.env("PI_PACKAGE_DIR", package_dir);
             }
         }
+        if runtime.bundled_bun_path.is_some() {
+            if let Some(path_value) =
+                crate::services::pi_runtime::resolve_effective_subprocess_path(Some(&runtime))
+            {
+                command.env("PATH", path_value);
+            }
+        }
 
         let child = pair
             .slave

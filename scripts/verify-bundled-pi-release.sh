@@ -27,6 +27,8 @@ APP_CODESIGN_LOG="${OUTPUT_DIR}/codesign-app.txt"
 APP_CODESIGN_DETAILS_LOG="${OUTPUT_DIR}/codesign-app-details.txt"
 RUNTIME_CODESIGN_LOG="${OUTPUT_DIR}/codesign-runtime.txt"
 RUNTIME_CODESIGN_DETAILS_LOG="${OUTPUT_DIR}/codesign-runtime-details.txt"
+BUN_CODESIGN_LOG="${OUTPUT_DIR}/codesign-bun.txt"
+BUN_CODESIGN_DETAILS_LOG="${OUTPUT_DIR}/codesign-bun-details.txt"
 SPCTL_LOG="${OUTPUT_DIR}/spctl.txt"
 NOTARIZATION_LOG="${OUTPUT_DIR}/notarization.txt"
 
@@ -104,11 +106,24 @@ manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 print(pathlib.Path(sys.argv[2]) / manifest["executableRelativePath"])
 PY
 )"
+BUNDLED_BUN_EXECUTABLE="$(python3 - "${MANIFEST_PATH}" "${RESOURCE_ROOT}" <<'PY'
+import json
+import pathlib
+import sys
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+relative = manifest.get("bundledBunRelativePath")
+print(pathlib.Path(sys.argv[2]) / relative if relative else "")
+PY
+)"
 
 codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}" >"${APP_CODESIGN_LOG}" 2>&1
 codesign -dv --verbose=4 "${APP_BUNDLE}" >"${APP_CODESIGN_DETAILS_LOG}" 2>&1 || true
 codesign --verify --strict --verbose=2 "${RUNTIME_EXECUTABLE}" >"${RUNTIME_CODESIGN_LOG}" 2>&1
 codesign -dv --verbose=4 "${RUNTIME_EXECUTABLE}" >"${RUNTIME_CODESIGN_DETAILS_LOG}" 2>&1 || true
+if [[ -n "${BUNDLED_BUN_EXECUTABLE}" ]]; then
+  codesign --verify --strict --verbose=2 "${BUNDLED_BUN_EXECUTABLE}" >"${BUN_CODESIGN_LOG}" 2>&1
+  codesign -dv --verbose=4 "${BUNDLED_BUN_EXECUTABLE}" >"${BUN_CODESIGN_DETAILS_LOG}" 2>&1 || true
+fi
 
 APP_SIGNATURE_KIND="$(python3 - "${APP_CODESIGN_DETAILS_LOG}" <<'PY'
 import pathlib
@@ -180,11 +195,14 @@ python3 - \
   "${APP_BUNDLE}" \
   "${RESOURCE_ROOT}" \
   "${RUNTIME_EXECUTABLE}" \
+  "${BUNDLED_BUN_EXECUTABLE}" \
   "${OUTPUT_DIR}/manifest-verification.json" \
   "${APP_CODESIGN_LOG}" \
   "${APP_CODESIGN_DETAILS_LOG}" \
   "${RUNTIME_CODESIGN_LOG}" \
   "${RUNTIME_CODESIGN_DETAILS_LOG}" \
+  "${BUN_CODESIGN_LOG}" \
+  "${BUN_CODESIGN_DETAILS_LOG}" \
   "${SPCTL_LOG}" \
   "${NOTARIZATION_LOG}" \
   "${NOTARIZATION_SUBMITTED}" \
@@ -198,29 +216,32 @@ import pathlib
 import sys
 
 summary_path = pathlib.Path(sys.argv[1])
-manifest_report = json.loads(pathlib.Path(sys.argv[5]).read_text())
+manifest_report = json.loads(pathlib.Path(sys.argv[6]).read_text())
 summary = {
     "appBundlePath": sys.argv[2],
     "runtimeResourceRoot": sys.argv[3],
     "runtimeExecutablePath": sys.argv[4],
+    "bundledBunExecutablePath": sys.argv[5] or None,
     "manifest": manifest_report,
     "codesign": {
-        "appLogPath": sys.argv[6],
-        "appDetailsLogPath": sys.argv[7],
-        "appSignatureKind": sys.argv[14],
-        "runtimeLogPath": sys.argv[8],
-        "runtimeDetailsLogPath": sys.argv[9],
-        "runtimeSignatureKind": sys.argv[15],
+        "appLogPath": sys.argv[7],
+        "appDetailsLogPath": sys.argv[8],
+        "appSignatureKind": sys.argv[17],
+        "runtimeLogPath": sys.argv[9],
+        "runtimeDetailsLogPath": sys.argv[10],
+        "runtimeSignatureKind": sys.argv[18],
+        "bundledBunLogPath": sys.argv[11] or None,
+        "bundledBunDetailsLogPath": sys.argv[12] or None,
     },
     "spctl": {
-        "logPath": sys.argv[10],
-        "status": sys.argv[16],
-        "required": sys.argv[17] == "1",
+        "logPath": sys.argv[13],
+        "status": sys.argv[19],
+        "required": sys.argv[20] == "1",
     },
     "notarization": {
-        "logPath": sys.argv[11],
-        "submitted": sys.argv[12].lower() == "true",
-        "stapled": sys.argv[13].lower() == "true",
+        "logPath": sys.argv[14],
+        "submitted": sys.argv[15].lower() == "true",
+        "stapled": sys.argv[16].lower() == "true",
     },
 }
 summary_path.write_text(json.dumps(summary, indent=2) + "\n")

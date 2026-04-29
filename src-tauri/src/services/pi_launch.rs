@@ -8,7 +8,7 @@ use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 use crate::{
     models::{AuthorizationContext, OrchestraToolDefinition},
-    services::{harness_settings, pi_sessions, tool_bridge::ToolBridgeConfig},
+    services::{harness_settings, pi_runtime, pi_sessions, tool_bridge::ToolBridgeConfig},
 };
 
 #[derive(Debug, Clone)]
@@ -72,7 +72,8 @@ pub fn build_interactive_launch_spec(
     allowed_tools: &[OrchestraToolDefinition],
     app: Option<&AppHandle>,
 ) -> Result<InteractivePiLaunchSpec, String> {
-    let executable = pi_sessions::resolve_pi_executable(None)?;
+    let runtime = pi_runtime::resolve_pi_runtime(None)?;
+    let executable = runtime.executable_path.clone();
     let extension_path = resolve_orchestra_extension_path(app)?;
     let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
     let temp_home_dir = prepare_terminal_home_dir(session_id, &executable)?;
@@ -132,6 +133,18 @@ pub fn build_interactive_launch_spec(
             let prefix = prefix.display().to_string();
             env.push(("NPM_CONFIG_PREFIX".to_string(), prefix.clone()));
             env.push(("npm_config_prefix".to_string(), prefix));
+        }
+    }
+
+    if let Some(package_dir) = runtime.package_dir.as_ref() {
+        env.push((
+            "PI_PACKAGE_DIR".to_string(),
+            package_dir.display().to_string(),
+        ));
+    }
+    if runtime.bundled_bun_path.is_some() {
+        if let Some(path_value) = pi_runtime::resolve_effective_subprocess_path(Some(&runtime)) {
+            env.push(("PATH".to_string(), path_value));
         }
     }
 

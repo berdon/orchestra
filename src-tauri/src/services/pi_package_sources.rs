@@ -22,7 +22,8 @@ pub struct PiAvailableModelsProbe {
 pub fn resolve_available_models_with_package_diagnostics() -> Result<PiAvailableModelsProbe, String>
 {
     let orchestra_root = default_orchestra_root()?;
-    let bun = resolve_bun_status();
+    let runtime = pi_runtime::resolve_pi_runtime(None).ok();
+    let bun = resolve_bun_status(runtime.as_ref());
     resolve_available_models_with_query_and_bun(
         &orchestra_root,
         pi_runtime::legacy_pi_agent_dir()
@@ -150,18 +151,28 @@ where
     }
 }
 
-pub fn resolve_bun_status() -> PiBunStatus {
-    let path_value = pi_runtime::resolve_user_shell_path()
+pub fn resolve_bun_status(runtime: Option<&pi_runtime::ResolvedPiRuntime>) -> PiBunStatus {
+    let bundled_bun_path = runtime.and_then(|resolved| resolved.bundled_bun_path.as_ref());
+    let path_value = pi_runtime::resolve_effective_subprocess_path(runtime)
+        .or_else(|| pi_runtime::resolve_user_shell_path())
         .or_else(|| env::var("PATH").ok())
         .unwrap_or_default();
 
     for directory in env::split_paths(&path_value) {
         for candidate in bun_candidates_for_directory(&directory) {
             if candidate.is_file() {
+                let message = if bundled_bun_path == Some(&candidate) {
+                    format!(
+                        "Bundled Bun is available at {} and Orchestra will use it for Pi subprocesses.",
+                        candidate.display()
+                    )
+                } else {
+                    format!("Bun is available at {}.", candidate.display())
+                };
                 return PiBunStatus {
                     available: true,
                     path: Some(candidate.display().to_string()),
-                    message: format!("Bun is available at {}.", candidate.display()),
+                    message,
                 };
             }
         }
@@ -381,6 +392,37 @@ mod tests {
             path: None,
             message: "missing".into(),
         }
+    }
+
+    #[test]
+    fn resolve_bun_status_reports_bundled_bun_path() {
+        let root = unique_temp_dir("orc-bundled-bun-status");
+        let bundled_bun_path = if cfg!(windows) {
+            root.join("bun").join("bun.exe")
+        } else {
+            root.join("bun").join("bun")
+        };
+        write_json(&bundled_bun_path, "#!/bin/sh\n");
+        let runtime = pi_runtime::ResolvedPiRuntime {
+            source: "bundled".into(),
+            mode: "packaged".into(),
+            executable_path: root.join("runtime").join("pi"),
+            package_dir: Some(root.join("runtime")),
+            bundled_bun_path: Some(bundled_bun_path.clone()),
+            agent_dir: root.join("agent"),
+            version: Some("0.68.1".into()),
+            built_at: Some("test".into()),
+            manifest_path: Some(root.join("manifest.json")),
+        };
+
+        let status = resolve_bun_status(Some(&runtime));
+        let expected_path = bundled_bun_path.display().to_string();
+
+        assert!(status.available);
+        assert_eq!(status.path.as_deref(), Some(expected_path.as_str()));
+        assert!(status.message.contains("Bundled Bun is available"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

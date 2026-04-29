@@ -40,6 +40,7 @@ pub struct ResolvedPiRuntime {
     pub mode: String,
     pub executable_path: PathBuf,
     pub package_dir: Option<PathBuf>,
+    pub bundled_bun_path: Option<PathBuf>,
     pub agent_dir: PathBuf,
     pub version: Option<String>,
     pub built_at: Option<String>,
@@ -77,6 +78,8 @@ struct BundledPiRuntimeManifest {
     orchestra_pack_version: u32,
     executable_relative_path: String,
     package_dir_relative_path: String,
+    #[serde(default)]
+    bundled_bun_relative_path: Option<String>,
     #[serde(default)]
     notice_relative_path: Option<String>,
     #[serde(default)]
@@ -196,7 +199,37 @@ pub fn runtime_environment_variables(
         }
     }
 
+    if runtime.bundled_bun_path.is_some() {
+        if let Some(path_value) = resolve_effective_subprocess_path(Some(runtime)) {
+            environment.push(("PATH".to_string(), path_value));
+        }
+    }
+
     environment
+}
+
+pub fn resolve_effective_subprocess_path(runtime: Option<&ResolvedPiRuntime>) -> Option<String> {
+    let mut directories = runtime
+        .and_then(|resolved| resolved.bundled_bun_path.as_ref())
+        .and_then(|path| path.parent())
+        .map(|directory| vec![directory.to_path_buf()])
+        .unwrap_or_default();
+    let base_path = resolve_user_shell_path()
+        .or_else(|| env::var("PATH").ok())
+        .unwrap_or_default();
+    directories.extend(env::split_paths(&base_path));
+
+    if directories.is_empty() {
+        return None;
+    }
+
+    let mut seen = HashSet::new();
+    directories
+        .retain(|directory| !directory.as_os_str().is_empty() && seen.insert(directory.clone()));
+
+    env::join_paths(directories)
+        .ok()
+        .map(|value| value.to_string_lossy().into_owned())
 }
 
 fn runtime_managed_npm_prefix_dir(agent_dir: &Path) -> PathBuf {
@@ -456,6 +489,7 @@ fn resolve_pi_runtime_internal(
                 mode: mode_label,
                 executable_path,
                 package_dir: None,
+                bundled_bun_path: None,
                 agent_dir,
                 version: None,
                 built_at: None,
@@ -528,6 +562,7 @@ fn resolve_pi_runtime_internal(
         mode: mode.as_str().into(),
         executable_path,
         package_dir: None,
+        bundled_bun_path: None,
         agent_dir,
         version: None,
         built_at: None,
@@ -721,6 +756,39 @@ fn validate_bundled_runtime_root(
         ));
     }
 
+    let bundled_bun_path = manifest
+        .bundled_bun_relative_path
+        .as_ref()
+        .map(|relative_path| root.join(relative_path));
+    if let Some(path) = bundled_bun_path.as_ref() {
+        if !path.exists() {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_file_missing",
+                format!("Bundled Bun executable is missing: {}", path.display()),
+                None,
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
+        if !is_executable(path) {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_unexecutable",
+                format!("Bundled Bun executable is not runnable: {}", path.display()),
+                Some(path),
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
+    }
+
     for optional_path in [
         manifest.notice_relative_path.as_deref(),
         manifest.sbom_relative_path.as_deref(),
@@ -859,6 +927,7 @@ fn validate_bundled_runtime_root(
         mode: mode.as_str().into(),
         executable_path,
         package_dir: Some(package_dir),
+        bundled_bun_path,
         agent_dir: agent_dir.to_path_buf(),
         version,
         built_at,
@@ -1244,7 +1313,13 @@ mod tests {
         );
     }
 
-    fn write_manifest(root: &Path, platform: &str, arch: &str, files: Vec<Value>) {
+    fn write_manifest(
+        root: &Path,
+        platform: &str,
+        arch: &str,
+        files: Vec<Value>,
+        bundled_bun_relative_path: Option<&str>,
+    ) {
         write_notice_and_sbom(root);
         let manifest = json!({
             "schemaVersion": 1,
@@ -1257,6 +1332,7 @@ mod tests {
             "orchestraPackVersion": 2,
             "executableRelativePath": executable_relative_path(),
             "packageDirRelativePath": "runtime",
+            "bundledBunRelativePath": bundled_bun_relative_path,
             "noticeRelativePath": "THIRD_PARTY_NOTICES.txt",
             "sbomRelativePath": "sbom.cyclonedx.json",
             "files": files,
@@ -1286,6 +1362,7 @@ mod tests {
             expected_manifest_platform(),
             expected_manifest_arch(),
             files,
+            None,
         );
         let agent_dir = make_temp_dir("agent-dir");
 
@@ -1354,6 +1431,7 @@ mod tests {
                 }),
                 manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
             ],
+            None,
         );
         let agent_dir = make_temp_dir("agent-dir-checksum-mismatch");
 
@@ -1385,6 +1463,7 @@ mod tests {
                 manifest_file_entry(&root, executable_relative_path(), true),
                 manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
             ],
+            None,
         );
         let agent_dir = make_temp_dir("agent-dir-incompatible");
 
@@ -1404,6 +1483,7 @@ mod tests {
             mode: "packaged".into(),
             executable_path: PathBuf::from("/tmp/pi-runtime/runtime/pi"),
             package_dir: Some(PathBuf::from("/tmp/pi-runtime/runtime")),
+            bundled_bun_path: Some(PathBuf::from("/tmp/pi-runtime/bun/bin/bun")),
             agent_dir: PathBuf::from("/tmp/orchestra/runtime/pi/agent"),
             version: Some("0.68.1".into()),
             built_at: Some("2026-04-22T00:00:00Z".into()),
@@ -1427,6 +1507,52 @@ mod tests {
         assert_eq!(
             map.get("PI_PACKAGE_DIR"),
             Some(&"/tmp/pi-runtime/runtime".to_string())
+        );
+        let path_value = map
+            .get("PATH")
+            .expect("bundled bun path should be exported");
+        let path_entries = env::split_paths(path_value)
+            .map(|entry| entry.display().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            path_entries.first().map(String::as_str),
+            Some("/tmp/pi-runtime/bun/bin")
+        );
+    }
+
+    #[test]
+    fn validates_optional_bundled_bun_executable() {
+        let root = make_temp_dir("bundled-valid-with-bun");
+        let executable_path = root.join(executable_relative_path());
+        let bundled_bun_relative_path = if cfg!(windows) {
+            "bun/bin/bun.exe"
+        } else {
+            "bun/bin/bun"
+        };
+        let bundled_bun_path = root.join(bundled_bun_relative_path);
+        write_fake_executable(&executable_path);
+        write_fake_executable(&bundled_bun_path);
+        write_notice_and_sbom(&root);
+        let files = vec![
+            manifest_file_entry(&root, executable_relative_path(), true),
+            manifest_file_entry(&root, bundled_bun_relative_path, true),
+            manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+        ];
+        write_manifest(
+            &root,
+            expected_manifest_platform(),
+            expected_manifest_arch(),
+            files,
+            Some(bundled_bun_relative_path),
+        );
+        let agent_dir = make_temp_dir("agent-dir-with-bun");
+
+        let runtime = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect("bundled runtime with Bun should validate");
+
+        assert_eq!(
+            runtime.bundled_bun_path.as_deref(),
+            Some(bundled_bun_path.as_path())
         );
     }
 

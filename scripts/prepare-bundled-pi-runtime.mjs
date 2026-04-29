@@ -16,9 +16,12 @@ const repoRoot = path.resolve(__dirname, "..");
 const generatedRoot = path.join(repoRoot, "src-tauri", "gen", "pi-runtime");
 const packageName = process.env.ORCHESTRA_PI_PACKAGE_NAME?.trim() || "@mariozechner/pi-coding-agent";
 const requestedVersion = process.env.ORCHESTRA_PI_VERSION?.trim() || "latest";
+const bunWrapperPackageName = process.env.ORCHESTRA_BUN_WRAPPER_PACKAGE_NAME?.trim() || "bun";
+const requestedBunVersion = process.env.ORCHESTRA_BUN_VERSION?.trim() || "latest";
 const releaseBaseUrl = process.env.ORCHESTRA_PI_RELEASE_BASE_URL?.trim() || "https://github.com/badlogic/pi-mono/releases/download";
 const npmBinary = process.env.ORCHESTRA_NPM_BINARY?.trim() || "npm";
 const executableName = process.platform === "win32" ? "pi.exe" : "pi";
+const bunExecutableName = process.platform === "win32" ? "bun.exe" : "bun";
 const platform = mapPlatform(process.platform);
 const arch = mapArch(process.arch);
 const noticeFileName = "THIRD_PARTY_NOTICES.txt";
@@ -61,6 +64,32 @@ function npmView(specifier, field) {
   return execFileSync(npmBinary, ["view", specifier, field, "--silent"], {
     encoding: "utf8",
   }).trim();
+}
+
+function npmViewJson(specifier, field) {
+  const output = execFileSync(npmBinary, ["view", specifier, field, "--json", "--silent"], {
+    encoding: "utf8",
+  }).trim();
+  return output ? JSON.parse(output) : null;
+}
+
+function bunPlatformPackageNameFor(platformName, archName) {
+  switch (`${platformName}/${archName}`) {
+    case "darwin/arm64":
+      return "@oven/bun-darwin-aarch64";
+    case "darwin/x64":
+      return "@oven/bun-darwin-x64-baseline";
+    case "linux/arm64":
+      return "@oven/bun-linux-aarch64";
+    case "linux/x64":
+      return "@oven/bun-linux-x64-baseline";
+    case "windows/arm64":
+      return "@oven/bun-windows-aarch64";
+    case "windows/x64":
+      return "@oven/bun-windows-x64-baseline";
+    default:
+      throw new Error(`No published Bun npm package is available for ${platformName}/${archName}.`);
+  }
 }
 
 function replaceBufferOccurrences(buffer, from, to) {
@@ -117,6 +146,26 @@ async function sanitizeBundledPiRuntime(runtimeRoot) {
   for (const relativePath of ["CHANGELOG.md", "examples"]) {
     await rm(path.join(runtimeRoot, relativePath), { recursive: true, force: true });
   }
+}
+
+function packNpmPackage(specifier, cwd) {
+  const result = spawnSync(npmBinary, ["pack", specifier, "--silent"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`Command failed: ${npmBinary} pack ${specifier}`);
+  }
+  const tarballName = result.stdout
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!tarballName) {
+    throw new Error(`npm pack ${specifier} did not produce a tarball name.`);
+  }
+  return path.join(cwd, tarballName);
 }
 
 function runCommand(command, args, options = {}) {
@@ -208,7 +257,41 @@ async function collectRuntimeNoticeSections(runtimeRoot) {
   return sections;
 }
 
-function buildThirdPartyNotice({ packageJson, resolvedVersion, tagName, assetName, assetUrl, noticeSections }) {
+async function prepareBundledBun(tempRoot, generatedRoot) {
+  const wrapperSpecifier = requestedBunVersion === "latest"
+    ? bunWrapperPackageName
+    : `${bunWrapperPackageName}@${requestedBunVersion}`;
+  const bunPackageName = bunPlatformPackageNameFor(platform, arch);
+  const optionalDependencies = npmViewJson(wrapperSpecifier, "optionalDependencies") || {};
+  const bunResolvedVersion = requestedBunVersion === "latest"
+    ? optionalDependencies[bunPackageName] || npmView(bunPackageName, "version")
+    : requestedBunVersion;
+  const bunSpecifier = `${bunPackageName}@${bunResolvedVersion}`;
+  const bunTarball = packNpmPackage(bunSpecifier, tempRoot);
+  const bunExtractRoot = path.join(tempRoot, "bun-extract");
+  await extractArchive(bunTarball, bunExtractRoot);
+
+  const extractedBunRoot = path.join(bunExtractRoot, "package");
+  const packageJson = JSON.parse(await readFile(path.join(extractedBunRoot, "package.json"), "utf8"));
+  const nextBunRoot = path.join(generatedRoot, "bun");
+  await cp(extractedBunRoot, nextBunRoot, { recursive: true });
+
+  const bundledExecutablePath = path.join(nextBunRoot, "bin", bunExecutableName);
+  if (!(await readFile(bundledExecutablePath).catch(() => null))) {
+    throw new Error(`Bundled Bun executable is missing from ${bunSpecifier}: ${bundledExecutablePath}`);
+  }
+  await chmod(bundledExecutablePath, 0o755);
+  maybeCodesignMacosExecutable(bundledExecutablePath);
+
+  return {
+    packageName: bunPackageName,
+    packageVersion: packageJson.version || bunResolvedVersion,
+    license: packageJson.license || "unknown",
+    executableRelativePath: path.relative(generatedRoot, bundledExecutablePath).split(path.sep).join("/"),
+  };
+}
+
+function buildThirdPartyNotice({ packageJson, resolvedVersion, tagName, assetName, assetUrl, noticeSections, bundledBun }) {
   const header = [
     "Orchestra bundled Pi runtime notice bundle",
     "",
@@ -220,9 +303,12 @@ function buildThirdPartyNotice({ packageJson, resolvedVersion, tagName, assetNam
     `Source asset: ${assetName}`,
     `Source URL: ${assetUrl}`,
     "",
+    bundledBun
+      ? `Bundled Bun: ${bundledBun.packageName}@${bundledBun.packageVersion} (${bundledBun.license})`
+      : null,
     "This file is generated by scripts/prepare-bundled-pi-runtime.mjs and ships with the embedded Pi runtime so release validation can point at a durable notice artifact.",
     "",
-  ];
+  ].filter(Boolean);
 
   if (noticeSections.length === 0) {
     header.push("No upstream LICENSE/NOTICE/COPYING files were present in the extracted runtime archive.");
@@ -299,15 +385,26 @@ function buildCycloneDxBom({ packageJson, resolvedVersion, tagName, assetUrl, ma
   };
 }
 
-async function buildRuntimeFileManifest(runtimeRoot, noticePath) {
-  const runtimeFiles = await listFilesRecursive(runtimeRoot, "runtime");
+async function buildRuntimeFileManifest(runtimeRoot, noticePath, bundledBunRoot = null, bundledBunExecutableRelativePath = null) {
   const manifestFiles = [];
+  const runtimeFiles = await listFilesRecursive(runtimeRoot, "runtime");
   for (const file of runtimeFiles) {
     manifestFiles.push({
       path: file.relativePath,
       sha256: await sha256ForFile(file.absolutePath),
       executable: file.relativePath === `runtime/${executableName}`,
     });
+  }
+
+  if (bundledBunRoot) {
+    const bundledBunFiles = await listFilesRecursive(bundledBunRoot, "bun");
+    for (const file of bundledBunFiles) {
+      manifestFiles.push({
+        path: file.relativePath,
+        sha256: await sha256ForFile(file.absolutePath),
+        executable: file.relativePath === bundledBunExecutableRelativePath,
+      });
+    }
   }
 
   manifestFiles.push({
@@ -359,6 +456,7 @@ async function main() {
     await chmod(bundledExecutablePath, 0o755);
     maybeCodesignMacosExecutable(bundledExecutablePath);
 
+    const bundledBun = await prepareBundledBun(tempRoot, nextGeneratedRoot);
     const noticeSections = await collectRuntimeNoticeSections(nextRuntimeRoot);
     const noticeContent = buildThirdPartyNotice({
       packageJson,
@@ -367,11 +465,17 @@ async function main() {
       assetName,
       assetUrl,
       noticeSections,
+      bundledBun,
     });
     const noticePath = path.join(nextGeneratedRoot, noticeFileName);
     await writeFile(noticePath, `${noticeContent.trimEnd()}\n`);
 
-    const manifestFiles = await buildRuntimeFileManifest(nextRuntimeRoot, noticePath);
+    const manifestFiles = await buildRuntimeFileManifest(
+      nextRuntimeRoot,
+      noticePath,
+      path.join(nextGeneratedRoot, "bun"),
+      bundledBun.executableRelativePath,
+    );
     const sbom = buildCycloneDxBom({
       packageJson,
       resolvedVersion,
@@ -394,6 +498,9 @@ async function main() {
       requestedVersionSpec: requestedVersion,
       executableRelativePath: `runtime/${executableName}`,
       packageDirRelativePath: "runtime",
+      bundledBunRelativePath: bundledBun.executableRelativePath,
+      bundledBunPackageName: bundledBun.packageName,
+      bundledBunVersion: bundledBun.packageVersion,
       builtAt: new Date().toISOString(),
       sourceTag: tagName,
       sourceAssetName: assetName,
@@ -401,7 +508,7 @@ async function main() {
       noticeRelativePath: noticeFileName,
       sbomRelativePath: sbomFileName,
       files: manifestFiles,
-      notes: `Generated from the published standalone Pi runtime release asset ${assetName}. Orchestra refreshes this pack on every packaged build and records bundled file checksums for runtime verification.`,
+      notes: `Generated from the published standalone Pi runtime release asset ${assetName} plus ${bundledBun.packageName}@${bundledBun.packageVersion}. Orchestra refreshes this pack on every packaged build and records bundled file checksums for runtime verification.`,
     };
     await writeFile(path.join(nextGeneratedRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
@@ -410,7 +517,7 @@ async function main() {
     await rename(nextGeneratedRoot, generatedRoot);
 
     console.log(
-      `[orchestra] bundled Pi runtime ready: ${packageJson.version} -> ${path.join(generatedRoot, "runtime", executableName)}`,
+      `[orchestra] bundled Pi runtime ready: ${packageJson.version} (+ Bun ${bundledBun.packageVersion}) -> ${path.join(generatedRoot, "runtime", executableName)}`,
     );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

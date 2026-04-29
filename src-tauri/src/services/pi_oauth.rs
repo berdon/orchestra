@@ -17,7 +17,7 @@ use crate::{
     services::{
         app_events,
         orchestra_paths::{default_orchestra_root, pi_agent_dir, pi_runtime_root},
-        pi_sessions, pi_setup,
+        pi_runtime, pi_sessions, pi_setup,
     },
     state::AppState,
 };
@@ -168,6 +168,14 @@ fn resolve_js_runtime() -> Result<PathBuf, String> {
         }
     }
 
+    if let Some(path) = pi_runtime::resolve_pi_runtime(None)
+        .ok()
+        .and_then(|runtime| runtime.bundled_bun_path)
+        .filter(|path| path.exists())
+    {
+        return Ok(path);
+    }
+
     for candidate in ["node", "bun"] {
         if let Some(path) = resolve_command_in_path(candidate) {
             return Ok(path);
@@ -175,7 +183,7 @@ fn resolve_js_runtime() -> Result<PathBuf, String> {
     }
 
     Err(
-        "Unable to locate a JavaScript runtime for Orchestra-started Pi OAuth flows. Install Node.js (or Bun) or set ORCHESTRA_NODE_EXECUTABLE to the runtime path."
+        "Unable to locate a JavaScript runtime for Orchestra-started Pi OAuth flows. Install Node.js, install Bun, or use the packaged Orchestra runtime that bundles Bun; ORCHESTRA_NODE_EXECUTABLE can also point at an explicit runtime path."
             .into(),
     )
 }

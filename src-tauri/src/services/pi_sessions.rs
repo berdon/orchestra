@@ -34,7 +34,7 @@ const GET_STATE_REQUEST_ID: &str = "get-state-1";
 const GET_MODELS_REQUEST_ID: &str = "get-models-1";
 const GET_SESSION_STATS_REQUEST_ID: &str = "get-session-stats-1";
 const SET_MODEL_REQUEST_ID: &str = "set-model-1";
-const MISSING_BUN_MODEL_DISCOVERY_MESSAGE: &str = "Pi could not load package-based model sources because Bun is not available on PATH. Install Bun or remove package-based Pi sources in Settings → Pi.";
+const MISSING_BUN_MODEL_DISCOVERY_MESSAGE: &str = "Harness could not load package-based model sources because Bun is not available on PATH used for Orchestra subprocesses. Install Bun or remove those package sources in Settings → Harness.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelDiscoveryErrorKind {
@@ -3810,8 +3810,8 @@ process.stdin.on('end', () => process.exit(0));
             classify_model_discovery_error(&error),
             Some(ModelDiscoveryErrorKind::MissingBun)
         );
-        assert!(error.contains("Bun is not available on PATH"));
-        assert!(error.contains("Settings → Pi"));
+        assert!(error.contains("Bun is not available on PATH used for Orchestra subprocesses"));
+        assert!(error.contains("Settings → Harness"));
         assert!(!error.contains("bun pm bin -g"));
         assert!(!error.contains("resolvePackageSources"));
     }
