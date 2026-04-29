@@ -2982,10 +2982,6 @@ strong {
   z-index: 14;
 }
 
-.page-fab--sessions {
-  bottom: max(160px, calc(env(safe-area-inset-bottom, 0px) + 160px));
-}
-
 .page-fab--lifted {
   bottom: max(108px, calc(env(safe-area-inset-bottom, 0px) + 108px));
 }
@@ -5262,10 +5258,6 @@ strong {
   .page-fab {
     right: max(12px, calc(env(safe-area-inset-right, 0px) + 12px));
     bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 12px));
-  }
-
-  .page-fab--sessions {
-    bottom: max(136px, calc(env(safe-area-inset-bottom, 0px) + 136px));
   }
 
   .page-fab--lifted {

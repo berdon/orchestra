@@ -169,6 +169,11 @@ export function SessionsPage({
   const [runtimeDetailsError, setRuntimeDetailsError] = useState<string | null>(null);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
   const [mobileSessionPickerOpen, setMobileSessionPickerOpen] = useState(false);
+  const [compactSessionLayout, setCompactSessionLayout] = useState(
+    () => (typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 1100px)").matches
+      : false),
+  );
   const [touchFriendlySessionListActions, setTouchFriendlySessionListActions] = useState(
     () => (typeof window !== "undefined"
       ? window.matchMedia("(max-width: 1100px), (hover: none), (pointer: coarse)").matches
@@ -195,15 +200,22 @@ export function SessionsPage({
       return undefined;
     }
 
-    const mediaQuery = window.matchMedia("(max-width: 1100px), (hover: none), (pointer: coarse)");
+    const compactLayoutMediaQuery = window.matchMedia("(max-width: 1100px)");
+    const touchFriendlyMediaQuery = window.matchMedia("(max-width: 1100px), (hover: none), (pointer: coarse)");
+    const updateCompactSessionLayout = () => {
+      setCompactSessionLayout(compactLayoutMediaQuery.matches);
+    };
     const updateTouchFriendlySessionListActions = () => {
-      setTouchFriendlySessionListActions(mediaQuery.matches);
+      setTouchFriendlySessionListActions(touchFriendlyMediaQuery.matches);
     };
 
+    updateCompactSessionLayout();
     updateTouchFriendlySessionListActions();
-    mediaQuery.addEventListener("change", updateTouchFriendlySessionListActions);
+    compactLayoutMediaQuery.addEventListener("change", updateCompactSessionLayout);
+    touchFriendlyMediaQuery.addEventListener("change", updateTouchFriendlySessionListActions);
     return () => {
-      mediaQuery.removeEventListener("change", updateTouchFriendlySessionListActions);
+      compactLayoutMediaQuery.removeEventListener("change", updateCompactSessionLayout);
+      touchFriendlyMediaQuery.removeEventListener("change", updateTouchFriendlySessionListActions);
     };
   }, []);
 
@@ -394,9 +406,13 @@ export function SessionsPage({
   }
 
   const selectedSessionPickerLabel = selectedSession ? getSessionListTitle(selectedSession) : `Choose ${sessionFilter} session`;
+  const showCreateSessionFab = Boolean(onCreateSession && (!compactSessionLayout || mobileSessionPickerOpen || !selectedSession));
 
   return (
-    <section className="panel-stack panel-stack--sessions panel-stack--sessions-layout sessions-page">
+    <section className={showCreateSessionFab
+      ? "panel-stack panel-stack--sessions panel-stack--sessions-layout sessions-page task-page-stack--with-fab"
+      : "panel-stack panel-stack--sessions panel-stack--sessions-layout sessions-page"}
+    >
       <div className="page-mobile-switcher page-mobile-switcher--sessions" data-role="sessions-mobile-switcher">
         <button
           className="page-mobile-switcher__trigger"
@@ -777,7 +793,7 @@ export function SessionsPage({
         )}
       />
 
-      {onCreateSession ? (
+      {showCreateSessionFab ? (
         <div className="page-fab page-fab--sessions" data-role="sessions-create-fab">
           <button
             className="primary-button page-fab__button"

@@ -25,6 +25,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const mobilePickerTrigger = document.querySelector('[data-role="sessions-mobile-picker-trigger"]') as HTMLElement | null;
     const mobilePickerCurrent = document.querySelector('.page-mobile-switcher--sessions .page-mobile-switcher__current') as HTMLElement | null;
     const mobilePickerSheet = document.querySelector('[data-role="sessions-mobile-picker"]') as HTMLElement | null;
+    const createSessionFabButton = document.querySelector('[data-role="sessions-create-fab"] [data-role="create-session"]') as HTMLButtonElement | null;
 
     if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
       return null;
@@ -39,6 +40,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const modelRect = modelSelect?.getBoundingClientRect() ?? null;
     const triggerRect = mobilePickerTrigger?.getBoundingClientRect() ?? null;
     const sheetRect = mobilePickerSheet?.getBoundingClientRect() ?? null;
+    const fabRect = createSessionFabButton?.getBoundingClientRect() ?? null;
     const pickerCurrentStyle = mobilePickerCurrent ? window.getComputedStyle(mobilePickerCurrent) : null;
 
     return {
@@ -71,6 +73,8 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       mobilePickerCurrentOverflow: pickerCurrentStyle?.overflow ?? null,
       mobilePickerCurrentTextOverflow: pickerCurrentStyle?.textOverflow ?? null,
       mobilePickerCurrentWhiteSpace: pickerCurrentStyle?.whiteSpace ?? null,
+      fabRightInset: fabRect ? window.innerWidth - fabRect.right : null,
+      fabBottomInset: fabRect ? window.innerHeight - fabRect.bottom : null,
       panelResize: window.getComputedStyle(panel).resize,
       composerResize: window.getComputedStyle(composerInput).resize,
     };
@@ -191,22 +195,55 @@ test("sessions page hides shared header controls on mobile while keeping session
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  const createSessionButton = page.locator('[data-role="create-session"]');
+  const createSessionFab = page.locator('[data-role="sessions-create-fab"]');
+  const createSessionButton = createSessionFab.locator('[data-role="create-session"]');
   await expect(page.locator('.page-header')).toHaveCount(0);
   await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
   await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
   await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="sessions-create-fab"]')).toBeVisible();
+  await expect(createSessionFab).toBeVisible();
   await expect(createSessionButton).toBeVisible();
+
+  const initialFabInsets = await page.evaluate(() => {
+    const button = document.querySelector('[data-role="sessions-create-fab"] [data-role="create-session"]');
+    if (!(button instanceof HTMLElement)) {
+      return null;
+    }
+    const rect = button.getBoundingClientRect();
+    return {
+      rightInset: window.innerWidth - rect.right,
+      bottomInset: window.innerHeight - rect.bottom,
+    };
+  });
+  expect(initialFabInsets).not.toBeNull();
+  expect(initialFabInsets?.rightInset ?? 999).toBeGreaterThanOrEqual(8);
+  expect(initialFabInsets?.rightInset ?? 999).toBeLessThanOrEqual(24);
+  expect(initialFabInsets?.bottomInset ?? 999).toBeGreaterThanOrEqual(8);
+  expect(initialFabInsets?.bottomInset ?? 999).toBeLessThanOrEqual(24);
 
   await createSessionButton.click();
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
+  await expect(createSessionFab).toHaveCount(0);
   await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
+
+  const previousSessionCount = await page.locator('[data-role="session-link"]').count();
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await expect(page.locator('[data-role="session-actions-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-action-new"]')).toBeEnabled();
+  await page.locator('[data-role="session-action-new"]').click();
+  await expect(page.locator('[data-role="session-link"]')).toHaveCount(previousSessionCount + 1);
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
+  await expect(createSessionFab).toHaveCount(0);
 
   await page.locator('[data-role="composer-input"]').fill("Hello from mobile sessions");
   await page.locator('[data-role="composer-input"]').press("Control+Enter");
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Hello from mobile sessions", { timeout: 10_000 });
+
+  const activeLayout = await measureSessionLayout(page);
+  expect(activeLayout).not.toBeNull();
+  expect(activeLayout?.composerBottom ?? 999).toBeLessThanOrEqual((activeLayout?.viewportHeight ?? 0) - 8);
+  expect(activeLayout?.sendBottom ?? 999).toBeLessThanOrEqual((activeLayout?.viewportHeight ?? 0) - 8);
 
   await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
@@ -396,6 +433,7 @@ test("sessions mobile mirrors chat with a lightweight page-local session picker 
   await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-1"]').click();
   await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Mobile planning session");
+  await expect(page.locator('[data-role="sessions-create-fab"]')).toHaveCount(0);
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("First mobile transcript entry.");
 
