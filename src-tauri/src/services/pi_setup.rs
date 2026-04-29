@@ -441,7 +441,19 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
     let available_models = match pi_sessions::list_available_models() {
         Ok(models) => models,
         Err(error) => {
-            if models_path.exists() {
+            if pi_sessions::classify_model_discovery_error(&error).is_some() {
+                let issue = PiSetupIssue {
+                    code: "package_source_bun_unavailable".into(),
+                    message: error,
+                    provider_id: None,
+                    model_id: None,
+                };
+                if models_path.exists() {
+                    issues.push(issue);
+                } else {
+                    warnings.push(issue);
+                }
+            } else if models_path.exists() {
                 issues.push(PiSetupIssue {
                     code: "models_json_invalid".into(),
                     message: format!(
@@ -564,6 +576,9 @@ pub fn block_message_for_state(state: &PiSetupState) -> String {
                     state.models_path
                 );
             }
+            "package_source_bun_unavailable" => {
+                return "Pi package-based model sources require Bun. Install Bun or remove package-based Pi sources in Settings → Pi before running Pi-backed work.".into();
+            }
             _ => {}
         }
     }
@@ -633,6 +648,19 @@ mod tests {
 
         let message = block_message_for_state(&state);
         assert!(message.contains("models.json"));
+        assert!(message.contains("Settings → Pi"));
+    }
+
+    #[test]
+    fn block_message_mentions_bun_for_package_sources() {
+        let state = setup_state_with_issue(
+            "package_source_bun_unavailable",
+            "/tmp/orchestra/runtime/pi/agent/auth.json",
+            "/tmp/orchestra/runtime/pi/agent/models.json",
+        );
+
+        let message = block_message_for_state(&state);
+        assert!(message.contains("Install Bun"));
         assert!(message.contains("Settings → Pi"));
     }
 

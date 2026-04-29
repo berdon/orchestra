@@ -46,7 +46,7 @@ PATH_TRAP_LOG="${RUN_DIR}/path-tool-trap.log"
 mkdir -p "${AGENT_DIR}" "${TRAP_BIN_DIR}"
 rm -rf "${TEST_HOME}/.pi"
 
-for tool in pi node npm; do
+for tool in pi node npm bun; do
   if env PATH="${SANITIZED_PATH}" /bin/sh -lc "command -v ${tool}" >/dev/null 2>&1; then
     echo "[packaged-runtime-validation] base sanitized PATH still resolves ${tool}; shadowing it with a failing trap binary so packaged validation can still prove the app did not use PATH-discovered ${tool}."
   fi
@@ -181,7 +181,7 @@ ORCHESTRA_PACKAGED_RUNTIME_APP_BINARY="${APP_BINARY}" \
 npx vitest run "${TEST_FILE}"
 
 if [[ -s "${PATH_TRAP_LOG}" ]]; then
-  echo "Packaged app attempted to invoke PATH-discovered pi/node/npm during validation:" >&2
+  echo "Packaged app attempted to invoke PATH-discovered pi/node/npm/bun during validation:" >&2
   cat "${PATH_TRAP_LOG}" >&2
   exit 1
 fi

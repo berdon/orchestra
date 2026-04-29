@@ -176,10 +176,16 @@ pub fn runtime_environment_variables(
     agent_dir_override: Option<&Path>,
 ) -> Vec<(String, String)> {
     let agent_dir = agent_dir_override.unwrap_or(&runtime.agent_dir);
-    let mut environment = vec![(
-        "PI_CODING_AGENT_DIR".to_string(),
-        agent_dir.display().to_string(),
-    )];
+    let npm_prefix_dir = runtime_managed_npm_prefix_dir(agent_dir);
+    let npm_prefix = npm_prefix_dir.display().to_string();
+    let mut environment = vec![
+        (
+            "PI_CODING_AGENT_DIR".to_string(),
+            agent_dir.display().to_string(),
+        ),
+        ("NPM_CONFIG_PREFIX".to_string(), npm_prefix.clone()),
+        ("npm_config_prefix".to_string(), npm_prefix),
+    ];
 
     if runtime.source == "bundled" {
         if let Some(package_dir) = runtime.package_dir.as_ref() {
@@ -191,6 +197,10 @@ pub fn runtime_environment_variables(
     }
 
     environment
+}
+
+fn runtime_managed_npm_prefix_dir(agent_dir: &Path) -> PathBuf {
+    agent_dir.parent().unwrap_or(agent_dir).join("npm")
 }
 
 pub fn user_shell() -> Result<PathBuf, String> {
@@ -1012,6 +1022,14 @@ fn ensure_orchestra_pi_agent_dir() -> Result<PathBuf, String> {
         )
     })?;
 
+    let npm_prefix_dir = runtime_managed_npm_prefix_dir(&agent_dir);
+    fs::create_dir_all(&npm_prefix_dir).map_err(|error| {
+        format!(
+            "Unable to create Orchestra Pi npm prefix directory {}: {error}",
+            npm_prefix_dir.display()
+        )
+    })?;
+
     if directory_is_empty(&agent_dir) {
         migrate_legacy_agent_dir(&agent_dir)?;
     }
@@ -1023,12 +1041,18 @@ fn migrate_legacy_agent_dir(destination: &Path) -> Result<(), String> {
     let Some(home) = env::var_os("HOME").map(PathBuf::from) else {
         return Ok(());
     };
-    let legacy_agent_dir = home.join(".pi").join("agent");
+    migrate_legacy_agent_dir_from(&home.join(".pi").join("agent"), destination)
+}
+
+fn migrate_legacy_agent_dir_from(
+    legacy_agent_dir: &Path,
+    destination: &Path,
+) -> Result<(), String> {
     if !legacy_agent_dir.exists() {
         return Ok(());
     }
 
-    for file_name in ["auth.json", "models.json", "settings.json"] {
+    for file_name in ["auth.json", "models.json"] {
         let source = legacy_agent_dir.join(file_name);
         let target = destination.join(file_name);
         if source.exists() && !target.exists() {
@@ -1374,7 +1398,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_environment_sets_agent_dir_and_package_dir_for_bundled_runtime() {
+    fn runtime_environment_sets_agent_dir_package_dir_and_npm_prefix_for_bundled_runtime() {
         let runtime = ResolvedPiRuntime {
             source: "bundled".into(),
             mode: "packaged".into(),
@@ -1393,8 +1417,35 @@ mod tests {
             Some(&"/tmp/orchestra/runtime/pi/agent".to_string())
         );
         assert_eq!(
+            map.get("NPM_CONFIG_PREFIX"),
+            Some(&"/tmp/orchestra/runtime/pi/npm".to_string())
+        );
+        assert_eq!(
+            map.get("npm_config_prefix"),
+            Some(&"/tmp/orchestra/runtime/pi/npm".to_string())
+        );
+        assert_eq!(
             map.get("PI_PACKAGE_DIR"),
             Some(&"/tmp/pi-runtime/runtime".to_string())
         );
+    }
+
+    #[test]
+    fn legacy_migration_skips_settings_json() {
+        let legacy_agent_dir = make_temp_dir("legacy-agent");
+        let destination = make_temp_dir("orchestra-agent");
+        write_file(&legacy_agent_dir.join("auth.json"), "{}\n");
+        write_file(&legacy_agent_dir.join("models.json"), "{}\n");
+        write_file(
+            &legacy_agent_dir.join("settings.json"),
+            "{\"packages\":[\"npm:test\"]}\n",
+        );
+
+        migrate_legacy_agent_dir_from(&legacy_agent_dir, &destination)
+            .expect("legacy migration should succeed");
+
+        assert!(destination.join("auth.json").exists());
+        assert!(destination.join("models.json").exists());
+        assert!(!destination.join("settings.json").exists());
     }
 }
