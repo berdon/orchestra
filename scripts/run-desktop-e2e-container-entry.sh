@@ -173,7 +173,21 @@ fi
 export DISPLAY="${XVFB_DISPLAY}"
 export ORCHESTRA_TAURI_BINARY="${HOST_BINARY_PATH}"
 export ORCHESTRA_PROJECT_ROOT="${WORKSPACE_DIR}"
-export ORCHESTRA_PI_EXECUTABLE="/workspace/orchestra/node_modules/.bin/pi"
 export IS_DESKTOP_E2E=1
-echo "[desktop-e2e] launching isolated desktop harness with DISPLAY=${DISPLAY} binary=${ORCHESTRA_TAURI_BINARY} project_root=${ORCHESTRA_PROJECT_ROOT} pi=${ORCHESTRA_PI_EXECUTABLE}"
+
+if [[ "${TEST_FILE}" == "tests/desktop-e2e/packaged-runtime-smoke.test.ts" ]]; then
+  export ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT="${WORKSPACE_DIR}/.tmp/desktop-e2e/bundled-pi-runtime"
+  export ORCHESTRA_DESKTOP_E2E_RUNTIME_VALIDATION_MODE="podman"
+  export ORCHESTRA_DESKTOP_E2E_EXPECT_RUNTIME_PATH_FRAGMENT="bundled-pi-runtime"
+  export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH=0
+  export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS=0
+  export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS=0
+  unset ORCHESTRA_PI_EXECUTABLE
+  node "${WORKSPACE_DIR}/scripts/prepare-desktop-e2e-bundled-runtime-fixture.mjs" "${ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT}"
+  echo "[desktop-e2e] launching bundled-runtime podman validation with DISPLAY=${DISPLAY} binary=${ORCHESTRA_TAURI_BINARY} project_root=${ORCHESTRA_PROJECT_ROOT} runtime_root=${ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT}"
+else
+  export ORCHESTRA_PI_EXECUTABLE="/workspace/orchestra/node_modules/.bin/pi"
+  echo "[desktop-e2e] launching isolated desktop harness with DISPLAY=${DISPLAY} binary=${ORCHESTRA_TAURI_BINARY} project_root=${ORCHESTRA_PROJECT_ROOT} pi=${ORCHESTRA_PI_EXECUTABLE}"
+fi
+
 ./scripts/run-desktop-e2e.sh "${TEST_FILE}"

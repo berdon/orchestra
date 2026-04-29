@@ -149,15 +149,20 @@ run_inner() {
 
   local managed_pi_dir="${TEST_HOME}/.orchestra/runtime/pi/agent"
   local legacy_pi_dir="${TEST_HOME}/.pi/agent"
+  local import_legacy_auth="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH:-1}"
   local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-1}"
   local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"
   if [[ -d "${legacy_pi_dir}" ]]; then
     mkdir -p "${managed_pi_dir}"
     chmod 700 "${TEST_HOME}/.orchestra" "${TEST_HOME}/.orchestra/runtime" "${TEST_HOME}/.orchestra/runtime/pi" "${managed_pi_dir}" 2>/dev/null || true
 
-    if [[ -f "${legacy_pi_dir}/auth.json" && ! -f "${managed_pi_dir}/auth.json" ]]; then
-      install -m 600 "${legacy_pi_dir}/auth.json" "${managed_pi_dir}/auth.json"
-      echo "[desktop-e2e-runner] imported host Pi auth.json into managed runtime"
+    if [[ "${import_legacy_auth}" == "1" ]]; then
+      if [[ -f "${legacy_pi_dir}/auth.json" && ! -f "${managed_pi_dir}/auth.json" ]]; then
+        install -m 600 "${legacy_pi_dir}/auth.json" "${managed_pi_dir}/auth.json"
+        echo "[desktop-e2e-runner] imported host Pi auth.json into managed runtime"
+      fi
+    elif [[ -f "${legacy_pi_dir}/auth.json" ]]; then
+      echo "[desktop-e2e-runner] skipping host Pi auth.json import because ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH=0"
     fi
 
     if [[ "${import_legacy_settings}" == "1" ]]; then

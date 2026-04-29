@@ -8,7 +8,12 @@ import {
   sleep,
 } from "./driver";
 
-const isPackagedValidation = process.env.ORCHESTRA_DESKTOP_E2E_PACKAGED_VALIDATION === "1";
+const runtimeValidationMode = process.env.ORCHESTRA_DESKTOP_E2E_RUNTIME_VALIDATION_MODE
+  ?? (process.env.ORCHESTRA_DESKTOP_E2E_PACKAGED_VALIDATION === "1" ? "packaged" : "");
+const isBundledRuntimeValidation = runtimeValidationMode === "packaged" || runtimeValidationMode === "podman";
+const expectPackagedMode = runtimeValidationMode === "packaged";
+const expectedRuntimeMode = expectPackagedMode ? "packaged" : "development";
+const expectedRuntimePathFragment = process.env.ORCHESTRA_DESKTOP_E2E_EXPECT_RUNTIME_PATH_FRAGMENT ?? "pi-runtime";
 const expectPromptSuccess = process.env.ORCHESTRA_PACKAGED_RUNTIME_EXPECT_PROMPT_SUCCESS === "1";
 const testHome = process.env.ORCHESTRA_TEST_HOME ?? "";
 
@@ -34,17 +39,17 @@ async function waitForAssistantText(webdriverSessionId: string, sessionId: strin
   throw new Error(`Timed out waiting for assistant text ${expectedText}. Last assistant messages: ${JSON.stringify(lastMessages)}`);
 }
 
-describe("packaged bundled-runtime validation", () => {
-  it.skipIf(!isPackagedValidation)("launches the packaged app with the bundled Pi runtime and Orchestra-managed Pi setup", async () => {
+describe("bundled-runtime validation", () => {
+  it.skipIf(!isBundledRuntimeValidation)("launches the app with the bundled Pi runtime and Orchestra-managed Pi setup", async () => {
     const webdriverSessionId = await createReadyWebdriverSession(120_000);
     try {
       await ensureReactReady(webdriverSessionId, 120_000);
 
       const appInfo = await invokeCommand<any>(webdriverSessionId, "get_app_info");
-      expect(appInfo?.piRuntimeDiagnostics?.runtime?.packagedMode).toBe(true);
+      expect(appInfo?.piRuntimeDiagnostics?.runtime?.packagedMode).toBe(expectPackagedMode);
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.source).toBe("bundled");
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? null).toBeNull();
-      expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.resolvedPath ?? "")).toContain("pi-runtime");
+      expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.resolvedPath ?? "")).toContain(expectedRuntimePathFragment);
       expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).toContain(".orchestra/runtime/pi/agent");
       expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).not.toContain("/.pi/");
       if (testHome) {
@@ -54,6 +59,10 @@ describe("packaged bundled-runtime validation", () => {
       const setupState = await invokeCommand<any>(webdriverSessionId, "get_pi_setup_state");
       expect(setupState?.status).toBe("ready");
       expect(String(setupState?.agentDir ?? "")).toContain(".orchestra/runtime/pi/agent");
+      expect(setupState?.packageDiagnostics?.bun?.available).toBe(true);
+      expect(String(setupState?.packageDiagnostics?.bun?.message ?? "")).toContain("Bundled Bun is available");
+      expect(String(setupState?.packageDiagnostics?.bun?.path ?? "")).toContain(expectedRuntimePathFragment);
+      expect(setupState?.packageDiagnostics?.blocking).toBe(false);
 
       const createdSession = await invokeCommand<any>(webdriverSessionId, "create_session", {
         title: "Packaged runtime smoke",
@@ -65,9 +74,9 @@ describe("packaged bundled-runtime validation", () => {
         sessionId: createdSession.id,
       });
       expect(runtimeDetails?.piRuntimeSource).toBe("bundled");
-      expect(runtimeDetails?.piRuntimeMode).toBe("packaged");
+      expect(runtimeDetails?.piRuntimeMode).toBe(expectedRuntimeMode);
       expect(runtimeDetails?.piRuntimeStatus).toBe("healthy");
-      expect(String(runtimeDetails?.piExecutablePath ?? "")).toContain("pi-runtime");
+      expect(String(runtimeDetails?.piExecutablePath ?? "")).toContain(expectedRuntimePathFragment);
       expect(String(runtimeDetails?.piRuntimeManifestPath ?? "")).toContain("manifest.json");
       expect(Array.isArray(runtimeDetails?.blockedExtraExtensions) ? runtimeDetails.blockedExtraExtensions : []).toEqual([]);
 

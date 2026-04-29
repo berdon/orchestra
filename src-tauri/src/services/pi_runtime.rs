@@ -1282,8 +1282,7 @@ mod tests {
         fs::write(path, content).expect("file should be written");
     }
 
-    fn write_fake_executable(path: &Path) {
-        write_file(path, "#!/bin/sh\necho pi\n");
+    fn mark_executable(path: &Path) {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1291,6 +1290,21 @@ mod tests {
             permissions.set_mode(0o755);
             fs::set_permissions(path, permissions).expect("permissions");
         }
+    }
+
+    fn write_fake_executable(path: &Path) {
+        write_file(path, "#!/bin/sh\necho pi\n");
+        mark_executable(path);
+    }
+
+    fn write_fake_bun_executable(path: &Path) {
+        let script = if cfg!(windows) {
+            "@echo off\r\necho bundled bun ok\r\n"
+        } else {
+            "#!/bin/sh\necho bundled bun ok\n"
+        };
+        write_file(path, script);
+        mark_executable(path);
     }
 
     fn manifest_file_entry(root: &Path, relative_path: &str, executable: bool) -> Value {
@@ -1554,6 +1568,59 @@ mod tests {
             runtime.bundled_bun_path.as_deref(),
             Some(bundled_bun_path.as_path())
         );
+    }
+
+    #[test]
+    fn packaged_runtime_environment_executes_bundled_bun_via_path() {
+        let root = make_temp_dir("bundled-bun-executes");
+        let executable_path = root.join(executable_relative_path());
+        let bundled_bun_relative_path = if cfg!(windows) {
+            "bun/bin/bun.cmd"
+        } else {
+            "bun/bin/bun"
+        };
+        let bundled_bun_path = root.join(bundled_bun_relative_path);
+        write_fake_executable(&executable_path);
+        write_fake_bun_executable(&bundled_bun_path);
+        write_notice_and_sbom(&root);
+        let files = vec![
+            manifest_file_entry(&root, executable_relative_path(), true),
+            manifest_file_entry(&root, bundled_bun_relative_path, true),
+            manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+        ];
+        write_manifest(
+            &root,
+            expected_manifest_platform(),
+            expected_manifest_arch(),
+            files,
+            Some(bundled_bun_relative_path),
+        );
+        let agent_dir = make_temp_dir("agent-dir-bun-executes");
+        let runtime = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect("bundled runtime with executable Bun should validate");
+
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "bun"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "bun"]);
+            command
+        };
+        apply_runtime_environment(&mut command, &runtime, None);
+
+        let output = command
+            .output()
+            .expect("packaged runtime subprocess should execute bundled Bun");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected bundled Bun subprocess to succeed; stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert_eq!(stdout.trim(), "bundled bun ok");
     }
 
     #[test]
