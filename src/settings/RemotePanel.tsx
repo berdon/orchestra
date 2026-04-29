@@ -241,6 +241,7 @@ export function RemotePanel() {
                 <input type="checkbox" data-role="remote-use-tailscale" checked={useTailscaleDraft} onChange={(event) => setUseTailscaleDraft(event.target.checked)} />
                 <span>Automatically expose the hosted Orchestra web app and API together on HTTPS port {portDraft || "49500"} via Tailscale Serve.</span>
               </label>
+              <p className="muted-copy">Orchestra stays completely idle with respect to Tailscale until remote access is enabled and this option is turned on.</p>
             </label>
             <label className="field-group" {...getTooltipProps("Choose which network interface the remote API listens on.")}>
               <span className="field-group__label">Bind host</span>
@@ -409,7 +410,7 @@ export function RemotePanel() {
           </div>
           <ol className="muted-copy remote-panel__steps">
             <li>Enable remote access and save the server settings.</li>
-            <li>Optional: turn on Tailscale Serve to expose the hosted Orchestra web app and API on the same HTTPS origin.</li>
+            <li>Optional: turn on Tailscale Serve to expose the hosted Orchestra web app and API on the same HTTPS origin. Orchestra only touches Tailscale while both remote access and this option are enabled.</li>
             <li>Create a pairing code.</li>
             <li>For browser access, open the Hosted Orchestra web app URL and enter the pairing code on the sign-in screen.</li>
             <li>For Android/iOS pairing, paste the Pairing API URL into the mobile app and enter the same code there.</li>

@@ -35,7 +35,7 @@ pub fn update_remote_access_settings(
     let settings = remote_access::update_settings(&connection, input)?;
     drop(connection);
 
-    if previous_settings.use_tailscale && previous_settings.port != settings.port {
+    if remote_access::tailscale_cleanup_required(&previous_settings, &settings) {
         let _ = remote_api::disable_remote_tailscale_api_route(previous_settings.port);
     }
 
