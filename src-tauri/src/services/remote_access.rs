@@ -17,6 +17,18 @@ pub const DEFAULT_REMOTE_PORT: u16 = 49500;
 pub const DEFAULT_REMOTE_TAILSCALE_ENABLED: bool = false;
 const PAIRING_TTL_MINUTES: i64 = 15;
 
+pub fn tailscale_runtime_enabled(settings: &RemoteAccessSettings) -> bool {
+    settings.enabled && settings.use_tailscale
+}
+
+pub fn tailscale_cleanup_required(
+    previous: &RemoteAccessSettings,
+    next: &RemoteAccessSettings,
+) -> bool {
+    tailscale_runtime_enabled(previous)
+        && (!tailscale_runtime_enabled(next) || previous.port != next.port)
+}
+
 pub fn effective_bind_host(settings: &RemoteAccessSettings) -> String {
     if settings.use_tailscale {
         "127.0.0.1".to_string()
@@ -518,5 +530,76 @@ mod tests {
 
         revoke_device(&connection, &auth.device.id).expect("device should revoke");
         assert!(authenticate_token(&connection, &auth.token).is_err());
+    }
+
+    #[test]
+    fn tailscale_runtime_requires_remote_access_and_tailscale_toggle() {
+        let disabled = RemoteAccessSettings {
+            enabled: false,
+            use_tailscale: true,
+            bind_host: DEFAULT_REMOTE_BIND_HOST.into(),
+            port: DEFAULT_REMOTE_PORT,
+            base_url: None,
+            websocket_url: None,
+            lan_base_url: None,
+            web_url: None,
+            tailscale_url: None,
+            tailscale_web_url: None,
+            started_at: None,
+            last_error: None,
+        };
+        let lan_only = RemoteAccessSettings {
+            enabled: true,
+            use_tailscale: false,
+            ..disabled.clone()
+        };
+        let tailscale_active = RemoteAccessSettings {
+            enabled: true,
+            use_tailscale: true,
+            ..disabled.clone()
+        };
+
+        assert!(!tailscale_runtime_enabled(&disabled));
+        assert!(!tailscale_runtime_enabled(&lan_only));
+        assert!(tailscale_runtime_enabled(&tailscale_active));
+    }
+
+    #[test]
+    fn tailscale_cleanup_only_runs_for_active_tailscale_transitions() {
+        let previous = RemoteAccessSettings {
+            enabled: true,
+            use_tailscale: true,
+            bind_host: "127.0.0.1".into(),
+            port: DEFAULT_REMOTE_PORT,
+            base_url: None,
+            websocket_url: None,
+            lan_base_url: None,
+            web_url: None,
+            tailscale_url: None,
+            tailscale_web_url: None,
+            started_at: None,
+            last_error: None,
+        };
+        let lan_only = RemoteAccessSettings {
+            enabled: true,
+            use_tailscale: false,
+            bind_host: DEFAULT_REMOTE_BIND_HOST.into(),
+            ..previous.clone()
+        };
+        let disabled = RemoteAccessSettings {
+            enabled: false,
+            ..previous.clone()
+        };
+        let port_changed = RemoteAccessSettings {
+            port: previous.port + 1,
+            ..previous.clone()
+        };
+        let still_active = previous.clone();
+
+        assert!(tailscale_cleanup_required(&previous, &lan_only));
+        assert!(tailscale_cleanup_required(&previous, &disabled));
+        assert!(tailscale_cleanup_required(&previous, &port_changed));
+        assert!(!tailscale_cleanup_required(&previous, &still_active));
+        assert!(!tailscale_cleanup_required(&lan_only, &previous));
     }
 }

@@ -8,6 +8,9 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -42,7 +45,7 @@ use crate::{
         task_schedules as task_schedule_commands, tasks as task_commands,
         workflows as workflow_commands,
     },
-     models::{
+    models::{
         AgentQueueEntryInput, AgentUpsertInput, AppInfo, ArchiveMailboxMessagesInput,
         AuthorizationContext, ChannelUpsertInput, LocalSkillUpsertInput, MailboxMessage,
         MarkMailboxMessagesReadInput, OrchestraCapabilityAvailability,
@@ -624,7 +627,36 @@ fn tailscale_dns_name() -> Result<Option<String>, String> {
         .filter(|value| !value.is_empty()))
 }
 
+#[cfg(test)]
+static TAILSCALE_CLI_AVAILABLE_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static TAILSCALE_URL_FOR_PORT_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct TailscaleHelperCallCounts {
+    cli_available: usize,
+    url_for_port: usize,
+}
+
+#[cfg(test)]
+fn reset_tailscale_helper_call_counts() {
+    TAILSCALE_CLI_AVAILABLE_CALLS.store(0, AtomicOrdering::Relaxed);
+    TAILSCALE_URL_FOR_PORT_CALLS.store(0, AtomicOrdering::Relaxed);
+}
+
+#[cfg(test)]
+fn tailscale_helper_call_counts() -> TailscaleHelperCallCounts {
+    TailscaleHelperCallCounts {
+        cli_available: TAILSCALE_CLI_AVAILABLE_CALLS.load(AtomicOrdering::Relaxed),
+        url_for_port: TAILSCALE_URL_FOR_PORT_CALLS.load(AtomicOrdering::Relaxed),
+    }
+}
+
 fn tailscale_url_for_port(port: u16) -> Result<Option<String>, String> {
+    #[cfg(test)]
+    TAILSCALE_URL_FOR_PORT_CALLS.fetch_add(1, AtomicOrdering::Relaxed);
+
     Ok(tailscale_dns_name()?.map(|dns_name| {
         if port == 443 {
             format!("https://{dns_name}/")
@@ -635,6 +667,9 @@ fn tailscale_url_for_port(port: u16) -> Result<Option<String>, String> {
 }
 
 fn tailscale_cli_available() -> bool {
+    #[cfg(test)]
+    TAILSCALE_CLI_AVAILABLE_CALLS.fetch_add(1, AtomicOrdering::Relaxed);
+
     let Ok(mut command) = tailscale_command() else {
         return false;
     };
@@ -1250,6 +1285,78 @@ mod tests {
             &[("ORCHESTRA_ENABLE_TEST_AUTHORIZATION", "1")],
         )
         .expect("skills permission production probe should pass");
+    }
+
+    #[test]
+    fn sync_tailscale_routes_skips_helper_calls_when_runtime_is_inactive() {
+        reset_tailscale_helper_call_counts();
+
+        let disabled = RemoteAccessSettings {
+            enabled: false,
+            use_tailscale: true,
+            bind_host: "127.0.0.1".into(),
+            port: 49500,
+            base_url: None,
+            websocket_url: None,
+            lan_base_url: None,
+            web_url: None,
+            tailscale_url: None,
+            tailscale_web_url: None,
+            started_at: None,
+            last_error: None,
+        };
+        let lan_only = RemoteAccessSettings {
+            enabled: true,
+            use_tailscale: false,
+            bind_host: "0.0.0.0".into(),
+            ..disabled.clone()
+        };
+
+        sync_tailscale_routes(&disabled).expect("disabled settings should short-circuit");
+        sync_tailscale_routes(&lan_only).expect("lan-only settings should short-circuit");
+
+        assert_eq!(
+            tailscale_helper_call_counts(),
+            TailscaleHelperCallCounts::default()
+        );
+    }
+
+    #[test]
+    fn populate_tailscale_status_urls_skips_lookup_when_runtime_is_inactive() {
+        reset_tailscale_helper_call_counts();
+
+        let mut disabled = RemoteAccessSettings {
+            enabled: false,
+            use_tailscale: true,
+            bind_host: "127.0.0.1".into(),
+            port: 49500,
+            base_url: None,
+            websocket_url: None,
+            lan_base_url: None,
+            web_url: None,
+            tailscale_url: Some("https://stale.example".into()),
+            tailscale_web_url: Some("https://stale.example".into()),
+            started_at: None,
+            last_error: None,
+        };
+        let mut lan_only = RemoteAccessSettings {
+            enabled: true,
+            use_tailscale: false,
+            bind_host: "0.0.0.0".into(),
+            ..disabled.clone()
+        };
+
+        populate_tailscale_status_urls(&mut disabled);
+        populate_tailscale_status_urls(&mut lan_only);
+
+        assert_eq!(disabled.tailscale_url, None);
+        assert_eq!(disabled.tailscale_web_url, None);
+        assert_eq!(lan_only.tailscale_url, None);
+        assert_eq!(lan_only.tailscale_web_url, None);
+        assert_eq!(
+            tailscale_helper_call_counts(),
+            TailscaleHelperCallCounts::default()
+        );
     }
 }
 
@@ -2785,20 +2892,27 @@ pub fn disable_remote_tailscale_api_route(api_port: u16) -> Result<(), String> {
 }
 
 fn sync_tailscale_routes(settings: &RemoteAccessSettings) -> Result<(), String> {
-    let api_target = remote_api_target_url(settings.port);
-    if !tailscale_cli_available() {
-        if settings.use_tailscale {
-            return ensure_tailscale_cli_available();
-        }
+    if !remote_access::tailscale_runtime_enabled(settings) {
         return Ok(());
     }
 
-    if settings.use_tailscale {
-        ensure_tailscale_serve(&api_target, settings.port)?;
-    } else {
-        disable_matching_tailscale_serve(&api_target, settings.port)?;
+    let api_target = remote_api_target_url(settings.port);
+    if !tailscale_cli_available() {
+        return ensure_tailscale_cli_available();
     }
+
+    ensure_tailscale_serve(&api_target, settings.port)?;
     Ok(())
+}
+
+fn populate_tailscale_status_urls(settings: &mut RemoteAccessSettings) {
+    settings.tailscale_url = None;
+    settings.tailscale_web_url = None;
+
+    if remote_access::tailscale_runtime_enabled(settings) {
+        settings.tailscale_url = tailscale_url_for_port(settings.port).ok().flatten();
+        settings.tailscale_web_url = settings.tailscale_url.clone();
+    }
 }
 
 pub fn stop_remote_api_server(state: &AppState) -> Result<(), String> {
@@ -2817,10 +2931,6 @@ pub fn ensure_remote_api_server(app: AppHandle, state: &AppState) -> Result<(), 
     drop(connection);
 
     if !settings.enabled {
-        let api_target = remote_api_target_url(settings.port);
-        if tailscale_cli_available() {
-            let _ = disable_matching_tailscale_serve(&api_target, settings.port);
-        }
         stop_remote_api_server(state)?;
         state.clear_remote_server_error()?;
         return Ok(());
@@ -2839,7 +2949,9 @@ pub fn ensure_remote_api_server(app: AppHandle, state: &AppState) -> Result<(), 
         start_remote_api_server(app.clone(), state, &runtime_settings)?;
     }
 
-    sync_tailscale_routes(&runtime_settings)?;
+    if remote_access::tailscale_runtime_enabled(&runtime_settings) {
+        sync_tailscale_routes(&runtime_settings)?;
+    }
     state.clear_remote_server_error()?;
     Ok(())
 }
@@ -2857,10 +2969,7 @@ pub fn build_remote_access_status(state: &AppState) -> Result<RemoteAccessStatus
         settings.web_url = settings.lan_base_url.clone().or(settings.base_url.clone());
         settings.started_at = Some(started_at);
     }
-    if settings.use_tailscale {
-        settings.tailscale_url = tailscale_url_for_port(settings.port).ok().flatten();
-        settings.tailscale_web_url = settings.tailscale_url.clone();
-    }
+    populate_tailscale_status_urls(&mut settings);
     settings.last_error = state.remote_server_error()?;
     let pairing_codes = remote_access::list_pairing_codes(&connection)?;
     let devices =

@@ -239,6 +239,7 @@ npm run web     # shared web frontend
 In **Settings → Remote**, Orchestra can now optionally manage Tailscale Serve for the hosted Orchestra web app:
 
 - the browser app, `/api/v1/frontend/bootstrap`, `/api/v1/*`, and `/api/v1/ws` all share the configured remote API HTTPS port (default `49500`)
+- Orchestra does not query or manage Tailscale unless remote access is enabled and **Use Tailscale Serve** is turned on
 - when **Use Tailscale Serve** is enabled, Orchestra binds the backend to `127.0.0.1` and keeps one HTTPS Serve route pointed at that same-origin hosted-web/API surface automatically
 
 For packaged builds, the Tauri bundle now includes the hosted-web `dist/` assets built from the main shared frontend:
