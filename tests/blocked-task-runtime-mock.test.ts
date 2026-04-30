@@ -31,9 +31,19 @@ describe("blocked task runtime mock parity", () => {
   test("mock mode preserves an active lane assignment when a task becomes blocked", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");
-    const { createWorkflow, createTask, dispatchTaskLane, getTask, updateTask } = await import("../src/lib/tauri");
+    const {
+      createWorkflow,
+      createTask,
+      dispatchTaskLane,
+      getTask,
+      updateTask,
+    } = await import("../src/lib/tauri");
 
-    await createProject({ name: "Blocked Runtime Mock Project", description: "mock project", taskPrefix: "BRM" });
+    await createProject({
+      name: "Blocked Runtime Mock Project",
+      description: "mock project",
+      taskPrefix: "BRM",
+    });
     const role = await createRole({
       name: "Mock Blocked Runtime Role",
       description: "Role for blocked runtime mock coverage.",
@@ -102,9 +112,20 @@ describe("blocked task runtime mock parity", () => {
   test("mock mode stops a blocked active task when it tries to transition and leaves it blocked", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");
-    const { createWorkflow, createTask, dispatchTaskLane, getTask, updateTask, completeLaneAsSuccess } = await import("../src/lib/tauri");
+    const {
+      createWorkflow,
+      createTask,
+      dispatchTaskLane,
+      getTask,
+      updateTask,
+      completeLaneAsSuccess,
+    } = await import("../src/lib/tauri");
 
-    await createProject({ name: "Blocked Transition Mock Project", description: "mock project", taskPrefix: "BTM" });
+    await createProject({
+      name: "Blocked Transition Mock Project",
+      description: "mock project",
+      taskPrefix: "BTM",
+    });
     const role = await createRole({
       name: "Mock Blocked Transition Role",
       description: "Role for blocked transition mock coverage.",
@@ -161,19 +182,32 @@ describe("blocked task runtime mock parity", () => {
       archived: dispatched.archived,
     });
 
-    const blocked = await completeLaneAsSuccess(task.id, "Tried to finish while blocked.");
+    const blocked = await completeLaneAsSuccess(
+      task.id,
+      "Tried to finish while blocked.",
+    );
     expect(blocked.status).toBe("blocked");
     expect(blocked.activeLaneAssignment).toBeNull();
     expect(blocked.currentLaneId).toBe("lane-implement");
     expect(blocked.laneRuns.at(-1)?.result).toBe("blocked");
   });
 
-  test("mock mode unblocks a dependent when the blocker advances to the Test lane", async () => {
+  test("mock mode keeps a dependent blocked through blocker lane advancement and only unblocks on completion", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");
-    const { createWorkflow, createTask, addTaskDependency, completeLaneAsSuccess, getTask } = await import("../src/lib/tauri");
+    const {
+      createWorkflow,
+      createTask,
+      addTaskDependency,
+      completeLaneAsSuccess,
+      getTask,
+    } = await import("../src/lib/tauri");
 
-    await createProject({ name: "Dependency Test Lane Mock Project", description: "mock project", taskPrefix: "DTM" });
+    await createProject({
+      name: "Dependency Test Lane Mock Project",
+      description: "mock project",
+      taskPrefix: "DTM",
+    });
     const role = await createRole({
       name: "Mock Dependency Implementer",
       description: "Role for dependency lane coverage.",
@@ -182,7 +216,7 @@ describe("blocked task runtime mock parity", () => {
     });
     const blockerWorkflow = await createWorkflow({
       name: "Mock Blocker Implement Test Flow",
-      description: "Implement lane advances to Test.",
+      description: "Implement lane advances to Test before final completion.",
       lanes: [
         {
           id: "lane-implement",
@@ -240,7 +274,7 @@ describe("blocked task runtime mock parity", () => {
 
     const blocker = await createTask({
       title: "Mock blocker to test",
-      description: "Advancing this to Test should unblock the dependent.",
+      description: "Advancing this to Test should not unblock the dependent.",
       type: "task",
       status: "ready",
       priority: "P1",
@@ -250,8 +284,8 @@ describe("blocked task runtime mock parity", () => {
       assigneeId: role.slug,
     });
     const dependent = await createTask({
-      title: "Mock dependent blocked until test",
-      description: "Should be runnable once the blocker reaches Test.",
+      title: "Mock dependent blocked until completion",
+      description: "Should stay blocked until the blocker actually completes.",
       type: "task",
       status: "ready",
       priority: "P2",
@@ -267,9 +301,23 @@ describe("blocked task runtime mock parity", () => {
     expect(blocked.dependencyBlocked).toBe(true);
     expect(blocked.readyForDispatch).toBe(false);
 
-    const transitioned = await completeLaneAsSuccess(blocker.id, "Implementation ready for Test.");
+    const transitioned = await completeLaneAsSuccess(
+      blocker.id,
+      "Implementation ready for Test.",
+    );
     expect(transitioned.status).toBe("in_review");
     expect(transitioned.currentLaneId).toBe("lane-test");
+
+    const stillBlocked = await getTask(dependent.id);
+    expect(stillBlocked.status).toBe("blocked");
+    expect(stillBlocked.dependencyBlocked).toBe(true);
+    expect(stillBlocked.readyForDispatch).toBe(false);
+
+    const completed = await completeLaneAsSuccess(
+      blocker.id,
+      "Test completed.",
+    );
+    expect(completed.status).toBe("completed");
 
     const unblocked = await getTask(dependent.id);
     expect(unblocked.status).toBe("ready");
@@ -280,9 +328,14 @@ describe("blocked task runtime mock parity", () => {
   test("mock mode rejects dispatch for initially blocked tasks", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");
-    const { createWorkflow, createTask, dispatchTaskLane } = await import("../src/lib/tauri");
+    const { createWorkflow, createTask, dispatchTaskLane } =
+      await import("../src/lib/tauri");
 
-    await createProject({ name: "Initially Blocked Mock Project", description: "mock project", taskPrefix: "IBM" });
+    await createProject({
+      name: "Initially Blocked Mock Project",
+      description: "mock project",
+      taskPrefix: "IBM",
+    });
     const role = await createRole({
       name: "Mock Initially Blocked Role",
       description: "Role for initially blocked mock coverage.",
@@ -322,6 +375,8 @@ describe("blocked task runtime mock parity", () => {
       assigneeId: role.slug,
     });
 
-    await expect(dispatchTaskLane(blockedTask.id)).rejects.toThrow(/blocked and cannot be dispatched/i);
+    await expect(dispatchTaskLane(blockedTask.id)).rejects.toThrow(
+      /blocked and cannot be dispatched/i,
+    );
   });
 });

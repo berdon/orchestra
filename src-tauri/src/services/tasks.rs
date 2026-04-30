@@ -3058,26 +3058,16 @@ fn unread_user_comment_count_sql(alias: &str) -> String {
 }
 
 fn unresolved_blocker_sql(alias: &str) -> String {
+    // Task dependencies are terminal-only: a blocker keeps blocking until the blocker
+    // task itself is actually completed or canceled. Intermediate lane movement,
+    // including review/test transitions, must not auto-resolve the dependency.
     format!(
         r#"COALESCE((
             SELECT COUNT(*)
             FROM task_dependencies d
             JOIN tasks blocker ON blocker.id = d.blocker_task_id
-            LEFT JOIN workflow_lanes blocker_current_lane
-                ON blocker_current_lane.workflow_id = blocker.workflow_id
-               AND blocker_current_lane.id = blocker.current_lane_id
             WHERE d.blocked_task_id = {alias}.id
               AND blocker.status NOT IN ('completed', 'canceled')
-              AND (
-                    d.blocker_workflow_id IS NULL
-                 OR d.blocker_lane_id IS NULL
-                 OR d.blocker_lane_order IS NULL
-                 OR blocker.workflow_id IS NULL
-                 OR blocker.current_lane_id IS NULL
-                 OR blocker.workflow_id != d.blocker_workflow_id
-                 OR blocker_current_lane.lane_order IS NULL
-                 OR blocker_current_lane.lane_order <= d.blocker_lane_order
-              )
         ), 0)"#
     )
 }
@@ -5290,7 +5280,7 @@ mod tests {
     }
 
     #[test]
-    fn dependency_resolves_when_blocker_advances_beyond_captured_lane() {
+    fn dependency_remains_blocked_when_blocker_advances_to_later_lane() {
         let mut connection = in_memory_connection();
         seed_multi_lane_workflow(&connection);
 
@@ -5310,14 +5300,14 @@ mod tests {
             Some("lane-review")
         );
 
-        let unblocked = get_task(&connection, &blocked.id).expect("reload unblocked task");
-        assert_eq!(unblocked.status, "ready");
-        assert!(!unblocked.dependency_blocked);
-        assert!(unblocked.ready_for_dispatch);
+        let still_blocked = get_task(&connection, &blocked.id).expect("reload still blocked task");
+        assert_eq!(still_blocked.status, "blocked");
+        assert!(still_blocked.dependency_blocked);
+        assert!(!still_blocked.ready_for_dispatch);
     }
 
     #[test]
-    fn dependency_remains_unresolved_without_lane_snapshot_until_terminal_status() {
+    fn dependency_resolves_only_on_terminal_status_even_without_lane_snapshot() {
         let mut connection = in_memory_connection();
         seed_multi_lane_workflow(&connection);
 
@@ -5364,6 +5354,79 @@ mod tests {
         assert_eq!(completed_blocker.status, "completed");
 
         let unblocked = get_task(&connection, &blocked.id).expect("reload unblocked legacy task");
+        assert_eq!(unblocked.status, "ready");
+        assert!(!unblocked.dependency_blocked);
+        assert!(unblocked.ready_for_dispatch);
+    }
+
+    #[test]
+    fn dependency_with_multiple_blockers_waits_for_final_completion() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let blocker_a = create_named_task(&mut connection, "Blocker A", "in_progress", None);
+        let blocker_b = create_named_task(&mut connection, "Blocker B", "in_progress", None);
+        let blocked = create_named_task(&mut connection, "Blocked", "ready", None);
+
+        add_task_dependency(&mut connection, &blocker_a.id, &blocked.id)
+            .expect("add first dependency");
+        add_task_dependency(&mut connection, &blocker_b.id, &blocked.id)
+            .expect("add second dependency");
+
+        let completed_blocker_a = update_task(
+            &mut connection,
+            &blocker_a.id,
+            TaskUpsertInput {
+                title: blocker_a.title.clone(),
+                description: blocker_a.description.clone(),
+                task_type: blocker_a.task_type.clone(),
+                tags: blocker_a.tags.clone(),
+                status: "completed".into(),
+                priority: blocker_a.priority.clone(),
+                workflow_id: blocker_a.workflow_id.clone(),
+                current_lane_id: blocker_a.current_lane_id.clone(),
+                assignee_type: blocker_a.assignee_type.clone(),
+                assignee_id: blocker_a.assignee_id.clone(),
+                repository_id: blocker_a.repository_id.clone(),
+                repository_ids: blocker_a.repository_ids.clone(),
+                parent_task_id: blocker_a.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("complete first blocker");
+        assert_eq!(completed_blocker_a.status, "completed");
+
+        let still_blocked = get_task(&connection, &blocked.id).expect("reload still blocked task");
+        assert_eq!(still_blocked.status, "blocked");
+        assert!(still_blocked.dependency_blocked);
+        assert!(!still_blocked.ready_for_dispatch);
+
+        let completed_blocker_b = update_task(
+            &mut connection,
+            &blocker_b.id,
+            TaskUpsertInput {
+                title: blocker_b.title.clone(),
+                description: blocker_b.description.clone(),
+                task_type: blocker_b.task_type.clone(),
+                tags: blocker_b.tags.clone(),
+                status: "completed".into(),
+                priority: blocker_b.priority.clone(),
+                workflow_id: blocker_b.workflow_id.clone(),
+                current_lane_id: blocker_b.current_lane_id.clone(),
+                assignee_type: blocker_b.assignee_type.clone(),
+                assignee_id: blocker_b.assignee_id.clone(),
+                repository_id: blocker_b.repository_id.clone(),
+                repository_ids: blocker_b.repository_ids.clone(),
+                parent_task_id: blocker_b.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("complete final blocker");
+        assert_eq!(completed_blocker_b.status, "completed");
+
+        let unblocked = get_task(&connection, &blocked.id).expect("reload fully unblocked task");
         assert_eq!(unblocked.status, "ready");
         assert!(!unblocked.dependency_blocked);
         assert!(unblocked.ready_for_dispatch);

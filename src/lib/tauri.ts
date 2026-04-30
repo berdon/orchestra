@@ -1,17 +1,38 @@
 import { invoke } from "@tauri-apps/api/core";
-import { buildSeededMockProjects, buildSeededMockWorkflows, DEFAULT_INSTALL_BASELINE_PROJECT_ID } from "./defaultInstallBaseline";
+import {
+  buildSeededMockProjects,
+  buildSeededMockWorkflows,
+  DEFAULT_INSTALL_BASELINE_PROJECT_ID,
+} from "./defaultInstallBaseline";
 import { getActiveProjectId, getProjectRuntimeCwd } from "./projects";
 import { getStoredMockProjectRuntimeSettings } from "./mockProjectRuntimeSettings";
 import { formatTaskNumber, parseTaskNumber } from "./taskPrefixes";
 import { sortSessionRecords } from "./sessionList";
-import { buildMailboxNotificationIntent, buildTaskAttentionNotificationIntent, resolveNotificationProjectLabel } from "./notificationIntents";
-import { emitMockInboxChange, emitMockNotificationIntent, emitMockSessionChange, emitMockSessionStream, emitMockTaskChange } from "./mockOrchestra/events";
+import {
+  buildMailboxNotificationIntent,
+  buildTaskAttentionNotificationIntent,
+  resolveNotificationProjectLabel,
+} from "./notificationIntents";
+import {
+  emitMockInboxChange,
+  emitMockNotificationIntent,
+  emitMockSessionChange,
+  emitMockSessionStream,
+  emitMockTaskChange,
+} from "./mockOrchestra/events";
 import { isTauriAvailable } from "./mockOrchestra/host";
-import { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
+import {
+  createMockSessionRecord,
+  upsertMockSession,
+} from "./mockOrchestra/sessions";
 import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { getTaskTags } from "./taskListQuery";
 import { getEffectiveTaskReviewAssignmentStatus } from "./taskReviewState";
-import { normalizeTaskTags, TASK_TAG_COUNT_ERROR, validateTaskTag } from "./taskTags";
+import {
+  normalizeTaskTags,
+  TASK_TAG_COUNT_ERROR,
+  validateTaskTag,
+} from "./taskTags";
 import type {
   AgentSummary,
   AppInfo,
@@ -83,7 +104,8 @@ const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
 const TASK_FILE_CONTENT_STORAGE_KEY = "orchestra.mock.file-contents";
 const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
-const TASK_COMMENT_USER_RECEIPT_STORAGE_KEY = "orchestra.mock.task-comment-user-receipts";
+const TASK_COMMENT_USER_RECEIPT_STORAGE_KEY =
+  "orchestra.mock.task-comment-user-receipts";
 const MAILBOX_STORAGE_KEY = "orchestra.mock.mailbox";
 const AGENT_STORAGE_KEY = "orchestra.mock.agents";
 const AGENT_RUNTIME_STORAGE_KEY = "orchestra.mock.agent-runtimes";
@@ -109,40 +131,67 @@ type OrchestraWindowGlobals = Window & {
 };
 
 function getInjectedWindowKind() {
-  const windowKind = (window as OrchestraWindowGlobals).__ORCHESTRA_WINDOW_KIND__;
+  const windowKind = (window as OrchestraWindowGlobals)
+    .__ORCHESTRA_WINDOW_KIND__;
   return typeof windowKind === "string" ? windowKind : null;
 }
 
 function getStoredMockProjectSettings() {
   const value = window.localStorage.getItem(PROJECT_SETTINGS_STORAGE_KEY);
-  return value ? (JSON.parse(value) as { general?: { autoDispatchOnBlockerCompletion?: boolean }; projects?: Record<string, { runtime?: { autoDispatchOnBlockerCompletion?: boolean } }> }) : {};
+  return value
+    ? (JSON.parse(value) as {
+        general?: { autoDispatchOnBlockerCompletion?: boolean };
+        projects?: Record<
+          string,
+          { runtime?: { autoDispatchOnBlockerCompletion?: boolean } }
+        >;
+      })
+    : {};
 }
 
 function getStoredMockHarnessSettings() {
-  return getStoredValue<{ extraExtensions?: string[]; updatedAt?: string | null }>(HARNESS_SETTINGS_STORAGE_KEY) ?? {};
+  return (
+    getStoredValue<{ extraExtensions?: string[]; updatedAt?: string | null }>(
+      HARNESS_SETTINGS_STORAGE_KEY,
+    ) ?? {}
+  );
 }
 
 function getStoredMockProjects() {
-  return getStoredValue<ProjectDetail[]>("orchestra.mock.projects") ?? buildSeededMockProjects();
+  return (
+    getStoredValue<ProjectDetail[]>("orchestra.mock.projects") ??
+    buildSeededMockProjects()
+  );
 }
 
 function getStoredMockProjectsForSettings() {
-  return getStoredMockProjects().map((project) => ({ id: project.id, slug: project.slug }));
+  return getStoredMockProjects().map((project) => ({
+    id: project.id,
+    slug: project.slug,
+  }));
 }
 
 function resolveCurrentMockProjectId(preferredProjectId?: string | null) {
   const projects = getStoredMockProjectsForSettings();
-  if (preferredProjectId && projects.some((project) => project.id === preferredProjectId)) {
+  if (
+    preferredProjectId &&
+    projects.some((project) => project.id === preferredProjectId)
+  ) {
     return preferredProjectId;
   }
   return projects[0]?.id ?? null;
 }
 
 function hasStoredMockProject(projectId: string) {
-  return getStoredMockProjectsForSettings().some((project) => project.id === projectId);
+  return getStoredMockProjectsForSettings().some(
+    (project) => project.id === projectId,
+  );
 }
 
-function resolveMockProjectIdOrThrow(preferredProjectId?: string | null, entityLabel = "task") {
+function resolveMockProjectIdOrThrow(
+  preferredProjectId?: string | null,
+  entityLabel = "task",
+) {
   const resolvedProjectId = resolveCurrentMockProjectId(preferredProjectId);
   if (resolvedProjectId) {
     return resolvedProjectId;
@@ -151,15 +200,22 @@ function resolveMockProjectIdOrThrow(preferredProjectId?: string | null, entityL
 }
 
 export function getInitialLogsWindowFlag() {
-  return getInjectedWindowKind() === "logs" || new URLSearchParams(window.location.search).get("view") === "logs";
+  return (
+    getInjectedWindowKind() === "logs" ||
+    new URLSearchParams(window.location.search).get("view") === "logs"
+  );
 }
 
 export function getInitialAgentTerminalWindowFlag() {
-  return getInjectedWindowKind() === "agent-terminal" || new URLSearchParams(window.location.search).get("view") === "agent-terminal";
+  return (
+    getInjectedWindowKind() === "agent-terminal" ||
+    new URLSearchParams(window.location.search).get("view") === "agent-terminal"
+  );
 }
 
 export function getInitialAgentTerminalSessionId() {
-  const injectedSessionId = (window as OrchestraWindowGlobals).__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__;
+  const injectedSessionId = (window as OrchestraWindowGlobals)
+    .__ORCHESTRA_AGENT_TERMINAL_SESSION_ID__;
   if (typeof injectedSessionId === "string" && injectedSessionId.length > 0) {
     return injectedSessionId;
   }
@@ -204,7 +260,10 @@ const MOCK_MODELS: SessionModel[] = [
 
 export { emitMockSessionChange } from "./mockOrchestra/events";
 export { isTauriAvailable } from "./mockOrchestra/host";
-export { createMockSessionRecord, upsertMockSession } from "./mockOrchestra/sessions";
+export {
+  createMockSessionRecord,
+  upsertMockSession,
+} from "./mockOrchestra/sessions";
 export {
   listenToInboxChanges,
   listenToSessionChanges,
@@ -240,10 +299,16 @@ function normalizeLogLevel(_level: LogLevel, target: string): LogLevel {
 
 function normalizeLogEntry(entry: LogEntry): LogEntry {
   const normalizedLevel = normalizeLogLevel(entry.level, entry.target);
-  return normalizedLevel === entry.level ? entry : { ...entry, level: normalizedLevel };
+  return normalizedLevel === entry.level
+    ? entry
+    : { ...entry, level: normalizedLevel };
 }
 
-function createLogEntry(level: LogLevel, target: string, message: string): LogEntry {
+function createLogEntry(
+  level: LogLevel,
+  target: string,
+  message: string,
+): LogEntry {
   return {
     id: createId("log"),
     level: normalizeLogLevel(level, target),
@@ -253,7 +318,11 @@ function createLogEntry(level: LogLevel, target: string, message: string): LogEn
   };
 }
 
-function createEvent(kind: SessionEvent["kind"], message: string, overrides?: Partial<SessionEvent>): SessionEvent {
+function createEvent(
+  kind: SessionEvent["kind"],
+  message: string,
+  overrides?: Partial<SessionEvent>,
+): SessionEvent {
   return {
     id: createId("event"),
     kind,
@@ -279,61 +348,89 @@ function getDefaultMockPiPackageDiagnostics() {
 }
 
 function getStoredMockPiSetupState(): PiSetupState {
-  return getStoredValue<PiSetupState>(PI_SETUP_STORAGE_KEY) ?? {
-    status: "ready",
-    agentDir: "/mock/.orchestra/runtime/pi/agent",
-    authPath: "/mock/.orchestra/runtime/pi/agent/auth.json",
-    modelsPath: "/mock/.orchestra/runtime/pi/agent/models.json",
-    settingsPath: "/mock/.orchestra/runtime/pi/agent/settings.json",
-    legacyAgentDir: "/mock/.pi/agent",
-    availableProviders: [
-      {
-        id: "anthropic",
-        name: "Anthropic",
-        authModes: ["api_key", "oauth"],
-        connected: true,
-        usingOAuth: false,
-        modelCount: 1,
-        usesCallbackServer: true,
-        oauthMethods: [{ id: "browser_oauth", label: "Browser sign-in", kind: "browser", isDefault: true }],
+  return (
+    getStoredValue<PiSetupState>(PI_SETUP_STORAGE_KEY) ??
+    ({
+      status: "ready",
+      agentDir: "/mock/.orchestra/runtime/pi/agent",
+      authPath: "/mock/.orchestra/runtime/pi/agent/auth.json",
+      modelsPath: "/mock/.orchestra/runtime/pi/agent/models.json",
+      settingsPath: "/mock/.orchestra/runtime/pi/agent/settings.json",
+      legacyAgentDir: "/mock/.pi/agent",
+      availableProviders: [
+        {
+          id: "anthropic",
+          name: "Anthropic",
+          authModes: ["api_key", "oauth"],
+          connected: true,
+          usingOAuth: false,
+          modelCount: 1,
+          usesCallbackServer: true,
+          oauthMethods: [
+            {
+              id: "browser_oauth",
+              label: "Browser sign-in",
+              kind: "browser",
+              isDefault: true,
+            },
+          ],
+        },
+        {
+          id: "openai",
+          name: "OpenAI",
+          authModes: ["api_key"],
+          connected: true,
+          usingOAuth: false,
+          modelCount: 1,
+          usesCallbackServer: false,
+          oauthMethods: null,
+        },
+        {
+          id: "openai-codex",
+          name: "OpenAI Codex",
+          authModes: ["oauth"],
+          connected: false,
+          usingOAuth: false,
+          modelCount: 1,
+          usesCallbackServer: true,
+          oauthMethods: [
+            {
+              id: "browser_oauth",
+              label: "Browser sign-in",
+              kind: "browser",
+              isDefault: true,
+            },
+          ],
+        },
+        {
+          id: "github-copilot",
+          name: "GitHub Copilot",
+          authModes: ["oauth"],
+          connected: false,
+          usingOAuth: false,
+          modelCount: 1,
+          usesCallbackServer: false,
+          oauthMethods: [
+            {
+              id: "device_code",
+              label: "Device code auth",
+              kind: "device_code",
+              isDefault: true,
+            },
+          ],
+        },
+      ],
+      availableModels: MOCK_MODELS,
+      issues: [],
+      warnings: [],
+      importState: {
+        canImportLegacy: false,
+        importedAt: null,
+        dismissedAt: null,
       },
-      {
-        id: "openai",
-        name: "OpenAI",
-        authModes: ["api_key"],
-        connected: true,
-        usingOAuth: false,
-        modelCount: 1,
-        usesCallbackServer: false,
-        oauthMethods: null,
-      },
-      {
-        id: "openai-codex",
-        name: "OpenAI Codex",
-        authModes: ["oauth"],
-        connected: false,
-        usingOAuth: false,
-        modelCount: 1,
-        usesCallbackServer: true,
-        oauthMethods: [{ id: "browser_oauth", label: "Browser sign-in", kind: "browser", isDefault: true }],
-      },
-      {
-        id: "github-copilot",
-        name: "GitHub Copilot",
-        authModes: ["oauth"],
-        connected: false,
-        usingOAuth: false,
-        modelCount: 1,
-        usesCallbackServer: false,
-        oauthMethods: [{ id: "device_code", label: "Device code auth", kind: "device_code", isDefault: true }],
-      },
-    ],
-    availableModels: MOCK_MODELS,
-    issues: [],
-    warnings: [],
-    importState: { canImportLegacy: false, importedAt: null, dismissedAt: null },
-    packageDiagnostics: getDefaultMockPiPackageDiagnostics(),
-  } satisfies PiSetupState;
+      packageDiagnostics: getDefaultMockPiPackageDiagnostics(),
+    } satisfies PiSetupState)
+  );
 }
 
 function saveStoredMockPiSetupState(state: PiSetupState) {
@@ -353,18 +450,30 @@ function saveStoredMockPiOAuthFlowState(state: PiOAuthFlowState | null) {
 }
 
 function dispatchMockPiSetupChange(detail: Record<string, unknown>) {
-  window.dispatchEvent(new CustomEvent("orchestra:pi-setup-change", { detail }));
+  window.dispatchEvent(
+    new CustomEvent("orchestra:pi-setup-change", { detail }),
+  );
 }
 
 function dispatchMockPiOAuthFlowChange(state: PiOAuthFlowState | null) {
-  window.dispatchEvent(new CustomEvent("orchestra:pi-oauth-flow-change", { detail: state }));
+  window.dispatchEvent(
+    new CustomEvent("orchestra:pi-oauth-flow-change", { detail: state }),
+  );
 }
 
-function getDefaultMockOAuthMethod(providerId: string, methods?: PiProviderAuthMethodSummary[] | null) {
+function getDefaultMockOAuthMethod(
+  providerId: string,
+  methods?: PiProviderAuthMethodSummary[] | null,
+) {
   const availableMethods = methods ?? [];
-  const selectedMethod = availableMethods.find((method) => method.isDefault) ?? availableMethods[0] ?? null;
+  const selectedMethod =
+    availableMethods.find((method) => method.isDefault) ??
+    availableMethods[0] ??
+    null;
   if (!selectedMethod) {
-    throw new Error(`Provider ${providerId} does not expose any OAuth methods.`);
+    throw new Error(
+      `Provider ${providerId} does not expose any OAuth methods.`,
+    );
   }
   return selectedMethod;
 }
@@ -376,9 +485,11 @@ function markMockPiProviderConnected(providerId: string, usingOAuth: boolean) {
     status: "ready",
     issues: [],
     warnings: [],
-    availableProviders: current.availableProviders.map((provider) => provider.id === providerId
-      ? { ...provider, connected: true, usingOAuth }
-      : provider),
+    availableProviders: current.availableProviders.map((provider) =>
+      provider.id === providerId
+        ? { ...provider, connected: true, usingOAuth }
+        : provider,
+    ),
   } satisfies PiSetupState;
   saveStoredMockPiSetupState(next);
   return next;
@@ -396,11 +507,17 @@ function completeMockPiOAuthFlowSuccess(state: PiOAuthFlowState) {
   dispatchMockPiOAuthFlowChange(successState);
   markMockPiProviderConnected(state.providerId, true);
   saveStoredMockPiOAuthFlowState(null);
-  dispatchMockPiSetupChange({ reason: "pi.oauth.succeeded", providerId: state.providerId });
+  dispatchMockPiSetupChange({
+    reason: "pi.oauth.succeeded",
+    providerId: state.providerId,
+  });
 }
 
 function getStoredMockPiModelsJson() {
-  return window.localStorage.getItem(PI_MODELS_JSON_STORAGE_KEY) ?? '{\n  "providers": {}\n}\n';
+  return (
+    window.localStorage.getItem(PI_MODELS_JSON_STORAGE_KEY) ??
+    '{\n  "providers": {}\n}\n'
+  );
 }
 
 function saveStoredMockPiModelsJson(value: string) {
@@ -413,10 +530,26 @@ function getStoredValue<T>(key: string): T | null {
 }
 
 function getStoredMockTaskCommentUserReceipts() {
-  return getStoredValue<Array<{ commentId: string; taskId: string; userId: string; readAt: string }>>(TASK_COMMENT_USER_RECEIPT_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<
+      Array<{
+        commentId: string;
+        taskId: string;
+        userId: string;
+        readAt: string;
+      }>
+    >(TASK_COMMENT_USER_RECEIPT_STORAGE_KEY) ?? []
+  );
 }
 
-function saveStoredMockTaskCommentUserReceipts(receipts: Array<{ commentId: string; taskId: string; userId: string; readAt: string }>) {
+function saveStoredMockTaskCommentUserReceipts(
+  receipts: Array<{
+    commentId: string;
+    taskId: string;
+    userId: string;
+    readAt: string;
+  }>,
+) {
   setStoredValue(TASK_COMMENT_USER_RECEIPT_STORAGE_KEY, receipts);
 }
 
@@ -428,13 +561,22 @@ function normalizeMockTaskComment(comment: TaskComment): TaskComment {
   };
 }
 
-function countMockUnreadTaskComments(task: Pick<TaskDetail, "id" | "comments">) {
+function countMockUnreadTaskComments(
+  task: Pick<TaskDetail, "id" | "comments">,
+) {
   const receipts = getStoredMockTaskCommentUserReceipts();
   return task.comments
     .map(normalizeMockTaskComment)
     .filter((comment) => comment.originType !== "user")
-    .filter((comment) => !receipts.some((receipt) => receipt.commentId === comment.id && receipt.taskId === task.id && receipt.userId === "desktop-user"))
-    .length;
+    .filter(
+      (comment) =>
+        !receipts.some(
+          (receipt) =>
+            receipt.commentId === comment.id &&
+            receipt.taskId === task.id &&
+            receipt.userId === "desktop-user",
+        ),
+    ).length;
 }
 
 function setStoredValue<T>(key: string, value: T) {
@@ -449,7 +591,11 @@ function saveStoredMailboxMessages(messages: MailboxMessage[]) {
   setStoredValue(MAILBOX_STORAGE_KEY, messages);
 }
 
-function createMockSessionEnvelope(sessionId: string, runId: string, event: JsonValue): SessionStreamEnvelope {
+function createMockSessionEnvelope(
+  sessionId: string,
+  runId: string,
+  event: JsonValue,
+): SessionStreamEnvelope {
   return {
     sessionId,
     runId,
@@ -461,7 +607,11 @@ function createMockSessionEnvelope(sessionId: string, runId: string, event: Json
 function seedMockLogs(): LogEntry[] {
   return [
     createLogEntry("info", "app.bootstrap", "Frontend scaffold initialized"),
-    createLogEntry("info", "session.mock", "Using browser-backed session fallback until Tauri backend is running"),
+    createLogEntry(
+      "info",
+      "session.mock",
+      "Using browser-backed session fallback until Tauri backend is running",
+    ),
   ];
 }
 
@@ -477,7 +627,10 @@ function seedMockSessions(): SessionRecord[] {
       subscribed: false,
       events: [
         createEvent("system", "Mock session created in browser fallback mode."),
-        createEvent("assistant", "Ready when you are. Create a session, resume it, or send me a message."),
+        createEvent(
+          "assistant",
+          "Ready when you are. Create a session, resume it, or send me a message.",
+        ),
       ],
     },
   ];
@@ -491,7 +644,9 @@ function ensureMockLogs() {
   const existing = getStoredValue<LogEntry[]>(LOG_STORAGE_KEY);
   if (existing) {
     const normalized = existing.map(normalizeLogEntry);
-    const changed = normalized.some((entry, index) => entry.level !== existing[index]?.level);
+    const changed = normalized.some(
+      (entry, index) => entry.level !== existing[index]?.level,
+    );
     if (changed) {
       setStoredValue(LOG_STORAGE_KEY, normalized);
     }
@@ -504,12 +659,16 @@ function ensureMockLogs() {
 }
 
 function ensureMockSessions(projectId?: string | null) {
-  const existing = getStoredValue<SessionRecord[]>(sessionStorageKey(projectId));
+  const existing = getStoredValue<SessionRecord[]>(
+    sessionStorageKey(projectId),
+  );
   if (existing) {
     return existing;
   }
 
-  const resolvedProjectId = resolveCurrentMockProjectId(projectId ?? getActiveProjectId());
+  const resolvedProjectId = resolveCurrentMockProjectId(
+    projectId ?? getActiveProjectId(),
+  );
   if (projectId && projectId !== resolvedProjectId) {
     return [];
   }
@@ -520,7 +679,9 @@ function ensureMockSessions(projectId?: string | null) {
 }
 
 function ensureMockBridgeDiagnostics(): BridgeDiagnostics {
-  const existing = getStoredValue<BridgeDiagnostics>(BRIDGE_DIAGNOSTICS_STORAGE_KEY);
+  const existing = getStoredValue<BridgeDiagnostics>(
+    BRIDGE_DIAGNOSTICS_STORAGE_KEY,
+  );
   if (existing) {
     return existing;
   }
@@ -550,7 +711,10 @@ function getStoredMockAgents() {
 }
 
 function getStoredMockAgentRuntimes() {
-  return getStoredValue<Array<Record<string, unknown>>>(AGENT_RUNTIME_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<Array<Record<string, unknown>>>(AGENT_RUNTIME_STORAGE_KEY) ??
+    []
+  );
 }
 
 function saveStoredMockAgentRuntimes(runtimes: Array<Record<string, unknown>>) {
@@ -558,7 +722,10 @@ function saveStoredMockAgentRuntimes(runtimes: Array<Record<string, unknown>>) {
 }
 
 function getStoredMockAgentQueue() {
-  return getStoredValue<Array<Record<string, unknown>>>(AGENT_QUEUE_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<Array<Record<string, unknown>>>(AGENT_QUEUE_STORAGE_KEY) ??
+    []
+  );
 }
 
 function saveStoredMockAgentQueue(entries: Array<Record<string, unknown>>) {
@@ -570,7 +737,9 @@ function getStoredMockRoles() {
 }
 
 function getStoredMockRoleQueue() {
-  return getStoredValue<Array<Record<string, unknown>>>(ROLE_QUEUE_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<Array<Record<string, unknown>>>(ROLE_QUEUE_STORAGE_KEY) ?? []
+  );
 }
 
 function saveStoredMockRoleQueue(entries: Array<Record<string, unknown>>) {
@@ -578,31 +747,50 @@ function saveStoredMockRoleQueue(entries: Array<Record<string, unknown>>) {
 }
 
 function getStoredMockRoleInstances() {
-  return getStoredValue<Array<Record<string, unknown>>>(ROLE_INSTANCE_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<Array<Record<string, unknown>>>(ROLE_INSTANCE_STORAGE_KEY) ??
+    []
+  );
 }
 
-function saveStoredMockRoleInstances(instances: Array<Record<string, unknown>>) {
+function saveStoredMockRoleInstances(
+  instances: Array<Record<string, unknown>>,
+) {
   setStoredValue(ROLE_INSTANCE_STORAGE_KEY, instances);
 }
 
 function migrateMockWorkflowWorkerRefs(workflows: WorkflowDefinition[]) {
-  const agentRefs = new Map<string, string>(getStoredMockAgents().map((agent) => [agent.id, agent.slug]));
-  const roleRefs = new Map<string, string>(getStoredMockRoles().map((role) => [role.id, role.slug]));
+  const agentRefs = new Map<string, string>(
+    getStoredMockAgents().map((agent) => [agent.id, agent.slug]),
+  );
+  const roleRefs = new Map<string, string>(
+    getStoredMockRoles().map((role) => [role.id, role.slug]),
+  );
 
   return workflows.map((workflow) => ({
     ...workflow,
     lanes: workflow.lanes.map((lane): WorkflowLane => {
-      if (lane.assignedEntityType === "agent" && lane.assignedEntityId && agentRefs.has(lane.assignedEntityId)) {
+      if (
+        lane.assignedEntityType === "agent" &&
+        lane.assignedEntityId &&
+        agentRefs.has(lane.assignedEntityId)
+      ) {
         return {
           ...lane,
-          assignedEntityId: agentRefs.get(lane.assignedEntityId) ?? lane.assignedEntityId,
+          assignedEntityId:
+            agentRefs.get(lane.assignedEntityId) ?? lane.assignedEntityId,
         };
       }
 
-      if (lane.assignedEntityType === "role" && lane.assignedEntityId && roleRefs.has(lane.assignedEntityId)) {
+      if (
+        lane.assignedEntityType === "role" &&
+        lane.assignedEntityId &&
+        roleRefs.has(lane.assignedEntityId)
+      ) {
         return {
           ...lane,
-          assignedEntityId: roleRefs.get(lane.assignedEntityId) ?? lane.assignedEntityId,
+          assignedEntityId:
+            roleRefs.get(lane.assignedEntityId) ?? lane.assignedEntityId,
         };
       }
 
@@ -631,7 +819,9 @@ function saveMockWorkflows(workflows: WorkflowDefinition[]) {
 }
 
 function getMockSessionModels() {
-  return getStoredValue<Record<string, SessionModel>>(sessionModelStorageKey()) ?? {};
+  return (
+    getStoredValue<Record<string, SessionModel>>(sessionModelStorageKey()) ?? {}
+  );
 }
 
 function setMockSessionModels(models: Record<string, SessionModel>) {
@@ -639,10 +829,19 @@ function setMockSessionModels(models: Record<string, SessionModel>) {
 }
 
 function getMockActiveSessionRuns() {
-  const stored = getStoredValue<Record<string, string | string[]>>(ACTIVE_RUN_STORAGE_KEY) ?? {};
+  const stored =
+    getStoredValue<Record<string, string | string[]>>(ACTIVE_RUN_STORAGE_KEY) ??
+    {};
   const normalized = Object.fromEntries(
     Object.entries(stored)
-      .map(([sessionId, value]) => [sessionId, Array.isArray(value) ? value : (typeof value === "string" && value ? [value] : [])])
+      .map(([sessionId, value]) => [
+        sessionId,
+        Array.isArray(value)
+          ? value
+          : typeof value === "string" && value
+            ? [value]
+            : [],
+      ])
       .filter(([, value]) => value.length > 0),
   ) as Record<string, string[]>;
 
@@ -672,19 +871,33 @@ function ensureMockSessionModel(sessionId: string) {
 
 function appendMockLog(level: LogLevel, target: string, message: string) {
   const logs = ensureMockLogs();
-  const updated = [createLogEntry(level, target, message), ...logs].slice(0, 200);
+  const updated = [createLogEntry(level, target, message), ...logs].slice(
+    0,
+    200,
+  );
   setStoredValue(LOG_STORAGE_KEY, updated);
 }
 
 function getDismissedMockSessionIds(projectId?: string | null) {
-  return new Set(getStoredValue<string[]>(dismissedSessionStorageKey(projectId)) ?? []);
+  return new Set(
+    getStoredValue<string[]>(dismissedSessionStorageKey(projectId)) ?? [],
+  );
 }
 
-function saveDismissedMockSessionIds(ids: Iterable<string>, projectId?: string | null) {
-  setStoredValue(dismissedSessionStorageKey(projectId), Array.from(new Set(ids)).sort());
+function saveDismissedMockSessionIds(
+  ids: Iterable<string>,
+  projectId?: string | null,
+) {
+  setStoredValue(
+    dismissedSessionStorageKey(projectId),
+    Array.from(new Set(ids)).sort(),
+  );
 }
 
-function saveMockSessions(sessions: SessionRecord[], projectId?: string | null) {
+function saveMockSessions(
+  sessions: SessionRecord[],
+  projectId?: string | null,
+) {
   setStoredValue(sessionStorageKey(projectId), sessions);
 }
 
@@ -719,35 +932,60 @@ function clearMockSessionActiveTaskMetadata(session: SessionRecord) {
   } satisfies SessionRecord;
 }
 
-function syncMockSessionTaskActivity(previousAssignment?: TaskDetail["activeLaneAssignment"] | null, nextAssignment?: TaskDetail["activeLaneAssignment"] | null) {
+function syncMockSessionTaskActivity(
+  previousAssignment?: TaskDetail["activeLaneAssignment"] | null,
+  nextAssignment?: TaskDetail["activeLaneAssignment"] | null,
+) {
   const previousSessionId = previousAssignment?.sessionId ?? null;
   const nextSessionId = nextAssignment?.sessionId ?? null;
   if (!previousSessionId || previousSessionId === nextSessionId) {
     return;
   }
 
-  updateMockSession(previousSessionId, (current) => clearMockSessionActiveTaskMetadata(current));
-  emitMockSessionChange({ sessionIds: [previousSessionId], reason: "task.assignment.cleared" });
+  updateMockSession(previousSessionId, (current) =>
+    clearMockSessionActiveTaskMetadata(current),
+  );
+  emitMockSessionChange({
+    sessionIds: [previousSessionId],
+    reason: "task.assignment.cleared",
+  });
 }
 
 function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
-  const runtime = getStoredMockAgentRuntimes().find((entry) => entry.agentId === agentId && entry.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID) ?? null;
-  const existingSessionId = typeof runtime?.mainSessionId === "string" ? runtime.mainSessionId : null;
-  const existingSession = existingSessionId ? ensureMockSessions().find((entry) => entry.id === existingSessionId) ?? null : null;
-  const session = existingSession ?? createMockSessionRecord(
-    `${agentSlug} main session`.replace(/(^|\s)\S/g, (value) => value.toUpperCase()),
-    `${agentSlug} is ready. This persistent session keeps the agent context for dispatched work.`,
-  );
+  const runtime =
+    getStoredMockAgentRuntimes().find(
+      (entry) =>
+        entry.agentId === agentId &&
+        entry.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID,
+    ) ?? null;
+  const existingSessionId =
+    typeof runtime?.mainSessionId === "string" ? runtime.mainSessionId : null;
+  const existingSession = existingSessionId
+    ? (ensureMockSessions().find((entry) => entry.id === existingSessionId) ??
+      null)
+    : null;
+  const session =
+    existingSession ??
+    createMockSessionRecord(
+      `${agentSlug} main session`.replace(/(^|\s)\S/g, (value) =>
+        value.toUpperCase(),
+      ),
+      `${agentSlug} is ready. This persistent session keeps the agent context for dispatched work.`,
+    );
 
   ensureMockSessionModel(session.id);
   upsertMockSession(session);
   saveStoredMockAgentRuntimes(
     getStoredMockAgentRuntimes().map((entry) =>
-      entry.agentId === agentId && entry.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
+      entry.agentId === agentId &&
+      entry.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
         ? {
             ...entry,
             mainSessionId: session.id,
-            runtimeCwd: (typeof entry.runtimeCwd === "string" && entry.runtimeCwd) ? entry.runtimeCwd : getProjectRuntimeCwd(DEFAULT_INSTALL_BASELINE_PROJECT_ID),
+            runtimeCwd:
+              typeof entry.runtimeCwd === "string" && entry.runtimeCwd
+                ? entry.runtimeCwd
+                : getProjectRuntimeCwd(DEFAULT_INSTALL_BASELINE_PROJECT_ID),
             status: entry.currentQueueEntryId ? "running" : "idle",
             updatedAt: nowIso(),
           }
@@ -758,9 +996,14 @@ function ensureMockAgentMainSession(agentSlug: string, agentId: string) {
   return session;
 }
 
-function updateMockSession(sessionId: string, updater: (session: SessionRecord) => SessionRecord) {
+function updateMockSession(
+  sessionId: string,
+  updater: (session: SessionRecord) => SessionRecord,
+) {
   const sessions = ensureMockSessions();
-  const updated = sessions.map((session) => (session.id === sessionId ? updater(session) : session));
+  const updated = sessions.map((session) =>
+    session.id === sessionId ? updater(session) : session,
+  );
   saveMockSessions(updated);
   return updated.find((session) => session.id === sessionId) ?? null;
 }
@@ -795,16 +1038,24 @@ function summarizeWorkflow(workflow: WorkflowDefinition): WorkflowSummary {
   };
 }
 
-function buildMockWorkflowDeleteImpact(workflow: WorkflowDefinition): WorkflowDeleteImpact {
-  const tasks = ensureMockTasks().filter((task) => task.workflowId === workflow.id).length;
-  const taskSchedules = ensureMockTaskSchedules().filter((schedule) => schedule.taskBlueprint.workflowId === workflow.id).length;
+function buildMockWorkflowDeleteImpact(
+  workflow: WorkflowDefinition,
+): WorkflowDeleteImpact {
+  const tasks = ensureMockTasks().filter(
+    (task) => task.workflowId === workflow.id,
+  ).length;
+  const taskSchedules = ensureMockTaskSchedules().filter(
+    (schedule) => schedule.taskBlueprint.workflowId === workflow.id,
+  ).length;
   const blockerMessages: string[] = [];
 
   if (tasks > 0) {
     blockerMessages.push(`${tasks} ${tasks === 1 ? "task" : "tasks"}`);
   }
   if (taskSchedules > 0) {
-    blockerMessages.push(`${taskSchedules} ${taskSchedules === 1 ? "task schedule" : "task schedules"}`);
+    blockerMessages.push(
+      `${taskSchedules} ${taskSchedules === 1 ? "task schedule" : "task schedules"}`,
+    );
   }
 
   return {
@@ -839,7 +1090,8 @@ function seedMockTasks(): TaskDetail[] {
       projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
       number: "ORC-1",
       title: "Define Orchestra task system",
-      description: "Document the task model including hierarchy, dependencies, attachments, and task tools.",
+      description:
+        "Document the task model including hierarchy, dependencies, attachments, and task tools.",
       type: "epic",
       status: "ready",
       priority: "P1",
@@ -884,7 +1136,8 @@ function seedMockTasks(): TaskDetail[] {
       projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
       number: "ORC-2",
       title: "Implement task foundation shell",
-      description: "Add the first real Tasks page with list/detail editing so task orchestration can move out of placeholders.",
+      description:
+        "Add the first real Tasks page with list/detail editing so task orchestration can move out of placeholders.",
       type: "feature",
       status: "in_progress",
       priority: "P1",
@@ -927,7 +1180,8 @@ function seedMockTasks(): TaskDetail[] {
           author: "User",
           originType: "user",
           originId: null,
-          message: "Start with persistence and a task list/detail shell before layering on graph features.",
+          message:
+            "Start with persistence and a task list/detail shell before layering on graph features.",
           interruptAgent: false,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -954,7 +1208,8 @@ function seedMockTasks(): TaskDetail[] {
       projectId: DEFAULT_INSTALL_BASELINE_PROJECT_ID,
       number: "ORC-3",
       title: "Plan hierarchy rollups",
-      description: "Use the epic container to summarize child task progress and expose lineage in the task detail pane.",
+      description:
+        "Use the epic container to summarize child task progress and expose lineage in the task detail pane.",
       type: "task",
       status: "ready",
       priority: "P2",
@@ -1018,7 +1273,10 @@ type StoredMockTaskDependency = TaskDependency & {
 };
 
 function ensureMockTaskDependencies() {
-  return getStoredValue<StoredMockTaskDependency[]>(TASK_DEPENDENCY_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<StoredMockTaskDependency[]>(TASK_DEPENDENCY_STORAGE_KEY) ??
+    []
+  );
 }
 
 function saveMockTaskDependencies(dependencies: StoredMockTaskDependency[]) {
@@ -1059,7 +1317,8 @@ function appendMockDomainEvent(
 ) {
   const events = ensureMockDomainEvents();
   const event: DomainEvent = {
-    sequence: ((events.length > 0 ? events[events.length - 1]?.sequence : 0) ?? 0) + 1,
+    sequence:
+      ((events.length > 0 ? events[events.length - 1]?.sequence : 0) ?? 0) + 1,
     id: createId("domain-event"),
     projectId: projectId ?? null,
     topic,
@@ -1073,7 +1332,9 @@ function appendMockDomainEvent(
 }
 
 function ensureMockTaskSchedules() {
-  return getStoredValue<StoredTaskScheduleRecord[]>(TASK_SCHEDULE_STORAGE_KEY) ?? [];
+  return (
+    getStoredValue<StoredTaskScheduleRecord[]>(TASK_SCHEDULE_STORAGE_KEY) ?? []
+  );
 }
 
 function saveMockTaskSchedules(schedules: StoredTaskScheduleRecord[]) {
@@ -1119,7 +1380,14 @@ function parseTimeOfDayParts(value: string) {
   }
   const hours = Number(match[1]);
   const minutes = Number(match[2]);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
     return null;
   }
   return { hours, minutes };
@@ -1135,7 +1403,9 @@ function getTimeZoneDateParts(date: Date, timeZone: string) {
     minute: "2-digit",
     hour12: false,
   });
-  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value]),
+  );
   return {
     year: Number(parts.year),
     month: Number(parts.month),
@@ -1145,7 +1415,12 @@ function getTimeZoneDateParts(date: Date, timeZone: string) {
   };
 }
 
-function addDaysToLocalDate(year: number, month: number, day: number, dayOffset: number) {
+function addDaysToLocalDate(
+  year: number,
+  month: number,
+  day: number,
+  dayOffset: number,
+) {
   const date = new Date(Date.UTC(year, month - 1, day + dayOffset));
   return {
     year: date.getUTCFullYear(),
@@ -1158,7 +1433,12 @@ function daysInMonthUtc(year: number, month: number) {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-function addMonthsToLocalDate(year: number, month: number, day: number, monthsToAdd: number) {
+function addMonthsToLocalDate(
+  year: number,
+  month: number,
+  day: number,
+  monthsToAdd: number,
+) {
   const base = new Date(Date.UTC(year, month - 1 + monthsToAdd, 1));
   const nextYear = base.getUTCFullYear();
   const nextMonth = base.getUTCMonth() + 1;
@@ -1169,13 +1449,28 @@ function addMonthsToLocalDate(year: number, month: number, day: number, monthsTo
   };
 }
 
-function zonedLocalDateTimeToUtcDate(year: number, month: number, day: number, hours: number, minutes: number, timeZone: string) {
+function zonedLocalDateTimeToUtcDate(
+  year: number,
+  month: number,
+  day: number,
+  hours: number,
+  minutes: number,
+  timeZone: string,
+) {
   let utcMillis = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
   const desiredUtc = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const observed = getTimeZoneDateParts(new Date(utcMillis), timeZone);
-    const observedUtc = Date.UTC(observed.year, observed.month - 1, observed.day, observed.hour, observed.minute, 0, 0);
+    const observedUtc = Date.UTC(
+      observed.year,
+      observed.month - 1,
+      observed.day,
+      observed.hour,
+      observed.minute,
+      0,
+      0,
+    );
     const diff = desiredUtc - observedUtc;
     if (diff === 0) {
       break;
@@ -1186,21 +1481,28 @@ function zonedLocalDateTimeToUtcDate(year: number, month: number, day: number, h
   return new Date(utcMillis);
 }
 
-function nextMockTimeFireAt(trigger: TaskScheduleTrigger, referenceIso: string) {
+function nextMockTimeFireAt(
+  trigger: TaskScheduleTrigger,
+  referenceIso: string,
+) {
   if (trigger.type !== "time") {
     return null;
   }
 
   const reference = new Date(referenceIso);
   if (Number.isNaN(reference.getTime())) {
-    throw new Error("trigger: Unable to parse schedule time trigger reference.");
+    throw new Error(
+      "trigger: Unable to parse schedule time trigger reference.",
+    );
   }
 
   switch (trigger.kind) {
     case "once":
       return trigger.at;
     case "everyMinutes":
-      return new Date(reference.getTime() + Math.max(1, trigger.everyMinutes) * 60_000).toISOString();
+      return new Date(
+        reference.getTime() + Math.max(1, trigger.everyMinutes) * 60_000,
+      ).toISOString();
     case "daily": {
       const parts = parseTimeOfDayParts(trigger.timeOfDay);
       if (!parts) {
@@ -1208,13 +1510,27 @@ function nextMockTimeFireAt(trigger: TaskScheduleTrigger, referenceIso: string) 
       }
       const localReference = getTimeZoneDateParts(reference, trigger.timezone);
       for (let offset = 0; offset <= 7; offset += 1) {
-        const localDate = addDaysToLocalDate(localReference.year, localReference.month, localReference.day, offset);
-        const candidate = zonedLocalDateTimeToUtcDate(localDate.year, localDate.month, localDate.day, parts.hours, parts.minutes, trigger.timezone);
+        const localDate = addDaysToLocalDate(
+          localReference.year,
+          localReference.month,
+          localReference.day,
+          offset,
+        );
+        const candidate = zonedLocalDateTimeToUtcDate(
+          localDate.year,
+          localDate.month,
+          localDate.day,
+          parts.hours,
+          parts.minutes,
+          trigger.timezone,
+        );
         if (candidate.getTime() > reference.getTime()) {
           return candidate.toISOString();
         }
       }
-      throw new Error("trigger.timeOfDay: Unable to compute next daily fire time.");
+      throw new Error(
+        "trigger.timeOfDay: Unable to compute next daily fire time.",
+      );
     }
     case "weekly": {
       const parts = parseTimeOfDayParts(trigger.timeOfDay);
@@ -1225,19 +1541,37 @@ function nextMockTimeFireAt(trigger: TaskScheduleTrigger, referenceIso: string) 
         throw new Error("trigger.daysOfWeek: Select at least one weekday.");
       }
       const localReference = getTimeZoneDateParts(reference, trigger.timezone);
-      const sortedDays = [...trigger.daysOfWeek].sort((left, right) => left - right);
+      const sortedDays = [...trigger.daysOfWeek].sort(
+        (left, right) => left - right,
+      );
       for (let offset = 0; offset <= 14; offset += 1) {
-        const localDate = addDaysToLocalDate(localReference.year, localReference.month, localReference.day, offset);
-        const weekday = new Date(Date.UTC(localDate.year, localDate.month - 1, localDate.day)).getUTCDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+        const localDate = addDaysToLocalDate(
+          localReference.year,
+          localReference.month,
+          localReference.day,
+          offset,
+        );
+        const weekday = new Date(
+          Date.UTC(localDate.year, localDate.month - 1, localDate.day),
+        ).getUTCDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6;
         if (!sortedDays.includes(weekday)) {
           continue;
         }
-        const candidate = zonedLocalDateTimeToUtcDate(localDate.year, localDate.month, localDate.day, parts.hours, parts.minutes, trigger.timezone);
+        const candidate = zonedLocalDateTimeToUtcDate(
+          localDate.year,
+          localDate.month,
+          localDate.day,
+          parts.hours,
+          parts.minutes,
+          trigger.timezone,
+        );
         if (candidate.getTime() > reference.getTime()) {
           return candidate.toISOString();
         }
       }
-      throw new Error("trigger.daysOfWeek: Unable to compute next weekly fire time.");
+      throw new Error(
+        "trigger.daysOfWeek: Unable to compute next weekly fire time.",
+      );
     }
     case "monthly": {
       const parts = parseTimeOfDayParts(trigger.timeOfDay);
@@ -1247,20 +1581,39 @@ function nextMockTimeFireAt(trigger: TaskScheduleTrigger, referenceIso: string) 
       const localReference = getTimeZoneDateParts(reference, trigger.timezone);
       const targetDay = Math.min(Math.max(1, trigger.dayOfMonth), 31);
       for (let offset = 0; offset < 24; offset += 1) {
-        const localDate = addMonthsToLocalDate(localReference.year, localReference.month, targetDay, offset);
-        const candidate = zonedLocalDateTimeToUtcDate(localDate.year, localDate.month, localDate.day, parts.hours, parts.minutes, trigger.timezone);
+        const localDate = addMonthsToLocalDate(
+          localReference.year,
+          localReference.month,
+          targetDay,
+          offset,
+        );
+        const candidate = zonedLocalDateTimeToUtcDate(
+          localDate.year,
+          localDate.month,
+          localDate.day,
+          parts.hours,
+          parts.minutes,
+          trigger.timezone,
+        );
         if (candidate.getTime() > reference.getTime()) {
           return candidate.toISOString();
         }
       }
-      throw new Error("trigger.dayOfMonth: Unable to compute next monthly fire time.");
+      throw new Error(
+        "trigger.dayOfMonth: Unable to compute next monthly fire time.",
+      );
     }
     default:
       return null;
   }
 }
 
-function createScheduleOccurrence(scheduleId: string, occurrenceKey: string, scheduledAt?: string | null, eventId?: string | null): TaskScheduleOccurrence {
+function createScheduleOccurrence(
+  scheduleId: string,
+  occurrenceKey: string,
+  scheduledAt?: string | null,
+  eventId?: string | null,
+): TaskScheduleOccurrence {
   const timestamp = nowIso();
   return {
     id: createId("task-schedule-occurrence"),
@@ -1276,18 +1629,33 @@ function createScheduleOccurrence(scheduleId: string, occurrenceKey: string, sch
   };
 }
 
-function scheduleOpenMaterializedTaskCount(schedule: StoredTaskScheduleRecord, tasks: TaskDetail[]) {
+function scheduleOpenMaterializedTaskCount(
+  schedule: StoredTaskScheduleRecord,
+  tasks: TaskDetail[],
+) {
   const materializedTaskIds = new Set(
     schedule.occurrences
-      .filter((occurrence) => occurrence.status === "materialized" && occurrence.taskId)
+      .filter(
+        (occurrence) =>
+          occurrence.status === "materialized" && occurrence.taskId,
+      )
       .map((occurrence) => occurrence.taskId as string),
   );
-  return tasks.filter((task) => materializedTaskIds.has(task.id) && !["completed", "canceled"].includes(task.status)).length;
+  return tasks.filter(
+    (task) =>
+      materializedTaskIds.has(task.id) &&
+      !["completed", "canceled"].includes(task.status),
+  ).length;
 }
 
-function summarizeTaskSchedule(schedule: StoredTaskScheduleRecord, tasks: TaskDetail[]): TaskScheduleSummary {
+function summarizeTaskSchedule(
+  schedule: StoredTaskScheduleRecord,
+  tasks: TaskDetail[],
+): TaskScheduleSummary {
   const recentMaterializedTaskIds = schedule.occurrences
-    .filter((occurrence) => occurrence.status === "materialized" && occurrence.taskId)
+    .filter(
+      (occurrence) => occurrence.status === "materialized" && occurrence.taskId,
+    )
     .map((occurrence) => occurrence.taskId as string);
   return {
     id: schedule.id,
@@ -1304,22 +1672,34 @@ function summarizeTaskSchedule(schedule: StoredTaskScheduleRecord, tasks: TaskDe
     trigger: schedule.trigger,
     nextFireAt: schedule.nextFireAt ?? null,
     lastFiredAt: schedule.lastFiredAt ?? null,
-    lastMaterializedTaskId: schedule.lastMaterializedTaskId ?? recentMaterializedTaskIds[0] ?? null,
+    lastMaterializedTaskId:
+      schedule.lastMaterializedTaskId ?? recentMaterializedTaskIds[0] ?? null,
     lastError: schedule.lastError ?? null,
     materializedTaskCount: recentMaterializedTaskIds.length,
-    openMaterializedTaskCount: scheduleOpenMaterializedTaskCount(schedule, tasks),
+    openMaterializedTaskCount: scheduleOpenMaterializedTaskCount(
+      schedule,
+      tasks,
+    ),
     createdAt: schedule.createdAt,
     updatedAt: schedule.updatedAt,
   };
 }
 
-function hydrateTaskScheduleDetail(schedule: StoredTaskScheduleRecord, tasks: TaskDetail[]): TaskScheduleDetail {
+function hydrateTaskScheduleDetail(
+  schedule: StoredTaskScheduleRecord,
+  tasks: TaskDetail[],
+): TaskScheduleDetail {
   const summary = summarizeTaskSchedule(schedule, tasks);
   const recentMaterializedTasks = schedule.occurrences
-    .filter((occurrence) => occurrence.status === "materialized" && occurrence.taskId)
+    .filter(
+      (occurrence) => occurrence.status === "materialized" && occurrence.taskId,
+    )
     .slice()
     .reverse()
-    .map((occurrence) => tasks.find((task) => task.id === occurrence.taskId) ?? null)
+    .map(
+      (occurrence) =>
+        tasks.find((task) => task.id === occurrence.taskId) ?? null,
+    )
     .filter((task): task is TaskDetail => Boolean(task))
     .map((task) => summarizeTask(task))
     .slice(0, 10);
@@ -1341,77 +1721,151 @@ function isValidTimeZone(value: string) {
   }
 }
 
-function validateMockTaskScheduleInput(input: TaskScheduleUpsertInput, scheduleId?: string) {
+function validateMockTaskScheduleInput(
+  input: TaskScheduleUpsertInput,
+  scheduleId?: string,
+) {
   const errors: Array<{ path: string; message: string }> = [];
-  const taskValidation = validateMockTaskInput(normalizeScheduleBlueprint(input.task), scheduleId);
+  const taskValidation = validateMockTaskInput(
+    normalizeScheduleBlueprint(input.task),
+    scheduleId,
+  );
   errors.push(...taskValidation);
 
   if (!["skip", "create_another"].includes(input.overlapPolicy)) {
-    errors.push({ path: "overlapPolicy", message: "Expected skip or create_another." });
+    errors.push({
+      path: "overlapPolicy",
+      message: "Expected skip or create_another.",
+    });
   }
 
   if (input.trigger.type === "event") {
     if (!input.trigger.eventKey.trim()) {
-      errors.push({ path: "trigger.eventKey", message: "Event trigger key is required." });
+      errors.push({
+        path: "trigger.eventKey",
+        message: "Event trigger key is required.",
+      });
     }
   } else if (input.trigger.kind === "once") {
     if (!input.trigger.timezone.trim()) {
-      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+      errors.push({
+        path: "trigger.timezone",
+        message: "Timezone is required.",
+      });
     } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
-      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+      errors.push({
+        path: "trigger.timezone",
+        message:
+          "Expected a valid IANA timezone such as UTC or America/New_York.",
+      });
     }
     if (Number.isNaN(Date.parse(input.trigger.at))) {
-      errors.push({ path: "trigger.at", message: "Expected an RFC3339 datetime." });
+      errors.push({
+        path: "trigger.at",
+        message: "Expected an RFC3339 datetime.",
+      });
     }
   } else if (input.trigger.kind === "everyMinutes") {
     if (input.trigger.everyMinutes < 1) {
-      errors.push({ path: "trigger.everyMinutes", message: "Must be at least 1 minute." });
+      errors.push({
+        path: "trigger.everyMinutes",
+        message: "Must be at least 1 minute.",
+      });
     }
   } else if (input.trigger.kind === "daily") {
     if (!parseTimeOfDayParts(input.trigger.timeOfDay)) {
-      errors.push({ path: "trigger.timeOfDay", message: "Expected HH:MM in 24 hour time." });
+      errors.push({
+        path: "trigger.timeOfDay",
+        message: "Expected HH:MM in 24 hour time.",
+      });
     }
     if (!input.trigger.timezone.trim()) {
-      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+      errors.push({
+        path: "trigger.timezone",
+        message: "Timezone is required.",
+      });
     } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
-      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+      errors.push({
+        path: "trigger.timezone",
+        message:
+          "Expected a valid IANA timezone such as UTC or America/New_York.",
+      });
     }
   } else if (input.trigger.kind === "weekly") {
     if (!parseTimeOfDayParts(input.trigger.timeOfDay)) {
-      errors.push({ path: "trigger.timeOfDay", message: "Expected HH:MM in 24 hour time." });
+      errors.push({
+        path: "trigger.timeOfDay",
+        message: "Expected HH:MM in 24 hour time.",
+      });
     }
     if (!input.trigger.timezone.trim()) {
-      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+      errors.push({
+        path: "trigger.timezone",
+        message: "Timezone is required.",
+      });
     } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
-      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+      errors.push({
+        path: "trigger.timezone",
+        message:
+          "Expected a valid IANA timezone such as UTC or America/New_York.",
+      });
     }
-    if (!input.trigger.daysOfWeek.length || input.trigger.daysOfWeek.some((day) => day < 0 || day > 6)) {
-      errors.push({ path: "trigger.daysOfWeek", message: "Select one or more weekdays between Sunday and Saturday." });
+    if (
+      !input.trigger.daysOfWeek.length ||
+      input.trigger.daysOfWeek.some((day) => day < 0 || day > 6)
+    ) {
+      errors.push({
+        path: "trigger.daysOfWeek",
+        message: "Select one or more weekdays between Sunday and Saturday.",
+      });
     }
   } else if (input.trigger.kind === "monthly") {
     if (!parseTimeOfDayParts(input.trigger.timeOfDay)) {
-      errors.push({ path: "trigger.timeOfDay", message: "Expected HH:MM in 24 hour time." });
+      errors.push({
+        path: "trigger.timeOfDay",
+        message: "Expected HH:MM in 24 hour time.",
+      });
     }
     if (!input.trigger.timezone.trim()) {
-      errors.push({ path: "trigger.timezone", message: "Timezone is required." });
+      errors.push({
+        path: "trigger.timezone",
+        message: "Timezone is required.",
+      });
     } else if (!isValidTimeZone(input.trigger.timezone.trim())) {
-      errors.push({ path: "trigger.timezone", message: "Expected a valid IANA timezone such as UTC or America/New_York." });
+      errors.push({
+        path: "trigger.timezone",
+        message:
+          "Expected a valid IANA timezone such as UTC or America/New_York.",
+      });
     }
     if (input.trigger.dayOfMonth < 1 || input.trigger.dayOfMonth > 31) {
-      errors.push({ path: "trigger.dayOfMonth", message: "Expected a day between 1 and 31." });
+      errors.push({
+        path: "trigger.dayOfMonth",
+        message: "Expected a day between 1 and 31.",
+      });
     }
   }
 
   return errors;
 }
 
-function normalizeMockTaskScheduleInput(input: TaskScheduleUpsertInput, existing?: StoredTaskScheduleRecord, projectId?: string | null): StoredTaskScheduleRecord {
+function normalizeMockTaskScheduleInput(
+  input: TaskScheduleUpsertInput,
+  existing?: StoredTaskScheduleRecord,
+  projectId?: string | null,
+): StoredTaskScheduleRecord {
   const timestamp = nowIso();
   const taskBlueprint = normalizeScheduleBlueprint(input.task);
-  const nextFireAt = input.trigger.type === "time"
-    ? existing?.nextFireAt ?? nextMockTimeFireAt(input.trigger, timestamp)
-    : null;
-  const resolvedProjectId = existing?.projectId ?? resolveMockProjectIdOrThrow(projectId ?? getActiveProjectId(), "task schedule");
+  const nextFireAt =
+    input.trigger.type === "time"
+      ? (existing?.nextFireAt ?? nextMockTimeFireAt(input.trigger, timestamp))
+      : null;
+  const resolvedProjectId =
+    existing?.projectId ??
+    resolveMockProjectIdOrThrow(
+      projectId ?? getActiveProjectId(),
+      "task schedule",
+    );
 
   return {
     id: existing?.id ?? createId("task-schedule"),
@@ -1432,7 +1886,9 @@ function normalizeMockTaskScheduleInput(input: TaskScheduleUpsertInput, existing
 }
 
 function processMockTaskSchedules(projectId?: string | null) {
-  const targetProjectId = resolveCurrentMockProjectId(projectId ?? getActiveProjectId());
+  const targetProjectId = resolveCurrentMockProjectId(
+    projectId ?? getActiveProjectId(),
+  );
   const schedules = ensureMockTaskSchedules();
   const domainEvents = ensureMockDomainEvents();
   let tasks = ensureMockTasks();
@@ -1440,8 +1896,14 @@ function processMockTaskSchedules(projectId?: string | null) {
   let tasksChanged = false;
 
   const materializeScheduleTask = (schedule: StoredTaskScheduleRecord) => {
-    const task = normalizeMockTaskInput({ ...schedule.taskBlueprint, status: "ready", archived: false }, undefined, schedule.projectId);
-    tasks = [task, ...tasks].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    const task = normalizeMockTaskInput(
+      { ...schedule.taskBlueprint, status: "ready", archived: false },
+      undefined,
+      schedule.projectId,
+    );
+    tasks = [task, ...tasks].sort(
+      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    );
     tasksChanged = true;
     return task;
   };
@@ -1452,12 +1914,22 @@ function processMockTaskSchedules(projectId?: string | null) {
     }
 
     if (schedule.trigger.type === "time") {
-      if (schedule.enabled && schedule.nextFireAt && Date.parse(schedule.nextFireAt) <= Date.now()) {
-        const occurrence = createScheduleOccurrence(schedule.id, schedule.nextFireAt, schedule.nextFireAt, null);
+      if (
+        schedule.enabled &&
+        schedule.nextFireAt &&
+        Date.parse(schedule.nextFireAt) <= Date.now()
+      ) {
+        const occurrence = createScheduleOccurrence(
+          schedule.id,
+          schedule.nextFireAt,
+          schedule.nextFireAt,
+          null,
+        );
         const openCount = scheduleOpenMaterializedTaskCount(schedule, tasks);
         if (schedule.overlapPolicy === "skip" && openCount > 0) {
           occurrence.status = "skipped";
-          occurrence.error = "Skipped because an open materialized task already exists.";
+          occurrence.error =
+            "Skipped because an open materialized task already exists.";
           occurrence.updatedAt = nowIso();
           schedule.lastError = occurrence.error;
         } else {
@@ -1467,23 +1939,37 @@ function processMockTaskSchedules(projectId?: string | null) {
           occurrence.updatedAt = nowIso();
           schedule.lastMaterializedTaskId = task.id;
           schedule.lastError = null;
-          appendMockDomainEvent("task.created", "task", task.id, {
-            taskId: task.id,
-            taskNumber: task.number,
-            status: task.status,
-            workflowId: task.workflowId ?? null,
-            laneId: task.currentLaneId ?? null,
-            sourceScheduleId: schedule.id,
-            sourceScheduleOccurrenceId: occurrence.id,
-          }, schedule.projectId);
-          appendMockLog("info", "task.schedule.materialized", `Materialized task ${task.id} from schedule ${schedule.id}`);
+          appendMockDomainEvent(
+            "task.created",
+            "task",
+            task.id,
+            {
+              taskId: task.id,
+              taskNumber: task.number,
+              status: task.status,
+              workflowId: task.workflowId ?? null,
+              laneId: task.currentLaneId ?? null,
+              sourceScheduleId: schedule.id,
+              sourceScheduleOccurrenceId: occurrence.id,
+            },
+            schedule.projectId,
+          );
+          appendMockLog(
+            "info",
+            "task.schedule.materialized",
+            `Materialized task ${task.id} from schedule ${schedule.id}`,
+          );
         }
         schedule.lastFiredAt = occurrence.scheduledAt ?? occurrence.updatedAt;
         schedule.occurrences = [...schedule.occurrences, occurrence];
         schedule.updatedAt = nowIso();
-        schedule.nextFireAt = schedule.oneShot || schedule.trigger.kind === "once"
-          ? null
-          : nextMockTimeFireAt(schedule.trigger, occurrence.scheduledAt ?? occurrence.updatedAt);
+        schedule.nextFireAt =
+          schedule.oneShot || schedule.trigger.kind === "once"
+            ? null
+            : nextMockTimeFireAt(
+                schedule.trigger,
+                occurrence.scheduledAt ?? occurrence.updatedAt,
+              );
         if (schedule.oneShot || schedule.trigger.kind === "once") {
           schedule.enabled = false;
         }
@@ -1492,12 +1978,19 @@ function processMockTaskSchedules(projectId?: string | null) {
       continue;
     }
 
-    const processedEventIds = new Set(schedule.occurrences.map((occurrence) => occurrence.eventId).filter((value): value is string => Boolean(value)));
+    const processedEventIds = new Set(
+      schedule.occurrences
+        .map((occurrence) => occurrence.eventId)
+        .filter((value): value is string => Boolean(value)),
+    );
     for (const event of domainEvents) {
       if (!schedule.enabled) {
         break;
       }
-      if (processedEventIds.has(event.id) || event.topic !== schedule.trigger.eventKey) {
+      if (
+        processedEventIds.has(event.id) ||
+        event.topic !== schedule.trigger.eventKey
+      ) {
         continue;
       }
       if (event.projectId && event.projectId !== schedule.projectId) {
@@ -1506,11 +1999,19 @@ function processMockTaskSchedules(projectId?: string | null) {
       if (Date.parse(event.createdAt) <= Date.parse(schedule.updatedAt)) {
         continue;
       }
-      if (typeof (event.payload as { sourceScheduleId?: string | null }).sourceScheduleId === "string") {
+      if (
+        typeof (event.payload as { sourceScheduleId?: string | null })
+          .sourceScheduleId === "string"
+      ) {
         continue;
       }
 
-      const occurrence = createScheduleOccurrence(schedule.id, event.id, null, event.id);
+      const occurrence = createScheduleOccurrence(
+        schedule.id,
+        event.id,
+        null,
+        event.id,
+      );
       const openCount = scheduleOpenMaterializedTaskCount(schedule, tasks);
       if (schedule.overlapPolicy === "skip" && openCount > 0) {
         occurrence.status = "skipped";
@@ -1522,16 +2023,26 @@ function processMockTaskSchedules(projectId?: string | null) {
         occurrence.taskId = task.id;
         schedule.lastMaterializedTaskId = task.id;
         schedule.lastError = null;
-        appendMockDomainEvent("task.created", "task", task.id, {
-          taskId: task.id,
-          taskNumber: task.number,
-          status: task.status,
-          workflowId: task.workflowId ?? null,
-          laneId: task.currentLaneId ?? null,
-          sourceScheduleId: schedule.id,
-          sourceScheduleOccurrenceId: occurrence.id,
-        }, schedule.projectId);
-        appendMockLog("info", "task.schedule.materialized", `Materialized task ${task.id} from schedule ${schedule.id}`);
+        appendMockDomainEvent(
+          "task.created",
+          "task",
+          task.id,
+          {
+            taskId: task.id,
+            taskNumber: task.number,
+            status: task.status,
+            workflowId: task.workflowId ?? null,
+            laneId: task.currentLaneId ?? null,
+            sourceScheduleId: schedule.id,
+            sourceScheduleOccurrenceId: occurrence.id,
+          },
+          schedule.projectId,
+        );
+        appendMockLog(
+          "info",
+          "task.schedule.materialized",
+          `Materialized task ${task.id} from schedule ${schedule.id}`,
+        );
       }
       occurrence.updatedAt = nowIso();
       schedule.lastFiredAt = event.createdAt;
@@ -1565,27 +2076,37 @@ function dedupeMockTaskIds(taskIds: string[]) {
   return [...new Set(taskIds)];
 }
 
-function ensureStoredMockTask(task: TaskDetail | StoredMockTask): StoredMockTask {
+function ensureStoredMockTask(
+  task: TaskDetail | StoredMockTask,
+): StoredMockTask {
   return {
     ...task,
     tags: normalizeMockTaskTags(task.tags),
-    autoBlockedByDependencies: (task as StoredMockTask).autoBlockedByDependencies ?? false,
+    autoBlockedByDependencies:
+      (task as StoredMockTask).autoBlockedByDependencies ?? false,
   };
 }
 
-function collectMockParentChainTaskIds(tasks: StoredMockTask[], parentTaskId?: string | null) {
+function collectMockParentChainTaskIds(
+  tasks: StoredMockTask[],
+  parentTaskId?: string | null,
+) {
   const taskIds: string[] = [];
   let currentParentId = parentTaskId ?? null;
 
   while (currentParentId) {
     taskIds.push(currentParentId);
-    currentParentId = tasks.find((task) => task.id === currentParentId)?.parentTaskId ?? null;
+    currentParentId =
+      tasks.find((task) => task.id === currentParentId)?.parentTaskId ?? null;
   }
 
   return taskIds;
 }
 
-function collectMockDependentTaskIds(dependencies: TaskDependency[], blockerTaskId: string) {
+function collectMockDependentTaskIds(
+  dependencies: TaskDependency[],
+  blockerTaskId: string,
+) {
   return dependencies
     .filter((dependency) => dependency.blockerTaskId === blockerTaskId)
     .map((dependency) => dependency.blockedTaskId);
@@ -1606,10 +2127,17 @@ function collectMockRefreshTaskIds(
   ]);
 }
 
-function mockDependencyBlockerLaneSnapshot(tasks: TaskDetail[], blockerTaskId: string) {
+function mockDependencyBlockerLaneSnapshot(
+  tasks: TaskDetail[],
+  blockerTaskId: string,
+) {
   const blocker = tasks.find((task) => task.id === blockerTaskId);
-  const workflow = blocker?.workflowId ? ensureMockWorkflows().find((entry) => entry.id === blocker.workflowId) : null;
-  const lane = blocker?.currentLaneId ? workflow?.lanes.find((entry) => entry.id === blocker.currentLaneId) : null;
+  const workflow = blocker?.workflowId
+    ? ensureMockWorkflows().find((entry) => entry.id === blocker.workflowId)
+    : null;
+  const lane = blocker?.currentLaneId
+    ? workflow?.lanes.find((entry) => entry.id === blocker.currentLaneId)
+    : null;
 
   return {
     blockerWorkflowId: blocker?.workflowId ?? null,
@@ -1619,24 +2147,10 @@ function mockDependencyBlockerLaneSnapshot(tasks: TaskDetail[], blockerTaskId: s
 }
 
 function mockDependencyHasUnresolvedBlocker(
-  dependency: TaskDependency,
-  blocker?: Pick<TaskSummary, "status" | "workflowId" | "currentLaneId"> | null,
+  _dependency: TaskDependency,
+  blocker?: Pick<TaskSummary, "status"> | null,
 ) {
-  if (!blocker || ["completed", "canceled"].includes(blocker.status)) {
-    return false;
-  }
-
-  const snapshot = dependency as StoredMockTaskDependency;
-  if (!snapshot.blockerWorkflowId || !snapshot.blockerLaneId || snapshot.blockerLaneOrder == null) {
-    return true;
-  }
-  if (!blocker.workflowId || !blocker.currentLaneId || blocker.workflowId !== snapshot.blockerWorkflowId) {
-    return true;
-  }
-
-  const workflow = ensureMockWorkflows().find((entry) => entry.id === blocker.workflowId);
-  const currentLane = workflow?.lanes.find((entry) => entry.id === blocker.currentLaneId);
-  return currentLane?.order == null || currentLane.order <= snapshot.blockerLaneOrder;
+  return blocker != null && !["completed", "canceled"].includes(blocker.status);
 }
 
 function mockTaskHasUnresolvedDependencyBlockers(
@@ -1653,8 +2167,16 @@ function mockTaskHasUnresolvedDependencyBlockers(
   });
 }
 
-function mockTaskHasUnfinishedChildren(taskId: string, tasks: StoredMockTask[]) {
-  return tasks.some((task) => task.parentTaskId === taskId && !task.archived && !["completed", "canceled"].includes(task.status));
+function mockTaskHasUnfinishedChildren(
+  taskId: string,
+  tasks: StoredMockTask[],
+) {
+  return tasks.some(
+    (task) =>
+      task.parentTaskId === taskId &&
+      !task.archived &&
+      !["completed", "canceled"].includes(task.status),
+  );
 }
 
 function reconcileStoredMockTasks(
@@ -1673,12 +2195,20 @@ function reconcileStoredMockTasks(
     }
 
     const task = nextTasks[index];
-    const hasBlockers = mockTaskHasUnresolvedDependencyBlockers(taskId, nextTasks, dependencies)
-      || mockTaskHasUnfinishedChildren(taskId, nextTasks);
+    const hasBlockers =
+      mockTaskHasUnresolvedDependencyBlockers(
+        taskId,
+        nextTasks,
+        dependencies,
+      ) || mockTaskHasUnfinishedChildren(taskId, nextTasks);
 
     if (["completed", "canceled"].includes(task.status)) {
       if (task.autoBlockedByDependencies) {
-        nextTasks[index] = { ...task, autoBlockedByDependencies: false, updatedAt };
+        nextTasks[index] = {
+          ...task,
+          autoBlockedByDependencies: false,
+          updatedAt,
+        };
         changedTaskIds.add(taskId);
       }
       continue;
@@ -1686,23 +2216,44 @@ function reconcileStoredMockTasks(
 
     if (hasBlockers) {
       if (["ready", "in_progress", "in_review"].includes(task.status)) {
-        nextTasks[index] = { ...task, status: "blocked", autoBlockedByDependencies: true, updatedAt };
+        nextTasks[index] = {
+          ...task,
+          status: "blocked",
+          autoBlockedByDependencies: true,
+          updatedAt,
+        };
         changedTaskIds.add(taskId);
-      } else if (!["blocked"].includes(task.status) && task.autoBlockedByDependencies) {
-        nextTasks[index] = { ...task, autoBlockedByDependencies: false, updatedAt };
+      } else if (
+        !["blocked"].includes(task.status) &&
+        task.autoBlockedByDependencies
+      ) {
+        nextTasks[index] = {
+          ...task,
+          autoBlockedByDependencies: false,
+          updatedAt,
+        };
         changedTaskIds.add(taskId);
       }
       continue;
     }
 
     if (task.status === "blocked" && task.autoBlockedByDependencies) {
-      nextTasks[index] = { ...task, status: "ready", autoBlockedByDependencies: false, updatedAt };
+      nextTasks[index] = {
+        ...task,
+        status: "ready",
+        autoBlockedByDependencies: false,
+        updatedAt,
+      };
       changedTaskIds.add(taskId);
       continue;
     }
 
     if (task.autoBlockedByDependencies) {
-      nextTasks[index] = { ...task, autoBlockedByDependencies: false, updatedAt };
+      nextTasks[index] = {
+        ...task,
+        autoBlockedByDependencies: false,
+        updatedAt,
+      };
       changedTaskIds.add(taskId);
     }
   }
@@ -1710,7 +2261,11 @@ function reconcileStoredMockTasks(
   return { tasks: nextTasks, changedTaskIds: [...changedTaskIds] };
 }
 
-function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: string[], updatedAt = nowIso()) {
+function clearBlockedMockTaskRuntimeClaims(
+  tasks: StoredMockTask[],
+  taskIds: string[],
+  updatedAt = nowIso(),
+) {
   const nextTasks = tasks.map((task) => ensureStoredMockTask(task));
   let nextAgentQueue = getStoredMockAgentQueue();
   let nextAgentRuntimes = getStoredMockAgentRuntimes();
@@ -1738,7 +2293,12 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
     const affectedRoleInstanceIds = new Set<string>();
 
     nextAgentQueue = nextAgentQueue.map((entry) => {
-      if (entry.sourceTaskId !== taskId || !["queued", "dispatched", "paused_by_user"].includes(String(entry.status ?? ""))) {
+      if (
+        entry.sourceTaskId !== taskId ||
+        !["queued", "dispatched", "paused_by_user"].includes(
+          String(entry.status ?? ""),
+        )
+      ) {
         return entry;
       }
       if (typeof entry.agentId === "string" && entry.agentId) {
@@ -1754,10 +2314,18 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
     });
 
     nextRoleQueue = nextRoleQueue.map((entry) => {
-      if (entry.sourceTaskId !== taskId || !["queued", "assigned", "paused_by_user"].includes(String(entry.status ?? ""))) {
+      if (
+        entry.sourceTaskId !== taskId ||
+        !["queued", "assigned", "paused_by_user"].includes(
+          String(entry.status ?? ""),
+        )
+      ) {
         return entry;
       }
-      if (typeof entry.assignedInstanceId === "string" && entry.assignedInstanceId) {
+      if (
+        typeof entry.assignedInstanceId === "string" &&
+        entry.assignedInstanceId
+      ) {
         affectedRoleInstanceIds.add(entry.assignedInstanceId);
       }
       changed = true;
@@ -1775,10 +2343,16 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
       if (task.activeLaneAssignment.sessionId) {
         clearedSessionIds.add(task.activeLaneAssignment.sessionId);
       }
-      if (task.activeLaneAssignment.workerType === "agent" && task.activeLaneAssignment.workerId) {
+      if (
+        task.activeLaneAssignment.workerType === "agent" &&
+        task.activeLaneAssignment.workerId
+      ) {
         affectedAgentIds.add(task.activeLaneAssignment.workerId);
       }
-      if (task.activeLaneAssignment.workerType === "role" && task.activeLaneAssignment.roleInstanceId) {
+      if (
+        task.activeLaneAssignment.workerType === "role" &&
+        task.activeLaneAssignment.roleInstanceId
+      ) {
         affectedRoleInstanceIds.add(task.activeLaneAssignment.roleInstanceId);
       }
       nextTasks[index] = {
@@ -1790,9 +2364,9 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
 
     if (affectedAgentIds.size > 0) {
       nextAgentRuntimes = nextAgentRuntimes.map((runtime) =>
-        typeof runtime.agentId === "string"
-          && affectedAgentIds.has(runtime.agentId)
-          && runtime.projectId === task.projectId
+        typeof runtime.agentId === "string" &&
+        affectedAgentIds.has(runtime.agentId) &&
+        runtime.projectId === task.projectId
           ? {
               ...runtime,
               status: "idle",
@@ -1807,7 +2381,8 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
 
     if (affectedRoleInstanceIds.size > 0) {
       nextRoleInstances = nextRoleInstances.map((instance) =>
-        typeof instance.id === "string" && affectedRoleInstanceIds.has(instance.id)
+        typeof instance.id === "string" &&
+        affectedRoleInstanceIds.has(instance.id)
           ? {
               ...instance,
               status: "canceled",
@@ -1831,8 +2406,13 @@ function clearBlockedMockTaskRuntimeClaims(tasks: StoredMockTask[], taskIds: str
     saveStoredMockRoleQueue(nextRoleQueue);
     saveStoredMockRoleInstances(nextRoleInstances);
     for (const sessionId of clearedSessionIds) {
-      updateMockSession(sessionId, (current) => clearMockSessionActiveTaskMetadata(current));
-      emitMockSessionChange({ sessionIds: [sessionId], reason: "task.blocked.runtime_cleared" });
+      updateMockSession(sessionId, (current) =>
+        clearMockSessionActiveTaskMetadata(current),
+      );
+      emitMockSessionChange({
+        sessionIds: [sessionId],
+        reason: "task.blocked.runtime_cleared",
+      });
     }
   }
 
@@ -1857,17 +2437,29 @@ function ensureMockTasks() {
 }
 
 function saveMockTasks(tasks: StoredMockTask[]) {
-  setStoredValue(TASK_STORAGE_KEY, enrichMockTasks(tasks.map((task) => ensureStoredMockTask(task)), ensureMockTaskDependencies()));
+  setStoredValue(
+    TASK_STORAGE_KEY,
+    enrichMockTasks(
+      tasks.map((task) => ensureStoredMockTask(task)),
+      ensureMockTaskDependencies(),
+    ),
+  );
 }
 
-function hasUnfinishedChildBlockers(children: Array<{ status: string; archived?: boolean | null }>) {
-  return children.some((child) => !child.archived && !["completed", "canceled"].includes(child.status));
+function hasUnfinishedChildBlockers(
+  children: Array<{ status: string; archived?: boolean | null }>,
+) {
+  return children.some(
+    (child) =>
+      !child.archived && !["completed", "canceled"].includes(child.status),
+  );
 }
 
 function summarizeTask(task: TaskDetail): TaskSummary {
   const dependencyBlocked =
-    task.blockedBy.some((dependency) => mockDependencyHasUnresolvedBlocker(dependency, dependency.blocker))
-    || hasUnfinishedChildBlockers(task.children);
+    task.blockedBy.some((dependency) =>
+      mockDependencyHasUnresolvedBlocker(dependency, dependency.blocker),
+    ) || hasUnfinishedChildBlockers(task.children);
   return {
     id: task.id,
     projectId: task.projectId,
@@ -1887,14 +2479,24 @@ function summarizeTask(task: TaskDetail): TaskSummary {
     unreadCommentCount: countMockUnreadTaskComments(task),
     laneRunCount: task.laneRuns.length,
     childCount: task.children.length,
-    completedChildCount: task.children.filter((child) => child.status === "completed").length,
-    inProgressChildCount: task.children.filter((child) => child.status === "in_progress").length,
-    blockedChildCount: task.children.filter((child) => !child.archived && !["completed", "canceled"].includes(child.status)).length,
+    completedChildCount: task.children.filter(
+      (child) => child.status === "completed",
+    ).length,
+    inProgressChildCount: task.children.filter(
+      (child) => child.status === "in_progress",
+    ).length,
+    blockedChildCount: task.children.filter(
+      (child) =>
+        !child.archived && !["completed", "canceled"].includes(child.status),
+    ).length,
     blockedByCount: task.blockedBy.length,
     blockingCount: task.blocking.length,
     attachmentCount: task.attachments.length,
     dependencyBlocked,
-    activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? task.activeLaneAssignmentStatus ?? null,
+    activeLaneAssignmentStatus:
+      task.activeLaneAssignment?.status ??
+      task.activeLaneAssignmentStatus ??
+      null,
     readyForDispatch:
       !task.archived &&
       Boolean(task.workflowId && task.currentLaneId) &&
@@ -1923,7 +2525,10 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
     blockingCount: 0,
     attachmentCount: 0,
     dependencyBlocked: false,
-    activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? task.activeLaneAssignmentStatus ?? null,
+    activeLaneAssignmentStatus:
+      task.activeLaneAssignment?.status ??
+      task.activeLaneAssignmentStatus ??
+      null,
     readyForDispatch: false,
     attachments: task.attachments ?? [],
     todos: task.todos ?? [],
@@ -1954,25 +2559,37 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         .filter((dependency) => dependency.blockedTaskId === task.id)
         .map((dependency) => ({
           ...dependency,
-          blocker: summarizeTask(bareById.get(dependency.blockerTaskId) ?? task),
-          blocked: summarizeTask(bareById.get(dependency.blockedTaskId) ?? task),
+          blocker: summarizeTask(
+            bareById.get(dependency.blockerTaskId) ?? task,
+          ),
+          blocked: summarizeTask(
+            bareById.get(dependency.blockedTaskId) ?? task,
+          ),
         }));
 
       const blocking = dependencies
         .filter((dependency) => dependency.blockerTaskId === task.id)
         .map((dependency) => ({
           ...dependency,
-          blocker: summarizeTask(bareById.get(dependency.blockerTaskId) ?? task),
-          blocked: summarizeTask(bareById.get(dependency.blockedTaskId) ?? task),
+          blocker: summarizeTask(
+            bareById.get(dependency.blockerTaskId) ?? task,
+          ),
+          blocked: summarizeTask(
+            bareById.get(dependency.blockedTaskId) ?? task,
+          ),
         }));
 
       const dependencyBlocked =
-        blockedBy.some((dependency) => mockDependencyHasUnresolvedBlocker(dependency, dependency.blocker))
-        || hasUnfinishedChildBlockers(children);
+        blockedBy.some((dependency) =>
+          mockDependencyHasUnresolvedBlocker(dependency, dependency.blocker),
+        ) || hasUnfinishedChildBlockers(children);
 
       return {
         ...task,
-        parent: task.parentTaskId && bareById.get(task.parentTaskId) ? summarizeTask(bareById.get(task.parentTaskId) as TaskDetail) : null,
+        parent:
+          task.parentTaskId && bareById.get(task.parentTaskId)
+            ? summarizeTask(bareById.get(task.parentTaskId) as TaskDetail)
+            : null,
         lineage,
         children,
         blockedBy,
@@ -1981,14 +2598,25 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
         unreadCommentCount: countMockUnreadTaskComments(task),
         laneRunCount: task.laneRuns.length,
         childCount: children.length,
-        completedChildCount: children.filter((child) => child.status === "completed").length,
-        inProgressChildCount: children.filter((child) => child.status === "in_progress").length,
-        blockedChildCount: children.filter((child) => !child.archived && !["completed", "canceled"].includes(child.status)).length,
+        completedChildCount: children.filter(
+          (child) => child.status === "completed",
+        ).length,
+        inProgressChildCount: children.filter(
+          (child) => child.status === "in_progress",
+        ).length,
+        blockedChildCount: children.filter(
+          (child) =>
+            !child.archived &&
+            !["completed", "canceled"].includes(child.status),
+        ).length,
         blockedByCount: blockedBy.length,
         blockingCount: blocking.length,
         attachmentCount: task.attachments.length,
         dependencyBlocked,
-        activeLaneAssignmentStatus: task.activeLaneAssignment?.status ?? task.activeLaneAssignmentStatus ?? null,
+        activeLaneAssignmentStatus:
+          task.activeLaneAssignment?.status ??
+          task.activeLaneAssignmentStatus ??
+          null,
         readyForDispatch:
           !task.archived &&
           Boolean(task.workflowId && task.currentLaneId) &&
@@ -1997,7 +2625,9 @@ function enrichMockTasks(tasks: TaskDetail[], dependencies: TaskDependency[]) {
           !task.activeLaneAssignment,
       } satisfies TaskDetail;
     })
-    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    .sort(
+      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    );
 }
 
 function getMockProjectTaskPrefix(projectId: string) {
@@ -2006,8 +2636,16 @@ function getMockProjectTaskPrefix(projectId: string) {
     return "ORC";
   }
 
-  const projects = JSON.parse(value) as Array<{ id: string; taskPrefix?: string | null }>;
-  return projects.find((project) => project.id === projectId)?.taskPrefix?.trim().toUpperCase() || "ORC";
+  const projects = JSON.parse(value) as Array<{
+    id: string;
+    taskPrefix?: string | null;
+  }>;
+  return (
+    projects
+      .find((project) => project.id === projectId)
+      ?.taskPrefix?.trim()
+      .toUpperCase() || "ORC"
+  );
 }
 
 function getTaskSequenceNumber(taskNumber?: string | null) {
@@ -2015,22 +2653,46 @@ function getTaskSequenceNumber(taskNumber?: string | null) {
   return Number.isFinite(parsed.sequence) ? parsed.sequence : 0;
 }
 
-function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMockTask, projectId?: string | null): StoredMockTask {
+function normalizeMockTaskInput(
+  input: TaskUpsertInput,
+  existingTask?: StoredMockTask,
+  projectId?: string | null,
+): StoredMockTask {
   const timestamp = nowIso();
   const previousTasks = ensureMockTasks();
-  const workflow = input.workflowId ? ensureMockWorkflows().find((entry) => entry.id === input.workflowId) : null;
-  const resolvedLaneId = input.currentLaneId?.trim() || workflow?.lanes.slice().sort((left, right) => left.order - right.order)[0]?.id || null;
-  const resolvedLane = workflow?.lanes.find((entry) => entry.id === resolvedLaneId) ?? null;
-  const resolvedProjectId = existingTask?.projectId ?? resolveMockProjectIdOrThrow(projectId ?? getActiveProjectId());
-  const projectTasks = previousTasks.filter((task) => task.projectId === resolvedProjectId);
+  const workflow = input.workflowId
+    ? ensureMockWorkflows().find((entry) => entry.id === input.workflowId)
+    : null;
+  const resolvedLaneId =
+    input.currentLaneId?.trim() ||
+    workflow?.lanes.slice().sort((left, right) => left.order - right.order)[0]
+      ?.id ||
+    null;
+  const resolvedLane =
+    workflow?.lanes.find((entry) => entry.id === resolvedLaneId) ?? null;
+  const resolvedProjectId =
+    existingTask?.projectId ??
+    resolveMockProjectIdOrThrow(projectId ?? getActiveProjectId());
+  const projectTasks = previousTasks.filter(
+    (task) => task.projectId === resolvedProjectId,
+  );
   const nextSequence = existingTask
     ? getTaskSequenceNumber(existingTask.number) || projectTasks.length + 1
-    : projectTasks.reduce((highest, task) => Math.max(highest, getTaskSequenceNumber(task.number)), 0) + 1;
+    : projectTasks.reduce(
+        (highest, task) =>
+          Math.max(highest, getTaskSequenceNumber(task.number)),
+        0,
+      ) + 1;
 
   return {
     id: existingTask?.id ?? createId("task"),
     projectId: resolvedProjectId,
-    number: existingTask?.number ?? formatTaskNumber(getMockProjectTaskPrefix(resolvedProjectId), nextSequence),
+    number:
+      existingTask?.number ??
+      formatTaskNumber(
+        getMockProjectTaskPrefix(resolvedProjectId),
+        nextSequence,
+      ),
     title: input.title.trim(),
     description: input.description?.trim() || null,
     type: input.type,
@@ -2040,11 +2702,18 @@ function normalizeMockTaskInput(input: TaskUpsertInput, existingTask?: StoredMoc
     workflowId: input.workflowId?.trim() || null,
     currentLaneId: resolvedLaneId,
     assigneeType: resolvedLane?.assignedEntityType ?? input.assigneeType,
-    assigneeId: resolvedLane?.assignedEntityId ?? (input.assigneeId?.trim() || null),
-    repositoryId: (input.repositoryIds?.[0]?.trim() || input.repositoryId?.trim() || null),
-    repositoryIds: (input.repositoryIds ?? []).map((value) => value.trim()).filter(Boolean),
+    assigneeId:
+      resolvedLane?.assignedEntityId ?? (input.assigneeId?.trim() || null),
+    repositoryId:
+      input.repositoryIds?.[0]?.trim() || input.repositoryId?.trim() || null,
+    repositoryIds: (input.repositoryIds ?? [])
+      .map((value) => value.trim())
+      .filter(Boolean),
     parentTaskId: input.parentTaskId?.trim() || null,
-    whipMaxAttempts: Math.max(1, input.whipMaxAttempts ?? existingTask?.whipMaxAttempts ?? 10),
+    whipMaxAttempts: Math.max(
+      1,
+      input.whipMaxAttempts ?? existingTask?.whipMaxAttempts ?? 10,
+    ),
     archived: input.archived ?? existingTask?.archived ?? false,
     commentCount: existingTask?.comments.length ?? 0,
     unreadCommentCount: existingTask?.unreadCommentCount ?? 0,
@@ -2086,56 +2755,104 @@ function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
   errors.push(...validateMockTaskTags(input.tags).errors);
 
   if (!["task", "bug", "feature", "chore", "epic"].includes(input.type)) {
-    errors.push({ path: "type", message: "Task type must be one of: task, bug, feature, chore, epic." });
+    errors.push({
+      path: "type",
+      message: "Task type must be one of: task, bug, feature, chore, epic.",
+    });
   }
 
-  if (!["draft", "ready", "in_progress", "blocked", "in_review", "completed", "canceled"].includes(input.status)) {
+  if (
+    ![
+      "draft",
+      "ready",
+      "in_progress",
+      "blocked",
+      "in_review",
+      "completed",
+      "canceled",
+    ].includes(input.status)
+  ) {
     errors.push({
       path: "status",
-      message: "Task status must be one of: draft, ready, in_progress, blocked, in_review, completed, canceled.",
+      message:
+        "Task status must be one of: draft, ready, in_progress, blocked, in_review, completed, canceled.",
     });
   }
 
   if (!["P0", "P1", "P2", "P3", "P4"].includes(input.priority)) {
-    errors.push({ path: "priority", message: "Task priority must be one of: P0, P1, P2, P3, P4." });
+    errors.push({
+      path: "priority",
+      message: "Task priority must be one of: P0, P1, P2, P3, P4.",
+    });
   }
 
   if (!["user", "agent", "role", "unassigned"].includes(input.assigneeType)) {
-    errors.push({ path: "assigneeType", message: "Assignee type must be one of: user, agent, role, unassigned." });
+    errors.push({
+      path: "assigneeType",
+      message: "Assignee type must be one of: user, agent, role, unassigned.",
+    });
   }
 
   if ((input.whipMaxAttempts ?? 10) < 1) {
-    errors.push({ path: "whipMaxAttempts", message: "Task whip max attempts must be at least 1." });
+    errors.push({
+      path: "whipMaxAttempts",
+      message: "Task whip max attempts must be at least 1.",
+    });
   }
 
-
-  if (["user", "unassigned"].includes(input.assigneeType) && input.assigneeId?.trim()) {
-    errors.push({ path: "assigneeId", message: "User and unassigned tasks must not specify an assignee id." });
+  if (
+    ["user", "unassigned"].includes(input.assigneeType) &&
+    input.assigneeId?.trim()
+  ) {
+    errors.push({
+      path: "assigneeId",
+      message: "User and unassigned tasks must not specify an assignee id.",
+    });
   }
 
-  if (["agent", "role"].includes(input.assigneeType) && !input.assigneeId?.trim()) {
-    errors.push({ path: "assigneeId", message: "Agent and role tasks require an assignee id." });
+  if (
+    ["agent", "role"].includes(input.assigneeType) &&
+    !input.assigneeId?.trim()
+  ) {
+    errors.push({
+      path: "assigneeId",
+      message: "Agent and role tasks require an assignee id.",
+    });
   }
 
   if (input.currentLaneId?.trim() && !input.workflowId?.trim()) {
-    errors.push({ path: "currentLaneId", message: "A current lane requires a workflow selection." });
+    errors.push({
+      path: "currentLaneId",
+      message: "A current lane requires a workflow selection.",
+    });
   }
 
   if (input.parentTaskId?.trim()) {
     const parentId = input.parentTaskId.trim();
     const tasks = ensureMockTasks();
     if (taskId && parentId === taskId) {
-      errors.push({ path: "parentTaskId", message: "A task cannot be its own parent." });
+      errors.push({
+        path: "parentTaskId",
+        message: "A task cannot be its own parent.",
+      });
     } else if (!tasks.some((task) => task.id === parentId)) {
-      errors.push({ path: "parentTaskId", message: "Parent task was not found." });
+      errors.push({
+        path: "parentTaskId",
+        message: "Parent task was not found.",
+      });
     } else if (taskId) {
       let currentParentId: string | null = parentId;
       while (currentParentId) {
         if (currentParentId === taskId) {
-          errors.push({ path: "parentTaskId", message: "Parent would create a hierarchy cycle." });
+          errors.push({
+            path: "parentTaskId",
+            message: "Parent would create a hierarchy cycle.",
+          });
           break;
         }
-        currentParentId = tasks.find((task) => task.id === currentParentId)?.parentTaskId ?? null;
+        currentParentId =
+          tasks.find((task) => task.id === currentParentId)?.parentTaskId ??
+          null;
       }
     }
   }
@@ -2143,21 +2860,33 @@ function validateMockTaskInput(input: TaskUpsertInput, taskId?: string) {
   return errors;
 }
 
-function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidationResult {
+function validateMockWorkflowInput(
+  input: WorkflowUpsertInput,
+): WorkflowValidationResult {
   const errors: WorkflowValidationResult["errors"] = [];
 
   if (!input.name.trim()) {
-    errors.push({ code: "required", path: "name", message: "Workflow name is required." });
+    errors.push({
+      code: "required",
+      path: "name",
+      message: "Workflow name is required.",
+    });
   }
 
   if (!input.lanes.length) {
-    errors.push({ code: "required", path: "lanes", message: "A workflow must contain at least one lane." });
+    errors.push({
+      code: "required",
+      path: "lanes",
+      message: "A workflow must contain at least one lane.",
+    });
   }
 
   const laneIds = new Set<string>();
   const laneKeys = new Set<string>();
   const laneOrders = new Set<number>();
-  const normalizedIds = input.lanes.map((lane, index) => lane.id?.trim() || `lane-${index}`);
+  const normalizedIds = input.lanes.map(
+    (lane, index) => lane.id?.trim() || `lane-${index}`,
+  );
 
   input.lanes.forEach((lane, index) => {
     const laneId = normalizedIds[index]!;
@@ -2166,25 +2895,45 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
     const path = `lanes[${index}]`;
 
     if (!lane.name.trim()) {
-      errors.push({ code: "required", path: `${path}.name`, message: "Lane name is required." });
+      errors.push({
+        code: "required",
+        path: `${path}.name`,
+        message: "Lane name is required.",
+      });
     }
 
     if (!lane.key.trim()) {
-      errors.push({ code: "required", path: `${path}.key`, message: "Lane key is required." });
+      errors.push({
+        code: "required",
+        path: `${path}.key`,
+        message: "Lane key is required.",
+      });
     }
 
     if (laneIds.has(laneId)) {
-      errors.push({ code: "duplicate", path: `${path}.id`, message: "Lane ids must be unique within a workflow." });
+      errors.push({
+        code: "duplicate",
+        path: `${path}.id`,
+        message: "Lane ids must be unique within a workflow.",
+      });
     }
     laneIds.add(laneId);
 
     if (laneKeys.has(laneKey)) {
-      errors.push({ code: "duplicate", path: `${path}.key`, message: "Lane keys must be unique within a workflow." });
+      errors.push({
+        code: "duplicate",
+        path: `${path}.key`,
+        message: "Lane keys must be unique within a workflow.",
+      });
     }
     laneKeys.add(laneKey);
 
     if (laneOrders.has(laneOrder)) {
-      errors.push({ code: "duplicate", path: `${path}.order`, message: "Lane order values must be unique within a workflow." });
+      errors.push({
+        code: "duplicate",
+        path: `${path}.order`,
+        message: "Lane order values must be unique within a workflow.",
+      });
     }
     laneOrders.add(laneOrder);
 
@@ -2204,7 +2953,10 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
       });
     }
 
-    if (lane.assignedEntityType === "user" && lane.requireUserApprovalOnSuccess) {
+    if (
+      lane.assignedEntityType === "user" &&
+      lane.requireUserApprovalOnSuccess
+    ) {
       errors.push({
         code: "invalid",
         path: `${path}.requireUserApprovalOnSuccess`,
@@ -2221,11 +2973,15 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
           path: `${path}.assignedEntityId`,
           message: "This lane owner type requires an assigned entity id.",
         });
-      } else if (agents.length > 0 && !agents.some((agent) => !agent.archived && agent.slug === agentRef)) {
+      } else if (
+        agents.length > 0 &&
+        !agents.some((agent) => !agent.archived && agent.slug === agentRef)
+      ) {
         errors.push({
           code: "invalid_reference",
           path: `${path}.assignedEntityId`,
-          message: "Assigned entity id does not reference an existing active worker.",
+          message:
+            "Assigned entity id does not reference an existing active worker.",
         });
       }
     }
@@ -2239,11 +2995,15 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
           path: `${path}.assignedEntityId`,
           message: "This lane owner type requires an assigned entity id.",
         });
-      } else if (roles.length > 0 && !roles.some((role) => !role.archived && role.slug === roleRef)) {
+      } else if (
+        roles.length > 0 &&
+        !roles.some((role) => !role.archived && role.slug === roleRef)
+      ) {
         errors.push({
           code: "invalid_reference",
           path: `${path}.assignedEntityId`,
-          message: "Assigned entity id does not reference an existing active worker.",
+          message:
+            "Assigned entity id does not reference an existing active worker.",
         });
       }
     }
@@ -2252,8 +3012,18 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
   const validTargets = new Set(normalizedIds);
   input.lanes.forEach((lane, index) => {
     const transitions = [
-      [lane.successTransitionType, lane.successTargetLaneId, "successTransitionType", "successTargetLaneId"],
-      [lane.failureTransitionType, lane.failureTargetLaneId, "failureTransitionType", "failureTargetLaneId"],
+      [
+        lane.successTransitionType,
+        lane.successTargetLaneId,
+        "successTransitionType",
+        "successTargetLaneId",
+      ],
+      [
+        lane.failureTransitionType,
+        lane.failureTargetLaneId,
+        "failureTransitionType",
+        "failureTargetLaneId",
+      ],
     ] as const;
 
     transitions.forEach(([transitionType, target, typeKey, targetKey]) => {
@@ -2261,7 +3031,8 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
         errors.push({
           code: "invalid",
           path: `lanes[${index}].${typeKey}`,
-          message: "Transition type must be one of: lane, user_intervention, end.",
+          message:
+            "Transition type must be one of: lane, user_intervention, end.",
         });
         return;
       }
@@ -2296,7 +3067,10 @@ function validateMockWorkflowInput(input: WorkflowUpsertInput): WorkflowValidati
   };
 }
 
-function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow?: WorkflowDefinition): WorkflowDefinition {
+function normalizeMockWorkflowInput(
+  input: WorkflowUpsertInput,
+  existingWorkflow?: WorkflowDefinition,
+): WorkflowDefinition {
   const timestamp = nowIso();
 
   const lanes: WorkflowLane[] = input.lanes.map((lane, index) => ({
@@ -2308,12 +3082,19 @@ function normalizeMockWorkflowInput(input: WorkflowUpsertInput, existingWorkflow
     assignedEntityType: lane.assignedEntityType,
     assignedEntityId: lane.assignedEntityId?.trim() || null,
     entryPromptTemplate: lane.entryPromptTemplate?.trim() || null,
-    useSeparateWorktree: (lane.useSeparateWorktree ?? false) && lane.assignedEntityType !== "user",
+    useSeparateWorktree:
+      (lane.useSeparateWorktree ?? false) && lane.assignedEntityType !== "user",
     requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
     successTransitionType: lane.successTransitionType,
-    successTargetLaneId: lane.successTransitionType === "lane" ? lane.successTargetLaneId?.trim() || null : null,
+    successTargetLaneId:
+      lane.successTransitionType === "lane"
+        ? lane.successTargetLaneId?.trim() || null
+        : null,
     failureTransitionType: lane.failureTransitionType,
-    failureTargetLaneId: lane.failureTransitionType === "lane" ? lane.failureTargetLaneId?.trim() || null : null,
+    failureTargetLaneId:
+      lane.failureTransitionType === "lane"
+        ? lane.failureTargetLaneId?.trim() || null
+        : null,
   }));
 
   return {
@@ -2338,7 +3119,11 @@ function describeError(error: unknown, fallback: string) {
   return fallback;
 }
 
-export async function reportClientError(target: string, error: unknown, fallback: string) {
+export async function reportClientError(
+  target: string,
+  error: unknown,
+  fallback: string,
+) {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.app.reportError(target, error, fallback);
@@ -2368,7 +3153,10 @@ export async function getAppInfo(): Promise<AppInfo> {
       backendStatus: "mock",
       versionDisplay: "0.1.0-mock0000",
       dispatchBlocked: piSetup.status !== "ready",
-      dispatchBlockedReason: piSetup.status === "ready" ? null : "No Pi models are configured yet. Open Settings → Harness to connect a provider or import an existing Pi setup.",
+      dispatchBlockedReason:
+        piSetup.status === "ready"
+          ? null
+          : "No Pi models are configured yet. Open Settings → Harness to connect a provider or import an existing Pi setup.",
       piRuntimeDiagnostics: {
         runtime: {
           available: true,
@@ -2384,16 +3172,23 @@ export async function getAppInfo(): Promise<AppInfo> {
           authPath: "~/.orchestra/runtime/pi/agent/auth.json",
           modelsPath: "~/.orchestra/runtime/pi/agent/models.json",
           settingsPath: "~/.orchestra/runtime/pi/agent/settings.json",
-          authExists: piSetup.availableProviders.some((provider) => provider.connected),
+          authExists: piSetup.availableProviders.some(
+            (provider) => provider.connected,
+          ),
           modelsExists: piSetup.status === "ready",
           legacyAgentDir: piSetup.legacyAgentDir ?? "~/.pi/agent",
-          legacyAuthAvailable: piSetup.status === "legacy_import_available" || piSetup.importState.canImportLegacy,
-          legacyModelsAvailable: piSetup.status === "legacy_import_available" || piSetup.importState.canImportLegacy,
+          legacyAuthAvailable:
+            piSetup.status === "legacy_import_available" ||
+            piSetup.importState.canImportLegacy,
+          legacyModelsAvailable:
+            piSetup.status === "legacy_import_available" ||
+            piSetup.importState.canImportLegacy,
           authImportedAt: piSetup.importState.importedAt,
           modelsImportedAt: piSetup.importState.importedAt,
-          message: piSetup.status === "ready"
-            ? "Browser-mode mock simulates configured Orchestra-managed PI auth."
-            : "Browser-mode mock requires Pi setup before Pi-backed flows are available.",
+          message:
+            piSetup.status === "ready"
+              ? "Browser-mode mock simulates configured Orchestra-managed PI auth."
+              : "Browser-mode mock requires Pi setup before Pi-backed flows are available.",
         },
         addOns: {
           packagedMode: false,
@@ -2425,7 +3220,9 @@ export async function getBridgeDiagnostics(): Promise<BridgeDiagnostics> {
   return invoke<BridgeDiagnostics>("get_bridge_diagnostics");
 }
 
-export async function cleanupStaleBridgeInstances(): Promise<BridgeCleanupEvent[]> {
+export async function cleanupStaleBridgeInstances(): Promise<
+  BridgeCleanupEvent[]
+> {
   if (!isTauriAvailable()) {
     const diagnostics = ensureMockBridgeDiagnostics();
     setStoredValue(BRIDGE_DIAGNOSTICS_STORAGE_KEY, {
@@ -2458,12 +3255,16 @@ export async function clearLogs(): Promise<void> {
   await invoke("clear_logs");
 }
 
-export async function exportLogsBundle(includeRelatedSessionSnapshot = false): Promise<string> {
+export async function exportLogsBundle(
+  includeRelatedSessionSnapshot = false,
+): Promise<string> {
   if (!isTauriAvailable()) {
     throw new Error("Log bundle export is only available in the desktop app.");
   }
 
-  return invoke<string>("export_logs_bundle", { includeRelatedSessionSnapshot });
+  return invoke<string>("export_logs_bundle", {
+    includeRelatedSessionSnapshot,
+  });
 }
 
 export async function openLogsWindow(): Promise<void> {
@@ -2471,7 +3272,11 @@ export async function openLogsWindow(): Promise<void> {
   logsUrl.searchParams.set("view", "logs");
 
   if (!isTauriAvailable()) {
-    window.open(logsUrl.toString(), "orchestra-logs", "popup=yes,width=980,height=760,resizable=yes,scrollbars=yes");
+    window.open(
+      logsUrl.toString(),
+      "orchestra-logs",
+      "popup=yes,width=980,height=760,resizable=yes,scrollbars=yes",
+    );
     return;
   }
 
@@ -2483,7 +3288,8 @@ export async function isCurrentLogsWindow(): Promise<boolean> {
     return getInitialLogsWindowFlag();
   }
 
-  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const { getCurrentWebviewWindow } =
+    await import("@tauri-apps/api/webviewWindow");
   return getCurrentWebviewWindow().label === "logs";
 }
 
@@ -2492,58 +3298,97 @@ export async function isCurrentAgentTerminalWindow(): Promise<boolean> {
     return getInitialAgentTerminalWindowFlag();
   }
 
-  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const { getCurrentWebviewWindow } =
+    await import("@tauri-apps/api/webviewWindow");
   return getCurrentWebviewWindow().label.startsWith("agent-terminal-");
 }
 
-export async function getCurrentAgentTerminalSessionId(): Promise<string | null> {
+export async function getCurrentAgentTerminalSessionId(): Promise<
+  string | null
+> {
   if (!isTauriAvailable()) {
     return getInitialAgentTerminalSessionId();
   }
 
-  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const { getCurrentWebviewWindow } =
+    await import("@tauri-apps/api/webviewWindow");
   const label = getCurrentWebviewWindow().label;
-  return label.startsWith("agent-terminal-") ? label.slice("agent-terminal-".length) : null;
+  return label.startsWith("agent-terminal-")
+    ? label.slice("agent-terminal-".length)
+    : null;
 }
 
-export async function listSessions(projectId?: string | null): Promise<SessionRecord[]> {
+export async function listSessions(
+  projectId?: string | null,
+): Promise<SessionRecord[]> {
   if (!isTauriAvailable()) {
     const dismissed = getDismissedMockSessionIds(projectId);
-    const sessions = sortSessions(ensureMockSessions(projectId).filter((session) => !dismissed.has(session.id)));
-    appendMockLog("info", "sessions.list", `Listed ${sessions.length} sessions`);
+    const sessions = sortSessions(
+      ensureMockSessions(projectId).filter(
+        (session) => !dismissed.has(session.id),
+      ),
+    );
+    appendMockLog(
+      "info",
+      "sessions.list",
+      `Listed ${sessions.length} sessions`,
+    );
     return sessions;
   }
 
-  return invoke<SessionRecord[]>("list_sessions", { projectId: projectId ?? null });
+  return invoke<SessionRecord[]>("list_sessions", {
+    projectId: projectId ?? null,
+  });
 }
 
-export async function getSessionRecord(sessionId: string): Promise<SessionRecord> {
+export async function getSessionRecord(
+  sessionId: string,
+): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
-    const session = ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
+    const session =
+      ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
     if (!session) {
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
     const dismissed = getDismissedMockSessionIds();
-    appendMockLog("info", "sessions.record", `Loaded session record ${sessionId}`);
+    appendMockLog(
+      "info",
+      "sessions.record",
+      `Loaded session record ${sessionId}`,
+    );
     return {
       ...session,
-      listVisibility: dismissed.has(sessionId) ? "hidden" : (session.listVisibility ?? (session.status === "closed" ? "closed" : "active")),
-      messageability: session.messageability ?? (session.status === "closed" ? "closed" : "messageable"),
+      listVisibility: dismissed.has(sessionId)
+        ? "hidden"
+        : (session.listVisibility ??
+          (session.status === "closed" ? "closed" : "active")),
+      messageability:
+        session.messageability ??
+        (session.status === "closed" ? "closed" : "messageable"),
     };
   }
 
   return invoke<SessionRecord>("get_session_record", { sessionId });
 }
 
-export async function getSessionRuntimeDetails(sessionId: string): Promise<SessionRuntimeDetails> {
+export async function getSessionRuntimeDetails(
+  sessionId: string,
+): Promise<SessionRuntimeDetails> {
   if (!isTauriAvailable()) {
-    const session = ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
+    const session =
+      ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
     if (!session) {
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
-    const extraExtensions = [...new Set((getStoredMockHarnessSettings().extraExtensions ?? []).map((entry) => entry.trim()).filter(Boolean))];
+    const extraExtensions = [
+      ...new Set(
+        (getStoredMockHarnessSettings().extraExtensions ?? [])
+          .map((entry) => entry.trim())
+          .filter(Boolean),
+      ),
+    ];
     const orchestraExtensionPath = "extensions/orchestra-tools.ts";
     return {
       sessionId,
@@ -2572,8 +3417,12 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
       sessionDir: "/mock/orchestra/sessions",
       sessionPath: `/mock/orchestra/sessions/${sessionId}.jsonl`,
       notes: session.subscribed
-        ? ["Browser-mode mock simulates an active runtime for subscribed sessions."]
-        : ["No live runtime is active in browser mode; these are the extensions Orchestra would load the next time this session spawns a runtime."],
+        ? [
+            "Browser-mode mock simulates an active runtime for subscribed sessions.",
+          ]
+        : [
+            "No live runtime is active in browser mode; these are the extensions Orchestra would load the next time this session spawns a runtime.",
+          ],
       managedSkills: {
         state: "resolved",
         context: {
@@ -2590,8 +3439,11 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
         resolvedSkills: [],
         suppressedSkills: [],
         scopedSnapshot: null,
-        globalPublicationManifestPath: "/mock/.orchestra/runtime/pi/agent/skills/manifest.json",
-        notes: ["Browser-mode mock exposes an empty managed-skills diagnostics payload for compatibility with the desktop runtime details UI."],
+        globalPublicationManifestPath:
+          "/mock/.orchestra/runtime/pi/agent/skills/manifest.json",
+        notes: [
+          "Browser-mode mock exposes an empty managed-skills diagnostics payload for compatibility with the desktop runtime details UI.",
+        ],
         warnings: [],
         errorMessage: null,
       },
@@ -2600,30 +3452,42 @@ export async function getSessionRuntimeDetails(sessionId: string): Promise<Sessi
     };
   }
 
-  return invoke<SessionRuntimeDetails>("get_session_runtime_details", { sessionId });
+  return invoke<SessionRuntimeDetails>("get_session_runtime_details", {
+    sessionId,
+  });
 }
 
-export async function getSessionStats(sessionId: string): Promise<SessionStats> {
+export async function getSessionStats(
+  sessionId: string,
+): Promise<SessionStats> {
   if (!isTauriAvailable()) {
-    const session = ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
+    const session =
+      ensureMockSessions().find((entry) => entry.id === sessionId) ?? null;
     if (!session) {
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
     const allText = session.events.map((event) => event.message).join("\n");
     const approxTokens = Math.max(0, Math.round(allText.length / 4));
-    const userMessages = session.events.filter((event) => event.kind === "user").length;
-    const assistantMessages = session.events.filter((event) => event.kind === "assistant").length;
+    const userMessages = session.events.filter(
+      (event) => event.kind === "user",
+    ).length;
+    const assistantMessages = session.events.filter(
+      (event) => event.kind === "assistant",
+    ).length;
     const totalMessages = userMessages + assistantMessages;
     const contextWindow = 200000;
-    const contextTokens = totalMessages === 0 ? null : Math.max(approxTokens, 1200);
+    const contextTokens =
+      totalMessages === 0 ? null : Math.max(approxTokens, 1200);
 
     return {
       sessionId,
       sessionFile: `/mock/orchestra/sessions/${sessionId}.jsonl`,
       userMessages,
       assistantMessages,
-      toolCalls: session.events.filter((event) => event.presentation === "tool_call").length,
+      toolCalls: session.events.filter(
+        (event) => event.presentation === "tool_call",
+      ).length,
       toolResults: 0,
       totalMessages,
       tokens: {
@@ -2637,7 +3501,8 @@ export async function getSessionStats(sessionId: string): Promise<SessionStats> 
       contextUsage: {
         tokens: contextTokens,
         contextWindow,
-        percent: contextTokens == null ? null : (contextTokens / contextWindow) * 100,
+        percent:
+          contextTokens == null ? null : (contextTokens / contextWindow) * 100,
       },
     };
   }
@@ -2645,7 +3510,10 @@ export async function getSessionStats(sessionId: string): Promise<SessionStats> 
   return invoke<SessionStats>("get_session_stats", { sessionId });
 }
 
-function cloneMockSessionModel(sourceSessionId: string, targetSessionId: string) {
+function cloneMockSessionModel(
+  sourceSessionId: string,
+  targetSessionId: string,
+) {
   const models = getMockSessionModels();
   if (models[sourceSessionId]) {
     models[targetSessionId] = models[sourceSessionId]!;
@@ -2656,14 +3524,20 @@ function cloneMockSessionModel(sourceSessionId: string, targetSessionId: string)
 }
 
 function createMockContextualSessionRecord(title: string): SessionRecord {
-  const session = createMockSessionRecord(title, "Fresh session is active. Continue here while the prior session remains in history.");
+  const session = createMockSessionRecord(
+    title,
+    "Fresh session is active. Continue here while the prior session remains in history.",
+  );
   return {
     ...session,
     subscribed: true,
   };
 }
 
-function createMockContextualSession(sessionId: string, projectSlug?: string | null): SessionRecord {
+function createMockContextualSession(
+  sessionId: string,
+  projectSlug?: string | null,
+): SessionRecord {
   const sessions = ensureMockSessions();
   const currentSession = sessions.find((entry) => entry.id === sessionId);
   if (!currentSession) {
@@ -2672,10 +3546,20 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
 
   const timestamp = nowIso();
   const tasks = ensureMockTasks();
-  const task = tasks.find((entry) => {
-    const assignment = entry.activeLaneAssignment;
-    return assignment?.sessionId === sessionId && ["queued", "active", "awaiting_user_approval", "awaiting_user_intervention", "paused_by_user"].includes(assignment.status);
-  }) ?? null;
+  const task =
+    tasks.find((entry) => {
+      const assignment = entry.activeLaneAssignment;
+      return (
+        assignment?.sessionId === sessionId &&
+        [
+          "queued",
+          "active",
+          "awaiting_user_approval",
+          "awaiting_user_intervention",
+          "paused_by_user",
+        ].includes(assignment.status)
+      );
+    }) ?? null;
 
   if (task?.activeLaneAssignment) {
     const currentAssignment = task.activeLaneAssignment;
@@ -2693,37 +3577,48 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
       updatedAt: timestamp,
     };
 
-    saveMockTasks(tasks.map((entry) =>
-      entry.id === task.id
-        ? {
-            ...entry,
-            activeLaneAssignment: nextAssignment,
-            laneRuns: [
-              ...entry.laneRuns.map((run) =>
-                run.sessionId === sessionId && run.completedAt == null
-                  ? { ...run, result: "canceled" as const, notes: "Session rotated by operator.", completedAt: timestamp }
-                  : run,
-              ),
-              {
-                id: createId("lane-run"),
-                taskId: entry.id,
-                laneId: nextAssignment.laneId,
-                sessionId: nextSession.id,
-                result: "needs_user" as const,
-                notes: null,
-                startedAt: timestamp,
-                completedAt: null,
-              },
-            ],
-            updatedAt: timestamp,
-          }
-        : entry,
-    ));
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === task.id
+          ? {
+              ...entry,
+              activeLaneAssignment: nextAssignment,
+              laneRuns: [
+                ...entry.laneRuns.map((run) =>
+                  run.sessionId === sessionId && run.completedAt == null
+                    ? {
+                        ...run,
+                        result: "canceled" as const,
+                        notes: "Session rotated by operator.",
+                        completedAt: timestamp,
+                      }
+                    : run,
+                ),
+                {
+                  id: createId("lane-run"),
+                  taskId: entry.id,
+                  laneId: nextAssignment.laneId,
+                  sessionId: nextSession.id,
+                  result: "needs_user" as const,
+                  notes: null,
+                  startedAt: timestamp,
+                  completedAt: null,
+                },
+              ],
+              updatedAt: timestamp,
+            }
+          : entry,
+      ),
+    );
 
-    if (currentAssignment.workerType === "agent" && currentAssignment.workerId) {
+    if (
+      currentAssignment.workerType === "agent" &&
+      currentAssignment.workerId
+    ) {
       saveStoredMockAgentRuntimes(
         getStoredMockAgentRuntimes().map((runtime) =>
-          runtime.agentId === currentAssignment.workerId && runtime.projectId === task.projectId
+          runtime.agentId === currentAssignment.workerId &&
+          runtime.projectId === task.projectId
             ? {
                 ...runtime,
                 mainSessionId: nextSession.id,
@@ -2735,7 +3630,10 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
       );
     }
 
-    if (currentAssignment.workerType === "role" && currentAssignment.roleInstanceId) {
+    if (
+      currentAssignment.workerType === "role" &&
+      currentAssignment.roleInstanceId
+    ) {
       saveStoredMockRoleInstances(
         getStoredMockRoleInstances().map((instance) =>
           instance.id === currentAssignment.roleInstanceId
@@ -2750,15 +3648,31 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
       status: "closed",
       subscribed: false,
       updatedAt: timestamp,
-      events: [...current.events, createEvent("system", "Session replaced by a newer worker session.")],
+      events: [
+        ...current.events,
+        createEvent("system", "Session replaced by a newer worker session."),
+      ],
     }));
-    appendMockLog("info", "sessions.create_contextual", `Rotated worker session ${sessionId} to ${nextSession.id}`);
-    emitMockSessionChange({ sessionIds: [sessionId, nextSession.id], reason: "sessions.create_contextual" });
-    emitMockTaskChange({ taskIds: [task.id], reason: "task.assignment.session_rotated" });
+    appendMockLog(
+      "info",
+      "sessions.create_contextual",
+      `Rotated worker session ${sessionId} to ${nextSession.id}`,
+    );
+    emitMockSessionChange({
+      sessionIds: [sessionId, nextSession.id],
+      reason: "sessions.create_contextual",
+    });
+    emitMockTaskChange({
+      taskIds: [task.id],
+      reason: "task.assignment.session_rotated",
+    });
     return nextSession;
   }
 
-  const agentRuntime = getStoredMockAgentRuntimes().find((entry) => entry.mainSessionId === sessionId) ?? null;
+  const agentRuntime =
+    getStoredMockAgentRuntimes().find(
+      (entry) => entry.mainSessionId === sessionId,
+    ) ?? null;
   if (agentRuntime) {
     const nextSession = createMockContextualSessionRecord(currentSession.title);
     cloneMockSessionModel(sessionId, nextSession.id);
@@ -2770,12 +3684,25 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
           : entry,
       ),
     );
-    appendMockLog("info", "sessions.create_contextual", `Rotated agent main session ${sessionId} to ${nextSession.id}`);
-    emitMockSessionChange({ sessionIds: [sessionId, nextSession.id], reason: "sessions.create_contextual" });
+    appendMockLog(
+      "info",
+      "sessions.create_contextual",
+      `Rotated agent main session ${sessionId} to ${nextSession.id}`,
+    );
+    emitMockSessionChange({
+      sessionIds: [sessionId, nextSession.id],
+      reason: "sessions.create_contextual",
+    });
     return nextSession;
   }
 
-  const roleInstance = getStoredMockRoleInstances().find((entry) => entry.sessionId === sessionId && typeof entry.status === "string" && ["running", "waiting", "idle"].includes(entry.status)) ?? null;
+  const roleInstance =
+    getStoredMockRoleInstances().find(
+      (entry) =>
+        entry.sessionId === sessionId &&
+        typeof entry.status === "string" &&
+        ["running", "waiting", "idle"].includes(entry.status),
+    ) ?? null;
   if (roleInstance) {
     const nextSession = createMockContextualSessionRecord(currentSession.title);
     cloneMockSessionModel(sessionId, nextSession.id);
@@ -2787,8 +3714,15 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
           : entry,
       ),
     );
-    appendMockLog("info", "sessions.create_contextual", `Rotated role session ${sessionId} to ${nextSession.id}`);
-    emitMockSessionChange({ sessionIds: [sessionId, nextSession.id], reason: "sessions.create_contextual" });
+    appendMockLog(
+      "info",
+      "sessions.create_contextual",
+      `Rotated role session ${sessionId} to ${nextSession.id}`,
+    );
+    emitMockSessionChange({
+      sessionIds: [sessionId, nextSession.id],
+      reason: "sessions.create_contextual",
+    });
     return nextSession;
   }
 
@@ -2800,31 +3734,56 @@ function createMockContextualSession(sessionId: string, projectSlug?: string | n
     updatedAt: timestamp,
     subscribed: true,
     events: [
-      createEvent("system", "Session created from the Orchestra Sessions page."),
-      createEvent("assistant", "Session is active. Send a message to begin the interaction loop."),
+      createEvent(
+        "system",
+        "Session created from the Orchestra Sessions page.",
+      ),
+      createEvent(
+        "assistant",
+        "Session is active. Send a message to begin the interaction loop.",
+      ),
     ],
   };
 
   ensureMockSessionModel(nextSession.id);
   saveMockSessions(sortSessions([nextSession, ...sessions]));
-  appendMockLog("info", "sessions.create_contextual", `Created generic successor session ${nextSession.id} in ${projectSlug ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID}`);
-  emitMockSessionChange({ sessionIds: [nextSession.id], reason: "sessions.create_contextual" });
+  appendMockLog(
+    "info",
+    "sessions.create_contextual",
+    `Created generic successor session ${nextSession.id} in ${projectSlug ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID}`,
+  );
+  emitMockSessionChange({
+    sessionIds: [nextSession.id],
+    reason: "sessions.create_contextual",
+  });
   return nextSession;
 }
 
-export async function createSession(title?: string, projectSlug?: string | null, agentId?: string | null): Promise<SessionRecord> {
+export async function createSession(
+  title?: string,
+  projectSlug?: string | null,
+  agentId?: string | null,
+): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const timestamp = nowIso();
     const session: SessionRecord = {
       id: createId("session"),
-      title: title?.trim() || `New session ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      title:
+        title?.trim() ||
+        `New session ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
       status: "active",
       createdAt: timestamp,
       updatedAt: timestamp,
       subscribed: true,
       events: [
-        createEvent("system", "Session created from the Orchestra Sessions page."),
-        createEvent("assistant", "Session is active. Send a message to begin the interaction loop."),
+        createEvent(
+          "system",
+          "Session created from the Orchestra Sessions page.",
+        ),
+        createEvent(
+          "assistant",
+          "Session is active. Send a message to begin the interaction loop.",
+        ),
       ],
     };
 
@@ -2834,7 +3793,9 @@ export async function createSession(title?: string, projectSlug?: string | null,
     if (agentId) {
       const projectId = DEFAULT_INSTALL_BASELINE_PROJECT_ID;
       const runtimes = getStoredMockAgentRuntimes();
-      const matchingRuntimeExists = runtimes.some((entry) => entry.agentId === agentId && entry.projectId === projectId);
+      const matchingRuntimeExists = runtimes.some(
+        (entry) => entry.agentId === agentId && entry.projectId === projectId,
+      );
       saveStoredMockAgentRuntimes(
         matchingRuntimeExists
           ? runtimes.map((entry) =>
@@ -2861,19 +3822,34 @@ export async function createSession(title?: string, projectSlug?: string | null,
       );
     }
     appendMockLog("info", "sessions.create", `Created session ${session.id}`);
-    emitMockSessionChange({ sessionIds: [session.id], reason: "sessions.create" });
+    emitMockSessionChange({
+      sessionIds: [session.id],
+      reason: "sessions.create",
+    });
     return session;
   }
 
-  return invoke<SessionRecord>("create_session", { title, projectSlug, agentId });
+  return invoke<SessionRecord>("create_session", {
+    title,
+    projectSlug,
+    agentId,
+  });
 }
 
-export async function createContextualSession(sessionId: string, projectSlug?: string | null, agentId?: string | null): Promise<SessionRecord> {
+export async function createContextualSession(
+  sessionId: string,
+  projectSlug?: string | null,
+  agentId?: string | null,
+): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     return createMockContextualSession(sessionId, projectSlug);
   }
 
-  return invoke<SessionRecord>("create_contextual_session", { sessionId, projectSlug, agentId });
+  return invoke<SessionRecord>("create_contextual_session", {
+    sessionId,
+    projectSlug,
+    agentId,
+  });
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -2898,7 +3874,10 @@ export async function resumeSession(sessionId: string): Promise<SessionRecord> {
       status: current.status === "closed" ? "closed" : "active",
       subscribed: true,
       updatedAt: nowIso(),
-      events: [...current.events, createEvent("system", "Session resumed from the Sessions page.")],
+      events: [
+        ...current.events,
+        createEvent("system", "Session resumed from the Sessions page."),
+      ],
     }));
 
     if (!session) {
@@ -2912,7 +3891,9 @@ export async function resumeSession(sessionId: string): Promise<SessionRecord> {
   return invoke<SessionRecord>("resume_session", { sessionId });
 }
 
-export async function subscribeSession(sessionId: string): Promise<SessionRecord> {
+export async function subscribeSession(
+  sessionId: string,
+): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
@@ -2923,14 +3904,20 @@ export async function subscribeSession(sessionId: string): Promise<SessionRecord
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
-    appendMockLog("info", "sessions.subscribe", `Subscribed to session ${session.id}`);
+    appendMockLog(
+      "info",
+      "sessions.subscribe",
+      `Subscribed to session ${session.id}`,
+    );
     return session;
   }
 
   return invoke<SessionRecord>("subscribe_session", { sessionId });
 }
 
-export async function unsubscribeSession(sessionId: string): Promise<SessionRecord> {
+export async function unsubscribeSession(
+  sessionId: string,
+): Promise<SessionRecord> {
   if (!isTauriAvailable()) {
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
@@ -2941,14 +3928,21 @@ export async function unsubscribeSession(sessionId: string): Promise<SessionReco
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
-    appendMockLog("info", "sessions.unsubscribe", `Unsubscribed from session ${session.id}`);
+    appendMockLog(
+      "info",
+      "sessions.unsubscribe",
+      `Unsubscribed from session ${session.id}`,
+    );
     return session;
   }
 
   return invoke<SessionRecord>("unsubscribe_session", { sessionId });
 }
 
-export async function stopSessionRuntime(sessionId: string, notes?: string): Promise<SessionRecord> {
+export async function stopSessionRuntime(
+  sessionId: string,
+  notes?: string,
+): Promise<SessionRecord> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.sessions.stopRuntime(sessionId, notes);
@@ -2962,14 +3956,26 @@ export async function stopSessionRuntime(sessionId: string, notes?: string): Pro
       ...current,
       status: "paused",
       updatedAt: nowIso(),
-      events: [...current.events, createEvent("system", notes?.trim() ? `Session run stopped by operator. ${notes.trim()}` : "Session run stopped by operator.")],
+      events: [
+        ...current.events,
+        createEvent(
+          "system",
+          notes?.trim()
+            ? `Session run stopped by operator. ${notes.trim()}`
+            : "Session run stopped by operator.",
+        ),
+      ],
     }));
 
     if (!session) {
       throw new Error(`Unable to find session ${sessionId}`);
     }
 
-    appendMockLog("info", "sessions.stop", `Stopped session runtime ${sessionId}`);
+    appendMockLog(
+      "info",
+      "sessions.stop",
+      `Stopped session runtime ${sessionId}`,
+    );
     emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.stop" });
     return session;
   }
@@ -2994,7 +4000,8 @@ export async function getPiExecutableDiagnostic(): Promise<PiExecutableDiagnosti
         builtAt: null,
         manifestPath: null,
         errorKind: "desktop_only",
-        errorMessage: "Local Pi executable diagnostics are only available in the desktop app.",
+        errorMessage:
+          "Local Pi executable diagnostics are only available in the desktop app.",
       };
     }
   }
@@ -3025,16 +4032,25 @@ export async function getPiRuntimeDiagnostics(): Promise<PiRuntimeDiagnostics> {
   return invoke<PiRuntimeDiagnostics>("get_pi_runtime_diagnostics");
 }
 
-export async function importLegacyPiConfiguration(importAuth: boolean, importModels: boolean): Promise<PiImportLegacyResult> {
+export async function importLegacyPiConfiguration(
+  importAuth: boolean,
+  importModels: boolean,
+): Promise<PiImportLegacyResult> {
   if (!isTauriAvailable()) {
     return {
-      imported: [importAuth ? "auth.json" : null, importModels ? "models.json" : null].filter((value): value is string => Boolean(value)),
+      imported: [
+        importAuth ? "auth.json" : null,
+        importModels ? "models.json" : null,
+      ].filter((value): value is string => Boolean(value)),
       skipped: [],
       diagnostics: await getPiRuntimeDiagnostics(),
     };
   }
 
-  return invoke<PiImportLegacyResult>("import_legacy_pi_configuration", { importAuth, importModels });
+  return invoke<PiImportLegacyResult>("import_legacy_pi_configuration", {
+    importAuth,
+    importModels,
+  });
 }
 
 export async function getPiSetupState(): Promise<PiSetupState> {
@@ -3052,8 +4068,12 @@ export async function previewPiLegacyImport(): Promise<PiLegacyImportPreview> {
       legacyAgentDir: state.legacyAgentDir ?? "/mock/.pi/agent",
       authPath: `${state.legacyAgentDir ?? "/mock/.pi/agent"}/auth.json`,
       modelsPath: `${state.legacyAgentDir ?? "/mock/.pi/agent"}/models.json`,
-      authExists: state.status === "legacy_import_available" || state.importState.canImportLegacy,
-      modelsExists: state.status === "legacy_import_available" || state.importState.canImportLegacy,
+      authExists:
+        state.status === "legacy_import_available" ||
+        state.importState.canImportLegacy,
+      modelsExists:
+        state.status === "legacy_import_available" ||
+        state.importState.canImportLegacy,
       canImport: state.importState.canImportLegacy,
       warning: null,
     } satisfies PiLegacyImportPreview;
@@ -3079,7 +4099,10 @@ export async function savePiModelsJson(content: string): Promise<PiSetupState> {
   return invoke<PiSetupState>("save_pi_models_json", { content });
 }
 
-export async function setPiProviderApiKey(providerId: string, apiKey: string): Promise<PiSetupState> {
+export async function setPiProviderApiKey(
+  providerId: string,
+  apiKey: string,
+): Promise<PiSetupState> {
   if (!isTauriAvailable()) {
     const current = getStoredMockPiSetupState();
     const next = {
@@ -3087,21 +4110,34 @@ export async function setPiProviderApiKey(providerId: string, apiKey: string): P
       status: "ready",
       issues: [],
       warnings: [],
-      availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: true, usingOAuth: false } : provider),
+      availableProviders: current.availableProviders.map((provider) =>
+        provider.id === providerId
+          ? { ...provider, connected: true, usingOAuth: false }
+          : provider,
+      ),
     } satisfies PiSetupState;
     saveStoredMockPiSetupState(next);
     return next;
   }
 
-  return invoke<PiSetupState>("set_pi_provider_api_key", { providerId, apiKey });
+  return invoke<PiSetupState>("set_pi_provider_api_key", {
+    providerId,
+    apiKey,
+  });
 }
 
-export async function removePiProviderCredential(providerId: string): Promise<PiSetupState> {
+export async function removePiProviderCredential(
+  providerId: string,
+): Promise<PiSetupState> {
   if (!isTauriAvailable()) {
     const current = getStoredMockPiSetupState();
     const next = {
       ...current,
-      availableProviders: current.availableProviders.map((provider) => provider.id === providerId ? { ...provider, connected: false, usingOAuth: false } : provider),
+      availableProviders: current.availableProviders.map((provider) =>
+        provider.id === providerId
+          ? { ...provider, connected: false, usingOAuth: false }
+          : provider,
+      ),
     } satisfies PiSetupState;
     saveStoredMockPiSetupState(next);
     const currentFlow = getStoredMockPiOAuthFlowState();
@@ -3115,7 +4151,9 @@ export async function removePiProviderCredential(providerId: string): Promise<Pi
   return invoke<PiSetupState>("remove_pi_provider_credential", { providerId });
 }
 
-export async function importPiLegacyConfig(replaceExisting = false): Promise<PiSetupState> {
+export async function importPiLegacyConfig(
+  replaceExisting = false,
+): Promise<PiSetupState> {
   if (!isTauriAvailable()) {
     const current = getStoredMockPiSetupState();
     const next = {
@@ -3159,74 +4197,99 @@ export async function getPiOAuthFlowState(): Promise<PiOAuthFlowState | null> {
   return invoke<PiOAuthFlowState | null>("get_pi_oauth_flow_state");
 }
 
-export async function startPiOAuthFlow(providerId: string, methodId?: string | null): Promise<PiOAuthFlowState> {
+export async function startPiOAuthFlow(
+  providerId: string,
+  methodId?: string | null,
+): Promise<PiOAuthFlowState> {
   if (!isTauriAvailable()) {
     const current = getStoredMockPiSetupState();
-    const provider = current.availableProviders.find((entry) => entry.id === providerId);
+    const provider = current.availableProviders.find(
+      (entry) => entry.id === providerId,
+    );
     if (!provider) {
       throw new Error(`Unknown Pi provider ${providerId}`);
     }
     const selectedMethod = methodId
-      ? (provider.oauthMethods ?? []).find((method) => method.id === methodId) ?? null
+      ? ((provider.oauthMethods ?? []).find(
+          (method) => method.id === methodId,
+        ) ?? null)
       : getDefaultMockOAuthMethod(providerId, provider.oauthMethods);
     if (!selectedMethod) {
-      throw new Error(`Provider ${providerId} does not support OAuth method ${methodId}`);
+      throw new Error(
+        `Provider ${providerId} does not support OAuth method ${methodId}`,
+      );
     }
-    const next: PiOAuthFlowState = selectedMethod.kind === "device_code"
-      ? {
-        providerId,
-        providerName: provider.name,
-        methodId: selectedMethod.id,
-        methodKind: selectedMethod.kind,
-        usesCallbackServer: provider.usesCallbackServer,
-        status: providerId === "github-copilot" ? "awaiting_input" : "running",
-        authStep: providerId === "github-copilot"
-          ? null
-          : {
-            kind: "device_code",
-            url: `https://example.com/device/${providerId}`,
-            linkLabel: "Open verification page",
-            instructions: "Enter the device code on the verification page.",
-            userCode: "ABCD-EFGH",
-          },
-        browserOpened: providerId !== "github-copilot",
-        browserOpenError: null,
-        prompt: providerId === "github-copilot"
-          ? { kind: "prompt", message: "GitHub Enterprise URL/domain (blank for github.com)", placeholder: "company.ghe.com", allowEmpty: true }
-          : null,
-        latestProgressMessage: `Starting ${provider.name} sign-in…`,
-        error: null,
-        startedAt: nowIso(),
-        finishedAt: null,
-      }
-      : {
-        providerId,
-        providerName: provider.name,
-        methodId: selectedMethod.id,
-        methodKind: selectedMethod.kind,
-        usesCallbackServer: provider.usesCallbackServer,
-        status: "running",
-        authStep: {
-          kind: "browser",
-          url: `https://example.com/oauth/${providerId}`,
-          linkLabel: "Open browser sign-in",
-          instructions: "If nothing opened automatically, use the link above.",
-          userCode: null,
-        },
-        browserOpened: true,
-        browserOpenError: null,
-        prompt: null,
-        latestProgressMessage: `Starting ${provider.name} sign-in…`,
-        error: null,
-        startedAt: nowIso(),
-        finishedAt: null,
-      };
+    const next: PiOAuthFlowState =
+      selectedMethod.kind === "device_code"
+        ? {
+            providerId,
+            providerName: provider.name,
+            methodId: selectedMethod.id,
+            methodKind: selectedMethod.kind,
+            usesCallbackServer: provider.usesCallbackServer,
+            status:
+              providerId === "github-copilot" ? "awaiting_input" : "running",
+            authStep:
+              providerId === "github-copilot"
+                ? null
+                : {
+                    kind: "device_code",
+                    url: `https://example.com/device/${providerId}`,
+                    linkLabel: "Open verification page",
+                    instructions:
+                      "Enter the device code on the verification page.",
+                    userCode: "ABCD-EFGH",
+                  },
+            browserOpened: providerId !== "github-copilot",
+            browserOpenError: null,
+            prompt:
+              providerId === "github-copilot"
+                ? {
+                    kind: "prompt",
+                    message:
+                      "GitHub Enterprise URL/domain (blank for github.com)",
+                    placeholder: "company.ghe.com",
+                    allowEmpty: true,
+                  }
+                : null,
+            latestProgressMessage: `Starting ${provider.name} sign-in…`,
+            error: null,
+            startedAt: nowIso(),
+            finishedAt: null,
+          }
+        : {
+            providerId,
+            providerName: provider.name,
+            methodId: selectedMethod.id,
+            methodKind: selectedMethod.kind,
+            usesCallbackServer: provider.usesCallbackServer,
+            status: "running",
+            authStep: {
+              kind: "browser",
+              url: `https://example.com/oauth/${providerId}`,
+              linkLabel: "Open browser sign-in",
+              instructions:
+                "If nothing opened automatically, use the link above.",
+              userCode: null,
+            },
+            browserOpened: true,
+            browserOpenError: null,
+            prompt: null,
+            latestProgressMessage: `Starting ${provider.name} sign-in…`,
+            error: null,
+            startedAt: nowIso(),
+            finishedAt: null,
+          };
     saveStoredMockPiOAuthFlowState(next);
     dispatchMockPiOAuthFlowChange(next);
     if (next.methodKind === "browser") {
       window.setTimeout(() => {
         const currentFlow = getStoredMockPiOAuthFlowState();
-        if (currentFlow && currentFlow.providerId === next.providerId && currentFlow.startedAt === next.startedAt) {
+        if (
+          currentFlow &&
+          currentFlow.providerId === next.providerId &&
+          currentFlow.startedAt === next.startedAt
+        ) {
           completeMockPiOAuthFlowSuccess(currentFlow);
         }
       }, 200);
@@ -3234,36 +4297,42 @@ export async function startPiOAuthFlow(providerId: string, methodId?: string | n
     return next;
   }
 
-  return invoke<PiOAuthFlowState>("start_pi_oauth_flow", { providerId, methodId: methodId ?? null });
+  return invoke<PiOAuthFlowState>("start_pi_oauth_flow", {
+    providerId,
+    methodId: methodId ?? null,
+  });
 }
 
-export async function submitPiOAuthFlowInput(value: string): Promise<PiOAuthFlowState> {
+export async function submitPiOAuthFlowInput(
+  value: string,
+): Promise<PiOAuthFlowState> {
   if (!isTauriAvailable()) {
     const current = getStoredMockPiOAuthFlowState();
     if (!current) {
       throw new Error("No active Pi OAuth flow.");
     }
-    const next: PiOAuthFlowState = current.methodKind === "device_code"
-      ? {
-        ...current,
-        status: "running",
-        prompt: null,
-        authStep: current.authStep ?? {
-          kind: "device_code",
-          url: `https://example.com/device/${current.providerId}`,
-          linkLabel: "Open verification page",
-          instructions: "Enter the device code on the verification page.",
-          userCode: "ABCD-EFGH",
-        },
-        browserOpened: true,
-        latestProgressMessage: "Waiting for device-code verification…",
-      }
-      : {
-        ...current,
-        status: "running",
-        prompt: null,
-        latestProgressMessage: "Waiting for browser sign-in to finish…",
-      };
+    const next: PiOAuthFlowState =
+      current.methodKind === "device_code"
+        ? {
+            ...current,
+            status: "running",
+            prompt: null,
+            authStep: current.authStep ?? {
+              kind: "device_code",
+              url: `https://example.com/device/${current.providerId}`,
+              linkLabel: "Open verification page",
+              instructions: "Enter the device code on the verification page.",
+              userCode: "ABCD-EFGH",
+            },
+            browserOpened: true,
+            latestProgressMessage: "Waiting for device-code verification…",
+          }
+        : {
+            ...current,
+            status: "running",
+            prompt: null,
+            latestProgressMessage: "Waiting for browser sign-in to finish…",
+          };
     saveStoredMockPiOAuthFlowState(next);
     dispatchMockPiOAuthFlowChange(next);
     return next;
@@ -3300,7 +4369,9 @@ export async function dismissPiOAuthFlow(): Promise<PiOAuthFlowState | null> {
       return null;
     }
     if (!current.finishedAt) {
-      throw new Error("Active Pi OAuth flows must be cancelled before they can be dismissed.");
+      throw new Error(
+        "Active Pi OAuth flows must be cancelled before they can be dismissed.",
+      );
     }
     saveStoredMockPiOAuthFlowState(null);
     dispatchMockPiOAuthFlowChange(null);
@@ -3322,7 +4393,9 @@ export async function listPiModels(): Promise<SessionModel[]> {
   return invoke<SessionModel[]>("list_pi_models");
 }
 
-export async function getSessionModelState(sessionId: string): Promise<SessionModelState> {
+export async function getSessionModelState(
+  sessionId: string,
+): Promise<SessionModelState> {
   if (!isTauriAvailable()) {
     return buildMockModelState(sessionId);
   }
@@ -3330,9 +4403,15 @@ export async function getSessionModelState(sessionId: string): Promise<SessionMo
   return invoke<SessionModelState>("get_session_model_state", { sessionId });
 }
 
-export async function setSessionModel(sessionId: string, provider: string, modelId: string): Promise<SessionModelState> {
+export async function setSessionModel(
+  sessionId: string,
+  provider: string,
+  modelId: string,
+): Promise<SessionModelState> {
   if (!isTauriAvailable()) {
-    const nextModel = MOCK_MODELS.find((model) => model.provider === provider && model.id === modelId);
+    const nextModel = MOCK_MODELS.find(
+      (model) => model.provider === provider && model.id === modelId,
+    );
     if (!nextModel) {
       throw new Error(`Unknown model ${provider}/${modelId}`);
     }
@@ -3340,14 +4419,25 @@ export async function setSessionModel(sessionId: string, provider: string, model
     const models = getMockSessionModels();
     models[sessionId] = nextModel;
     setMockSessionModels(models);
-    appendMockLog("info", "sessions.model", `Changed session ${sessionId} to ${provider}/${modelId}`);
+    appendMockLog(
+      "info",
+      "sessions.model",
+      `Changed session ${sessionId} to ${provider}/${modelId}`,
+    );
     return buildMockModelState(sessionId);
   }
 
-  return invoke<SessionModelState>("set_session_model", { sessionId, provider, modelId });
+  return invoke<SessionModelState>("set_session_model", {
+    sessionId,
+    provider,
+    modelId,
+  });
 }
 
-export async function compactSession(sessionId: string, customInstructions?: string | null): Promise<SessionRecord> {
+export async function compactSession(
+  sessionId: string,
+  customInstructions?: string | null,
+): Promise<SessionRecord> {
   const timestamp = nowIso();
 
   if (!isTauriAvailable()) {
@@ -3381,11 +4471,17 @@ export async function compactSession(sessionId: string, customInstructions?: str
     }
 
     appendMockLog("info", "sessions.compact", `Compacted session ${sessionId}`);
-    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.compact" });
+    emitMockSessionChange({
+      sessionIds: [sessionId],
+      reason: "sessions.compact",
+    });
     return session;
   }
 
-  return invoke<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null });
+  return invoke<SessionRecord>("compact_session", {
+    sessionId,
+    customInstructions: customInstructions ?? null,
+  });
 }
 
 export async function reloadSession(sessionId: string): Promise<SessionRecord> {
@@ -3405,7 +4501,9 @@ export async function reloadSession(sessionId: string): Promise<SessionRecord> {
       },
       events: [
         ...current.events,
-        createEvent("system", "Session reloaded.", { id: `reload-${sessionId}-${timestamp}` }),
+        createEvent("system", "Session reloaded.", {
+          id: `reload-${sessionId}-${timestamp}`,
+        }),
       ],
     }));
 
@@ -3414,14 +4512,21 @@ export async function reloadSession(sessionId: string): Promise<SessionRecord> {
     }
 
     appendMockLog("info", "sessions.reload", `Reloaded session ${sessionId}`);
-    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.reload" });
+    emitMockSessionChange({
+      sessionIds: [sessionId],
+      reason: "sessions.reload",
+    });
     return session;
   }
 
   return invoke<SessionRecord>("reload_session", { sessionId });
 }
 
-export async function sendSessionMessage(sessionId: string, message: string, runId: string): Promise<QueuedSessionMessage> {
+export async function sendSessionMessage(
+  sessionId: string,
+  message: string,
+  runId: string,
+): Promise<QueuedSessionMessage> {
   const trimmedMessage = message.trim();
   if (!trimmedMessage) {
     throw new Error("Message cannot be empty");
@@ -3475,7 +4580,9 @@ export async function sendSessionMessage(sessionId: string, message: string, run
     } satisfies BridgeDiagnostics);
 
     const activeRuns = getMockActiveSessionRuns();
-    activeRuns[sessionId] = Array.from(new Set([...(activeRuns[sessionId] ?? []), runId]));
+    activeRuns[sessionId] = Array.from(
+      new Set([...(activeRuns[sessionId] ?? []), runId]),
+    );
     setMockActiveSessionRuns(activeRuns);
 
     updateMockSession(sessionId, (current) => ({
@@ -3494,7 +4601,10 @@ export async function sendSessionMessage(sessionId: string, message: string, run
         },
       ],
     }));
-    emitMockSessionChange({ sessionIds: [sessionId], reason: "sessions.message.queued" });
+    emitMockSessionChange({
+      sessionIds: [sessionId],
+      reason: "sessions.message.queued",
+    });
 
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);
@@ -3512,111 +4622,251 @@ export async function sendSessionMessage(sessionId: string, message: string, run
     };
 
     window.setTimeout(() => {
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "agent_start" }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "turn_start" }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_start", message: userMessage }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_end", message: userMessage }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_start", message: assistantMessageBase }));
-      emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-        type: "message_update",
-        message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: "" }] as JsonValue[] },
-        assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} },
-      }));
+      emitMockSessionStream(
+        createMockSessionEnvelope(sessionId, runId, { type: "agent_start" }),
+      );
+      emitMockSessionStream(
+        createMockSessionEnvelope(sessionId, runId, { type: "turn_start" }),
+      );
+      emitMockSessionStream(
+        createMockSessionEnvelope(sessionId, runId, {
+          type: "message_start",
+          message: userMessage,
+        }),
+      );
+      emitMockSessionStream(
+        createMockSessionEnvelope(sessionId, runId, {
+          type: "message_end",
+          message: userMessage,
+        }),
+      );
+      emitMockSessionStream(
+        createMockSessionEnvelope(sessionId, runId, {
+          type: "message_start",
+          message: assistantMessageBase,
+        }),
+      );
+      emitMockSessionStream(
+        createMockSessionEnvelope(sessionId, runId, {
+          type: "message_update",
+          message: {
+            ...assistantMessageBase,
+            content: [{ type: "thinking", thinking: "" }] as JsonValue[],
+          },
+          assistantMessageEvent: {
+            type: "thinking_start",
+            contentIndex: 0,
+            partial: {},
+          },
+        }),
+      );
       thinkingChunks.forEach((chunk, index) => {
-        window.setTimeout(() => {
-          emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-            type: "message_update",
-            message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: thinkingReply.slice(0, thinkingReply.indexOf(chunk) >= 0 ? thinkingReply.indexOf(chunk) + chunk.length : thinkingReply.length) }] as JsonValue[] },
-            assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: chunk, partial: {} },
-          }));
-        }, 40 * (index + 1));
+        window.setTimeout(
+          () => {
+            emitMockSessionStream(
+              createMockSessionEnvelope(sessionId, runId, {
+                type: "message_update",
+                message: {
+                  ...assistantMessageBase,
+                  content: [
+                    {
+                      type: "thinking",
+                      thinking: thinkingReply.slice(
+                        0,
+                        thinkingReply.indexOf(chunk) >= 0
+                          ? thinkingReply.indexOf(chunk) + chunk.length
+                          : thinkingReply.length,
+                      ),
+                    },
+                  ] as JsonValue[],
+                },
+                assistantMessageEvent: {
+                  type: "thinking_delta",
+                  contentIndex: 0,
+                  delta: chunk,
+                  partial: {},
+                },
+              }),
+            );
+          },
+          40 * (index + 1),
+        );
       });
 
-      window.setTimeout(() => {
-        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-          type: "message_update",
-          message: { ...assistantMessageBase, content: [{ type: "thinking", thinking: thinkingReply }] as JsonValue[] },
-          assistantMessageEvent: { type: "thinking_end", contentIndex: 0, partial: {} },
-        }));
-        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-          type: "message_update",
-          message: { ...assistantMessageBase, content: [{ type: "text", text: "" }, { type: "thinking", thinking: thinkingReply }] as JsonValue[] },
-          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: {} },
-        }));
-      }, 40 * (thinkingChunks.length + 1));
+      window.setTimeout(
+        () => {
+          emitMockSessionStream(
+            createMockSessionEnvelope(sessionId, runId, {
+              type: "message_update",
+              message: {
+                ...assistantMessageBase,
+                content: [
+                  { type: "thinking", thinking: thinkingReply },
+                ] as JsonValue[],
+              },
+              assistantMessageEvent: {
+                type: "thinking_end",
+                contentIndex: 0,
+                partial: {},
+              },
+            }),
+          );
+          emitMockSessionStream(
+            createMockSessionEnvelope(sessionId, runId, {
+              type: "message_update",
+              message: {
+                ...assistantMessageBase,
+                content: [
+                  { type: "text", text: "" },
+                  { type: "thinking", thinking: thinkingReply },
+                ] as JsonValue[],
+              },
+              assistantMessageEvent: {
+                type: "text_start",
+                contentIndex: 0,
+                partial: {},
+              },
+            }),
+          );
+        },
+        40 * (thinkingChunks.length + 1),
+      );
 
       chunks.forEach((chunk, index) => {
-        window.setTimeout(() => {
-          emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-            type: "message_update",
-            message: { ...assistantMessageBase, content: [{ type: "text", text: assistantReply.slice(0, assistantReply.indexOf(chunk) >= 0 ? assistantReply.indexOf(chunk) + chunk.length : assistantReply.length) }] as JsonValue[] },
-            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: chunk, partial: {} },
-          }));
-        }, 40 * (thinkingChunks.length + 1) + 80 * (index + 1));
+        window.setTimeout(
+          () => {
+            emitMockSessionStream(
+              createMockSessionEnvelope(sessionId, runId, {
+                type: "message_update",
+                message: {
+                  ...assistantMessageBase,
+                  content: [
+                    {
+                      type: "text",
+                      text: assistantReply.slice(
+                        0,
+                        assistantReply.indexOf(chunk) >= 0
+                          ? assistantReply.indexOf(chunk) + chunk.length
+                          : assistantReply.length,
+                      ),
+                    },
+                  ] as JsonValue[],
+                },
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  contentIndex: 0,
+                  delta: chunk,
+                  partial: {},
+                },
+              }),
+            );
+          },
+          40 * (thinkingChunks.length + 1) + 80 * (index + 1),
+        );
       });
 
-      window.setTimeout(() => {
-        if (!isMockRunStillActive(sessionId, runId)) {
-          return;
-        }
-        const assistantMessage = {
-          ...assistantMessageBase,
-          content: [{ type: "thinking", thinking: thinkingReply }, { type: "text", text: assistantReply }] as JsonValue[],
-        };
-        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-          type: "message_update",
-          message: assistantMessage,
-          assistantMessageEvent: { type: "text_end", contentIndex: 0, content: assistantReply, partial: {} },
-        }));
-        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "message_end", message: assistantMessage }));
-        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-          type: "turn_end",
-          message: assistantMessage,
-          toolResults: [],
-        }));
-
-        const session = updateMockSession(sessionId, (current) => {
-          const timestamp = nowIso();
-          const remainingActiveRuns = (getMockActiveSessionRuns()[sessionId] ?? []).filter((activeRunId) => activeRunId !== runId);
-          return {
-            ...current,
-            status: remainingActiveRuns.length > 0 ? "streaming" : "idle",
-            updatedAt: timestamp,
-            events: [
-              ...current.events.filter((event) => event.runId !== runId),
-              createEvent("user", trimmedMessage, { runId, timestamp }),
-              createEvent("assistant", assistantReply, { thinkingText: thinkingReply, timestamp, runId }),
-            ],
+      window.setTimeout(
+        () => {
+          if (!isMockRunStillActive(sessionId, runId)) {
+            return;
+          }
+          const assistantMessage = {
+            ...assistantMessageBase,
+            content: [
+              { type: "thinking", thinking: thinkingReply },
+              { type: "text", text: assistantReply },
+            ] as JsonValue[],
           };
-        });
+          emitMockSessionStream(
+            createMockSessionEnvelope(sessionId, runId, {
+              type: "message_update",
+              message: assistantMessage,
+              assistantMessageEvent: {
+                type: "text_end",
+                contentIndex: 0,
+                content: assistantReply,
+                partial: {},
+              },
+            }),
+          );
+          emitMockSessionStream(
+            createMockSessionEnvelope(sessionId, runId, {
+              type: "message_end",
+              message: assistantMessage,
+            }),
+          );
+          emitMockSessionStream(
+            createMockSessionEnvelope(sessionId, runId, {
+              type: "turn_end",
+              message: assistantMessage,
+              toolResults: [],
+            }),
+          );
 
-        if (!session) {
-          emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, {
-            type: "error",
-            message: `Unable to find session ${sessionId}`,
-            source: "mock",
-          }));
-          return;
-        }
+          const session = updateMockSession(sessionId, (current) => {
+            const timestamp = nowIso();
+            const remainingActiveRuns = (
+              getMockActiveSessionRuns()[sessionId] ?? []
+            ).filter((activeRunId) => activeRunId !== runId);
+            return {
+              ...current,
+              status: remainingActiveRuns.length > 0 ? "streaming" : "idle",
+              updatedAt: timestamp,
+              events: [
+                ...current.events.filter((event) => event.runId !== runId),
+                createEvent("user", trimmedMessage, { runId, timestamp }),
+                createEvent("assistant", assistantReply, {
+                  thinkingText: thinkingReply,
+                  timestamp,
+                  runId,
+                }),
+              ],
+            };
+          });
 
-        const nextRuns = getMockActiveSessionRuns();
-        const remainingRuns = (nextRuns[sessionId] ?? []).filter((activeRunId) => activeRunId !== runId);
-        if (remainingRuns.length > 0) {
-          nextRuns[sessionId] = remainingRuns;
-        } else {
-          delete nextRuns[sessionId];
-        }
-        setMockActiveSessionRuns(nextRuns);
+          if (!session) {
+            emitMockSessionStream(
+              createMockSessionEnvelope(sessionId, runId, {
+                type: "error",
+                message: `Unable to find session ${sessionId}`,
+                source: "mock",
+              }),
+            );
+            return;
+          }
 
-        appendMockLog("info", "sessions.message", `Sent message to session ${session.id}`);
-        emitMockSessionStream(createMockSessionEnvelope(sessionId, runId, { type: "agent_end" }));
-      }, 80 * (chunks.length + 2));
+          const nextRuns = getMockActiveSessionRuns();
+          const remainingRuns = (nextRuns[sessionId] ?? []).filter(
+            (activeRunId) => activeRunId !== runId,
+          );
+          if (remainingRuns.length > 0) {
+            nextRuns[sessionId] = remainingRuns;
+          } else {
+            delete nextRuns[sessionId];
+          }
+          setMockActiveSessionRuns(nextRuns);
+
+          appendMockLog(
+            "info",
+            "sessions.message",
+            `Sent message to session ${session.id}`,
+          );
+          emitMockSessionStream(
+            createMockSessionEnvelope(sessionId, runId, { type: "agent_end" }),
+          );
+        },
+        80 * (chunks.length + 2),
+      );
     }, 120);
 
     return queued;
   }
 
-  return invoke<QueuedSessionMessage>("send_session_message", { sessionId, message: trimmedMessage, runId });
+  return invoke<QueuedSessionMessage>("send_session_message", {
+    sessionId,
+    message: trimmedMessage,
+    runId,
+  });
 }
 
 async function resolveTauriProjectId(projectId?: string | null) {
@@ -3626,7 +4876,10 @@ async function resolveTauriProjectId(projectId?: string | null) {
   }
 
   const projects = await invoke<Array<{ id: string }>>("list_projects");
-  if (requestedProjectId && projects.some((entry) => entry.id === requestedProjectId)) {
+  if (
+    requestedProjectId &&
+    projects.some((entry) => entry.id === requestedProjectId)
+  ) {
     return requestedProjectId;
   }
 
@@ -3636,8 +4889,20 @@ async function resolveTauriProjectId(projectId?: string | null) {
 function normalizeTaskListOptions(
   optionsOrIncludeArchived: TaskListOptions | boolean | undefined,
   legacyProjectId?: string | null,
-): Required<Pick<TaskListOptions, "includeArchived" | "tagMatch" | "sortBy" | "sortDirection">> & Omit<TaskListOptions, "includeArchived" | "tagMatch" | "sortBy" | "sortDirection"> {
-  if (typeof optionsOrIncludeArchived === "object" && optionsOrIncludeArchived !== null) {
+): Required<
+  Pick<
+    TaskListOptions,
+    "includeArchived" | "tagMatch" | "sortBy" | "sortDirection"
+  >
+> &
+  Omit<
+    TaskListOptions,
+    "includeArchived" | "tagMatch" | "sortBy" | "sortDirection"
+  > {
+  if (
+    typeof optionsOrIncludeArchived === "object" &&
+    optionsOrIncludeArchived !== null
+  ) {
     return {
       projectId: optionsOrIncludeArchived.projectId,
       includeArchived: optionsOrIncludeArchived.includeArchived ?? false,
@@ -3662,7 +4927,11 @@ function buildMockTaskTagSortKey(tags: string[] | null | undefined) {
   return normalizeMockTaskTags(tags).join(",");
 }
 
-function matchesMockTaskTags(task: TaskSummary, requestedTags: string[], tagMatch: "all" | "any") {
+function matchesMockTaskTags(
+  task: TaskSummary,
+  requestedTags: string[],
+  tagMatch: "all" | "any",
+) {
   if (requestedTags.length === 0) {
     return true;
   }
@@ -3675,34 +4944,53 @@ function matchesMockTaskTags(task: TaskSummary, requestedTags: string[], tagMatc
   return requestedTags.every((tag) => taskTags.has(tag));
 }
 
-function compareMockTasks(left: TaskSummary, right: TaskSummary, options: ReturnType<typeof normalizeTaskListOptions>) {
+function compareMockTasks(
+  left: TaskSummary,
+  right: TaskSummary,
+  options: ReturnType<typeof normalizeTaskListOptions>,
+) {
   if (left.archived !== right.archived) {
     return Number(left.archived) - Number(right.archived);
   }
 
   const directionMultiplier = options.sortDirection === "asc" ? 1 : -1;
-  const priorityRank = (value: string) => ({ P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 }[value] ?? 5);
+  const priorityRank = (value: string) =>
+    ({ P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 })[value] ?? 5;
   const defaultTiebreak = () => {
-    const updatedCompare = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    const updatedCompare =
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
     if (updatedCompare !== 0) {
       return updatedCompare;
     }
-    return parseTaskNumber(right.number).sequence - parseTaskNumber(left.number).sequence;
+    return (
+      parseTaskNumber(right.number).sequence -
+      parseTaskNumber(left.number).sequence
+    );
   };
 
   let primaryCompare = 0;
   switch (options.sortBy) {
     case "createdAt":
-      primaryCompare = (Date.parse(left.createdAt) - Date.parse(right.createdAt)) * directionMultiplier;
+      primaryCompare =
+        (Date.parse(left.createdAt) - Date.parse(right.createdAt)) *
+        directionMultiplier;
       break;
     case "priority":
-      primaryCompare = (priorityRank(left.priority) - priorityRank(right.priority)) * directionMultiplier;
+      primaryCompare =
+        (priorityRank(left.priority) - priorityRank(right.priority)) *
+        directionMultiplier;
       break;
     case "number":
-      primaryCompare = (parseTaskNumber(left.number).sequence - parseTaskNumber(right.number).sequence) * directionMultiplier;
+      primaryCompare =
+        (parseTaskNumber(left.number).sequence -
+          parseTaskNumber(right.number).sequence) *
+        directionMultiplier;
       break;
     case "title":
-      primaryCompare = left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) * directionMultiplier;
+      primaryCompare =
+        left.title.localeCompare(right.title, undefined, {
+          sensitivity: "base",
+        }) * directionMultiplier;
       break;
     case "tags": {
       const leftKey = buildMockTaskTagSortKey(left.tags);
@@ -3717,7 +5005,9 @@ function compareMockTasks(left: TaskSummary, right: TaskSummary, options: Return
     }
     case "updatedAt":
     default:
-      primaryCompare = (Date.parse(left.updatedAt) - Date.parse(right.updatedAt)) * directionMultiplier;
+      primaryCompare =
+        (Date.parse(left.updatedAt) - Date.parse(right.updatedAt)) *
+        directionMultiplier;
       break;
   }
 
@@ -3727,21 +5017,31 @@ function compareMockTasks(left: TaskSummary, right: TaskSummary, options: Return
   return defaultTiebreak();
 }
 
-export async function listTasks(options?: TaskListOptions): Promise<TaskSummary[]>;
-export async function listTasks(includeArchived?: boolean, projectId?: string | null): Promise<TaskSummary[]>;
+export async function listTasks(
+  options?: TaskListOptions,
+): Promise<TaskSummary[]>;
+export async function listTasks(
+  includeArchived?: boolean,
+  projectId?: string | null,
+): Promise<TaskSummary[]>;
 export async function listTasks(
   optionsOrIncludeArchived: TaskListOptions | boolean = false,
   legacyProjectId?: string | null,
 ): Promise<TaskSummary[]> {
-  const options = normalizeTaskListOptions(optionsOrIncludeArchived, legacyProjectId);
+  const options = normalizeTaskListOptions(
+    optionsOrIncludeArchived,
+    legacyProjectId,
+  );
   const activeProjectId = options.projectId ?? getActiveProjectId();
   const normalizedTags = normalizeMockTaskTags(options.tags);
   if (!isTauriAvailable()) {
-    return processMockTaskSchedules(activeProjectId).tasks
-      .filter((task) => task.projectId === activeProjectId)
+    return processMockTaskSchedules(activeProjectId)
+      .tasks.filter((task) => task.projectId === activeProjectId)
       .filter((task) => options.includeArchived || !task.archived)
       .map(summarizeTask)
-      .filter((task) => matchesMockTaskTags(task, normalizedTags, options.tagMatch))
+      .filter((task) =>
+        matchesMockTaskTags(task, normalizedTags, options.tagMatch),
+      )
       .sort((left, right) => compareMockTasks(left, right, options));
   }
 
@@ -3758,7 +5058,9 @@ export async function listTasks(
 
 export async function getTask(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    const task = processMockTaskSchedules().tasks.find((entry) => entry.id === taskId);
+    const task = processMockTaskSchedules().tasks.find(
+      (entry) => entry.id === taskId,
+    );
     if (!task) {
       throw new Error(`Task ${taskId} was not found`);
     }
@@ -3776,15 +5078,24 @@ export async function listTaskTodos(taskId: string): Promise<TaskTodo[]> {
   return invoke<TaskTodo[]>("list_task_todos", { taskId });
 }
 
-export async function listUnfinishedTaskTodos(taskId: string, laneId?: string | null): Promise<TaskTodo[]> {
+export async function listUnfinishedTaskTodos(
+  taskId: string,
+  laneId?: string | null,
+): Promise<TaskTodo[]> {
   if (!isTauriAvailable()) {
     return listMockTaskTodos(taskId, laneId ?? undefined, false);
   }
 
-  return invoke<TaskTodo[]>("list_unfinished_task_todos", { taskId, laneId: laneId ?? null });
+  return invoke<TaskTodo[]>("list_unfinished_task_todos", {
+    taskId,
+    laneId: laneId ?? null,
+  });
 }
 
-export async function addTaskTodo(taskId: string, input: TaskTodoInput): Promise<TaskTodo> {
+export async function addTaskTodo(
+  taskId: string,
+  input: TaskTodoInput,
+): Promise<TaskTodo> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const task = tasks.find((entry) => entry.id === taskId);
@@ -3797,12 +5108,16 @@ export async function addTaskTodo(taskId: string, input: TaskTodoInput): Promise
       throw new Error("description: Task todo description is required.");
     }
     if (!task.workflowId) {
-      throw new Error("laneId: Task todos require the task to have a workflow.");
+      throw new Error(
+        "laneId: Task todos require the task to have a workflow.",
+      );
     }
     if (!laneId) {
       throw new Error("laneId: A workflow lane is required for task todos.");
     }
-    const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+    const workflow = ensureMockWorkflows().find(
+      (entry) => entry.id === task.workflowId,
+    );
     if (!workflow?.lanes.some((entry) => entry.id === laneId)) {
       throw new Error("laneId: Todo lane must belong to the task workflow.");
     }
@@ -3816,8 +5131,22 @@ export async function addTaskTodo(taskId: string, input: TaskTodoInput): Promise
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    saveMockTasks(tasks.map((entry) => (entry.id === taskId ? { ...entry, todos: [...(entry.todos ?? []), todo], updatedAt: timestamp } : entry)));
-    appendMockLog("info", "task.todo.added", `Added todo ${todo.id} to task ${taskId}`);
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? {
+              ...entry,
+              todos: [...(entry.todos ?? []), todo],
+              updatedAt: timestamp,
+            }
+          : entry,
+      ),
+    );
+    appendMockLog(
+      "info",
+      "task.todo.added",
+      `Added todo ${todo.id} to task ${taskId}`,
+    );
     emitMockTaskChange({ taskIds: [taskId], reason: "task.todo.added" });
     return todo;
   }
@@ -3835,14 +5164,20 @@ export async function markTaskTodoFinished(todoId: string): Promise<TaskTodo> {
           ? {
               ...entry,
               todos: (entry.todos ?? []).map((candidate) =>
-                candidate.id === todoId ? { ...candidate, completed: true, updatedAt } : candidate,
+                candidate.id === todoId
+                  ? { ...candidate, completed: true, updatedAt }
+                  : candidate,
               ),
               updatedAt,
             }
           : entry,
       ),
     );
-    appendMockLog("info", "task.todo.finished", `Marked todo ${todoId} finished`);
+    appendMockLog(
+      "info",
+      "task.todo.finished",
+      `Marked todo ${todoId} finished`,
+    );
     emitMockTaskChange({ taskIds: [task.id], reason: "task.todo.finished" });
     return resolveMockTaskTodo(todoId).todo;
   }
@@ -3850,7 +5185,9 @@ export async function markTaskTodoFinished(todoId: string): Promise<TaskTodo> {
   return invoke<TaskTodo>("mark_task_todo_finished", { todoId });
 }
 
-export async function markTaskTodoUnfinished(todoId: string): Promise<TaskTodo> {
+export async function markTaskTodoUnfinished(
+  todoId: string,
+): Promise<TaskTodo> {
   if (!isTauriAvailable()) {
     const { task, todo } = resolveMockTaskTodo(todoId);
     const updatedAt = nowIso();
@@ -3860,14 +5197,20 @@ export async function markTaskTodoUnfinished(todoId: string): Promise<TaskTodo> 
           ? {
               ...entry,
               todos: (entry.todos ?? []).map((candidate) =>
-                candidate.id === todoId ? { ...candidate, completed: false, updatedAt } : candidate,
+                candidate.id === todoId
+                  ? { ...candidate, completed: false, updatedAt }
+                  : candidate,
               ),
               updatedAt,
             }
           : entry,
       ),
     );
-    appendMockLog("info", "task.todo.unfinished", `Marked todo ${todoId} unfinished`);
+    appendMockLog(
+      "info",
+      "task.todo.unfinished",
+      `Marked todo ${todoId} unfinished`,
+    );
     emitMockTaskChange({ taskIds: [task.id], reason: "task.todo.unfinished" });
     return resolveMockTaskTodo(todoId).todo;
   }
@@ -3882,7 +5225,13 @@ export async function deleteTaskTodo(todoId: string): Promise<TaskTodo> {
     saveMockTasks(
       ensureMockTasks().map((entry) =>
         entry.id === task.id
-          ? { ...entry, todos: (entry.todos ?? []).filter((candidate) => candidate.id !== todoId), updatedAt }
+          ? {
+              ...entry,
+              todos: (entry.todos ?? []).filter(
+                (candidate) => candidate.id !== todoId,
+              ),
+              updatedAt,
+            }
           : entry,
       ),
     );
@@ -3894,39 +5243,85 @@ export async function deleteTaskTodo(todoId: string): Promise<TaskTodo> {
   return invoke<TaskTodo>("delete_task_todo", { todoId });
 }
 
-export async function createTask(input: TaskUpsertInput, projectId?: string | null): Promise<TaskDetail> {
+export async function createTask(
+  input: TaskUpsertInput,
+  projectId?: string | null,
+): Promise<TaskDetail> {
   const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
     const validation = validateMockTaskInput(input);
     if (validation.length > 0) {
-      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+      throw new Error(
+        validation.map((error) => `${error.path}: ${error.message}`).join("; "),
+      );
     }
 
-    const existingTasks = ensureMockTasks().map((task) => ensureStoredMockTask(task));
-    const task = normalizeMockTaskInput(input, undefined, activeProjectId ?? undefined);
+    const existingTasks = ensureMockTasks().map((task) =>
+      ensureStoredMockTask(task),
+    );
+    const task = normalizeMockTaskInput(
+      input,
+      undefined,
+      activeProjectId ?? undefined,
+    );
     const dependencies = ensureMockTaskDependencies();
-    const nextTasks = [task, ...existingTasks].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-    const refreshTaskIds = collectMockRefreshTaskIds(nextTasks, dependencies, task.id, task.parentTaskId, task.parentTaskId);
-    const reconciled = reconcileStoredMockTasks(nextTasks, dependencies, refreshTaskIds, task.updatedAt);
-    const cleaned = clearBlockedMockTaskRuntimeClaims(reconciled.tasks, refreshTaskIds, task.updatedAt);
+    const nextTasks = [task, ...existingTasks].sort(
+      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    );
+    const refreshTaskIds = collectMockRefreshTaskIds(
+      nextTasks,
+      dependencies,
+      task.id,
+      task.parentTaskId,
+      task.parentTaskId,
+    );
+    const reconciled = reconcileStoredMockTasks(
+      nextTasks,
+      dependencies,
+      refreshTaskIds,
+      task.updatedAt,
+    );
+    const cleaned = clearBlockedMockTaskRuntimeClaims(
+      reconciled.tasks,
+      refreshTaskIds,
+      task.updatedAt,
+    );
     saveMockTasks(cleaned.tasks);
     appendMockLog("info", "task.created", `Created task ${task.id}`);
     const createdTask = await getTask(task.id);
-    appendMockDomainEvent("task.created", "task", task.id, { taskId: task.id, taskNumber: task.number, status: createdTask.status }, task.projectId);
+    appendMockDomainEvent(
+      "task.created",
+      "task",
+      task.id,
+      { taskId: task.id, taskNumber: task.number, status: createdTask.status },
+      task.projectId,
+    );
     emitMockTaskChange({ taskIds: refreshTaskIds, reason: "task.created" });
     return createdTask;
   }
 
   const resolvedProjectId = await resolveTauriProjectId(projectId);
-  console.debug("createTask resolvedProjectId", { projectId, resolvedProjectId, input });
-  return invoke<TaskDetail>("create_task", { projectId: resolvedProjectId, input });
+  console.debug("createTask resolvedProjectId", {
+    projectId,
+    resolvedProjectId,
+    input,
+  });
+  return invoke<TaskDetail>("create_task", {
+    projectId: resolvedProjectId,
+    input,
+  });
 }
 
-export async function updateTask(taskId: string, input: TaskUpsertInput): Promise<TaskDetail> {
+export async function updateTask(
+  taskId: string,
+  input: TaskUpsertInput,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const validation = validateMockTaskInput(input, taskId);
     if (validation.length > 0) {
-      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+      throw new Error(
+        validation.map((error) => `${error.path}: ${error.message}`).join("; "),
+      );
     }
 
     const tasks = ensureMockTasks().map((task) => ensureStoredMockTask(task));
@@ -3940,20 +5335,39 @@ export async function updateTask(taskId: string, input: TaskUpsertInput): Promis
       updated.autoBlockedByDependencies = false;
     }
     const dependencies = ensureMockTaskDependencies();
-    const refreshTaskIds = collectMockRefreshTaskIds(tasks, dependencies, taskId, existing.parentTaskId, updated.parentTaskId);
+    const refreshTaskIds = collectMockRefreshTaskIds(
+      tasks,
+      dependencies,
+      taskId,
+      existing.parentTaskId,
+      updated.parentTaskId,
+    );
     const reconciled = reconcileStoredMockTasks(
       tasks
         .map((task) => (task.id === taskId ? updated : task))
-        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+        .sort(
+          (left, right) =>
+            Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+        ),
       dependencies,
       refreshTaskIds,
       updated.updatedAt,
     );
-    const cleaned = clearBlockedMockTaskRuntimeClaims(reconciled.tasks, refreshTaskIds, updated.updatedAt);
+    const cleaned = clearBlockedMockTaskRuntimeClaims(
+      reconciled.tasks,
+      refreshTaskIds,
+      updated.updatedAt,
+    );
     saveMockTasks(cleaned.tasks);
     appendMockLog("info", "task.updated", `Updated task ${taskId}`);
     const updatedTask = await getTask(taskId);
-    appendMockDomainEvent("task.updated", "task", taskId, { taskId, taskNumber: updatedTask.number, status: updatedTask.status }, updatedTask.projectId);
+    appendMockDomainEvent(
+      "task.updated",
+      "task",
+      taskId,
+      { taskId, taskNumber: updatedTask.number, status: updatedTask.status },
+      updatedTask.projectId,
+    );
     emitMockTaskChange({ taskIds: refreshTaskIds, reason: "task.updated" });
     return updatedTask;
   }
@@ -3971,16 +5385,26 @@ export async function deleteTask(taskId: string): Promise<TaskDetail> {
 
     saveMockTaskDependencies(
       ensureMockTaskDependencies().filter(
-        (dependency) => dependency.blockerTaskId !== taskId && dependency.blockedTaskId !== taskId,
+        (dependency) =>
+          dependency.blockerTaskId !== taskId &&
+          dependency.blockedTaskId !== taskId,
       ),
     );
     saveMockTasks(
       tasks
         .filter((task) => task.id !== taskId)
-        .map((task) => (task.parentTaskId === taskId ? { ...task, parentTaskId: null } : task)),
+        .map((task) =>
+          task.parentTaskId === taskId ? { ...task, parentTaskId: null } : task,
+        ),
     );
     appendMockLog("info", "task.deleted", `Deleted task ${taskId}`);
-    appendMockDomainEvent("task.deleted", "task", taskId, { taskId, taskNumber: existing.number, status: existing.status }, existing.projectId);
+    appendMockDomainEvent(
+      "task.deleted",
+      "task",
+      taskId,
+      { taskId, taskNumber: existing.number, status: existing.status },
+      existing.projectId,
+    );
     emitMockTaskChange({ taskIds: [taskId], reason: "task.deleted" });
     return existing;
   }
@@ -4000,20 +5424,30 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       throw new Error(`Task ${taskId} was not found`);
     }
     if (!task.workflowId || !task.currentLaneId) {
-      throw new Error("Task must have a workflow and current lane before dispatch.");
+      throw new Error(
+        "Task must have a workflow and current lane before dispatch.",
+      );
     }
     if (task.activeLaneAssignment) {
       return getTask(taskId);
     }
     if (task.status === "blocked") {
-      throw new Error(`Task ${taskId} is blocked and cannot be dispatched until it becomes runnable.`);
+      throw new Error(
+        `Task ${taskId} is blocked and cannot be dispatched until it becomes runnable.`,
+      );
     }
     if (task.dependencyBlocked) {
-      throw new Error(`Task ${taskId} is blocked by unresolved dependencies or unfinished subtasks.`);
+      throw new Error(
+        `Task ${taskId} is blocked by unresolved dependencies or unfinished subtasks.`,
+      );
     }
 
-    const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
-    const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
+    const workflow = ensureMockWorkflows().find(
+      (entry) => entry.id === task.workflowId,
+    );
+    const lane = workflow?.lanes.find(
+      (entry) => entry.id === task.currentLaneId,
+    );
     if (!workflow || !lane) {
       throw new Error("Current workflow lane could not be resolved.");
     }
@@ -4021,9 +5455,14 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       throw new Error("Current lane is user-owned and cannot be dispatched.");
     }
 
-    const workerId = lane.assignedEntityType === "agent"
-      ? getStoredMockAgents().find((agent) => agent.slug === lane.assignedEntityId)?.id ?? lane.assignedEntityId ?? null
-      : lane.assignedEntityId ?? null;
+    const workerId =
+      lane.assignedEntityType === "agent"
+        ? (getStoredMockAgents().find(
+            (agent) => agent.slug === lane.assignedEntityId,
+          )?.id ??
+          lane.assignedEntityId ??
+          null)
+        : (lane.assignedEntityId ?? null);
     const assignmentStartedAt = nowIso();
     const assignment: TaskLaneAssignment = {
       id: createId("task-assignment"),
@@ -4035,8 +5474,10 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       status: "active",
       sessionId: null,
       runtimeCwd: `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
-      roleQueueEntryId: lane.assignedEntityType === "role" ? createId("queue") : null,
-      roleInstanceId: lane.assignedEntityType === "role" ? createId("instance") : null,
+      roleQueueEntryId:
+        lane.assignedEntityType === "role" ? createId("queue") : null,
+      roleInstanceId:
+        lane.assignedEntityType === "role" ? createId("instance") : null,
       prompt: `Work task ${task.number}: ${task.title}`,
       startedAt: assignmentStartedAt,
       completedAt: null,
@@ -4045,10 +5486,22 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
     };
 
     if (lane.assignedEntityType === "agent" && assignment.workerId) {
-      const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
+      const agentSession = ensureMockAgentMainSession(
+        lane.assignedEntityId ?? "Agent",
+        assignment.workerId,
+      );
       assignment.sessionId = agentSession.id;
-      assignment.runtimeCwd = getProjectRuntimeCwd(DEFAULT_INSTALL_BASELINE_PROJECT_ID);
-      updateMockSession(agentSession.id, (current) => attachMockSessionTaskMetadata(current, task, "agent", lane.assignedEntityId ?? "Agent"));
+      assignment.runtimeCwd = getProjectRuntimeCwd(
+        DEFAULT_INSTALL_BASELINE_PROJECT_ID,
+      );
+      updateMockSession(agentSession.id, (current) =>
+        attachMockSessionTaskMetadata(
+          current,
+          task,
+          "agent",
+          lane.assignedEntityId ?? "Agent",
+        ),
+      );
       const agentQueueEntryId = createId("agent-queue");
       saveStoredMockAgentQueue([
         ...getStoredMockAgentQueue(),
@@ -4074,7 +5527,8 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       ]);
       saveStoredMockAgentRuntimes(
         getStoredMockAgentRuntimes().map((runtime) =>
-          runtime.agentId === assignment.workerId && runtime.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
+          runtime.agentId === assignment.workerId &&
+          runtime.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
             ? {
                 ...runtime,
                 status: "running",
@@ -4100,7 +5554,10 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
       );
       assignment.sessionId = roleSession.id;
       upsertMockSession(roleSession);
-      emitMockSessionChange({ sessionIds: [roleSession.id], reason: "task.dispatch.role_session" });
+      emitMockSessionChange({
+        sessionIds: [roleSession.id],
+        reason: "task.dispatch.role_session",
+      });
     }
 
     const nextTasks = tasks.map((entry) =>
@@ -4129,10 +5586,28 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
         : entry,
     );
     saveMockTasks(nextTasks);
-    appendMockLog("info", "task.dispatch", `Dispatched task ${taskId} into ${lane.assignedEntityType}:${lane.assignedEntityId ?? "user"}`);
-    appendMockDomainEvent("task.dispatched", "task", taskId, { taskId, assignmentId: assignment.id, laneId: lane.id, sessionId: assignment.sessionId ?? null }, task.projectId);
+    appendMockLog(
+      "info",
+      "task.dispatch",
+      `Dispatched task ${taskId} into ${lane.assignedEntityType}:${lane.assignedEntityId ?? "user"}`,
+    );
+    appendMockDomainEvent(
+      "task.dispatched",
+      "task",
+      taskId,
+      {
+        taskId,
+        assignmentId: assignment.id,
+        laneId: lane.id,
+        sessionId: assignment.sessionId ?? null,
+      },
+      task.projectId,
+    );
     if (assignment.sessionId) {
-      emitMockSessionChange({ sessionIds: [assignment.sessionId], reason: "task.dispatch" });
+      emitMockSessionChange({
+        sessionIds: [assignment.sessionId],
+        reason: "task.dispatch",
+      });
     }
     emitMockTaskChange({ taskIds: [taskId], reason: "task.dispatch" });
     return getTask(taskId);
@@ -4141,7 +5616,12 @@ export async function dispatchTaskLane(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("dispatch_task_lane", { taskId });
 }
 
-function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition, lane: WorkflowLane, updatedAt: string) {
+function buildMockAutoAssignment(
+  task: TaskDetail,
+  workflow: WorkflowDefinition,
+  lane: WorkflowLane,
+  updatedAt: string,
+) {
   if (lane.assignedEntityType === "user") {
     return null;
   }
@@ -4155,11 +5635,14 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     workerId: lane.assignedEntityId ?? null,
     status: "active",
     sessionId: createId("session"),
-    runtimeCwd: lane.assignedEntityType === "agent"
-      ? getProjectRuntimeCwd(task.projectId)
-      : `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
-    roleQueueEntryId: lane.assignedEntityType === "role" ? createId("queue") : null,
-    roleInstanceId: lane.assignedEntityType === "role" ? createId("instance") : null,
+    runtimeCwd:
+      lane.assignedEntityType === "agent"
+        ? getProjectRuntimeCwd(task.projectId)
+        : `/mock/runtime/${lane.assignedEntityType}/${lane.assignedEntityId ?? "user"}`,
+    roleQueueEntryId:
+      lane.assignedEntityType === "role" ? createId("queue") : null,
+    roleInstanceId:
+      lane.assignedEntityType === "role" ? createId("instance") : null,
     prompt: `Work task ${task.number}: ${task.title}`,
     pendingOutcome: null,
     completionNotes: null,
@@ -4170,10 +5653,23 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
   };
 
   if (lane.assignedEntityType === "agent" && assignment.workerId) {
-    const agentSession = ensureMockAgentMainSession(lane.assignedEntityId ?? "Agent", assignment.workerId);
+    const agentSession = ensureMockAgentMainSession(
+      lane.assignedEntityId ?? "Agent",
+      assignment.workerId,
+    );
     assignment.sessionId = agentSession.id;
-    updateMockSession(agentSession.id, (current) => attachMockSessionTaskMetadata(current, task, "agent", lane.assignedEntityId ?? "Agent"));
-    emitMockSessionChange({ sessionIds: [agentSession.id], reason: "task.transition.next_assignment" });
+    updateMockSession(agentSession.id, (current) =>
+      attachMockSessionTaskMetadata(
+        current,
+        task,
+        "agent",
+        lane.assignedEntityId ?? "Agent",
+      ),
+    );
+    emitMockSessionChange({
+      sessionIds: [agentSession.id],
+      reason: "task.transition.next_assignment",
+    });
   }
 
   if (lane.assignedEntityType === "role") {
@@ -4188,21 +5684,33 @@ function buildMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
     );
     assignment.sessionId = roleSession.id;
     upsertMockSession(roleSession);
-    emitMockSessionChange({ sessionIds: [roleSession.id], reason: "task.dispatch.role_session" });
+    emitMockSessionChange({
+      sessionIds: [roleSession.id],
+      reason: "task.dispatch.role_session",
+    });
   }
 
   return assignment;
 }
 
-function closeMockTaskSessionIfNeeded(task: TaskDetail, nextStatus: string, updatedAt: string) {
-  if (!["completed", "canceled", "blocked"].includes(nextStatus) || !task.activeLaneAssignment?.sessionId) {
+function closeMockTaskSessionIfNeeded(
+  task: TaskDetail,
+  nextStatus: string,
+  updatedAt: string,
+) {
+  if (
+    !["completed", "canceled", "blocked"].includes(nextStatus) ||
+    !task.activeLaneAssignment?.sessionId
+  ) {
     return;
   }
 
   const activeSessionId = task.activeLaneAssignment.sessionId;
   const isPersistentAgentMainSession =
     task.activeLaneAssignment.workerType === "agent" &&
-    getStoredMockAgentRuntimes().some((runtime) => runtime.mainSessionId === activeSessionId);
+    getStoredMockAgentRuntimes().some(
+      (runtime) => runtime.mainSessionId === activeSessionId,
+    );
 
   if (!isPersistentAgentMainSession) {
     updateMockSession(activeSessionId, (current) => ({
@@ -4210,18 +5718,30 @@ function closeMockTaskSessionIfNeeded(task: TaskDetail, nextStatus: string, upda
       status: "closed",
       updatedAt,
     }));
-    emitMockSessionChange({ sessionIds: [activeSessionId], reason: "task.session.closed" });
+    emitMockSessionChange({
+      sessionIds: [activeSessionId],
+      reason: "task.session.closed",
+    });
   }
 }
 
-function finalizeMockAgentState(task: TaskDetail, outcome: "success" | "failure" | "needs_user", updatedAt: string, autoAssignment: TaskDetail["activeLaneAssignment"] | null) {
-  if (task.activeLaneAssignment?.workerType !== "agent" || !task.activeLaneAssignment.workerId) {
+function finalizeMockAgentState(
+  task: TaskDetail,
+  outcome: "success" | "failure" | "needs_user",
+  updatedAt: string,
+  autoAssignment: TaskDetail["activeLaneAssignment"] | null,
+) {
+  if (
+    task.activeLaneAssignment?.workerType !== "agent" ||
+    !task.activeLaneAssignment.workerId
+  ) {
     return;
   }
 
   saveStoredMockAgentQueue(
     getStoredMockAgentQueue().map((entry) =>
-      entry.id === task.activeLaneAssignment?.id || entry.sessionId === task.activeLaneAssignment?.sessionId
+      entry.id === task.activeLaneAssignment?.id ||
+      entry.sessionId === task.activeLaneAssignment?.sessionId
         ? {
             ...entry,
             status: outcome === "failure" ? "failed" : "completed",
@@ -4236,12 +5756,24 @@ function finalizeMockAgentState(task: TaskDetail, outcome: "success" | "failure"
       runtime.agentId === task.activeLaneAssignment?.workerId
         ? {
             ...runtime,
-            status: outcome === "failure" ? "needs_attention" : autoAssignment ? "running" : "idle",
-            mainSessionId: autoAssignment?.sessionId ?? task.activeLaneAssignment?.sessionId,
-            runtimeCwd: autoAssignment?.runtimeCwd ?? task.activeLaneAssignment?.runtimeCwd,
+            status:
+              outcome === "failure"
+                ? "needs_attention"
+                : autoAssignment
+                  ? "running"
+                  : "idle",
+            mainSessionId:
+              autoAssignment?.sessionId ?? task.activeLaneAssignment?.sessionId,
+            runtimeCwd:
+              autoAssignment?.runtimeCwd ??
+              task.activeLaneAssignment?.runtimeCwd,
             currentQueueEntryId: autoAssignment?.id ?? null,
             lastDispatchAt: updatedAt,
-            lastError: outcome === "failure" ? task.activeLaneAssignment?.completionNotes ?? "Marked failed" : null,
+            lastError:
+              outcome === "failure"
+                ? (task.activeLaneAssignment?.completionNotes ??
+                  "Marked failed")
+                : null,
             updatedAt,
           }
         : runtime,
@@ -4249,7 +5781,11 @@ function finalizeMockAgentState(task: TaskDetail, outcome: "success" | "failure"
   );
 }
 
-function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition, autoAssignment: TaskDetail["activeLaneAssignment"] | null) {
+function queueMockAutoAssignment(
+  task: TaskDetail,
+  workflow: WorkflowDefinition,
+  autoAssignment: TaskDetail["activeLaneAssignment"] | null,
+) {
   if (autoAssignment?.workerType !== "agent" || !autoAssignment.workerId) {
     return;
   }
@@ -4280,39 +5816,61 @@ function queueMockAutoAssignment(task: TaskDetail, workflow: WorkflowDefinition,
 
 function isMockAutoDispatchOnBlockerCompletionEnabled(projectId: string) {
   const projects = getStoredMockProjectsForSettings();
-  const projectSlug = projects.find((project) => project.id === projectId)?.slug ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID;
+  const projectSlug =
+    projects.find((project) => project.id === projectId)?.slug ??
+    DEFAULT_INSTALL_BASELINE_PROJECT_ID;
   const runtimeSettings = getStoredMockProjectRuntimeSettings(projectSlug);
-  return Boolean((runtimeSettings.autoDispatchOnBlockerCompletion ?? true) && projectSlug);
+  return Boolean(
+    (runtimeSettings.autoDispatchOnBlockerCompletion ?? true) && projectSlug,
+  );
 }
 
 async function autoDispatchMockDependentTasks(blockerTaskId: string) {
-  const dependencies = ensureMockTaskDependencies().filter((dependency) => dependency.blockerTaskId === blockerTaskId);
+  const dependencies = ensureMockTaskDependencies().filter(
+    (dependency) => dependency.blockerTaskId === blockerTaskId,
+  );
   if (dependencies.length === 0) {
     return [] as string[];
   }
 
   const tasks = ensureMockTasks();
-  const workflowMap = new Map(ensureMockWorkflows().map((workflow) => [workflow.id, workflow]));
+  const workflowMap = new Map(
+    ensureMockWorkflows().map((workflow) => [workflow.id, workflow]),
+  );
   const updatedAt = nowIso();
   const autoDispatchedTaskIds: string[] = [];
   const nextTasks = [...tasks];
 
   for (const dependency of dependencies) {
-    const index = nextTasks.findIndex((entry) => entry.id === dependency.blockedTaskId);
+    const index = nextTasks.findIndex(
+      (entry) => entry.id === dependency.blockedTaskId,
+    );
     if (index < 0) {
       continue;
     }
     const task = await getTask(dependency.blockedTaskId);
-    if (!isMockAutoDispatchOnBlockerCompletionEnabled(task.projectId) || !task.readyForDispatch || task.activeLaneAssignment) {
+    if (
+      !isMockAutoDispatchOnBlockerCompletionEnabled(task.projectId) ||
+      !task.readyForDispatch ||
+      task.activeLaneAssignment
+    ) {
       continue;
     }
-    const workflow = task.workflowId ? workflowMap.get(task.workflowId) ?? null : null;
-    const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId) ?? null;
+    const workflow = task.workflowId
+      ? (workflowMap.get(task.workflowId) ?? null)
+      : null;
+    const lane =
+      workflow?.lanes.find((entry) => entry.id === task.currentLaneId) ?? null;
     if (!workflow || !lane || lane.assignedEntityType === "user") {
       continue;
     }
 
-    const autoAssignment = buildMockAutoAssignment(task, workflow, lane, updatedAt);
+    const autoAssignment = buildMockAutoAssignment(
+      task,
+      workflow,
+      lane,
+      updatedAt,
+    );
     if (!autoAssignment?.sessionId) {
       continue;
     }
@@ -4342,18 +5900,31 @@ async function autoDispatchMockDependentTasks(blockerTaskId: string) {
   }
 
   if (autoDispatchedTaskIds.length > 0) {
-    saveMockTasks(nextTasks.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+    saveMockTasks(
+      nextTasks.sort(
+        (left, right) =>
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      ),
+    );
   }
 
   return autoDispatchedTaskIds;
 }
 
-function listMockTaskTodos(taskId: string, laneId?: string | null, completed?: boolean) {
+function listMockTaskTodos(
+  taskId: string,
+  laneId?: string | null,
+  completed?: boolean,
+) {
   const task = ensureMockTasks().find((entry) => entry.id === taskId);
   if (!task) {
     throw new Error(`Task ${taskId} was not found`);
   }
-  return (task.todos ?? []).filter((todo) => (laneId ? todo.laneId === laneId : true) && (completed === undefined ? true : todo.completed === completed));
+  return (task.todos ?? []).filter(
+    (todo) =>
+      (laneId ? todo.laneId === laneId : true) &&
+      (completed === undefined ? true : todo.completed === completed),
+  );
 }
 
 function resolveMockTaskTodo(todoId: string) {
@@ -4366,13 +5937,19 @@ function resolveMockTaskTodo(todoId: string) {
   throw new Error(`Task todo ${todoId} was not found`);
 }
 
-async function completeMockTaskLane(taskId: string, outcome: "success" | "failure" | "needs_user", notes?: string): Promise<TaskDetail> {
+async function completeMockTaskLane(
+  taskId: string,
+  outcome: "success" | "failure" | "needs_user",
+  notes?: string,
+): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
   if (!task || !task.workflowId || !task.currentLaneId) {
     throw new Error(`Task ${taskId} does not have an active workflow lane.`);
   }
-  const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+  const workflow = ensureMockWorkflows().find(
+    (entry) => entry.id === task.workflowId,
+  );
   const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
   if (!workflow || !lane) {
     throw new Error("Current workflow lane could not be resolved.");
@@ -4389,24 +5966,33 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 
   if (task.status === "blocked" || task.dependencyBlocked) {
     if (!task.activeLaneAssignment) {
-      throw new Error(`Task ${taskId} is blocked by unresolved dependencies or unfinished subtasks and cannot progress until those blockers are resolved.`);
+      throw new Error(
+        `Task ${taskId} is blocked by unresolved dependencies or unfinished subtasks and cannot progress until those blockers are resolved.`,
+      );
     }
 
-    saveMockTasks(tasks.map((entry) =>
-      entry.id === taskId
-        ? {
-            ...entry,
-            status: "blocked",
-            activeLaneAssignment: null,
-            laneRuns: entry.laneRuns.map((run, index, allRuns) =>
-              index === allRuns.length - 1 && run.completedAt == null
-                ? { ...run, result: "blocked" as const, notes: normalizedNotes ?? run.notes ?? null, completedAt: updatedAt }
-                : run,
-            ),
-            updatedAt,
-          }
-        : entry,
-    ));
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? {
+              ...entry,
+              status: "blocked",
+              activeLaneAssignment: null,
+              laneRuns: entry.laneRuns.map((run, index, allRuns) =>
+                index === allRuns.length - 1 && run.completedAt == null
+                  ? {
+                      ...run,
+                      result: "blocked" as const,
+                      notes: normalizedNotes ?? run.notes ?? null,
+                      completedAt: updatedAt,
+                    }
+                  : run,
+              ),
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
 
     syncMockSessionTaskActivity(task.activeLaneAssignment, null);
     finalizeMockAgentState(
@@ -4421,85 +6007,114 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
       null,
     );
     closeMockTaskSessionIfNeeded(task, "blocked", updatedAt);
-    appendMockLog("info", "task.transition", `Stopped blocked task ${taskId} at transition time`);
-    emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.blocked" });
+    appendMockLog(
+      "info",
+      "task.transition",
+      `Stopped blocked task ${taskId} at transition time`,
+    );
+    emitMockTaskChange({
+      taskIds: [taskId],
+      reason: "task.transition.blocked",
+    });
     return getTask(taskId);
   }
 
   if (
-    outcome === "success"
-    && task.activeLaneAssignment
-    && ["agent", "role"].includes(task.activeLaneAssignment.workerType)
-    && (lane.requireUserApprovalOnSuccess ?? false)
+    outcome === "success" &&
+    task.activeLaneAssignment &&
+    ["agent", "role"].includes(task.activeLaneAssignment.workerType) &&
+    (lane.requireUserApprovalOnSuccess ?? false)
   ) {
-    saveMockTasks(tasks.map((entry) =>
-      entry.id === taskId
-        ? {
-            ...entry,
-            status: "in_review",
-            assigneeType: "user",
-            assigneeId: null,
-            activeLaneAssignment: entry.activeLaneAssignment
-              ? {
-                  ...entry.activeLaneAssignment,
-                  status: "awaiting_user_approval",
-                  pendingOutcome: "success",
-                  completionNotes: normalizedNotes,
-                  updatedAt,
-                }
-              : null,
-            updatedAt,
-          }
-        : entry,
-    ));
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? {
+              ...entry,
+              status: "in_review",
+              assigneeType: "user",
+              assigneeId: null,
+              activeLaneAssignment: entry.activeLaneAssignment
+                ? {
+                    ...entry.activeLaneAssignment,
+                    status: "awaiting_user_approval",
+                    pendingOutcome: "success",
+                    completionNotes: normalizedNotes,
+                    updatedAt,
+                  }
+                : null,
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
 
-    appendMockLog("info", "task.transition", `Task ${taskId} is awaiting user approval on ${lane.name}`);
-    emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.awaiting_user_approval" });
+    appendMockLog(
+      "info",
+      "task.transition",
+      `Task ${taskId} is awaiting user approval on ${lane.name}`,
+    );
+    emitMockTaskChange({
+      taskIds: [taskId],
+      reason: "task.transition.awaiting_user_approval",
+    });
     const updatedTask = await getTask(taskId);
     const projects = getStoredMockProjects();
-    emitMockNotificationIntent(buildTaskAttentionNotificationIntent(
-      updatedTask,
-      "task.awaiting_user_approval",
-      resolveNotificationProjectLabel(projects, updatedTask.projectId),
-    ));
+    emitMockNotificationIntent(
+      buildTaskAttentionNotificationIntent(
+        updatedTask,
+        "task.awaiting_user_approval",
+        resolveNotificationProjectLabel(projects, updatedTask.projectId),
+      ),
+    );
     return updatedTask;
   }
 
   if (
-    outcome === "needs_user"
-    && task.activeLaneAssignment
-    && ["agent", "role"].includes(task.activeLaneAssignment.workerType)
+    outcome === "needs_user" &&
+    task.activeLaneAssignment &&
+    ["agent", "role"].includes(task.activeLaneAssignment.workerType)
   ) {
-    saveMockTasks(tasks.map((entry) =>
-      entry.id === taskId
-        ? {
-            ...entry,
-            status: "in_review",
-            assigneeType: "user",
-            assigneeId: null,
-            activeLaneAssignment: entry.activeLaneAssignment
-              ? {
-                  ...entry.activeLaneAssignment,
-                  status: "awaiting_user_intervention",
-                  pendingOutcome: "needs_user",
-                  completionNotes: normalizedNotes,
-                  updatedAt,
-                }
-              : null,
-            updatedAt,
-          }
-        : entry,
-    ));
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? {
+              ...entry,
+              status: "in_review",
+              assigneeType: "user",
+              assigneeId: null,
+              activeLaneAssignment: entry.activeLaneAssignment
+                ? {
+                    ...entry.activeLaneAssignment,
+                    status: "awaiting_user_intervention",
+                    pendingOutcome: "needs_user",
+                    completionNotes: normalizedNotes,
+                    updatedAt,
+                  }
+                : null,
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
 
-    appendMockLog("info", "task.transition", `Task ${taskId} is awaiting user intervention on ${lane.name}`);
-    emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.awaiting_user_intervention" });
+    appendMockLog(
+      "info",
+      "task.transition",
+      `Task ${taskId} is awaiting user intervention on ${lane.name}`,
+    );
+    emitMockTaskChange({
+      taskIds: [taskId],
+      reason: "task.transition.awaiting_user_intervention",
+    });
     const updatedTask = await getTask(taskId);
     const projects = getStoredMockProjects();
-    emitMockNotificationIntent(buildTaskAttentionNotificationIntent(
-      updatedTask,
-      "task.awaiting_user_intervention",
-      resolveNotificationProjectLabel(projects, updatedTask.projectId),
-    ));
+    emitMockNotificationIntent(
+      buildTaskAttentionNotificationIntent(
+        updatedTask,
+        "task.awaiting_user_intervention",
+        resolveNotificationProjectLabel(projects, updatedTask.projectId),
+      ),
+    );
     return updatedTask;
   }
 
@@ -4510,9 +6125,12 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
 
   if (outcome === "success") {
     if (lane.successTransitionType === "lane" && lane.successTargetLaneId) {
-      const nextLane = workflow.lanes.find((entry) => entry.id === lane.successTargetLaneId);
+      const nextLane = workflow.lanes.find(
+        (entry) => entry.id === lane.successTargetLaneId,
+      );
       nextLaneId = nextLane?.id ?? null;
-      nextStatus = nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
+      nextStatus =
+        nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
       nextAssigneeType = nextLane?.assignedEntityType ?? "unassigned";
       nextAssigneeId = nextLane?.assignedEntityId ?? null;
     } else {
@@ -4523,9 +6141,12 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
     }
   } else if (outcome === "failure") {
     if (lane.failureTransitionType === "lane" && lane.failureTargetLaneId) {
-      const nextLane = workflow.lanes.find((entry) => entry.id === lane.failureTargetLaneId);
+      const nextLane = workflow.lanes.find(
+        (entry) => entry.id === lane.failureTargetLaneId,
+      );
       nextLaneId = nextLane?.id ?? null;
-      nextStatus = nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
+      nextStatus =
+        nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
       nextAssigneeType = nextLane?.assignedEntityType ?? "unassigned";
       nextAssigneeId = nextLane?.assignedEntityId ?? null;
     } else {
@@ -4539,16 +6160,25 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
     nextAssigneeId = null;
   }
 
-  const nextLane = nextLaneId ? workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null : null;
+  const nextLane = nextLaneId
+    ? (workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null)
+    : null;
   const autoAssignment =
-    nextLane && nextLane.assignedEntityType !== "user" && ["ready", "in_progress"].includes(nextStatus)
+    nextLane &&
+    nextLane.assignedEntityType !== "user" &&
+    ["ready", "in_progress"].includes(nextStatus)
       ? buildMockAutoAssignment(task, workflow, nextLane, updatedAt)
       : null;
 
   const laneRuns = task.activeLaneAssignment
     ? task.laneRuns.map((run, index, allRuns) =>
         index === allRuns.length - 1 && run.completedAt == null
-          ? { ...run, result: outcome, notes: normalizedNotes ?? run.notes ?? null, completedAt: updatedAt }
+          ? {
+              ...run,
+              result: outcome,
+              notes: normalizedNotes ?? run.notes ?? null,
+              completedAt: updatedAt,
+            }
           : run,
       )
     : task.laneRuns;
@@ -4562,7 +6192,9 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
           assigneeType: nextAssigneeType,
           assigneeId: nextAssigneeId,
           activeLaneAssignment: autoAssignment,
-          autoBlockedByDependencies: ["completed", "canceled"].includes(nextStatus)
+          autoBlockedByDependencies: ["completed", "canceled"].includes(
+            nextStatus,
+          )
             ? false
             : ensureStoredMockTask(entry).autoBlockedByDependencies,
           laneRuns:
@@ -4586,8 +6218,19 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
       : ensureStoredMockTask(entry),
   );
   const dependencies = ensureMockTaskDependencies();
-  const refreshTaskIds = collectMockRefreshTaskIds(updatedTasks, dependencies, taskId, task.parentTaskId, task.parentTaskId);
-  const reconciled = reconcileStoredMockTasks(updatedTasks, dependencies, refreshTaskIds, updatedAt);
+  const refreshTaskIds = collectMockRefreshTaskIds(
+    updatedTasks,
+    dependencies,
+    taskId,
+    task.parentTaskId,
+    task.parentTaskId,
+  );
+  const reconciled = reconcileStoredMockTasks(
+    updatedTasks,
+    dependencies,
+    refreshTaskIds,
+    updatedAt,
+  );
   saveMockTasks(reconciled.tasks);
 
   syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
@@ -4604,9 +6247,14 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
   );
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
-  const autoDispatchedDependentTaskIds = await autoDispatchMockDependentTasks(taskId);
+  const autoDispatchedDependentTaskIds =
+    await autoDispatchMockDependentTasks(taskId);
 
-  appendMockLog("info", "task.transition", `Completed task ${taskId} lane with ${outcome}`);
+  appendMockLog(
+    "info",
+    "task.transition",
+    `Completed task ${taskId} lane with ${outcome}`,
+  );
   const updatedTask = await getTask(taskId);
   appendMockDomainEvent(
     outcome === "success" && updatedTask.status === "completed"
@@ -4618,21 +6266,40 @@ async function completeMockTaskLane(taskId: string, outcome: "success" | "failur
           : "task.user_intervention_requested",
     "task",
     taskId,
-    { taskId, status: updatedTask.status, outcome, workflowId: updatedTask.workflowId ?? null, laneId: updatedTask.currentLaneId ?? null },
+    {
+      taskId,
+      status: updatedTask.status,
+      outcome,
+      workflowId: updatedTask.workflowId ?? null,
+      laneId: updatedTask.currentLaneId ?? null,
+    },
     updatedTask.projectId,
   );
-  emitMockTaskChange({ taskIds: dedupeMockTaskIds([...refreshTaskIds, ...autoDispatchedDependentTaskIds]), reason: `task.transition.${outcome}` });
+  emitMockTaskChange({
+    taskIds: dedupeMockTaskIds([
+      ...refreshTaskIds,
+      ...autoDispatchedDependentTaskIds,
+    ]),
+    reason: `task.transition.${outcome}`,
+  });
   return updatedTask;
 }
 
 async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
-  if (!task || !task.workflowId || !task.currentLaneId || getEffectiveTaskReviewAssignmentStatus(task) !== "awaiting_user_approval") {
+  if (
+    !task ||
+    !task.workflowId ||
+    !task.currentLaneId ||
+    getEffectiveTaskReviewAssignmentStatus(task) !== "awaiting_user_approval"
+  ) {
     throw new Error(`Task ${taskId} is not awaiting lane approval.`);
   }
 
-  const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
+  const workflow = ensureMockWorkflows().find(
+    (entry) => entry.id === task.workflowId,
+  );
   const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
   if (!workflow || !lane) {
     throw new Error("Current workflow lane could not be resolved.");
@@ -4645,9 +6312,12 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
   let nextAssigneeId: string | null = task.assigneeId ?? null;
 
   if (lane.successTransitionType === "lane" && lane.successTargetLaneId) {
-    const nextLane = workflow.lanes.find((entry) => entry.id === lane.successTargetLaneId);
+    const nextLane = workflow.lanes.find(
+      (entry) => entry.id === lane.successTargetLaneId,
+    );
     nextLaneId = nextLane?.id ?? null;
-    nextStatus = nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
+    nextStatus =
+      nextLane?.assignedEntityType === "user" ? "in_review" : "ready";
     nextAssigneeType = nextLane?.assignedEntityType ?? "unassigned";
     nextAssigneeId = nextLane?.assignedEntityId ?? null;
   } else {
@@ -4657,9 +6327,13 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
     nextAssigneeId = null;
   }
 
-  const nextLane = nextLaneId ? workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null : null;
+  const nextLane = nextLaneId
+    ? (workflow.lanes.find((entry) => entry.id === nextLaneId) ?? null)
+    : null;
   const autoAssignment =
-    nextLane && nextLane.assignedEntityType !== "user" && ["ready", "in_progress"].includes(nextStatus)
+    nextLane &&
+    nextLane.assignedEntityType !== "user" &&
+    ["ready", "in_progress"].includes(nextStatus)
       ? buildMockAutoAssignment(task, workflow, nextLane, updatedAt)
       : null;
 
@@ -4668,7 +6342,8 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
       ? {
           ...run,
           result: "success" as const,
-          notes: task.activeLaneAssignment?.completionNotes ?? run.notes ?? null,
+          notes:
+            task.activeLaneAssignment?.completionNotes ?? run.notes ?? null,
           completedAt: updatedAt,
         }
       : run,
@@ -4683,7 +6358,9 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
           assigneeType: nextAssigneeType,
           assigneeId: nextAssigneeId,
           activeLaneAssignment: autoAssignment,
-          autoBlockedByDependencies: ["completed", "canceled"].includes(nextStatus)
+          autoBlockedByDependencies: ["completed", "canceled"].includes(
+            nextStatus,
+          )
             ? false
             : ensureStoredMockTask(entry).autoBlockedByDependencies,
           laneRuns:
@@ -4707,58 +6384,89 @@ async function approveMockLaneCompletion(taskId: string): Promise<TaskDetail> {
       : ensureStoredMockTask(entry),
   );
   const dependencies = ensureMockTaskDependencies();
-  const refreshTaskIds = collectMockRefreshTaskIds(updatedTasks, dependencies, taskId, task.parentTaskId, task.parentTaskId);
-  const reconciled = reconcileStoredMockTasks(updatedTasks, dependencies, refreshTaskIds, updatedAt);
+  const refreshTaskIds = collectMockRefreshTaskIds(
+    updatedTasks,
+    dependencies,
+    taskId,
+    task.parentTaskId,
+    task.parentTaskId,
+  );
+  const reconciled = reconcileStoredMockTasks(
+    updatedTasks,
+    dependencies,
+    refreshTaskIds,
+    updatedAt,
+  );
   saveMockTasks(reconciled.tasks);
 
   syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
   finalizeMockAgentState(task, "success", updatedAt, autoAssignment);
   queueMockAutoAssignment(task, workflow, autoAssignment);
   closeMockTaskSessionIfNeeded(task, nextStatus, updatedAt);
-  const autoDispatchedDependentTaskIds = await autoDispatchMockDependentTasks(taskId);
+  const autoDispatchedDependentTaskIds =
+    await autoDispatchMockDependentTasks(taskId);
 
-  appendMockLog("info", "task.transition", `Approved pending lane completion for task ${taskId}`);
-  emitMockTaskChange({ taskIds: dedupeMockTaskIds([...refreshTaskIds, ...autoDispatchedDependentTaskIds]), reason: "task.transition.approved_success" });
+  appendMockLog(
+    "info",
+    "task.transition",
+    `Approved pending lane completion for task ${taskId}`,
+  );
+  emitMockTaskChange({
+    taskIds: dedupeMockTaskIds([
+      ...refreshTaskIds,
+      ...autoDispatchedDependentTaskIds,
+    ]),
+    reason: "task.transition.approved_success",
+  });
   return getTask(taskId);
 }
 
 async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
-  const effectiveStatus = task ? getEffectiveTaskReviewAssignmentStatus(task) : null;
+  const effectiveStatus = task
+    ? getEffectiveTaskReviewAssignmentStatus(task)
+    : null;
   if (
-    !task
-    || !task.activeLaneAssignment?.sessionId
-    || !["awaiting_user_approval", "awaiting_user_intervention"].includes(effectiveStatus ?? "")
+    !task ||
+    !task.activeLaneAssignment?.sessionId ||
+    !["awaiting_user_approval", "awaiting_user_intervention"].includes(
+      effectiveStatus ?? "",
+    )
   ) {
     throw new Error(`Task ${taskId} is not paused for user review.`);
   }
 
   const updatedAt = nowIso();
-  const followUpPrompt = effectiveStatus === "awaiting_user_intervention"
-    ? "The user has responded to your intervention request and resumed this lane. Reload the latest task context, comments, and mail before continuing."
-    : "The user has requested more work be done on this lane. Reload the latest task context and comments before continuing.";
+  const followUpPrompt =
+    effectiveStatus === "awaiting_user_intervention"
+      ? "The user has responded to your intervention request and resumed this lane. Reload the latest task context, comments, and mail before continuing."
+      : "The user has requested more work be done on this lane. Reload the latest task context and comments before continuing.";
 
-  saveMockTasks(tasks.map((entry) =>
-    entry.id === taskId
-      ? {
-          ...entry,
-          status: "in_progress",
-          assigneeType: entry.activeLaneAssignment?.workerType ?? entry.assigneeType,
-          assigneeId: entry.activeLaneAssignment?.workerId ?? entry.assigneeId,
-          activeLaneAssignment: entry.activeLaneAssignment
-            ? {
-                ...entry.activeLaneAssignment,
-                status: "active",
-                pendingOutcome: null,
-                completionNotes: null,
-                updatedAt,
-              }
-            : null,
-          updatedAt,
-        }
-      : entry,
-  ));
+  saveMockTasks(
+    tasks.map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            status: "in_progress",
+            assigneeType:
+              entry.activeLaneAssignment?.workerType ?? entry.assigneeType,
+            assigneeId:
+              entry.activeLaneAssignment?.workerId ?? entry.assigneeId,
+            activeLaneAssignment: entry.activeLaneAssignment
+              ? {
+                  ...entry.activeLaneAssignment,
+                  status: "active",
+                  pendingOutcome: null,
+                  completionNotes: null,
+                  updatedAt,
+                }
+              : null,
+            updatedAt,
+          }
+        : entry,
+    ),
+  );
 
   updateMockSession(task.activeLaneAssignment.sessionId, (current) => ({
     ...current,
@@ -4766,17 +6474,35 @@ async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
     updatedAt,
     events: [...current.events, createEvent("system", followUpPrompt)],
   }));
-  emitMockSessionChange({ sessionIds: [task.activeLaneAssignment.sessionId], reason: "task.transition.rework" });
+  emitMockSessionChange({
+    sessionIds: [task.activeLaneAssignment.sessionId],
+    reason: "task.transition.rework",
+  });
 
-  appendMockLog("info", "task.transition", `Sent task ${taskId} back to the current lane session for more work`);
-  emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.needs_work" });
+  appendMockLog(
+    "info",
+    "task.transition",
+    `Sent task ${taskId} back to the current lane session for more work`,
+  );
+  emitMockTaskChange({
+    taskIds: [taskId],
+    reason: "task.transition.needs_work",
+  });
   return getTask(taskId);
 }
 
-async function pauseMockTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
+async function pauseMockTaskLane(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   const task = await getTask(taskId);
-  if (!task.activeLaneAssignment || !["active", "queued"].includes(task.activeLaneAssignment.status)) {
-    throw new Error(`Task ${taskId} is not active or queued and cannot be paused.`);
+  if (
+    !task.activeLaneAssignment ||
+    !["active", "queued"].includes(task.activeLaneAssignment.status)
+  ) {
+    throw new Error(
+      `Task ${taskId} is not active or queued and cannot be paused.`,
+    );
   }
 
   const updatedAt = nowIso();
@@ -4784,44 +6510,61 @@ async function pauseMockTaskLane(taskId: string, notes?: string): Promise<TaskDe
     await stopSessionRuntime(task.activeLaneAssignment.sessionId, notes);
   }
 
-  saveMockTasks(ensureMockTasks().map((entry) =>
-    entry.id === taskId
-      ? {
-          ...entry,
-          status: "in_review",
-          assigneeType: "user",
-          assigneeId: null,
-          activeLaneAssignment: entry.activeLaneAssignment
-            ? {
-                ...entry.activeLaneAssignment,
-                status: "paused_by_user",
-                pendingOutcome: "paused",
-                completionNotes: notes?.trim() || null,
-                updatedAt,
-              }
-            : null,
-          updatedAt,
-        }
-      : entry,
-  ));
+  saveMockTasks(
+    ensureMockTasks().map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            status: "in_review",
+            assigneeType: "user",
+            assigneeId: null,
+            activeLaneAssignment: entry.activeLaneAssignment
+              ? {
+                  ...entry.activeLaneAssignment,
+                  status: "paused_by_user",
+                  pendingOutcome: "paused",
+                  completionNotes: notes?.trim() || null,
+                  updatedAt,
+                }
+              : null,
+            updatedAt,
+          }
+        : entry,
+    ),
+  );
 
-  appendMockLog("info", "task.control.paused", `Paused task lane for task ${taskId}`);
+  appendMockLog(
+    "info",
+    "task.control.paused",
+    `Paused task lane for task ${taskId}`,
+  );
   emitMockTaskChange({ taskIds: [taskId], reason: "task.control.paused" });
   return getTask(taskId);
 }
 
-async function stopMockTaskActivity(taskId: string, notes?: string): Promise<TaskDetail> {
+async function stopMockTaskActivity(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   const task = await getTask(taskId);
   if (task.activeLaneAssignment?.sessionId) {
     await stopSessionRuntime(task.activeLaneAssignment.sessionId, notes);
   }
   const reset = await resetTaskRuntime(taskId);
-  appendMockLog("info", "task.control.stopped", `Stopped task activity for task ${taskId}`);
+  appendMockLog(
+    "info",
+    "task.control.stopped",
+    `Stopped task activity for task ${taskId}`,
+  );
   emitMockTaskChange({ taskIds: [taskId], reason: "task.control.stopped" });
   return reset;
 }
 
-async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: string): Promise<TaskDetail> {
+async function reassignMockTaskToLane(
+  taskId: string,
+  laneId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
   if (!task || !task.workflowId || !task.currentLaneId) {
@@ -4832,15 +6575,21 @@ async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: st
     throw new Error(`Task ${taskId} is already in lane ${laneId}.`);
   }
 
-  const workflow = ensureMockWorkflows().find((entry) => entry.id === task.workflowId);
-  const targetLane = workflow?.lanes.find((entry) => entry.id === laneId) ?? null;
+  const workflow = ensureMockWorkflows().find(
+    (entry) => entry.id === task.workflowId,
+  );
+  const targetLane =
+    workflow?.lanes.find((entry) => entry.id === laneId) ?? null;
   if (!workflow || !targetLane) {
-    throw new Error(`Workflow lane ${laneId} could not be resolved for task ${taskId}.`);
+    throw new Error(
+      `Workflow lane ${laneId} could not be resolved for task ${taskId}.`,
+    );
   }
 
   const updatedAt = nowIso();
   const normalizedNotes = notes?.trim() || null;
-  const nextStatus = targetLane.assignedEntityType === "user" ? "in_review" : "ready";
+  const nextStatus =
+    targetLane.assignedEntityType === "user" ? "in_review" : "ready";
   const nextAssigneeType = targetLane.assignedEntityType;
   const nextAssigneeId = targetLane.assignedEntityId ?? null;
   const autoAssignment =
@@ -4850,22 +6599,27 @@ async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: st
   const laneRuns = task.activeLaneAssignment
     ? task.laneRuns.map((run, index, allRuns) =>
         index === allRuns.length - 1 && run.completedAt == null
-          ? { ...run, result: "failure" as const, notes: normalizedNotes ?? run.notes ?? null, completedAt: updatedAt }
+          ? {
+              ...run,
+              result: "failure" as const,
+              notes: normalizedNotes ?? run.notes ?? null,
+              completedAt: updatedAt,
+            }
           : run,
       )
     : task.laneRuns;
 
-  saveMockTasks(tasks.map((entry) =>
-    entry.id === taskId
-      ? {
-          ...entry,
-          currentLaneId: targetLane.id,
-          status: autoAssignment ? "in_progress" : nextStatus,
-          assigneeType: nextAssigneeType,
-          assigneeId: nextAssigneeId,
-          activeLaneAssignment: autoAssignment,
-          laneRuns:
-            autoAssignment
+  saveMockTasks(
+    tasks.map((entry) =>
+      entry.id === taskId
+        ? {
+            ...entry,
+            currentLaneId: targetLane.id,
+            status: autoAssignment ? "in_progress" : nextStatus,
+            assigneeType: nextAssigneeType,
+            assigneeId: nextAssigneeId,
+            activeLaneAssignment: autoAssignment,
+            laneRuns: autoAssignment
               ? [
                   ...laneRuns,
                   {
@@ -4880,10 +6634,11 @@ async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: st
                   },
                 ]
               : laneRuns,
-          updatedAt,
-        }
-      : entry,
-  ));
+            updatedAt,
+          }
+        : entry,
+    ),
+  );
 
   syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
   finalizeMockAgentState(
@@ -4898,19 +6653,31 @@ async function reassignMockTaskToLane(taskId: string, laneId: string, notes?: st
     autoAssignment,
   );
   queueMockAutoAssignment(task, workflow, autoAssignment);
-  appendMockLog("info", "task.transition", `Re-laned task ${taskId} to lane ${laneId}`);
+  appendMockLog(
+    "info",
+    "task.transition",
+    `Re-laned task ${taskId} to lane ${laneId}`,
+  );
   appendMockDomainEvent(
     "task.relaned",
     "task",
     taskId,
-    { taskId, laneId: targetLane.id, status: autoAssignment ? "in_progress" : nextStatus, notes: normalizedNotes },
+    {
+      taskId,
+      laneId: targetLane.id,
+      status: autoAssignment ? "in_progress" : nextStatus,
+      notes: normalizedNotes,
+    },
     task.projectId,
   );
   emitMockTaskChange({ taskIds: [taskId], reason: "task.transition.relane" });
   return getTask(taskId);
 }
 
-export async function completeLaneAsSuccess(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function completeLaneAsSuccess(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return completeMockTaskLane(taskId, "success", notes);
   }
@@ -4918,7 +6685,10 @@ export async function completeLaneAsSuccess(taskId: string, notes?: string): Pro
   return invoke<TaskDetail>("complete_lane_as_success", { taskId, notes });
 }
 
-export async function completeLaneAsFailure(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function completeLaneAsFailure(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return completeMockTaskLane(taskId, "failure", notes);
   }
@@ -4926,7 +6696,10 @@ export async function completeLaneAsFailure(taskId: string, notes?: string): Pro
   return invoke<TaskDetail>("complete_lane_as_failure", { taskId, notes });
 }
 
-export async function requestUserIntervention(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function requestUserIntervention(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return completeMockTaskLane(taskId, "needs_user", notes);
   }
@@ -4942,7 +6715,9 @@ export async function approveTaskReview(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("approve_task_review", { taskId });
 }
 
-export async function approveLaneCompletion(taskId: string): Promise<TaskDetail> {
+export async function approveLaneCompletion(
+  taskId: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return approveMockLaneCompletion(taskId);
   }
@@ -4950,10 +6725,15 @@ export async function approveLaneCompletion(taskId: string): Promise<TaskDetail>
   return invoke<TaskDetail>("approve_lane_completion", { taskId });
 }
 
-export async function markTaskNeedsWork(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function markTaskNeedsWork(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
-    if (getEffectiveTaskReviewAssignmentStatus(task) !== "awaiting_user_approval") {
+    if (
+      getEffectiveTaskReviewAssignmentStatus(task) !== "awaiting_user_approval"
+    ) {
       throw new Error(`Task ${taskId} is not awaiting user approval.`);
     }
     return sendMockLaneBackForWork(taskId);
@@ -4962,46 +6742,76 @@ export async function markTaskNeedsWork(taskId: string, notes?: string): Promise
   return invoke<TaskDetail>("mark_task_needs_work", { taskId, notes });
 }
 
-export async function resumeTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function resumeTaskLane(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
     const effectiveStatus = getEffectiveTaskReviewAssignmentStatus(task);
-    if (!task.activeLaneAssignment || !["awaiting_user_intervention", "paused_by_user"].includes(effectiveStatus ?? "")) {
-      throw new Error(`Task ${taskId} is not paused for user intervention or a user pause.`);
+    if (
+      !task.activeLaneAssignment ||
+      !["awaiting_user_intervention", "paused_by_user"].includes(
+        effectiveStatus ?? "",
+      )
+    ) {
+      throw new Error(
+        `Task ${taskId} is not paused for user intervention or a user pause.`,
+      );
     }
     return effectiveStatus === "paused_by_user"
       ? await (async () => {
           const updatedAt = nowIso();
-          saveMockTasks(ensureMockTasks().map((entry) =>
-            entry.id === taskId
-              ? {
-                  ...entry,
-                  status: "in_progress",
-                  assigneeType: entry.activeLaneAssignment?.workerType ?? entry.assigneeType,
-                  assigneeId: entry.activeLaneAssignment?.workerId ?? entry.assigneeId,
-                  activeLaneAssignment: entry.activeLaneAssignment
-                    ? {
-                        ...entry.activeLaneAssignment,
-                        status: "active",
-                        pendingOutcome: null,
-                        completionNotes: null,
-                        updatedAt,
-                      }
-                    : null,
-                  updatedAt,
-                }
-              : entry,
-          ));
+          saveMockTasks(
+            ensureMockTasks().map((entry) =>
+              entry.id === taskId
+                ? {
+                    ...entry,
+                    status: "in_progress",
+                    assigneeType:
+                      entry.activeLaneAssignment?.workerType ??
+                      entry.assigneeType,
+                    assigneeId:
+                      entry.activeLaneAssignment?.workerId ?? entry.assigneeId,
+                    activeLaneAssignment: entry.activeLaneAssignment
+                      ? {
+                          ...entry.activeLaneAssignment,
+                          status: "active",
+                          pendingOutcome: null,
+                          completionNotes: null,
+                          updatedAt,
+                        }
+                      : null,
+                    updatedAt,
+                  }
+                : entry,
+            ),
+          );
           if (task.activeLaneAssignment?.sessionId) {
-            updateMockSession(task.activeLaneAssignment.sessionId, (current) => ({
-              ...current,
-              status: "active",
-              updatedAt,
-              events: [...current.events, createEvent("system", "The user resumed this paused lane. Reload the latest task context before continuing.")],
-            }));
-            emitMockSessionChange({ sessionIds: [task.activeLaneAssignment.sessionId], reason: "task.control.resumed" });
+            updateMockSession(
+              task.activeLaneAssignment.sessionId,
+              (current) => ({
+                ...current,
+                status: "active",
+                updatedAt,
+                events: [
+                  ...current.events,
+                  createEvent(
+                    "system",
+                    "The user resumed this paused lane. Reload the latest task context before continuing.",
+                  ),
+                ],
+              }),
+            );
+            emitMockSessionChange({
+              sessionIds: [task.activeLaneAssignment.sessionId],
+              reason: "task.control.resumed",
+            });
           }
-          emitMockTaskChange({ taskIds: [taskId], reason: "task.control.resumed" });
+          emitMockTaskChange({
+            taskIds: [taskId],
+            reason: "task.control.resumed",
+          });
           return getTask(taskId);
         })()
       : sendMockLaneBackForWork(taskId);
@@ -5010,7 +6820,10 @@ export async function resumeTaskLane(taskId: string, notes?: string): Promise<Ta
   return invoke<TaskDetail>("resume_task_lane", { taskId, notes });
 }
 
-export async function pauseTaskLane(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function pauseTaskLane(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return pauseMockTaskLane(taskId, notes);
   }
@@ -5018,7 +6831,10 @@ export async function pauseTaskLane(taskId: string, notes?: string): Promise<Tas
   return invoke<TaskDetail>("pause_task_lane", { taskId, notes });
 }
 
-export async function stopTaskActivity(taskId: string, notes?: string): Promise<TaskDetail> {
+export async function stopTaskActivity(
+  taskId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return stopMockTaskActivity(taskId, notes);
   }
@@ -5026,7 +6842,11 @@ export async function stopTaskActivity(taskId: string, notes?: string): Promise<
   return invoke<TaskDetail>("stop_task_activity", { taskId, notes });
 }
 
-export async function reassignTaskToLane(taskId: string, laneId: string, notes?: string): Promise<TaskDetail> {
+export async function reassignTaskToLane(
+  taskId: string,
+  laneId: string,
+  notes?: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     return reassignMockTaskToLane(taskId, laneId, notes);
   }
@@ -5046,7 +6866,9 @@ export async function manualTaskWhip(taskId: string): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
     if (!task.activeLaneAssignment) {
-      throw new Error(`Task ${taskId} does not have an active lane assignment to whip.`);
+      throw new Error(
+        `Task ${taskId} does not have an active lane assignment to whip.`,
+      );
     }
     const updated: TaskDetail = {
       ...task,
@@ -5057,8 +6879,14 @@ export async function manualTaskWhip(taskId: string): Promise<TaskDetail> {
       },
       updatedAt: nowIso(),
     };
-    saveMockTasks(ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)));
-    appendMockLog("info", "task.whip.sent", `Sent manual whip for task ${taskId}`);
+    saveMockTasks(
+      ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)),
+    );
+    appendMockLog(
+      "info",
+      "task.whip.sent",
+      `Sent manual whip for task ${taskId}`,
+    );
     emitMockTaskChange({ taskIds: [taskId], reason: "task.whip.sent" });
     return getTask(taskId);
   }
@@ -5084,11 +6912,14 @@ export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
 
     if (activeAssignment?.workerType === "agent") {
       saveStoredMockAgentQueue(
-        getStoredMockAgentQueue().filter((entry) => entry.sourceTaskId !== taskId),
+        getStoredMockAgentQueue().filter(
+          (entry) => entry.sourceTaskId !== taskId,
+        ),
       );
       saveStoredMockAgentRuntimes(
         getStoredMockAgentRuntimes().map((runtime) =>
-          runtime.agentId === activeAssignment.workerId && runtime.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
+          runtime.agentId === activeAssignment.workerId &&
+          runtime.projectId === DEFAULT_INSTALL_BASELINE_PROJECT_ID
             ? {
                 ...runtime,
                 status: "idle",
@@ -5104,7 +6935,8 @@ export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
     if (activeAssignment?.workerType === "role") {
       saveStoredMockRoleQueue(
         getStoredMockRoleQueue().map((entry) =>
-          entry.sourceTaskId === taskId && ["queued", "assigned"].includes(String(entry.status ?? ""))
+          entry.sourceTaskId === taskId &&
+          ["queued", "assigned"].includes(String(entry.status ?? ""))
             ? {
                 ...entry,
                 status: "canceled",
@@ -5129,10 +6961,17 @@ export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
       );
     }
 
-    saveMockTasks(ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)));
+    saveMockTasks(
+      ensureMockTasks().map((entry) => (entry.id === taskId ? updated : entry)),
+    );
     if (activeAssignment?.sessionId) {
-      updateMockSession(activeAssignment.sessionId, (current) => clearMockSessionActiveTaskMetadata(current));
-      emitMockSessionChange({ sessionIds: [activeAssignment.sessionId], reason: "task.runtime.reset" });
+      updateMockSession(activeAssignment.sessionId, (current) =>
+        clearMockSessionActiveTaskMetadata(current),
+      );
+      emitMockSessionChange({
+        sessionIds: [activeAssignment.sessionId],
+        reason: "task.runtime.reset",
+      });
     }
     emitMockTaskChange({ taskIds: [taskId], reason: "task.runtime.reset" });
     return getTask(taskId);
@@ -5141,19 +6980,31 @@ export async function resetTaskRuntime(taskId: string): Promise<TaskDetail> {
   return invoke<TaskDetail>("reset_task_runtime", { taskId });
 }
 
-export async function addTaskDependency(blockerTaskId: string, blockedTaskId: string): Promise<TaskDependency> {
+export async function addTaskDependency(
+  blockerTaskId: string,
+  blockedTaskId: string,
+): Promise<TaskDependency> {
   if (!isTauriAvailable()) {
     if (blockerTaskId === blockedTaskId) {
       throw new Error("A task cannot depend on itself.");
     }
 
     const tasks = ensureMockTasks();
-    if (!tasks.some((task) => task.id === blockerTaskId) || !tasks.some((task) => task.id === blockedTaskId)) {
+    if (
+      !tasks.some((task) => task.id === blockerTaskId) ||
+      !tasks.some((task) => task.id === blockedTaskId)
+    ) {
       throw new Error("Both tasks must exist before adding a dependency.");
     }
 
     const dependencies = ensureMockTaskDependencies();
-    if (dependencies.some((dependency) => dependency.blockerTaskId === blockerTaskId && dependency.blockedTaskId === blockedTaskId)) {
+    if (
+      dependencies.some(
+        (dependency) =>
+          dependency.blockerTaskId === blockerTaskId &&
+          dependency.blockedTaskId === blockedTaskId,
+      )
+    ) {
       throw new Error("That dependency already exists.");
     }
 
@@ -5168,7 +7019,9 @@ export async function addTaskDependency(blockerTaskId: string, blockedTaskId: st
         throw new Error("That dependency would create a cycle.");
       }
       currentBlockedIds.push(
-        ...dependencies.filter((dependency) => dependency.blockerTaskId === current).map((dependency) => dependency.blockedTaskId),
+        ...dependencies
+          .filter((dependency) => dependency.blockerTaskId === current)
+          .map((dependency) => dependency.blockedTaskId),
       );
     }
 
@@ -5185,19 +7038,46 @@ export async function addTaskDependency(blockerTaskId: string, blockedTaskId: st
     };
     const nextDependencies = [...dependencies, dependency];
     saveMockTaskDependencies(nextDependencies);
-    const refreshTaskIds = collectMockRefreshTaskIds(tasks.map((task) => ensureStoredMockTask(task)), nextDependencies, blockedTaskId, blocked.parentTaskId, blocked.parentTaskId);
-    const reconciled = reconcileStoredMockTasks(tasks.map((task) => ensureStoredMockTask(task)), nextDependencies, refreshTaskIds, dependency.createdAt);
-    const cleaned = clearBlockedMockTaskRuntimeClaims(reconciled.tasks, refreshTaskIds, dependency.createdAt);
+    const refreshTaskIds = collectMockRefreshTaskIds(
+      tasks.map((task) => ensureStoredMockTask(task)),
+      nextDependencies,
+      blockedTaskId,
+      blocked.parentTaskId,
+      blocked.parentTaskId,
+    );
+    const reconciled = reconcileStoredMockTasks(
+      tasks.map((task) => ensureStoredMockTask(task)),
+      nextDependencies,
+      refreshTaskIds,
+      dependency.createdAt,
+    );
+    const cleaned = clearBlockedMockTaskRuntimeClaims(
+      reconciled.tasks,
+      refreshTaskIds,
+      dependency.createdAt,
+    );
     saveMockTasks(cleaned.tasks);
-    appendMockLog("info", "task.dependency.added", `Added dependency ${blockerTaskId} -> ${blockedTaskId}`);
-    emitMockTaskChange({ taskIds: dedupeMockTaskIds([blockerTaskId, ...refreshTaskIds]), reason: "task.dependency.added" });
+    appendMockLog(
+      "info",
+      "task.dependency.added",
+      `Added dependency ${blockerTaskId} -> ${blockedTaskId}`,
+    );
+    emitMockTaskChange({
+      taskIds: dedupeMockTaskIds([blockerTaskId, ...refreshTaskIds]),
+      reason: "task.dependency.added",
+    });
     return dependency;
   }
 
-  return invoke<TaskDependency>("add_task_dependency", { blockerTaskId, blockedTaskId });
+  return invoke<TaskDependency>("add_task_dependency", {
+    blockerTaskId,
+    blockedTaskId,
+  });
 }
 
-export async function removeTaskDependency(dependencyId: string): Promise<TaskDependency> {
+export async function removeTaskDependency(
+  dependencyId: string,
+): Promise<TaskDependency> {
   if (!isTauriAvailable()) {
     const dependencies = ensureMockTaskDependencies();
     const dependency = dependencies.find((entry) => entry.id === dependencyId);
@@ -5205,23 +7085,50 @@ export async function removeTaskDependency(dependencyId: string): Promise<TaskDe
       throw new Error(`Task dependency ${dependencyId} was not found`);
     }
 
-    const nextDependencies = dependencies.filter((entry) => entry.id !== dependencyId);
+    const nextDependencies = dependencies.filter(
+      (entry) => entry.id !== dependencyId,
+    );
     saveMockTaskDependencies(nextDependencies);
     const tasks = ensureMockTasks().map((task) => ensureStoredMockTask(task));
-    const blockedTask = tasks.find((task) => task.id === dependency.blockedTaskId) ?? null;
-    const refreshTaskIds = collectMockRefreshTaskIds(tasks, nextDependencies, dependency.blockedTaskId, blockedTask?.parentTaskId, blockedTask?.parentTaskId);
-    const reconciled = reconcileStoredMockTasks(tasks, nextDependencies, refreshTaskIds);
-    const cleaned = clearBlockedMockTaskRuntimeClaims(reconciled.tasks, refreshTaskIds);
+    const blockedTask =
+      tasks.find((task) => task.id === dependency.blockedTaskId) ?? null;
+    const refreshTaskIds = collectMockRefreshTaskIds(
+      tasks,
+      nextDependencies,
+      dependency.blockedTaskId,
+      blockedTask?.parentTaskId,
+      blockedTask?.parentTaskId,
+    );
+    const reconciled = reconcileStoredMockTasks(
+      tasks,
+      nextDependencies,
+      refreshTaskIds,
+    );
+    const cleaned = clearBlockedMockTaskRuntimeClaims(
+      reconciled.tasks,
+      refreshTaskIds,
+    );
     saveMockTasks(cleaned.tasks);
-    appendMockLog("info", "task.dependency.removed", `Removed dependency ${dependencyId}`);
-    emitMockTaskChange({ taskIds: dedupeMockTaskIds([dependency.blockerTaskId, ...refreshTaskIds]), reason: "task.dependency.removed" });
+    appendMockLog(
+      "info",
+      "task.dependency.removed",
+      `Removed dependency ${dependencyId}`,
+    );
+    emitMockTaskChange({
+      taskIds: dedupeMockTaskIds([dependency.blockerTaskId, ...refreshTaskIds]),
+      reason: "task.dependency.removed",
+    });
     return dependency;
   }
 
   return invoke<TaskDependency>("remove_task_dependency", { dependencyId });
 }
 
-export async function searchTaskCommentFileMentions(taskId: string, query: string, limit = 10): Promise<TaskCommentFileMentionCandidate[]> {
+export async function searchTaskCommentFileMentions(
+  taskId: string,
+  query: string,
+  limit = 10,
+): Promise<TaskCommentFileMentionCandidate[]> {
   if (!isTauriAvailable()) {
     const task = ensureMockTasks().find((entry) => entry.id === taskId) ?? null;
     if (!task) {
@@ -5233,11 +7140,14 @@ export async function searchTaskCommentFileMentions(taskId: string, query: strin
       return [];
     }
 
-    const repositoryCount = new Set(task.fileReferences.map((reference) => reference.repositoryId)).size;
+    const repositoryCount = new Set(
+      task.fileReferences.map((reference) => reference.repositoryId),
+    ).size;
 
     return task.fileReferences
       .map((reference) => {
-        const scopedPath = `${reference.repositorySlug}:${reference.relativePath}`.toLowerCase();
+        const scopedPath =
+          `${reference.repositorySlug}:${reference.relativePath}`.toLowerCase();
         const barePath = reference.relativePath.toLowerCase();
         const matchIndex = barePath.indexOf(normalizedQuery);
         const scopedMatchIndex = scopedPath.indexOf(normalizedQuery);
@@ -5247,8 +7157,14 @@ export async function searchTaskCommentFileMentions(taskId: string, query: strin
           repositoryName: reference.repositoryName,
           repositorySlug: reference.repositorySlug,
           relativePath: reference.relativePath,
-          displayText: repositoryCount > 1 ? `${reference.relativePath} — ${reference.repositoryName}` : reference.relativePath,
-          insertText: repositoryCount > 1 ? `$${reference.repositorySlug}:${reference.relativePath}` : `$${reference.relativePath}`,
+          displayText:
+            repositoryCount > 1
+              ? `${reference.relativePath} — ${reference.repositoryName}`
+              : reference.relativePath,
+          insertText:
+            repositoryCount > 1
+              ? `$${reference.repositorySlug}:${reference.relativePath}`
+              : `$${reference.relativePath}`,
           bestIndex,
         };
       })
@@ -5263,10 +7179,16 @@ export async function searchTaskCommentFileMentions(taskId: string, query: strin
       .map(({ bestIndex: _bestIndex, ...candidate }) => candidate);
   }
 
-  return invoke<TaskCommentFileMentionCandidate[]>("search_task_comment_file_mentions", { taskId, query, limit });
+  return invoke<TaskCommentFileMentionCandidate[]>(
+    "search_task_comment_file_mentions",
+    { taskId, query, limit },
+  );
 }
 
-export async function commentOnTask(taskId: string, input: TaskCommentInput): Promise<TaskComment> {
+export async function commentOnTask(
+  taskId: string,
+  input: TaskCommentInput,
+): Promise<TaskComment> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5284,12 +7206,17 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
       throw new Error("message: Comment message is required.");
     }
     if (parentCommentId) {
-      const parent = task.comments.find((entry) => entry.id === parentCommentId) ?? null;
+      const parent =
+        task.comments.find((entry) => entry.id === parentCommentId) ?? null;
       if (!parent) {
-        throw new Error(`parentCommentId: Comment ${parentCommentId} was not found.`);
+        throw new Error(
+          `parentCommentId: Comment ${parentCommentId} was not found.`,
+        );
       }
       if (parent.parentCommentId) {
-        throw new Error("parentCommentId: Replies can only target top-level comments.");
+        throw new Error(
+          "parentCommentId: Replies can only target top-level comments.",
+        );
       }
     }
 
@@ -5328,13 +7255,23 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
     );
     appendMockLog(
       "info",
-      input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
+      input.interruptAgent
+        ? "task.comment.interrupt_requested"
+        : "task.commented",
       `Added comment ${comment.id} to task ${taskId}`,
     );
-    appendMockDomainEvent("task.comment_added", "task", taskId, { taskId, commentId: comment.id, interrupt: input.interruptAgent }, task.projectId);
+    appendMockDomainEvent(
+      "task.comment_added",
+      "task",
+      taskId,
+      { taskId, commentId: comment.id, interrupt: input.interruptAgent },
+      task.projectId,
+    );
     emitMockTaskChange({
       taskIds: [taskId],
-      reason: input.interruptAgent ? "task.comment.interrupt_requested" : "task.commented",
+      reason: input.interruptAgent
+        ? "task.comment.interrupt_requested"
+        : "task.commented",
     });
     return comment;
   }
@@ -5342,7 +7279,9 @@ export async function commentOnTask(taskId: string, input: TaskCommentInput): Pr
   return invoke<TaskComment>("comment_on_task", { taskId, input });
 }
 
-export async function markTaskCommentsReadForUser(taskId: string): Promise<TaskDetail> {
+export async function markTaskCommentsReadForUser(
+  taskId: string,
+): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
     const task = await getTask(taskId);
     const receipts = getStoredMockTaskCommentUserReceipts();
@@ -5352,7 +7291,12 @@ export async function markTaskCommentsReadForUser(taskId: string): Promise<TaskD
       if (comment.originType === "user") {
         continue;
       }
-      const existing = nextReceipts.find((receipt) => receipt.commentId === comment.id && receipt.taskId === taskId && receipt.userId === "desktop-user");
+      const existing = nextReceipts.find(
+        (receipt) =>
+          receipt.commentId === comment.id &&
+          receipt.taskId === taskId &&
+          receipt.userId === "desktop-user",
+      );
       if (existing) {
         existing.readAt = now;
       } else {
@@ -5365,7 +7309,11 @@ export async function markTaskCommentsReadForUser(taskId: string): Promise<TaskD
       }
     }
     saveStoredMockTaskCommentUserReceipts(nextReceipts);
-    appendMockLog("info", "task.comment.user_read", `Marked non-user task comments read for task ${taskId}`);
+    appendMockLog(
+      "info",
+      "task.comment.user_read",
+      `Marked non-user task comments read for task ${taskId}`,
+    );
     emitMockTaskChange({ taskIds: [taskId], reason: "task.comment.user_read" });
     return getTask(taskId);
   }
@@ -5373,10 +7321,17 @@ export async function markTaskCommentsReadForUser(taskId: string): Promise<TaskD
   return invoke<TaskDetail>("mark_task_comments_read_for_user", { taskId });
 }
 
-export async function listInboxMessages(projectId?: string | null, includeArchived = false): Promise<MailboxMessage[]> {
+export async function listInboxMessages(
+  projectId?: string | null,
+  includeArchived = false,
+): Promise<MailboxMessage[]> {
   if (!isTauriAvailable()) {
     return getStoredMailboxMessages()
-      .filter((message) => message.recipientType === "user" && (!projectId || message.projectId === projectId))
+      .filter(
+        (message) =>
+          message.recipientType === "user" &&
+          (!projectId || message.projectId === projectId),
+      )
       .filter((message) => includeArchived || !message.archivedAt)
       .sort((left, right) => {
         if (!left.archivedAt && right.archivedAt) return -1;
@@ -5387,10 +7342,15 @@ export async function listInboxMessages(projectId?: string | null, includeArchiv
       });
   }
 
-  return invoke<MailboxMessage[]>("list_inbox_messages", { projectId: projectId ?? null, includeArchived });
+  return invoke<MailboxMessage[]>("list_inbox_messages", {
+    projectId: projectId ?? null,
+    includeArchived,
+  });
 }
 
-export async function listTaskMessages(taskId: string): Promise<MailboxMessage[]> {
+export async function listTaskMessages(
+  taskId: string,
+): Promise<MailboxMessage[]> {
   if (!isTauriAvailable()) {
     return getStoredMailboxMessages()
       .filter((message) => message.taskId === taskId)
@@ -5400,32 +7360,47 @@ export async function listTaskMessages(taskId: string): Promise<MailboxMessage[]
   return invoke<MailboxMessage[]>("list_task_messages", { taskId });
 }
 
-export async function sendMailboxMessage(input: SendMailboxMessageInput): Promise<MailboxMessage> {
+export async function sendMailboxMessage(
+  input: SendMailboxMessageInput,
+): Promise<MailboxMessage> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
-    const task = input.taskId ? tasks.find((entry) => entry.id === input.taskId) ?? null : null;
-    const projectId = task?.projectId ?? input.projectId ?? getActiveProjectId() ?? DEFAULT_INSTALL_BASELINE_PROJECT_ID;
+    const task = input.taskId
+      ? (tasks.find((entry) => entry.id === input.taskId) ?? null)
+      : null;
+    const projectId =
+      task?.projectId ??
+      input.projectId ??
+      getActiveProjectId() ??
+      DEFAULT_INSTALL_BASELINE_PROJECT_ID;
     const projects = getStoredMockProjects();
-    const storedAgents = getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
+    const storedAgents =
+      getStoredValue<AgentSummary[]>(AGENT_STORAGE_KEY) ?? [];
     let recipientType = input.recipientType;
     let recipientId = input.recipientId ?? null;
     let recipientLabel = "User";
     let assignmentId: string | null = null;
 
     if (recipientType === "agent") {
-      const agent = storedAgents.find((entry) => entry.id === input.recipientId);
+      const agent = storedAgents.find(
+        (entry) => entry.id === input.recipientId,
+      );
       if (!agent) {
         throw new Error(`Agent ${input.recipientId} was not found`);
       }
       recipientLabel = agent.name;
     } else if (recipientType === "active_assignment") {
       if (!task?.activeLaneAssignment) {
-        throw new Error(`Task ${input.taskId} has no active assignment mailbox`);
+        throw new Error(
+          `Task ${input.taskId} has no active assignment mailbox`,
+        );
       }
       recipientType = "assignment";
       recipientId = task.activeLaneAssignment.workerId ?? null;
       assignmentId = task.activeLaneAssignment.id;
-      const agent = storedAgents.find((entry) => entry.id === task.activeLaneAssignment?.workerId);
+      const agent = storedAgents.find(
+        (entry) => entry.id === task.activeLaneAssignment?.workerId,
+      );
       recipientLabel = `${agent?.name ?? task.activeLaneAssignment.workerType} · ${task.number}`;
     }
 
@@ -5454,40 +7429,67 @@ export async function sendMailboxMessage(input: SendMailboxMessageInput): Promis
     };
 
     saveStoredMailboxMessages([message, ...getStoredMailboxMessages()]);
-    emitMockInboxChange({ deliveryIds: [message.deliveryId], reason: "mailbox.sent" });
+    emitMockInboxChange({
+      deliveryIds: [message.deliveryId],
+      reason: "mailbox.sent",
+    });
     if (message.taskId) {
       emitMockTaskChange({ taskIds: [message.taskId], reason: "mailbox.sent" });
     }
     if (message.recipientType === "user") {
-      emitMockNotificationIntent(buildMailboxNotificationIntent(
-        message,
-        resolveNotificationProjectLabel(projects, message.projectId),
-      ));
+      emitMockNotificationIntent(
+        buildMailboxNotificationIntent(
+          message,
+          resolveNotificationProjectLabel(projects, message.projectId),
+        ),
+      );
     }
-    appendMockLog("info", "mailbox.sent", `Sent mailbox delivery ${message.deliveryId} to ${message.recipientLabel}`);
+    appendMockLog(
+      "info",
+      "mailbox.sent",
+      `Sent mailbox delivery ${message.deliveryId} to ${message.recipientLabel}`,
+    );
     return message;
   }
 
   return invoke<MailboxMessage>("send_mailbox_message", { input });
 }
 
-export async function markMailboxMessagesRead(input: MarkMailboxMessagesReadInput): Promise<MailboxMessage[]> {
+export async function markMailboxMessagesRead(
+  input: MarkMailboxMessagesReadInput,
+): Promise<MailboxMessage[]> {
   if (!isTauriAvailable()) {
     const now = nowIso();
-    const selectedIds = new Set(input.deliveryIds ?? getStoredMailboxMessages().filter((entry) => entry.recipientType === "user" && !entry.readAt).map((entry) => entry.deliveryId));
+    const selectedIds = new Set(
+      input.deliveryIds ??
+        getStoredMailboxMessages()
+          .filter((entry) => entry.recipientType === "user" && !entry.readAt)
+          .map((entry) => entry.deliveryId),
+    );
     const updated: MailboxMessage[] = [];
     saveStoredMailboxMessages(
       getStoredMailboxMessages().map((entry) => {
-        if (entry.recipientType !== "user" || !selectedIds.has(entry.deliveryId)) {
+        if (
+          entry.recipientType !== "user" ||
+          !selectedIds.has(entry.deliveryId)
+        ) {
           return entry;
         }
-        const nextEntry = { ...entry, readAt: now, readSessionId: "desktop-user", updatedAt: now };
+        const nextEntry = {
+          ...entry,
+          readAt: now,
+          readSessionId: "desktop-user",
+          updatedAt: now,
+        };
         updated.push(nextEntry);
         return nextEntry;
       }),
     );
     if (updated.length) {
-      emitMockInboxChange({ deliveryIds: updated.map((entry) => entry.deliveryId), reason: "mailbox.read" });
+      emitMockInboxChange({
+        deliveryIds: updated.map((entry) => entry.deliveryId),
+        reason: "mailbox.read",
+      });
     }
     return updated;
   }
@@ -5495,14 +7497,26 @@ export async function markMailboxMessagesRead(input: MarkMailboxMessagesReadInpu
   return invoke<MailboxMessage[]>("mark_mailbox_messages_read", { input });
 }
 
-export async function archiveMailboxMessages(input: ArchiveMailboxMessagesInput): Promise<MailboxMessage[]> {
+export async function archiveMailboxMessages(
+  input: ArchiveMailboxMessagesInput,
+): Promise<MailboxMessage[]> {
   if (!isTauriAvailable()) {
     const now = nowIso();
-    const selectedIds = new Set(input.deliveryIds ?? getStoredMailboxMessages().filter((entry) => entry.recipientType === "user" && !entry.archivedAt).map((entry) => entry.deliveryId));
+    const selectedIds = new Set(
+      input.deliveryIds ??
+        getStoredMailboxMessages()
+          .filter(
+            (entry) => entry.recipientType === "user" && !entry.archivedAt,
+          )
+          .map((entry) => entry.deliveryId),
+    );
     const updated: MailboxMessage[] = [];
     saveStoredMailboxMessages(
       getStoredMailboxMessages().map((entry) => {
-        if (entry.recipientType !== "user" || !selectedIds.has(entry.deliveryId)) {
+        if (
+          entry.recipientType !== "user" ||
+          !selectedIds.has(entry.deliveryId)
+        ) {
           return entry;
         }
         const nextEntry = { ...entry, archivedAt: now, updatedAt: now };
@@ -5511,7 +7525,10 @@ export async function archiveMailboxMessages(input: ArchiveMailboxMessagesInput)
       }),
     );
     if (updated.length) {
-      emitMockInboxChange({ deliveryIds: updated.map((entry) => entry.deliveryId), reason: "mailbox.archived" });
+      emitMockInboxChange({
+        deliveryIds: updated.map((entry) => entry.deliveryId),
+        reason: "mailbox.archived",
+      });
     }
     return updated;
   }
@@ -5531,62 +7548,104 @@ export async function listTaskComments(taskId: string): Promise<TaskComment[]> {
   return invoke<TaskComment[]>("list_task_comments", { taskId });
 }
 
-export async function updateTaskComment(commentId: string, input: TaskCommentUpdateInput): Promise<TaskComment> {
+export async function updateTaskComment(
+  commentId: string,
+  input: TaskCommentUpdateInput,
+): Promise<TaskComment> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     let updated: TaskComment | null = null;
-    saveMockTasks(tasks.map((task) => ({
-      ...task,
-      comments: task.comments.map((comment) => {
-        if (comment.id !== commentId) {
-          return comment;
-        }
-        updated = { ...comment, message: input.message.trim(), updatedAt: nowIso() };
-        return updated;
-      }),
-    })));
+    saveMockTasks(
+      tasks.map((task) => ({
+        ...task,
+        comments: task.comments.map((comment) => {
+          if (comment.id !== commentId) {
+            return comment;
+          }
+          updated = {
+            ...comment,
+            message: input.message.trim(),
+            updatedAt: nowIso(),
+          };
+          return updated;
+        }),
+      })),
+    );
     if (!updated) {
       throw new Error(`Task comment ${commentId} was not found`);
     }
     const updatedComment = updated as TaskComment;
-    appendMockDomainEvent("task.comment_updated", "task", updatedComment.taskId, { taskId: updatedComment.taskId, commentId: updatedComment.id }, ensureMockTasks().find((task) => task.id === updatedComment.taskId)?.projectId ?? null);
+    appendMockDomainEvent(
+      "task.comment_updated",
+      "task",
+      updatedComment.taskId,
+      { taskId: updatedComment.taskId, commentId: updatedComment.id },
+      ensureMockTasks().find((task) => task.id === updatedComment.taskId)
+        ?.projectId ?? null,
+    );
     return updatedComment;
   }
 
   return invoke<TaskComment>("update_task_comment", { commentId, input });
 }
 
-export async function deleteTaskComment(commentId: string): Promise<TaskComment> {
+export async function deleteTaskComment(
+  commentId: string,
+): Promise<TaskComment> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     let removed: TaskComment | null = null;
-    saveMockTasks(tasks.map((task) => {
-      const target = task.comments.find((comment) => comment.id === commentId);
-      if (!target) {
-        return task;
-      }
-      removed = target;
-      const removedIds = new Set([commentId, ...task.comments.filter((comment) => comment.parentCommentId === commentId).map((comment) => comment.id)]);
-      return {
-        ...task,
-        comments: task.comments.filter((comment) => !removedIds.has(comment.id)),
-      };
-    }));
+    saveMockTasks(
+      tasks.map((task) => {
+        const target = task.comments.find(
+          (comment) => comment.id === commentId,
+        );
+        if (!target) {
+          return task;
+        }
+        removed = target;
+        const removedIds = new Set([
+          commentId,
+          ...task.comments
+            .filter((comment) => comment.parentCommentId === commentId)
+            .map((comment) => comment.id),
+        ]);
+        return {
+          ...task,
+          comments: task.comments.filter(
+            (comment) => !removedIds.has(comment.id),
+          ),
+        };
+      }),
+    );
     if (!removed) {
       throw new Error(`Task comment ${commentId} was not found`);
     }
     const removedComment = removed as TaskComment;
-    appendMockDomainEvent("task.comment_deleted", "task", removedComment.taskId, { taskId: removedComment.taskId, commentId: removedComment.id }, ensureMockTasks().find((task) => task.id === removedComment.taskId)?.projectId ?? null);
+    appendMockDomainEvent(
+      "task.comment_deleted",
+      "task",
+      removedComment.taskId,
+      { taskId: removedComment.taskId, commentId: removedComment.id },
+      ensureMockTasks().find((task) => task.id === removedComment.taskId)
+        ?.projectId ?? null,
+    );
     return removedComment;
   }
 
   return invoke<TaskComment>("delete_task_comment", { commentId });
 }
 
-export async function getTaskCommentDeleteImpact(commentId: string): Promise<TaskCommentDeleteImpact> {
+export async function getTaskCommentDeleteImpact(
+  commentId: string,
+): Promise<TaskCommentDeleteImpact> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
-    const task = tasks.find((entry) => entry.id === commentId || entry.comments.some((c) => c.id === commentId));
+    const task = tasks.find(
+      (entry) =>
+        entry.id === commentId ||
+        entry.comments.some((c) => c.id === commentId),
+    );
     if (!task) {
       throw new Error(`Task not found for comment ${commentId}`);
     }
@@ -5601,7 +7660,9 @@ export async function getTaskCommentDeleteImpact(commentId: string): Promise<Tas
 
     // Recursively count all descendant replies
     function countDescendants(parentId: string): number {
-      const children = taskRef.comments.filter((c) => c.parentCommentId === parentId);
+      const children = taskRef.comments.filter(
+        (c) => c.parentCommentId === parentId,
+      );
       let total = children.length;
       for (const child of children) {
         total += countDescendants(child.id);
@@ -5613,7 +7674,9 @@ export async function getTaskCommentDeleteImpact(commentId: string): Promise<Tas
     // Count attachments and file references on the comment and its descendants
     const allAffectedIds = new Set([commentId]);
     function collectDescendants(parentId: string) {
-      const children = taskRef.comments.filter((c) => c.parentCommentId === parentId);
+      const children = taskRef.comments.filter(
+        (c) => c.parentCommentId === parentId,
+      );
       for (const child of children) {
         allAffectedIds.add(child.id);
         collectDescendants(child.id);
@@ -5633,10 +7696,15 @@ export async function getTaskCommentDeleteImpact(commentId: string): Promise<Tas
     };
   }
 
-  return invoke<TaskCommentDeleteImpact>("get_task_comment_delete_impact", { commentId });
+  return invoke<TaskCommentDeleteImpact>("get_task_comment_delete_impact", {
+    commentId,
+  });
 }
 
-export async function addTaskFileReference(taskId: string, input: TaskFileReferenceInput): Promise<TaskFileReference> {
+export async function addTaskFileReference(
+  taskId: string,
+  input: TaskFileReferenceInput,
+): Promise<TaskFileReference> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5645,15 +7713,27 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
     }
 
     const projects = getStoredMockProjects();
-    const project = projects.find((entry) => entry.id === task.projectId) ?? null;
-    const repository = project?.repositories.find((entry) => entry.id === input.repositoryId) ?? null;
+    const project =
+      projects.find((entry) => entry.id === task.projectId) ?? null;
+    const repository =
+      project?.repositories.find((entry) => entry.id === input.repositoryId) ??
+      null;
     if (!repository) {
       throw new Error(`Repository ${input.repositoryId} was not found`);
     }
 
-    const relativePath = input.relativePath.trim().replace(/\\/g, "/").replace(/^\.\//, "");
-    if (!relativePath || relativePath.startsWith("/") || relativePath.split("/").includes("..")) {
-      throw new Error("relativePath: File path must stay inside the repository root.");
+    const relativePath = input.relativePath
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "");
+    if (
+      !relativePath ||
+      relativePath.startsWith("/") ||
+      relativePath.split("/").includes("..")
+    ) {
+      throw new Error(
+        "relativePath: File path must stay inside the repository root.",
+      );
     }
 
     const reference: TaskFileReference = {
@@ -5663,7 +7743,9 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
       repositoryName: repository.name,
       repositorySlug: repository.slug,
       relativePath,
-      absolutePath: repository.repositoryPath ? `${repository.repositoryPath.replace(/\/$/, "")}/${relativePath}` : null,
+      absolutePath: repository.repositoryPath
+        ? `${repository.repositoryPath.replace(/\/$/, "")}/${relativePath}`
+        : null,
       exists: false,
       isDefault: false,
       createdAt: nowIso(),
@@ -5672,20 +7754,46 @@ export async function addTaskFileReference(taskId: string, input: TaskFileRefere
     saveMockTasks(
       tasks.map((entry) =>
         entry.id === taskId
-          ? { ...entry, fileReferences: [...entry.fileReferences, reference], updatedAt: reference.createdAt }
+          ? {
+              ...entry,
+              fileReferences: [...entry.fileReferences, reference],
+              updatedAt: reference.createdAt,
+            }
           : entry,
       ),
     );
-    appendMockLog("info", "task.file_reference.added", `Added file reference ${reference.id} to task ${taskId}`);
-    appendMockDomainEvent("task.file_reference_added", "task", taskId, { taskId, referenceId: reference.id, relativePath: reference.relativePath }, task.projectId);
-    emitMockTaskChange({ taskIds: [taskId], reason: "task.file_reference.added" });
+    appendMockLog(
+      "info",
+      "task.file_reference.added",
+      `Added file reference ${reference.id} to task ${taskId}`,
+    );
+    appendMockDomainEvent(
+      "task.file_reference_added",
+      "task",
+      taskId,
+      {
+        taskId,
+        referenceId: reference.id,
+        relativePath: reference.relativePath,
+      },
+      task.projectId,
+    );
+    emitMockTaskChange({
+      taskIds: [taskId],
+      reason: "task.file_reference.added",
+    });
     return reference;
   }
 
-  return invoke<TaskFileReference>("add_task_file_reference", { taskId, input });
+  return invoke<TaskFileReference>("add_task_file_reference", {
+    taskId,
+    input,
+  });
 }
 
-export async function listTaskFileReferences(taskId: string): Promise<TaskFileReference[]> {
+export async function listTaskFileReferences(
+  taskId: string,
+): Promise<TaskFileReference[]> {
   if (!isTauriAvailable()) {
     const task = ensureMockTasks().find((entry) => entry.id === taskId);
     if (!task) {
@@ -5697,7 +7805,9 @@ export async function listTaskFileReferences(taskId: string): Promise<TaskFileRe
   return invoke<TaskFileReference[]>("list_task_file_references", { taskId });
 }
 
-export async function setDefaultTaskFileReference(referenceId: string): Promise<TaskFileReference> {
+export async function setDefaultTaskFileReference(
+  referenceId: string,
+): Promise<TaskFileReference> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const updated = tasks.map((task) => ({
@@ -5717,40 +7827,60 @@ export async function setDefaultTaskFileReference(referenceId: string): Promise<
       throw new Error(`Task file reference ${referenceId} was not found`);
     }
 
-    appendMockLog("info", "task.file_reference.default_set", `Set ${referenceId} as default`);
-    emitMockTaskChange({ taskIds: [reference.taskId], reason: "task.file_reference.default_set" });
+    appendMockLog(
+      "info",
+      "task.file_reference.default_set",
+      `Set ${referenceId} as default`,
+    );
+    emitMockTaskChange({
+      taskIds: [reference.taskId],
+      reason: "task.file_reference.default_set",
+    });
     return reference;
   }
 
-  return invoke<TaskFileReference>("set_default_task_file_reference", { referenceId });
+  return invoke<TaskFileReference>("set_default_task_file_reference", {
+    referenceId,
+  });
 }
 
 export async function getTaskFileContent(path: string): Promise<string> {
   if (!isTauriAvailable()) {
-    const storedContents = getStoredValue<Record<string, string>>(TASK_FILE_CONTENT_STORAGE_KEY) ?? {};
-    return storedContents[path] ?? [
-      `Mocked file content for: ${path}`,
-      "Second line for anchored comments.",
-      "Third line with text selection support.",
-    ].join("\n");
+    const storedContents =
+      getStoredValue<Record<string, string>>(TASK_FILE_CONTENT_STORAGE_KEY) ??
+      {};
+    return (
+      storedContents[path] ??
+      [
+        `Mocked file content for: ${path}`,
+        "Second line for anchored comments.",
+        "Third line with text selection support.",
+      ].join("\n")
+    );
   }
 
   return invoke<string>("get_task_file_content", { path });
 }
 
-export async function removeTaskFileReference(referenceId: string): Promise<TaskFileReference> {
+export async function removeTaskFileReference(
+  referenceId: string,
+): Promise<TaskFileReference> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     let removed: TaskFileReference | null = null;
     const updated = tasks.map((task) => {
-      const match = task.fileReferences.find((reference) => reference.id === referenceId) ?? null;
+      const match =
+        task.fileReferences.find((reference) => reference.id === referenceId) ??
+        null;
       if (!match) {
         return task;
       }
       removed = match;
       return {
         ...task,
-        fileReferences: task.fileReferences.filter((reference) => reference.id !== referenceId),
+        fileReferences: task.fileReferences.filter(
+          (reference) => reference.id !== referenceId,
+        ),
       };
     });
 
@@ -5760,16 +7890,39 @@ export async function removeTaskFileReference(referenceId: string): Promise<Task
 
     const removedReference = removed as TaskFileReference;
     saveMockTasks(updated);
-    appendMockLog("info", "task.file_reference.removed", `Removed file reference ${referenceId}`);
-    appendMockDomainEvent("task.file_reference_removed", "task", removedReference.taskId, { taskId: removedReference.taskId, referenceId: removedReference.id, relativePath: removedReference.relativePath }, ensureMockTasks().find((task) => task.id === removedReference.taskId)?.projectId ?? null);
-    emitMockTaskChange({ taskIds: [removedReference.taskId], reason: "task.file_reference.removed" });
+    appendMockLog(
+      "info",
+      "task.file_reference.removed",
+      `Removed file reference ${referenceId}`,
+    );
+    appendMockDomainEvent(
+      "task.file_reference_removed",
+      "task",
+      removedReference.taskId,
+      {
+        taskId: removedReference.taskId,
+        referenceId: removedReference.id,
+        relativePath: removedReference.relativePath,
+      },
+      ensureMockTasks().find((task) => task.id === removedReference.taskId)
+        ?.projectId ?? null,
+    );
+    emitMockTaskChange({
+      taskIds: [removedReference.taskId],
+      reason: "task.file_reference.removed",
+    });
     return removedReference;
   }
 
-  return invoke<TaskFileReference>("remove_task_file_reference", { referenceId });
+  return invoke<TaskFileReference>("remove_task_file_reference", {
+    referenceId,
+  });
 }
 
-export async function addTaskAttachment(taskId: string, input: TaskAttachmentInput): Promise<TaskAttachment> {
+export async function addTaskAttachment(
+  taskId: string,
+  input: TaskAttachmentInput,
+): Promise<TaskAttachment> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5778,8 +7931,14 @@ export async function addTaskAttachment(taskId: string, input: TaskAttachmentInp
     }
 
     const bytes = atob(input.base64Data);
-    const imageDataUrl = input.mediaType.startsWith("image/") ? `data:${input.mediaType};base64,${input.base64Data}` : null;
-    const previewText = input.mediaType.startsWith("text/") || input.mediaType === "application/json" ? bytes : null;
+    const imageDataUrl = input.mediaType.startsWith("image/")
+      ? `data:${input.mediaType};base64,${input.base64Data}`
+      : null;
+    const previewText =
+      input.mediaType.startsWith("text/") ||
+      input.mediaType === "application/json"
+        ? bytes
+        : null;
     const attachment: TaskAttachment = {
       id: createId("task-attachment"),
       taskId,
@@ -5793,9 +7952,25 @@ export async function addTaskAttachment(taskId: string, input: TaskAttachmentInp
       createdAt: nowIso(),
     };
 
-    saveMockTasks(tasks.map((entry) => (entry.id === taskId ? { ...entry, attachments: [...entry.attachments, attachment] } : entry)));
-    appendMockLog("info", "task.attachment.added", `Added attachment ${attachment.id} to task ${taskId}`);
-    appendMockDomainEvent("task.attachment_added", "task", taskId, { taskId, attachmentId: attachment.id, fileName: attachment.fileName }, task.projectId);
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? { ...entry, attachments: [...entry.attachments, attachment] }
+          : entry,
+      ),
+    );
+    appendMockLog(
+      "info",
+      "task.attachment.added",
+      `Added attachment ${attachment.id} to task ${taskId}`,
+    );
+    appendMockDomainEvent(
+      "task.attachment_added",
+      "task",
+      taskId,
+      { taskId, attachmentId: attachment.id, fileName: attachment.fileName },
+      task.projectId,
+    );
     emitMockTaskChange({ taskIds: [taskId], reason: "task.attachment.added" });
     return attachment;
   }
@@ -5803,19 +7978,25 @@ export async function addTaskAttachment(taskId: string, input: TaskAttachmentInp
   return invoke<TaskAttachment>("add_task_attachment", { taskId, input });
 }
 
-export async function removeTaskAttachment(attachmentId: string): Promise<TaskAttachment> {
+export async function removeTaskAttachment(
+  attachmentId: string,
+): Promise<TaskAttachment> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
     let removed: TaskAttachment | null = null;
     const updated = tasks.map((task) => {
-      const match = task.attachments.find((attachment) => attachment.id === attachmentId) ?? null;
+      const match =
+        task.attachments.find((attachment) => attachment.id === attachmentId) ??
+        null;
       if (!match) {
         return task;
       }
       removed = match;
       return {
         ...task,
-        attachments: task.attachments.filter((attachment) => attachment.id !== attachmentId),
+        attachments: task.attachments.filter(
+          (attachment) => attachment.id !== attachmentId,
+        ),
       };
     });
 
@@ -5825,31 +8006,57 @@ export async function removeTaskAttachment(attachmentId: string): Promise<TaskAt
 
     const removedAttachment = removed as TaskAttachment;
     saveMockTasks(updated);
-    appendMockLog("info", "task.attachment.removed", `Removed attachment ${attachmentId}`);
-    appendMockDomainEvent("task.attachment_removed", "task", removedAttachment.taskId, { taskId: removedAttachment.taskId, attachmentId: removedAttachment.id, fileName: removedAttachment.fileName }, ensureMockTasks().find((task) => task.id === removedAttachment.taskId)?.projectId ?? null);
-    emitMockTaskChange({ taskIds: [removedAttachment.taskId], reason: "task.attachment.removed" });
+    appendMockLog(
+      "info",
+      "task.attachment.removed",
+      `Removed attachment ${attachmentId}`,
+    );
+    appendMockDomainEvent(
+      "task.attachment_removed",
+      "task",
+      removedAttachment.taskId,
+      {
+        taskId: removedAttachment.taskId,
+        attachmentId: removedAttachment.id,
+        fileName: removedAttachment.fileName,
+      },
+      ensureMockTasks().find((task) => task.id === removedAttachment.taskId)
+        ?.projectId ?? null,
+    );
+    emitMockTaskChange({
+      taskIds: [removedAttachment.taskId],
+      reason: "task.attachment.removed",
+    });
     return removedAttachment;
   }
 
   return invoke<TaskAttachment>("remove_task_attachment", { attachmentId });
 }
 
-export async function listTaskSchedules(projectId?: string | null): Promise<TaskScheduleSummary[]> {
+export async function listTaskSchedules(
+  projectId?: string | null,
+): Promise<TaskScheduleSummary[]> {
   const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
-    return processMockTaskSchedules(activeProjectId).schedules
-      .filter((schedule) => schedule.projectId === activeProjectId)
+    return processMockTaskSchedules(activeProjectId)
+      .schedules.filter((schedule) => schedule.projectId === activeProjectId)
       .map((schedule) => summarizeTaskSchedule(schedule, ensureMockTasks()));
   }
 
   const resolvedProjectId = await resolveTauriProjectId(projectId);
-  return invoke<TaskScheduleSummary[]>("list_task_schedules", { projectId: resolvedProjectId });
+  return invoke<TaskScheduleSummary[]>("list_task_schedules", {
+    projectId: resolvedProjectId,
+  });
 }
 
-export async function getTaskSchedule(scheduleId: string): Promise<TaskScheduleDetail> {
+export async function getTaskSchedule(
+  scheduleId: string,
+): Promise<TaskScheduleDetail> {
   if (!isTauriAvailable()) {
     const processed = processMockTaskSchedules();
-    const schedule = processed.schedules.find((entry) => entry.id === scheduleId);
+    const schedule = processed.schedules.find(
+      (entry) => entry.id === scheduleId,
+    );
     if (!schedule) {
       throw new Error(`Task schedule ${scheduleId} was not found`);
     }
@@ -5859,36 +8066,77 @@ export async function getTaskSchedule(scheduleId: string): Promise<TaskScheduleD
   return invoke<TaskScheduleDetail>("get_task_schedule", { scheduleId });
 }
 
-export async function createTaskSchedule(input: TaskScheduleUpsertInput, projectId?: string | null): Promise<TaskScheduleDetail> {
+export async function createTaskSchedule(
+  input: TaskScheduleUpsertInput,
+  projectId?: string | null,
+): Promise<TaskScheduleDetail> {
   const activeProjectId = projectId ?? getActiveProjectId();
   if (!isTauriAvailable()) {
     const validation = validateMockTaskScheduleInput(input);
     if (validation.length > 0) {
-      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+      throw new Error(
+        validation.map((error) => `${error.path}: ${error.message}`).join("; "),
+      );
     }
 
-    const schedule = normalizeMockTaskScheduleInput(input, undefined, activeProjectId ?? undefined);
-    saveMockTaskSchedules([schedule, ...ensureMockTaskSchedules()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)));
+    const schedule = normalizeMockTaskScheduleInput(
+      input,
+      undefined,
+      activeProjectId ?? undefined,
+    );
+    saveMockTaskSchedules(
+      [schedule, ...ensureMockTaskSchedules()].sort(
+        (left, right) =>
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      ),
+    );
     const processed = processMockTaskSchedules(activeProjectId);
-    appendMockLog("info", "task.schedule.created", `Created task schedule ${schedule.id}`);
-    appendMockDomainEvent("task.schedule.created", "task_schedule", schedule.id, { scheduleId: schedule.id, title: schedule.taskBlueprint.title, enabled: schedule.enabled, triggerType: schedule.trigger.type }, schedule.projectId);
+    appendMockLog(
+      "info",
+      "task.schedule.created",
+      `Created task schedule ${schedule.id}`,
+    );
+    appendMockDomainEvent(
+      "task.schedule.created",
+      "task_schedule",
+      schedule.id,
+      {
+        scheduleId: schedule.id,
+        title: schedule.taskBlueprint.title,
+        enabled: schedule.enabled,
+        triggerType: schedule.trigger.type,
+      },
+      schedule.projectId,
+    );
     emitMockTaskChange({ taskIds: [], reason: "task.schedule.created" });
-    const created = processed.schedules.find((entry) => entry.id === schedule.id);
+    const created = processed.schedules.find(
+      (entry) => entry.id === schedule.id,
+    );
     if (!created) {
-      throw new Error(`Task schedule ${schedule.id} was not found after creation`);
+      throw new Error(
+        `Task schedule ${schedule.id} was not found after creation`,
+      );
     }
     return hydrateTaskScheduleDetail(created, processed.tasks);
   }
 
   const resolvedProjectId = await resolveTauriProjectId(projectId);
-  return invoke<TaskScheduleDetail>("create_task_schedule", { projectId: resolvedProjectId, input });
+  return invoke<TaskScheduleDetail>("create_task_schedule", {
+    projectId: resolvedProjectId,
+    input,
+  });
 }
 
-export async function updateTaskSchedule(scheduleId: string, input: TaskScheduleUpsertInput): Promise<TaskScheduleDetail> {
+export async function updateTaskSchedule(
+  scheduleId: string,
+  input: TaskScheduleUpsertInput,
+): Promise<TaskScheduleDetail> {
   if (!isTauriAvailable()) {
     const validation = validateMockTaskScheduleInput(input);
     if (validation.length > 0) {
-      throw new Error(validation.map((error) => `${error.path}: ${error.message}`).join("; "));
+      throw new Error(
+        validation.map((error) => `${error.path}: ${error.message}`).join("; "),
+      );
     }
 
     const schedules = ensureMockTaskSchedules();
@@ -5900,7 +8148,10 @@ export async function updateTaskSchedule(scheduleId: string, input: TaskSchedule
     const updated = normalizeMockTaskScheduleInput(input, {
       ...existing,
       trigger: input.trigger,
-      nextFireAt: input.trigger.type === "time" ? nextMockTimeFireAt(input.trigger, nowIso()) : null,
+      nextFireAt:
+        input.trigger.type === "time"
+          ? nextMockTimeFireAt(input.trigger, nowIso())
+          : null,
     });
     updated.occurrences = existing.occurrences;
     updated.lastFiredAt = existing.lastFiredAt ?? null;
@@ -5909,23 +8160,48 @@ export async function updateTaskSchedule(scheduleId: string, input: TaskSchedule
     saveMockTaskSchedules(
       schedules
         .map((schedule) => (schedule.id === scheduleId ? updated : schedule))
-        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+        .sort(
+          (left, right) =>
+            Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+        ),
     );
     const processed = processMockTaskSchedules(existing.projectId);
-    appendMockLog("info", "task.schedule.updated", `Updated task schedule ${scheduleId}`);
-    appendMockDomainEvent("task.schedule.updated", "task_schedule", scheduleId, { scheduleId, title: updated.taskBlueprint.title, enabled: updated.enabled, triggerType: updated.trigger.type }, updated.projectId);
+    appendMockLog(
+      "info",
+      "task.schedule.updated",
+      `Updated task schedule ${scheduleId}`,
+    );
+    appendMockDomainEvent(
+      "task.schedule.updated",
+      "task_schedule",
+      scheduleId,
+      {
+        scheduleId,
+        title: updated.taskBlueprint.title,
+        enabled: updated.enabled,
+        triggerType: updated.trigger.type,
+      },
+      updated.projectId,
+    );
     emitMockTaskChange({ taskIds: [], reason: "task.schedule.updated" });
-    const refreshed = processed.schedules.find((schedule) => schedule.id === scheduleId);
+    const refreshed = processed.schedules.find(
+      (schedule) => schedule.id === scheduleId,
+    );
     if (!refreshed) {
       throw new Error(`Task schedule ${scheduleId} was not found after update`);
     }
     return hydrateTaskScheduleDetail(refreshed, processed.tasks);
   }
 
-  return invoke<TaskScheduleDetail>("update_task_schedule", { scheduleId, input });
+  return invoke<TaskScheduleDetail>("update_task_schedule", {
+    scheduleId,
+    input,
+  });
 }
 
-export async function deleteTaskSchedule(scheduleId: string): Promise<TaskScheduleDetail> {
+export async function deleteTaskSchedule(
+  scheduleId: string,
+): Promise<TaskScheduleDetail> {
   if (!isTauriAvailable()) {
     const processed = processMockTaskSchedules();
     const schedules = processed.schedules;
@@ -5934,9 +8210,21 @@ export async function deleteTaskSchedule(scheduleId: string): Promise<TaskSchedu
       throw new Error(`Task schedule ${scheduleId} was not found`);
     }
 
-    saveMockTaskSchedules(schedules.filter((schedule) => schedule.id !== scheduleId));
-    appendMockLog("info", "task.schedule.deleted", `Deleted task schedule ${scheduleId}`);
-    appendMockDomainEvent("task.schedule.deleted", "task_schedule", scheduleId, { scheduleId, title: existing.taskBlueprint.title }, existing.projectId);
+    saveMockTaskSchedules(
+      schedules.filter((schedule) => schedule.id !== scheduleId),
+    );
+    appendMockLog(
+      "info",
+      "task.schedule.deleted",
+      `Deleted task schedule ${scheduleId}`,
+    );
+    appendMockDomainEvent(
+      "task.schedule.deleted",
+      "task_schedule",
+      scheduleId,
+      { scheduleId, title: existing.taskBlueprint.title },
+      existing.projectId,
+    );
     emitMockTaskChange({ taskIds: [], reason: "task.schedule.deleted" });
     return hydrateTaskScheduleDetail(existing, processed.tasks);
   }
@@ -5944,25 +8232,33 @@ export async function deleteTaskSchedule(scheduleId: string): Promise<TaskSchedu
   return invoke<TaskScheduleDetail>("delete_task_schedule", { scheduleId });
 }
 
-export async function listWorkflows(includeArchived = false): Promise<WorkflowSummary[]> {
+export async function listWorkflows(
+  includeArchived = false,
+): Promise<WorkflowSummary[]> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.catalog.listWorkflows(includeArchived);
   }
   if (!isTauriAvailable()) {
-    return ensureMockWorkflows().filter((workflow) => includeArchived || !workflow.archived).map(summarizeWorkflow);
+    return ensureMockWorkflows()
+      .filter((workflow) => includeArchived || !workflow.archived)
+      .map(summarizeWorkflow);
   }
 
   return invoke<WorkflowSummary[]>("list_workflows", { includeArchived });
 }
 
-export async function getWorkflow(workflowId: string): Promise<WorkflowDefinition> {
+export async function getWorkflow(
+  workflowId: string,
+): Promise<WorkflowDefinition> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.catalog.getWorkflow(workflowId);
   }
   if (!isTauriAvailable()) {
-    const workflow = ensureMockWorkflows().find((entry) => entry.id === workflowId);
+    const workflow = ensureMockWorkflows().find(
+      (entry) => entry.id === workflowId,
+    );
     if (!workflow) {
       throw new Error(`Workflow ${workflowId} was not found`);
     }
@@ -5972,7 +8268,9 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowDefinitio
   return invoke<WorkflowDefinition>("get_workflow", { workflowId });
 }
 
-export async function validateWorkflow(input: WorkflowUpsertInput): Promise<WorkflowValidationResult> {
+export async function validateWorkflow(
+  input: WorkflowUpsertInput,
+): Promise<WorkflowValidationResult> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.validateWorkflow(input);
@@ -5984,7 +8282,9 @@ export async function validateWorkflow(input: WorkflowUpsertInput): Promise<Work
   return invoke<WorkflowValidationResult>("validate_workflow", { input });
 }
 
-export async function createWorkflow(input: WorkflowUpsertInput): Promise<WorkflowDefinition> {
+export async function createWorkflow(
+  input: WorkflowUpsertInput,
+): Promise<WorkflowDefinition> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.createWorkflow(input);
@@ -5992,19 +8292,30 @@ export async function createWorkflow(input: WorkflowUpsertInput): Promise<Workfl
   if (!isTauriAvailable()) {
     const validation = validateMockWorkflowInput(input);
     if (!validation.valid) {
-      throw new Error(validation.errors.map((error) => `${error.path}: ${error.message}`).join("; "));
+      throw new Error(
+        validation.errors
+          .map((error) => `${error.path}: ${error.message}`)
+          .join("; "),
+      );
     }
 
     const workflow = normalizeMockWorkflowInput(input);
     saveMockWorkflows([workflow, ...ensureMockWorkflows()]);
-    appendMockLog("info", "workflow.created", `Created workflow ${workflow.id}`);
+    appendMockLog(
+      "info",
+      "workflow.created",
+      `Created workflow ${workflow.id}`,
+    );
     return workflow;
   }
 
   return invoke<WorkflowDefinition>("create_workflow", { input });
 }
 
-export async function updateWorkflow(workflowId: string, input: WorkflowUpsertInput): Promise<WorkflowDefinition> {
+export async function updateWorkflow(
+  workflowId: string,
+  input: WorkflowUpsertInput,
+): Promise<WorkflowDefinition> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.updateWorkflow(workflowId, input);
@@ -6012,7 +8323,11 @@ export async function updateWorkflow(workflowId: string, input: WorkflowUpsertIn
   if (!isTauriAvailable()) {
     const validation = validateMockWorkflowInput(input);
     if (!validation.valid) {
-      throw new Error(validation.errors.map((error) => `${error.path}: ${error.message}`).join("; "));
+      throw new Error(
+        validation.errors
+          .map((error) => `${error.path}: ${error.message}`)
+          .join("; "),
+      );
     }
 
     const workflows = ensureMockWorkflows();
@@ -6022,7 +8337,11 @@ export async function updateWorkflow(workflowId: string, input: WorkflowUpsertIn
     }
 
     const updated = normalizeMockWorkflowInput(input, existing);
-    saveMockWorkflows(workflows.map((workflow) => (workflow.id === workflowId ? updated : workflow)));
+    saveMockWorkflows(
+      workflows.map((workflow) =>
+        workflow.id === workflowId ? updated : workflow,
+      ),
+    );
     appendMockLog("info", "workflow.updated", `Updated workflow ${workflowId}`);
     return updated;
   }
@@ -6030,7 +8349,10 @@ export async function updateWorkflow(workflowId: string, input: WorkflowUpsertIn
   return invoke<WorkflowDefinition>("update_workflow", { workflowId, input });
 }
 
-export async function duplicateWorkflow(workflowId: string, newName?: string): Promise<WorkflowDefinition> {
+export async function duplicateWorkflow(
+  workflowId: string,
+  newName?: string,
+): Promise<WorkflowDefinition> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.duplicateWorkflow(workflowId, newName);
@@ -6049,7 +8371,8 @@ export async function duplicateWorkflow(workflowId: string, newName?: string): P
         assignedEntityId: lane.assignedEntityId,
         entryPromptTemplate: lane.entryPromptTemplate,
         useSeparateWorktree: lane.useSeparateWorktree ?? false,
-        requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
+        requireUserApprovalOnSuccess:
+          lane.requireUserApprovalOnSuccess ?? false,
         successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId,
         failureTransitionType: lane.failureTransitionType,
@@ -6060,10 +8383,15 @@ export async function duplicateWorkflow(workflowId: string, newName?: string): P
     return createWorkflow(duplicatedInput);
   }
 
-  return invoke<WorkflowDefinition>("duplicate_workflow", { workflowId, newName });
+  return invoke<WorkflowDefinition>("duplicate_workflow", {
+    workflowId,
+    newName,
+  });
 }
 
-export async function archiveWorkflow(workflowId: string): Promise<WorkflowDefinition> {
+export async function archiveWorkflow(
+  workflowId: string,
+): Promise<WorkflowDefinition> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.archiveWorkflow(workflowId);
@@ -6081,31 +8409,45 @@ export async function archiveWorkflow(workflowId: string): Promise<WorkflowDefin
       updatedAt: nowIso(),
     };
 
-    saveMockWorkflows(workflows.map((entry) => (entry.id === workflowId ? archived : entry)));
-    appendMockLog("info", "workflow.archived", `Archived workflow ${workflowId}`);
+    saveMockWorkflows(
+      workflows.map((entry) => (entry.id === workflowId ? archived : entry)),
+    );
+    appendMockLog(
+      "info",
+      "workflow.archived",
+      `Archived workflow ${workflowId}`,
+    );
     return archived;
   }
 
   return invoke<WorkflowDefinition>("archive_workflow", { workflowId });
 }
 
-export async function getWorkflowDeleteImpact(workflowId: string): Promise<WorkflowDeleteImpact> {
+export async function getWorkflowDeleteImpact(
+  workflowId: string,
+): Promise<WorkflowDeleteImpact> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.getWorkflowDeleteImpact(workflowId);
   }
   if (!isTauriAvailable()) {
-    const workflow = ensureMockWorkflows().find((entry) => entry.id === workflowId);
+    const workflow = ensureMockWorkflows().find(
+      (entry) => entry.id === workflowId,
+    );
     if (!workflow) {
       throw new Error(`Workflow ${workflowId} was not found`);
     }
     return buildMockWorkflowDeleteImpact(workflow);
   }
 
-  return invoke<WorkflowDeleteImpact>("get_workflow_delete_impact", { workflowId });
+  return invoke<WorkflowDeleteImpact>("get_workflow_delete_impact", {
+    workflowId,
+  });
 }
 
-export async function deleteWorkflow(workflowId: string): Promise<WorkflowDeleteImpact> {
+export async function deleteWorkflow(
+  workflowId: string,
+): Promise<WorkflowDeleteImpact> {
   const hostedWebClient = getHostedWebOrchestraClientBinding()?.client;
   if (hostedWebClient) {
     return hostedWebClient.workflows.deleteWorkflow(workflowId);
@@ -6126,7 +8468,13 @@ export async function deleteWorkflow(workflowId: string): Promise<WorkflowDelete
 
     saveMockWorkflows(workflows.filter((entry) => entry.id !== workflowId));
     appendMockLog("info", "workflow.deleted", `Deleted workflow ${workflowId}`);
-    appendMockDomainEvent("workflow.deleted", "workflow", workflowId, { workflowId, name: workflow.name }, null);
+    appendMockDomainEvent(
+      "workflow.deleted",
+      "workflow",
+      workflowId,
+      { workflowId, name: workflow.name },
+      null,
+    );
     return impact;
   }
 
