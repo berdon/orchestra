@@ -15,6 +15,7 @@ import { TaskEditorForm } from "./TaskEditorForm";
 import { getTaskTags } from "../../lib/taskListQuery";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 import { buildTaskDetailHeaderActions } from "./taskDetailHeaderActions";
+import { getTaskDependencyTreeBranchLabel, type TaskDependencyTreeNode } from "./taskDependencyTree";
 
 interface TaskTimelineItem {
   id: string;
@@ -41,11 +42,16 @@ type TaskDetailTab =
   | "timeline"
   | "history";
 
+type TaskDependencyViewMode = "list" | "tree";
+
 interface TaskDetailPageProps {
   task: TaskDetail;
   draft: TaskUpsertInput;
   commentDraft: TaskCommentInput;
   fileReferenceDraft: TaskFileReferenceInput;
+  dependencyTree: TaskDependencyTreeNode | null;
+  dependencyTreeLoading: boolean;
+  dependencyViewMode: TaskDependencyViewMode;
   tasks: TaskSummary[];
   workflows: WorkflowSummary[];
   workflowLanes: Array<{ id: string; name: string }>;
@@ -91,6 +97,7 @@ interface TaskDetailPageProps {
   onAddAttachment: (files: FileList | null) => void;
   onRemoveAttachment: (attachmentId: string) => void;
   onFileReferenceDraftChange: (draft: TaskFileReferenceInput) => void;
+  onDependencyViewModeChange: (mode: TaskDependencyViewMode) => void;
   onAddFileReference: () => void;
   onRemoveFileReference: (referenceId: string) => void;
   onSetDefaultFileReference: (referenceId: string) => void;
@@ -131,6 +138,53 @@ function createReplyDraft(author = "User", parentCommentId?: string | null): Tas
     interruptAgent: false,
     parentCommentId: parentCommentId ?? null,
   };
+}
+
+function describeTaskDependencyTreeMeta(task: TaskSummary, parent: TaskSummary | null) {
+  return [task.priority, task.type, parent ? `Parent: ${parent.number}` : null].filter(Boolean).join(" · ");
+}
+
+function TaskDependencyTreeCard({
+  node,
+  onOpenTask,
+  root = false,
+}: {
+  node: TaskDependencyTreeNode;
+  onOpenTask: (taskId: string) => void;
+  root?: boolean;
+}) {
+  const className = [
+    "task-dependency-tree-card",
+    root ? "task-dependency-tree-card--root" : null,
+    node.reference ? "task-dependency-tree-card--reference" : null,
+  ].filter(Boolean).join(" ");
+
+  return (
+    <div className="task-dependency-tree-node" data-role={root ? "task-dependency-tree-root" : "task-dependency-tree-node"}>
+      <button className={className} type="button" onClick={() => onOpenTask(node.task.id)}>
+        <div className="workflow-section__header">
+          <strong>{node.task.number} · {node.task.title}</strong>
+          <span className={`status-badge status-badge--${getStatusTone(node.task.status)}`}>{formatStatusLabel(node.task.status)}</span>
+        </div>
+        <p className="muted-copy">{describeTaskDependencyTreeMeta(node.task, node.parent)}</p>
+        {node.reference ? <p className="supporting-copy">Referenced elsewhere in this tree.</p> : null}
+      </button>
+      {node.reference || !node.branches.length ? null : (
+        <div className="task-dependency-tree-branches">
+          {node.branches.map((branch) => (
+            <section className="task-dependency-tree-branch" key={`${node.task.id}-${branch.type}`}>
+              <p className="eyebrow">{getTaskDependencyTreeBranchLabel(branch.type)}</p>
+              <div className="task-dependency-tree-branch__children">
+                {branch.nodes.map((childNode) => (
+                  <TaskDependencyTreeCard key={`${node.task.id}-${branch.type}-${childNode.task.id}`} node={childNode} onOpenTask={onOpenTask} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TaskRelaneMenu({
@@ -274,6 +328,9 @@ export function TaskDetailPage({
   draft,
   commentDraft,
   fileReferenceDraft,
+  dependencyTree,
+  dependencyTreeLoading,
+  dependencyViewMode,
   tasks,
   workflows,
   workflowLanes,
@@ -319,6 +376,7 @@ export function TaskDetailPage({
   onAddAttachment,
   onRemoveAttachment,
   onFileReferenceDraftChange,
+  onDependencyViewModeChange,
   onAddFileReference,
   onRemoveFileReference,
   onSetDefaultFileReference,
@@ -1044,66 +1102,103 @@ export function TaskDetailPage({
                 <p className="eyebrow">Dependencies</p>
                 <h4>Blocked by and blocking</h4>
               </div>
-              <div className="task-dependency-actions">
-                <select
-                  className="select-input"
-                  data-role="dependency-blocker-select"
-                  value={selectedBlockerTaskId}
-                  {...getTooltipProps("Choose a task that must finish before this one can continue.")}
-                  onChange={(event) => onSelectBlocker(event.target.value)}
-                >
-                  <option value="">Select blocker task…</option>
-                  {dependencyCandidates.map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.title}</option>
-                  ))}
-                </select>
-                <button
-                  className="secondary-button"
-                  data-role="add-dependency"
-                  type="button"
-                  disabled={!selectedBlockerTaskId}
-                  {...getTooltipProps("Link the selected task as a blocker for this one.")}
-                  onClick={onAddDependency}
-                >Add dependency</button>
+              <div className="task-dependency-header-controls">
+                <div className="task-view-toggle" data-role="task-dependency-view-toggle">
+                  <button
+                    className={dependencyViewMode === "list" ? "task-view-toggle__button task-view-toggle__button--active" : "task-view-toggle__button"}
+                    data-role="task-dependency-view-list"
+                    type="button"
+                    aria-pressed={dependencyViewMode === "list"}
+                    onClick={() => onDependencyViewModeChange("list")}
+                  >
+                    <span aria-hidden="true">☰</span>
+                    <span>List</span>
+                  </button>
+                  <button
+                    className={dependencyViewMode === "tree" ? "task-view-toggle__button task-view-toggle__button--active" : "task-view-toggle__button"}
+                    data-role="task-dependency-view-tree"
+                    type="button"
+                    aria-pressed={dependencyViewMode === "tree"}
+                    onClick={() => onDependencyViewModeChange("tree")}
+                  >
+                    <span aria-hidden="true">⋮</span>
+                    <span>Tree</span>
+                  </button>
+                </div>
+                <div className="task-dependency-actions">
+                  <select
+                    className="select-input"
+                    data-role="dependency-blocker-select"
+                    value={selectedBlockerTaskId}
+                    {...getTooltipProps("Choose a task that must finish before this one can continue.")}
+                    onChange={(event) => onSelectBlocker(event.target.value)}
+                  >
+                    <option value="">Select blocker task…</option>
+                    {dependencyCandidates.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.title}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="secondary-button"
+                    data-role="add-dependency"
+                    type="button"
+                    disabled={!selectedBlockerTaskId}
+                    {...getTooltipProps("Link the selected task as a blocker for this one.")}
+                    onClick={onAddDependency}
+                  >Add dependency</button>
+                </div>
               </div>
             </div>
 
             {task.dependencyBlocked ? <p className="error-copy">This task is currently blocked by unresolved dependencies or unfinished subtasks and is not dispatchable.</p> : null}
-            <div className="task-dependency-grid">
-              <div className="task-dependency-column">
-                <p className="eyebrow">Blocked by</p>
-                {task.blockedBy.length ? (
-                  <div className="task-section-list" data-role="task-blocked-by">
-                    {task.blockedBy.map((dependency) => (
-                      <article className="task-history-card" key={dependency.id}>
-                        <div className="workflow-section__header">
-                          <strong>{dependency.blocker.number} · {dependency.blocker.title}</strong>
-                          <span className={`status-badge status-badge--${getStatusTone(dependency.blocker.status)}`}>{formatStatusLabel(dependency.blocker.status)}</span>
-                        </div>
-                        <p className="muted-copy">{dependency.blocker.priority} · {dependency.blocker.type}</p>
-                        <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveDependency(dependency.id)}>Remove dependency</button>
-                      </article>
-                    ))}
-                  </div>
-                ) : <p className="supporting-copy">No blockers linked.</p>}
+            {dependencyViewMode === "list" ? (
+              <div className="task-dependency-grid" data-role="task-dependency-list">
+                <div className="task-dependency-column">
+                  <p className="eyebrow">Blocked by</p>
+                  {task.blockedBy.length ? (
+                    <div className="task-section-list" data-role="task-blocked-by">
+                      {task.blockedBy.map((dependency) => (
+                        <article className="task-history-card" key={dependency.id}>
+                          <div className="workflow-section__header">
+                            <strong>{dependency.blocker.number} · {dependency.blocker.title}</strong>
+                            <span className={`status-badge status-badge--${getStatusTone(dependency.blocker.status)}`}>{formatStatusLabel(dependency.blocker.status)}</span>
+                          </div>
+                          <p className="muted-copy">{dependency.blocker.priority} · {dependency.blocker.type}</p>
+                          <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveDependency(dependency.id)}>Remove dependency</button>
+                        </article>
+                      ))}
+                    </div>
+                  ) : <p className="supporting-copy">No blockers linked.</p>}
+                </div>
+                <div className="task-dependency-column">
+                  <p className="eyebrow">Blocking</p>
+                  {task.blocking.length ? (
+                    <div className="task-section-list" data-role="task-blocking">
+                      {task.blocking.map((dependency) => (
+                        <article className="task-history-card" key={dependency.id}>
+                          <div className="workflow-section__header">
+                            <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
+                            <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
+                          </div>
+                          <p className="supporting-copy">Blocked until this task is resolved.</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : <p className="supporting-copy">No downstream blocked tasks.</p>}
+                </div>
               </div>
-              <div className="task-dependency-column">
-                <p className="eyebrow">Blocking</p>
-                {task.blocking.length ? (
-                  <div className="task-section-list" data-role="task-blocking">
-                    {task.blocking.map((dependency) => (
-                      <article className="task-history-card" key={dependency.id}>
-                        <div className="workflow-section__header">
-                          <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
-                          <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
-                        </div>
-                        <p className="supporting-copy">Blocked until this task is resolved.</p>
-                      </article>
-                    ))}
-                  </div>
-                ) : <p className="supporting-copy">No downstream blocked tasks.</p>}
+            ) : (
+              <div className="task-dependency-tree" data-role="task-dependency-tree">
+                <p className="supporting-copy">Tree view is optimized for scanning dependency chains. Switch back to list view to remove specific direct dependency links.</p>
+                {dependencyTreeLoading ? (
+                  <p className="supporting-copy">Loading dependency tree…</p>
+                ) : dependencyTree ? (
+                  <TaskDependencyTreeCard node={dependencyTree} onOpenTask={onOpenTask} root />
+                ) : (
+                  <p className="supporting-copy">Unable to build the dependency tree right now.</p>
+                )}
               </div>
-            </div>
+            )}
           </section>
         );
       case "repo-files":

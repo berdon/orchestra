@@ -33,6 +33,7 @@ import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetail
 import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
 import { TasksOverviewPage } from "./tasks/TasksOverviewPage";
 import { DEFAULT_TASK_OVERVIEW_STATE, type TaskOverviewState } from "./tasks/taskOverviewState";
+import { buildTaskDependencyTree, collectTaskDependencyTreeNeighborIds, type TaskDependencyTreeNode } from "./tasks/taskDependencyTree";
 
 type TasksRoute =
   | { kind: "overview" }
@@ -230,6 +231,9 @@ export function TasksPage({
   const [sendingTaskMail, setSendingTaskMail] = useState(false);
   const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
+  const [dependencyViewMode, setDependencyViewMode] = useState<"list" | "tree">("list");
+  const [dependencyTreeTasksById, setDependencyTreeTasksById] = useState<Record<string, TaskDetail>>({});
+  const [loadingDependencyTree, setLoadingDependencyTree] = useState(false);
   const [taskDetailEditing, setTaskDetailEditing] = useState(false);
   const [taskScheduleEditing, setTaskScheduleEditing] = useState(false);
   const createTaskTokenRef = useRef(0);
@@ -238,6 +242,7 @@ export function TasksPage({
   const lastProjectIdRef = useRef<string | null>(projectId);
   const routeRef = useRef<TaskDetailRouteState>({ kind: "overview" });
   const taskDetailLoadRequestRef = useRef(0);
+  const taskDependencyTreeLoadRequestRef = useRef(0);
   const taskScheduleLoadRequestRef = useRef(0);
   const getTooltipProps = useExplanatoryTooltipProps();
 
@@ -358,6 +363,17 @@ export function TasksPage({
     );
   }, [taskDetail]);
 
+  const dependencyTree = useMemo<TaskDependencyTreeNode | null>(() => {
+    if (!taskDetail) {
+      return null;
+    }
+
+    return buildTaskDependencyTree(taskDetail.id, {
+      ...dependencyTreeTasksById,
+      [taskDetail.id]: taskDetail,
+    });
+  }, [dependencyTreeTasksById, taskDetail]);
+
   const dependencyCandidates = useMemo(
     () => tasks.filter((task) => route.kind === "detail" && task.id !== route.taskId),
     [route, tasks],
@@ -446,6 +462,40 @@ export function TasksPage({
     }
   }, [orchestraClient, repositories]);
 
+  const loadTaskDependencyTree = useCallback(async (rootTask: TaskDetail) => {
+    const requestId = ++taskDependencyTreeLoadRequestRef.current;
+    setLoadingDependencyTree(true);
+    try {
+      const loadedTasksById: Record<string, TaskDetail> = { [rootTask.id]: rootTask };
+      let pendingTaskIds = collectTaskDependencyTreeNeighborIds(rootTask).filter((taskId) => !loadedTasksById[taskId]);
+
+      while (pendingTaskIds.length) {
+        const loadedTasks = await retryOrchestraRead(() => Promise.all(pendingTaskIds.map((taskId) => orchestraClient.tasks.get(taskId))));
+        if (routeRef.current.kind !== "detail" || routeRef.current.taskId !== rootTask.id || taskDependencyTreeLoadRequestRef.current !== requestId) {
+          return;
+        }
+
+        for (const task of loadedTasks) {
+          loadedTasksById[task.id] = task;
+        }
+
+        pendingTaskIds = Array.from(new Set(loadedTasks.flatMap(collectTaskDependencyTreeNeighborIds))).filter((taskId) => !loadedTasksById[taskId]);
+      }
+
+      if (routeRef.current.kind === "detail" && routeRef.current.taskId === rootTask.id && taskDependencyTreeLoadRequestRef.current === requestId) {
+        setDependencyTreeTasksById((current) => (sameData(current, loadedTasksById) ? current : loadedTasksById));
+      }
+    } catch (error) {
+      if (taskDependencyTreeLoadRequestRef.current === requestId) {
+        setTaskActionError(await reportUiError(orchestraClient, "ui.tasks.dependency_tree.load", error, "Unable to load dependency tree."));
+      }
+    } finally {
+      if (taskDependencyTreeLoadRequestRef.current === requestId) {
+        setLoadingDependencyTree(false);
+      }
+    }
+  }, [orchestraClient]);
+
   const loadTaskScheduleDetail = useCallback(async (scheduleId: string, options?: { preserveDraft?: boolean; silent?: boolean }) => {
     const requestId = ++taskScheduleLoadRequestRef.current;
     if (!options?.silent) {
@@ -483,6 +533,13 @@ export function TasksPage({
   }, [route]);
 
   useEffect(() => {
+    taskDependencyTreeLoadRequestRef.current += 1;
+    setDependencyViewMode("list");
+    setDependencyTreeTasksById({});
+    setLoadingDependencyTree(false);
+  }, [route.kind === "detail" ? route.taskId : null]);
+
+  useEffect(() => {
     if (route.kind === "detail") {
       void loadTaskDetail(route.taskId, { preserveDraft: taskDraftDirty });
     }
@@ -499,6 +556,14 @@ export function TasksPage({
       setTaskScheduleEditing(false);
     }
   }, [route]);
+
+  useEffect(() => {
+    if (route.kind !== "detail" || dependencyViewMode !== "tree" || !taskDetail || taskDetail.id !== route.taskId) {
+      return;
+    }
+
+    void loadTaskDependencyTree(taskDetail);
+  }, [dependencyViewMode, loadTaskDependencyTree, route, taskDetail]);
 
   useEffect(() => {
     onSelectedTaskIdChange?.(route.kind === "detail" ? route.taskId : null);
@@ -1495,6 +1560,9 @@ export function TasksPage({
           dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
           draft={taskDraft}
           fileReferenceDraft={fileReferenceDraft}
+          dependencyTree={dependencyTree}
+          dependencyTreeLoading={loadingDependencyTree}
+          dependencyViewMode={dependencyViewMode}
           loading={loadingTaskDetail}
           onAddAttachment={(files) => void handleAttachmentInputChange(files)}
           onAddComment={(draft) => handleAddComment(draft)}
@@ -1516,6 +1584,7 @@ export function TasksPage({
             setTaskDraftDirty(true);
           }}
           onFileReferenceDraftChange={setFileReferenceDraft}
+          onDependencyViewModeChange={setDependencyViewMode}
           onOpenTask={openTaskDetail}
           onOpenTag={onOpenTaskTag ?? (() => {})}
           onOpenSession={onOpenSession ?? (() => {})}

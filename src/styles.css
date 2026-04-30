@@ -4247,9 +4247,54 @@ strong {
 }
 
 .task-dependency-column,
-.task-dependency-actions {
+.task-dependency-actions,
+.task-dependency-header-controls,
+.task-dependency-tree,
+.task-dependency-tree-node,
+.task-dependency-tree-branches,
+.task-dependency-tree-branch,
+.task-dependency-tree-branch__children {
   display: grid;
   gap: 10px;
+}
+
+.task-dependency-header-controls {
+  justify-items: end;
+}
+
+.task-dependency-tree {
+  align-content: start;
+}
+
+.task-dependency-tree-branch {
+  padding-left: 14px;
+  border-left: 2px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+}
+
+.task-dependency-tree-card {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.task-dependency-tree-card:hover,
+.task-dependency-tree-card:focus-visible {
+  background: var(--color-list-row-selected);
+}
+
+.task-dependency-tree-card--root {
+  background: color-mix(in srgb, var(--color-list-row-selected) 46%, var(--bg-subtle));
+}
+
+.task-dependency-tree-card--reference {
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 88%, transparent);
 }
 
 .status-card {
@@ -5080,6 +5125,10 @@ strong {
   .workflow-form-grid,
   .workflow-form-grid--compact {
     grid-template-columns: 1fr;
+  }
+
+  .task-dependency-header-controls {
+    justify-items: stretch;
   }
 
   .task-overview-filters__toggle {
