@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 
 use rusqlite::{params, Connection};
 
@@ -129,11 +133,24 @@ struct CanonicalSessionRow {
     updated_at: String,
 }
 
+#[derive(Debug, Default)]
+struct SessionForeignKeyLookup {
+    project_ids: HashSet<String>,
+    agent_ids: HashSet<String>,
+    role_ids: HashSet<String>,
+    role_instance_ids: HashSet<String>,
+    task_ids: HashSet<String>,
+    workflow_ids: HashSet<String>,
+    assignment_ids: HashSet<String>,
+    workflow_lane_keys: HashSet<String>,
+}
+
 pub(crate) fn backfill_sessions_table(
     connection: &Connection,
 ) -> Result<BackfillSessionsReport, String> {
     let existing_ids = load_existing_session_ids(connection)?;
     let project_ids_by_slug = load_project_ids_by_slug(connection)?;
+    let foreign_key_lookup = load_session_foreign_key_lookup(connection)?;
     let mut seeds = HashMap::<String, CanonicalSessionSeed>::new();
 
     collect_transcript_file_seeds(connection, &project_ids_by_slug, &mut seeds)?;
@@ -146,7 +163,7 @@ pub(crate) fn backfill_sessions_table(
 
     let mut report = BackfillSessionsReport::default();
     for (session_id, seed) in seeds {
-        let Some(row) = build_canonical_session_row(&session_id, seed) else {
+        let Some(row) = build_canonical_session_row(&session_id, seed, &foreign_key_lookup) else {
             report.skipped_missing_project += 1;
             continue;
         };
@@ -533,6 +550,7 @@ fn collect_role_instance_seeds(
 fn build_canonical_session_row(
     session_id: &str,
     seed: CanonicalSessionSeed,
+    foreign_key_lookup: &SessionForeignKeyLookup,
 ) -> Option<CanonicalSessionRow> {
     let active_assignment = seed.assignment.as_ref().filter(|assignment| {
         matches!(
@@ -544,60 +562,65 @@ fn build_canonical_session_row(
                 | "queued"
         )
     });
-    let primary_binding_task_id = seed
-        .assignment
-        .as_ref()
-        .and_then(|assignment| assignment.task_id.clone())
-        .or_else(|| {
-            seed.lane_run
-                .as_ref()
-                .and_then(|lane_run| lane_run.task_id.clone())
-        });
-    let primary_binding_workflow_id = seed
-        .assignment
-        .as_ref()
-        .and_then(|assignment| assignment.workflow_id.clone())
-        .or_else(|| {
-            seed.lane_run
-                .as_ref()
-                .and_then(|lane_run| lane_run.workflow_id.clone())
-        });
-    let primary_binding_lane_id = seed
-        .assignment
-        .as_ref()
-        .and_then(|assignment| assignment.lane_id.clone())
-        .or_else(|| {
-            seed.lane_run
-                .as_ref()
-                .and_then(|lane_run| lane_run.lane_id.clone())
-        });
-    let project_id = active_assignment
-        .and_then(|assignment| assignment.project_id.clone())
-        .or_else(|| {
-            seed.agent_runtime
-                .as_ref()
-                .map(|binding| binding.project_id.clone())
-        })
-        .or_else(|| {
+    let primary_binding_task_id = first_existing_id(
+        [
             seed.assignment
                 .as_ref()
-                .and_then(|assignment| assignment.project_id.clone())
-        })
-        .or_else(|| {
+                .and_then(|assignment| assignment.task_id.clone()),
             seed.lane_run
                 .as_ref()
-                .and_then(|lane_run| lane_run.project_id.clone())
-        })
-        .or_else(|| {
+                .and_then(|lane_run| lane_run.task_id.clone()),
+        ],
+        &foreign_key_lookup.task_ids,
+    );
+    let primary_binding_workflow_id = first_existing_id(
+        [
+            seed.assignment
+                .as_ref()
+                .and_then(|assignment| assignment.workflow_id.clone()),
+            seed.lane_run
+                .as_ref()
+                .and_then(|lane_run| lane_run.workflow_id.clone()),
+        ],
+        &foreign_key_lookup.workflow_ids,
+    );
+    let primary_binding_lane_id = primary_binding_workflow_id
+        .as_deref()
+        .and_then(|workflow_id| {
+            first_existing_lane_id(
+                workflow_id,
+                [
+                    seed.assignment
+                        .as_ref()
+                        .and_then(|assignment| assignment.lane_id.clone()),
+                    seed.lane_run
+                        .as_ref()
+                        .and_then(|lane_run| lane_run.lane_id.clone()),
+                ],
+                &foreign_key_lookup.workflow_lane_keys,
+            )
+        });
+    let project_id = first_existing_id(
+        [
+            active_assignment.and_then(|assignment| assignment.project_id.clone()),
+            seed.agent_runtime
+                .as_ref()
+                .map(|binding| binding.project_id.clone()),
+            seed.assignment
+                .as_ref()
+                .and_then(|assignment| assignment.project_id.clone()),
+            seed.lane_run
+                .as_ref()
+                .and_then(|lane_run| lane_run.project_id.clone()),
             seed.transcript
                 .as_ref()
-                .and_then(|transcript| transcript.project_id.clone())
-        })
-        .or_else(|| {
+                .and_then(|transcript| transcript.project_id.clone()),
             seed.role_instance
                 .as_ref()
-                .and_then(|binding| binding.inferred_project_id.clone())
-        })?;
+                .and_then(|binding| binding.inferred_project_id.clone()),
+        ],
+        &foreign_key_lookup.project_ids,
+    )?;
 
     let session_kind = if seed.agent_runtime.is_some() {
         "agent_main"
@@ -615,26 +638,31 @@ fn build_canonical_session_row(
     let agent_id = seed
         .agent_runtime
         .as_ref()
-        .map(|binding| binding.agent_id.clone());
-    let role_id = seed
-        .role_instance
-        .as_ref()
-        .map(|binding| binding.role_id.clone())
-        .or_else(|| {
+        .map(|binding| binding.agent_id.clone())
+        .filter(|agent_id| foreign_key_lookup.agent_ids.contains(agent_id));
+    let role_id = first_existing_id(
+        [
+            seed.role_instance
+                .as_ref()
+                .map(|binding| binding.role_id.clone()),
             seed.assignment
                 .as_ref()
                 .filter(|assignment| assignment.worker_type.as_deref() == Some("role"))
-                .and_then(|assignment| assignment.worker_id.clone())
-        });
-    let role_instance_id = seed
-        .role_instance
-        .as_ref()
-        .map(|binding| binding.role_instance_id.clone())
-        .or_else(|| {
+                .and_then(|assignment| assignment.worker_id.clone()),
+        ],
+        &foreign_key_lookup.role_ids,
+    );
+    let role_instance_id = first_existing_id(
+        [
+            seed.role_instance
+                .as_ref()
+                .map(|binding| binding.role_instance_id.clone()),
             seed.assignment
                 .as_ref()
-                .and_then(|assignment| assignment.role_instance_id.clone())
-        });
+                .and_then(|assignment| assignment.role_instance_id.clone()),
+        ],
+        &foreign_key_lookup.role_instance_ids,
+    );
     let (owner_worker_type, owner_worker_id) = if let Some(agent_id) = agent_id.clone() {
         (Some("agent".to_string()), Some(agent_id))
     } else if let Some(role_id) = role_id.clone() {
@@ -759,7 +787,8 @@ fn build_canonical_session_row(
         primary_assignment_id: seed
             .assignment
             .as_ref()
-            .map(|assignment| assignment.assignment_id.clone()),
+            .map(|assignment| assignment.assignment_id.clone())
+            .filter(|assignment_id| foreign_key_lookup.assignment_ids.contains(assignment_id)),
         transcript_path: seed
             .transcript
             .as_ref()
@@ -905,6 +934,71 @@ fn load_project_ids_by_slug(connection: &Connection) -> Result<HashMap<String, S
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to read project lookup rows: {error}"))?;
     Ok(pairs.into_iter().collect())
+}
+
+fn load_session_foreign_key_lookup(
+    connection: &Connection,
+) -> Result<SessionForeignKeyLookup, String> {
+    let workflow_lane_keys = connection
+        .prepare("SELECT workflow_id, id FROM workflow_lanes")
+        .map_err(|error| format!("Unable to prepare workflow lane lookup query: {error}"))?
+        .query_map([], |row| {
+            Ok(workflow_lane_key(
+                &row.get::<_, String>(0)?,
+                &row.get::<_, String>(1)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to query workflow lane lookup rows: {error}"))?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("Unable to read workflow lane lookup rows: {error}"))?;
+
+    Ok(SessionForeignKeyLookup {
+        project_ids: load_id_set(connection, "projects")?,
+        agent_ids: load_id_set(connection, "agents")?,
+        role_ids: load_id_set(connection, "roles")?,
+        role_instance_ids: load_id_set(connection, "role_instances")?,
+        task_ids: load_id_set(connection, "tasks")?,
+        workflow_ids: load_id_set(connection, "workflows")?,
+        assignment_ids: load_id_set(connection, "task_lane_assignments")?,
+        workflow_lane_keys,
+    })
+}
+
+fn load_id_set(connection: &Connection, table_name: &str) -> Result<HashSet<String>, String> {
+    let query = format!("SELECT id FROM {table_name}");
+    let mut statement = connection
+        .prepare(&query)
+        .map_err(|error| format!("Unable to prepare {table_name} id lookup query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query {table_name} id lookup rows: {error}"))?;
+    rows.collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("Unable to read {table_name} id lookup rows: {error}"))
+}
+
+fn first_existing_id<const N: usize>(
+    candidates: [Option<String>; N],
+    valid_ids: &HashSet<String>,
+) -> Option<String> {
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|value| valid_ids.contains(value))
+}
+
+fn first_existing_lane_id<const N: usize>(
+    workflow_id: &str,
+    candidates: [Option<String>; N],
+    workflow_lane_keys: &HashSet<String>,
+) -> Option<String> {
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|lane_id| workflow_lane_keys.contains(&workflow_lane_key(workflow_id, lane_id)))
+}
+
+fn workflow_lane_key(workflow_id: &str, lane_id: &str) -> String {
+    format!("{workflow_id}\u{0}{lane_id}")
 }
 
 fn canonicalize_transcript_status(status: &str) -> String {
@@ -1311,6 +1405,58 @@ mod tests {
             assert_eq!(
                 row.8.as_deref(),
                 Some(session_list::SESSION_HIDDEN_REASON_STALE_ROLE_SESSION)
+            );
+        });
+    }
+
+    #[test]
+    fn backfill_sessions_table_skips_rows_with_missing_project_foreign_key() {
+        with_temp_storage_root("canonical-sessions-missing-project", |_root| {
+            let connection = Connection::open_in_memory().expect("in-memory db should open");
+            database::apply_migrations(&connection).expect("migrations should apply");
+
+            seed_project(&connection, "project-1", "orchestra");
+            seed_workflow(&connection, "workflow-1", "lane-1");
+            let now = crate::state::now_iso();
+            let session_id = Uuid::new_v4().to_string();
+            connection
+                .execute(
+                    "INSERT INTO roles (id, slug, name, description, system_prompt, provider, model, thinking_level, capacity, compaction_window, direct_permissions, archived, created_at, updated_at) VALUES ('role-1', 'role-1', 'Role 1', NULL, NULL, NULL, NULL, 'off', 1, NULL, '[]', 0, ?1, ?1)",
+                    params![now],
+                )
+                .expect("role should seed");
+            connection
+                .execute(
+                    "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, whip_max_attempts, auto_blocked_by_dependencies, archived, source_schedule_id, source_schedule_occurrence_id, created_at, updated_at) VALUES ('task-1', 'missing-project', 1, 'ORC-1', 'Task 1', NULL, 'task', 'in_progress', 'P1', 'workflow-1', 'lane-1', 'role', 'role-1', NULL, NULL, 10, 0, 0, NULL, NULL, ?1, ?1)",
+                    params![now],
+                )
+                .expect("task should seed even with stale project id");
+            connection
+                .execute(
+                    "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-1', 'task-1', 'workflow-1', 'lane-1', 'role', 'role-1', 'awaiting_user_approval', ?1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?2, NULL, ?2, ?2)",
+                    params![session_id, now],
+                )
+                .expect("assignment should seed");
+            connection
+                .execute(
+                    "INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at) VALUES ('lane-run-1', 'task-1', 'lane-1', ?1, 'needs_user', NULL, ?2, NULL)",
+                    params![session_id, now],
+                )
+                .expect("lane run should seed");
+
+            let report = backfill_sessions_table(&connection).expect("backfill should succeed");
+            assert_eq!(report.created, 0);
+            assert_eq!(report.updated, 0);
+            assert_eq!(report.skipped_missing_project, 1);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                        [session_id.as_str()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .expect("session count should query"),
+                0
             );
         });
     }
