@@ -7,6 +7,7 @@ pub mod app_events;
 pub mod auth_bootstrap;
 pub mod authorization;
 pub mod backend_bootstrap;
+pub mod canonical_sessions;
 pub mod channels;
 pub mod command_authorization;
 pub mod database;
