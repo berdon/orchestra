@@ -166,7 +166,7 @@ fn derive_session_id_from_path(path: &Path) -> Option<String> {
     }
 }
 
-fn session_file_fingerprint(path: &Path) -> Result<(u64, i64), String> {
+pub(crate) fn session_file_fingerprint(path: &Path) -> Result<(u64, i64), String> {
     let metadata = fs::metadata(path)
         .map_err(|error| format!("Unable to inspect session file {}: {error}", path.display()))?;
     let file_size = metadata.len();
@@ -379,7 +379,7 @@ fn validate_catalog_session_path(path: &Path, session_id: &str) -> bool {
     path.exists() && parse_session_header_id(path).ok().as_deref() == Some(session_id)
 }
 
-fn summarize_session_for_catalog(path: &Path) -> Result<StoredSession, String> {
+pub(crate) fn summarize_session_for_catalog(path: &Path) -> Result<StoredSession, String> {
     match parse_session_file_summary(path, false) {
         Ok(session) => Ok(session),
         Err(_) => {
@@ -620,13 +620,17 @@ pub fn find_session_context_for_session(session_id: &str) -> Result<SessionConte
     ))
 }
 
+pub(crate) fn session_file_header_cwd(path: &Path) -> Result<Option<PathBuf>, String> {
+    let header = parse_session_header(path)?;
+    Ok(header.get("cwd").and_then(Value::as_str).map(PathBuf::from))
+}
+
 pub fn get_session_header_cwd(
     session_dir: &Path,
     session_id: &str,
 ) -> Result<Option<PathBuf>, String> {
     let path = get_session_path(session_dir, session_id)?;
-    let header = parse_session_header(&path)?;
-    Ok(header.get("cwd").and_then(Value::as_str).map(PathBuf::from))
+    session_file_header_cwd(&path)
 }
 
 pub fn create_session_file(

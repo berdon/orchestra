@@ -905,6 +905,76 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_lanes_workflow_order
                 ON workflow_lanes(workflow_id, lane_order);
 
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                session_kind TEXT NOT NULL,
+                owner_worker_type TEXT,
+                owner_worker_id TEXT,
+                agent_id TEXT,
+                role_id TEXT,
+                role_instance_id TEXT,
+                primary_task_id TEXT,
+                primary_workflow_id TEXT,
+                primary_lane_id TEXT,
+                primary_assignment_id TEXT,
+                transcript_path TEXT,
+                transcript_cwd TEXT,
+                transcript_exists INTEGER NOT NULL DEFAULT 1,
+                file_size INTEGER,
+                file_mtime_ms INTEGER,
+                last_indexed_at TEXT,
+                title TEXT NOT NULL,
+                session_status TEXT NOT NULL,
+                list_visibility TEXT NOT NULL,
+                hidden_reason TEXT,
+                dismissed_at TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE SET NULL,
+                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE SET NULL,
+                FOREIGN KEY(role_instance_id) REFERENCES role_instances(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_assignment_id) REFERENCES task_lane_assignments(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_workflow_id, primary_lane_id)
+                    REFERENCES workflow_lanes(workflow_id, id)
+                    ON DELETE SET NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_transcript_path
+                ON sessions(transcript_path)
+                WHERE transcript_path IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_updated
+                ON sessions(project_id, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_visibility
+                ON sessions(project_id, list_visibility, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_primary_task
+                ON sessions(primary_task_id, updated_at DESC)
+                WHERE primary_task_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_primary_task_lane
+                ON sessions(primary_task_id, primary_lane_id, list_visibility, updated_at DESC)
+                WHERE primary_task_id IS NOT NULL AND primary_lane_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_agent_main
+                ON sessions(project_id, agent_id, updated_at DESC)
+                WHERE agent_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_role_instance
+                ON sessions(role_instance_id, updated_at DESC)
+                WHERE role_instance_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_owner_worker
+                ON sessions(owner_worker_type, owner_worker_id, updated_at DESC)
+                WHERE owner_worker_type IS NOT NULL AND owner_worker_id IS NOT NULL;
+
             CREATE TABLE IF NOT EXISTS domain_events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 id TEXT NOT NULL UNIQUE,
@@ -1001,6 +1071,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
     migrate_legacy_workflow_intervention_semantics(connection)?;
+    crate::services::canonical_sessions::backfill_sessions_table(connection)?;
     Ok(())
 }
 
