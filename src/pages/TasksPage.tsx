@@ -29,7 +29,7 @@ import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
 import { getEffectiveTaskDetailAssignmentStatus } from "./tasks/taskDetailActionState";
 import { buildTaskDetailHeaderActions } from "./tasks/taskDetailHeaderActions";
-import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetailRouteState } from "./tasks/taskDetailLoadGuards";
+import { getTaskDetailRenderState, shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad, type TaskDetailRouteState } from "./tasks/taskDetailLoadGuards";
 import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask, type TaskBoardModel } from "./tasks/taskBoardModel";
 import { TasksOverviewPage } from "./tasks/TasksOverviewPage";
 import { DEFAULT_TASK_OVERVIEW_STATE, type TaskOverviewState } from "./tasks/taskOverviewState";
@@ -383,6 +383,10 @@ export function TasksPage({
     () => (taskDetail?.workflowId ? (workflowDefinitions[taskDetail.workflowId]?.lanes ?? []).map((lane) => ({ id: lane.id, name: lane.name })) : []),
     [taskDetail?.workflowId, workflowDefinitions],
   );
+  const taskDetailRenderState = useMemo(
+    () => getTaskDetailRenderState(route, taskDetail?.id ?? null, loadingTaskDetail),
+    [route, taskDetail?.id, loadingTaskDetail],
+  );
 
   const loadTasksData = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -681,8 +685,6 @@ export function TasksPage({
 
   function openTaskDetail(taskId: string) {
     taskDetailLoadRequestRef.current += 1;
-    setTaskDetail(null);
-    setTaskMessages([]);
     setTaskScheduleDetail(null);
     setRoute({ kind: "detail", taskId });
   }
@@ -1550,81 +1552,104 @@ export function TasksPage({
           schedule={taskScheduleDetail}
           workflows={workflowSummaries}
         />
-      ) : route.kind === "detail" && taskDetail?.id === route.taskId ? (
-        <TaskDetailPage
-          agents={agents}
-          commentDraft={commentDraft}
-          tasks={tasks}
-          deleting={deletingTask}
-          closing={closingTask}
-          dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
-          draft={taskDraft}
-          fileReferenceDraft={fileReferenceDraft}
-          dependencyTree={dependencyTree}
-          dependencyTreeLoading={loadingDependencyTree}
-          dependencyViewMode={dependencyViewMode}
-          loading={loadingTaskDetail}
-          onAddAttachment={(files) => void handleAttachmentInputChange(files)}
-          onAddComment={(draft) => handleAddComment(draft)}
-          onAddTaskTodo={(description, laneId) => void handleAddTaskTodo(description, laneId)}
-          onDeleteComment={(commentId) => handleDeleteComment(commentId)}
-          onDeleteTaskTodo={(todoId) => void handleDeleteTaskTodo(todoId)}
-          onAddDependency={() => void handleAddDependency()}
-          onAddFileReference={() => void handleAddFileReference()}
-          onApproveCompletion={() => void handleApproveLaneCompletion()}
-          onCommentDraftChange={setCommentDraft}
-          onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
-          onComplete={(outcome) => void handleCompleteLane(outcome)}
-          onCancelEdit={handleCancelDetailEdit}
-          onClose={(reason) => void handleCloseDetailTask(reason)}
-          onDelete={() => void handleDeleteDetailTask()}
-          onDispatch={() => void handleDispatchTaskLane()}
-          onDraftChange={(draft) => {
-            setTaskDraft(draft);
-            setTaskDraftDirty(true);
-          }}
-          onFileReferenceDraftChange={setFileReferenceDraft}
-          onDependencyViewModeChange={setDependencyViewMode}
-          onOpenTask={openTaskDetail}
-          onOpenTag={onOpenTaskTag ?? (() => {})}
-          onOpenSession={onOpenSession ?? (() => {})}
-          onOpenAgent={onOpenAgent ?? (() => {})}
-          onOpenRole={onOpenRole ?? (() => {})}
-          onPublish={() => void handlePublishDetailTask()}
-          onUpdateComment={(commentId, message) => handleUpdateComment(commentId, message)}
-          onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
-          onRetry={() => void handleRetryTaskLane()}
-          onPauseRuntime={() => void handlePauseTaskRuntime()}
-          onWhipTask={() => void handleWhipTask()}
-          onResetTask={() => void handleResetTaskRuntime()}
-          onRelane={(laneId, notes) => void handleRelaneTask(laneId, notes)}
-          onSendBackForWork={() => void handleSendLaneBackForWork()}
-          onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
-          onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
-          onSetDefaultFileReference={(referenceId) => void handleSetDefaultFileReference(referenceId)}
-          onMarkTaskTodoFinished={(todoId) => void handleMarkTaskTodoFinished(todoId)}
-          onMarkTaskTodoUnfinished={(todoId) => void handleMarkTaskTodoUnfinished(todoId)}
-          onSave={() => void handleSaveDetailTask()}
-          onSelectBlocker={setSelectedBlockerTaskId}
-          pendingActionId={detailActionPending}
-          publishing={publishingTask}
-          roles={roles}
-          repositories={repositories}
-          saving={savingTask}
-          selectedBlockerTaskId={selectedBlockerTaskId}
-          sendingMail={sendingTaskMail}
-          task={taskDetail}
-          taskMessages={taskMessages}
-          timelineItems={timelineItems}
-          workflows={workflowSummaries}
-          workflowLanes={taskWorkflowLanes}
-          onSendMail={(body, interrupt) => handleSendTaskMail(body, interrupt)}
-          onEditingStateChange={setTaskDetailEditing}
-        />
+      ) : route.kind === "detail" && taskDetailRenderState !== "loading" && taskDetail ? (
+        <div className="task-detail-route-loading-shell">
+          <TaskDetailPage
+            agents={agents}
+            commentDraft={commentDraft}
+            tasks={tasks}
+            deleting={deletingTask}
+            closing={closingTask}
+            dependencyCandidates={dependencyCandidates.map((task) => ({ id: task.id, number: task.number, title: task.title }))}
+            draft={taskDraft}
+            fileReferenceDraft={fileReferenceDraft}
+            dependencyTree={dependencyTree}
+            dependencyTreeLoading={loadingDependencyTree}
+            dependencyViewMode={dependencyViewMode}
+            loading={loadingTaskDetail || taskDetailRenderState === "detail_pending"}
+            onAddAttachment={(files) => void handleAttachmentInputChange(files)}
+            onAddComment={(draft) => handleAddComment(draft)}
+            onAddTaskTodo={(description, laneId) => void handleAddTaskTodo(description, laneId)}
+            onDeleteComment={(commentId) => handleDeleteComment(commentId)}
+            onDeleteTaskTodo={(todoId) => void handleDeleteTaskTodo(todoId)}
+            onAddDependency={() => void handleAddDependency()}
+            onAddFileReference={() => void handleAddFileReference()}
+            onApproveCompletion={() => void handleApproveLaneCompletion()}
+            onCommentDraftChange={setCommentDraft}
+            onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
+            onComplete={(outcome) => void handleCompleteLane(outcome)}
+            onCancelEdit={handleCancelDetailEdit}
+            onClose={(reason) => void handleCloseDetailTask(reason)}
+            onDelete={() => void handleDeleteDetailTask()}
+            onDispatch={() => void handleDispatchTaskLane()}
+            onDraftChange={(draft) => {
+              setTaskDraft(draft);
+              setTaskDraftDirty(true);
+            }}
+            onFileReferenceDraftChange={setFileReferenceDraft}
+            onDependencyViewModeChange={setDependencyViewMode}
+            onOpenTask={openTaskDetail}
+            onOpenTag={onOpenTaskTag ?? (() => {})}
+            onOpenSession={onOpenSession ?? (() => {})}
+            onOpenAgent={onOpenAgent ?? (() => {})}
+            onOpenRole={onOpenRole ?? (() => {})}
+            onPublish={() => void handlePublishDetailTask()}
+            onUpdateComment={(commentId, message) => handleUpdateComment(commentId, message)}
+            onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
+            onRetry={() => void handleRetryTaskLane()}
+            onPauseRuntime={() => void handlePauseTaskRuntime()}
+            onWhipTask={() => void handleWhipTask()}
+            onResetTask={() => void handleResetTaskRuntime()}
+            onRelane={(laneId, notes) => void handleRelaneTask(laneId, notes)}
+            onSendBackForWork={() => void handleSendLaneBackForWork()}
+            onRemoveDependency={(dependencyId) => void handleRemoveDependency(dependencyId)}
+            onRemoveFileReference={(referenceId) => void handleRemoveFileReference(referenceId)}
+            onSetDefaultFileReference={(referenceId) => void handleSetDefaultFileReference(referenceId)}
+            onMarkTaskTodoFinished={(todoId) => void handleMarkTaskTodoFinished(todoId)}
+            onMarkTaskTodoUnfinished={(todoId) => void handleMarkTaskTodoUnfinished(todoId)}
+            onSave={() => void handleSaveDetailTask()}
+            onSelectBlocker={setSelectedBlockerTaskId}
+            pendingActionId={detailActionPending}
+            publishing={publishingTask}
+            roles={roles}
+            repositories={repositories}
+            saving={savingTask}
+            selectedBlockerTaskId={selectedBlockerTaskId}
+            sendingMail={sendingTaskMail}
+            task={taskDetail}
+            taskMessages={taskMessages}
+            timelineItems={timelineItems}
+            workflows={workflowSummaries}
+            workflowLanes={taskWorkflowLanes}
+            onSendMail={(body, interrupt) => handleSendTaskMail(body, interrupt)}
+            onEditingStateChange={setTaskDetailEditing}
+          />
+          {taskDetailRenderState === "detail_pending" ? (
+            <div className="task-detail-route-loading-overlay" data-role="task-detail-route-loading-overlay" aria-live="polite">
+              <section className="panel task-detail-route-loading-card" aria-busy="true">
+                <p className="eyebrow">Opening task</p>
+                <h3>Loading exact task detail</h3>
+                <p>Keeping the current detail shell stable while the selected task hydrates.</p>
+              </section>
+            </div>
+          ) : null}
+        </div>
       ) : route.kind === "detail" ? (
-        <section className="panel empty-state">
-          <h3>Loading task</h3>
-          <p>Refreshing the selected task detail…</p>
+        <section className="task-page task-detail-page panel task-detail-loading-panel" data-role="task-detail-loading-panel" aria-busy="true">
+          <div className="panel__header panel__header--session-detail task-detail-primary-header">
+            <div className="task-detail-primary-header__copy">
+              <div className="empty-state__loading-visual task-detail-loading-visual" aria-hidden="true">
+                <span className="empty-state__loading-pill task-detail-loading-pill" />
+                <span className="empty-state__loading-line empty-state__loading-line--title task-detail-loading-line--title" />
+                <span className="empty-state__loading-line task-detail-loading-line" />
+              </div>
+            </div>
+          </div>
+          <div className="task-detail-loading-copy">
+            <p className="eyebrow">Opening task</p>
+            <h3>Loading task detail</h3>
+            <p>Preparing the selected task without shifting the page layout.</p>
+          </div>
         </section>
       ) : route.kind === "schedule" ? (
         <section className="panel empty-state">

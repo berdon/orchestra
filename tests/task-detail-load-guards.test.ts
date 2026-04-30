@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad } from "../src/pages/tasks/taskDetailLoadGuards";
+import { getTaskDetailRenderState, shouldApplyTaskDetailLoad, shouldApplyTaskScheduleLoad } from "../src/pages/tasks/taskDetailLoadGuards";
 
 describe("task detail load guards", () => {
   it("accepts only the latest matching task detail load for the active detail route", () => {
@@ -15,5 +15,13 @@ describe("task detail load guards", () => {
     expect(shouldApplyTaskScheduleLoad({ kind: "schedule", scheduleId: "schedule-b" }, "schedule-a", 6, 7)).toBe(false);
     expect(shouldApplyTaskScheduleLoad({ kind: "schedule", scheduleId: "schedule-b" }, "schedule-b", 6, 7)).toBe(false);
     expect(shouldApplyTaskScheduleLoad({ kind: "detail", taskId: "task-b" }, "schedule-b", 7, 7)).toBe(false);
+  });
+
+  it("keeps the current detail shell mounted while an exact replacement task is still loading", () => {
+    expect(getTaskDetailRenderState({ kind: "detail", taskId: "task-b" }, null, true)).toBe("loading");
+    expect(getTaskDetailRenderState({ kind: "detail", taskId: "task-b" }, "task-b", true)).toBe("detail");
+    expect(getTaskDetailRenderState({ kind: "detail", taskId: "task-b" }, "task-a", true)).toBe("detail_pending");
+    expect(getTaskDetailRenderState({ kind: "detail", taskId: "task-b" }, "task-a", false)).toBe("loading");
+    expect(getTaskDetailRenderState({ kind: "overview" }, "task-a", true)).toBeNull();
   });
 });

@@ -3947,6 +3947,58 @@ strong {
   position: relative;
 }
 
+.task-detail-route-loading-shell {
+  position: relative;
+}
+
+.task-detail-route-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--surface-base) 72%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 2;
+}
+
+.task-detail-route-loading-card {
+  width: min(560px, 100%);
+}
+
+.task-detail-loading-panel {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.task-detail-loading-visual {
+  width: min(420px, 100%);
+}
+
+.task-detail-loading-pill {
+  width: 84px;
+}
+
+.task-detail-loading-line--title {
+  width: min(320px, 72vw);
+}
+
+.task-detail-loading-line {
+  width: min(220px, 56vw);
+}
+
+.task-detail-loading-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.task-detail-loading-copy h3,
+.task-detail-loading-copy p {
+  margin: 0;
+}
+
 .task-detail-header-actions {
   display: flex;
   flex-direction: column;

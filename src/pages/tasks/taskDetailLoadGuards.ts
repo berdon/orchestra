@@ -4,6 +4,8 @@ export type TaskDetailRouteState =
   | { kind: "detail"; taskId: string }
   | { kind: "schedule"; scheduleId: string };
 
+export type TaskDetailRenderState = "detail" | "detail_pending" | "loading" | null;
+
 export function shouldApplyTaskDetailLoad(
   route: TaskDetailRouteState,
   taskId: string,
@@ -20,4 +22,24 @@ export function shouldApplyTaskScheduleLoad(
   latestRequestId: number,
 ) {
   return requestId === latestRequestId && route.kind === "schedule" && route.scheduleId === scheduleId;
+}
+
+export function getTaskDetailRenderState(
+  route: TaskDetailRouteState,
+  taskDetailId: string | null,
+  loading: boolean,
+): TaskDetailRenderState {
+  if (route.kind !== "detail") {
+    return null;
+  }
+
+  if (!taskDetailId) {
+    return "loading";
+  }
+
+  if (taskDetailId === route.taskId) {
+    return "detail";
+  }
+
+  return loading ? "detail_pending" : "loading";
 }
