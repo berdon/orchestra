@@ -53,8 +53,8 @@ export function ResourceStatusBanner({
         </div>
       ) : null}
       {refreshing && !error ? (
-        <div className="session-readonly-banner app-status-banner" data-role={`${dataRolePrefix}-refreshing`}>
-          <div>{refreshingLabel}</div>
+        <div className="visually-hidden" role="status" aria-live="polite" data-role={`${dataRolePrefix}-refreshing-live`}>
+          {refreshingLabel}
         </div>
       ) : null}
     </>
