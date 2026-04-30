@@ -68,9 +68,7 @@ pub fn effective_task_review_assignment_status(
     if is_task_in_user_review_state(task) {
         match assignment.pending_outcome.as_deref() {
             Some("success") => return ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL.to_string(),
-            Some("needs_user") => {
-                return ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION.to_string()
-            }
+            Some("needs_user") => return ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION.to_string(),
             Some("paused") => return ASSIGNMENT_STATUS_PAUSED_BY_USER.to_string(),
             _ => {}
         }
@@ -5324,7 +5322,10 @@ mod tests {
         }
     }
 
-    fn build_test_task_lane_assignment(status: &str, pending_outcome: Option<&str>) -> TaskLaneAssignment {
+    fn build_test_task_lane_assignment(
+        status: &str,
+        pending_outcome: Option<&str>,
+    ) -> TaskLaneAssignment {
         let now = now_iso();
         TaskLaneAssignment {
             id: "assignment-test".into(),
@@ -6212,10 +6213,8 @@ mod tests {
     #[test]
     fn derives_effective_review_assignment_status_from_pending_outcome() {
         let approval_task = build_test_task_detail("in_review", "user", Some("lane-review"));
-        let paused_assignment = build_test_task_lane_assignment(
-            ASSIGNMENT_STATUS_PAUSED_BY_USER,
-            Some("success"),
-        );
+        let paused_assignment =
+            build_test_task_lane_assignment(ASSIGNMENT_STATUS_PAUSED_BY_USER, Some("success"));
         assert_eq!(
             effective_task_review_assignment_status(&approval_task, &paused_assignment),
             ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
@@ -6232,12 +6231,13 @@ mod tests {
         );
 
         let explicit_pause_task = build_test_task_detail("in_progress", "role", Some("lane-work"));
-        let explicit_pause_assignment = build_test_task_lane_assignment(
-            ASSIGNMENT_STATUS_PAUSED_BY_USER,
-            Some("paused"),
-        );
+        let explicit_pause_assignment =
+            build_test_task_lane_assignment(ASSIGNMENT_STATUS_PAUSED_BY_USER, Some("paused"));
         assert_eq!(
-            effective_task_review_assignment_status(&explicit_pause_task, &explicit_pause_assignment),
+            effective_task_review_assignment_status(
+                &explicit_pause_task,
+                &explicit_pause_assignment
+            ),
             ASSIGNMENT_STATUS_PAUSED_BY_USER
         );
     }
@@ -9214,7 +9214,7 @@ mod tests {
     }
 
     #[test]
-    fn blocker_implementation_to_test_transition_restores_dependent_to_ready() {
+    fn blocker_implementation_to_test_transition_keeps_dependent_blocked_until_completion() {
         let mut connection = in_memory_connection();
         let role = roles::create_role(
             &mut connection,
@@ -9298,7 +9298,7 @@ mod tests {
             },
         )
         .expect("dependent workflow should create");
-        let root = init_test_repo("task-runtime-blocker-test-lane-unblocks-dependent");
+        let root = init_test_repo("task-runtime-blocker-test-lane-keeps-dependent-blocked");
         insert_project_and_repository(
             &connection,
             "project-blocker-test-lane",
@@ -9315,7 +9315,7 @@ mod tests {
             TaskUpsertInput {
                 title: "Blocker task".into(),
                 description: Some(
-                    "Advancing this to Test should unblock the dependent task.".into(),
+                    "Advancing this to Test should not unblock the dependent task.".into(),
                 ),
                 task_type: "task".into(),
                 tags: Vec::new(),
@@ -9338,7 +9338,9 @@ mod tests {
             Some("project-blocker-test-lane"),
             TaskUpsertInput {
                 title: "Dependent task".into(),
-                description: Some("Should return to ready once the blocker reaches Test.".into()),
+                description: Some(
+                    "Should stay blocked until the blocker actually completes.".into(),
+                ),
                 task_type: "task".into(),
                 tags: Vec::new(),
                 status: "ready".into(),
@@ -9381,8 +9383,25 @@ mod tests {
             Some("lane-blocker-test")
         );
 
+        let still_blocked = tasks::get_task(&connection, &dependent.id)
+            .expect("dependent should remain blocked after blocker enters Test");
+        assert_eq!(still_blocked.status, "blocked");
+        assert!(still_blocked.dependency_blocked);
+        assert!(!still_blocked.ready_for_dispatch);
+
+        let completed_blocker = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &blocker.id,
+            Some("Test completed".into()),
+            None,
+        )
+        .expect("blocker completion should succeed");
+        assert_eq!(completed_blocker.status, "completed");
+
         let unblocked_dependent = tasks::get_task(&connection, &dependent.id)
-            .expect("dependent should reload ready after blocker enters Test");
+            .expect("dependent should reload ready after blocker completion");
         assert_eq!(unblocked_dependent.status, "ready");
         assert!(!unblocked_dependent.dependency_blocked);
         assert!(unblocked_dependent.ready_for_dispatch);
