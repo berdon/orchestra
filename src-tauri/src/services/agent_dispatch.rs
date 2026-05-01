@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use rusqlite::OptionalExtension;
 use tauri::AppHandle;
 use uuid::Uuid;
 
@@ -8,7 +7,7 @@ use crate::{
     models::{AgentDefinition, AgentQueueEntry, AgentRuntimeState},
     services::{
         agent_runtime, agents, live_sessions, messages, pi_sessions, projects, roles,
-        session_records,
+        session_ownership, session_records,
     },
     state::{generate_id, AppState},
 };
@@ -540,12 +539,12 @@ fn agent_for_session(
     connection: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<Option<(String, String)>, String> {
-    connection
-        .query_row(
-            "SELECT project_id, agent_id FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
-            [session_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve agent runtime for session {session_id}: {error}"))
+    let Some(context) = session_ownership::load_session_worker_context(connection, session_id)?
+    else {
+        return Ok(None);
+    };
+    match context.agent_id {
+        Some(agent_id) => Ok(Some((context.project_id, agent_id))),
+        None => Ok(None),
+    }
 }

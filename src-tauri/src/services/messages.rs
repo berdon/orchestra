@@ -9,7 +9,9 @@ use crate::{
         AuthorizationContext, MailboxMessage, SendMailboxMessageInput, TaskComment, TaskDetail,
         TaskLaneAssignment,
     },
-    services::{agent_runtime, agents, pi_sessions, projects, roles, task_runtime},
+    services::{
+        agent_runtime, agents, pi_sessions, projects, roles, session_ownership, task_runtime,
+    },
     state::{generate_id, now_iso, AppState},
 };
 
@@ -325,7 +327,7 @@ pub fn send_mailbox_message_from_user(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "User".into()),
     };
-    send_mailbox_message_internal(Some(&app), Some(state), connection, sender, input)
+    send_mailbox_message_internal(Some(&app), Some(state), connection, sender, None, input)
 }
 
 pub fn send_mailbox_message_from_user_without_app(
@@ -341,7 +343,7 @@ pub fn send_mailbox_message_from_user_without_app(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "User".into()),
     };
-    send_mailbox_message_internal(None, None, connection, sender, input)
+    send_mailbox_message_internal(None, None, connection, sender, None, input)
 }
 
 pub fn send_mailbox_message_from_authorization(
@@ -353,7 +355,14 @@ pub fn send_mailbox_message_from_authorization(
     input: SendMailboxMessageInput,
 ) -> Result<MailboxMessage, String> {
     let sender = resolve_sender(connection, authorization, session_id, &input)?;
-    send_mailbox_message_internal(Some(&app), Some(state), connection, sender, input)
+    send_mailbox_message_internal(
+        Some(&app),
+        Some(state),
+        connection,
+        sender,
+        session_id,
+        input,
+    )
 }
 
 pub fn create_user_mailbox_message_for_task_comment(
@@ -441,6 +450,7 @@ fn send_mailbox_message_internal(
     state: Option<&AppState>,
     connection: &Connection,
     sender: ResolvedSender,
+    session_id: Option<&str>,
     input: SendMailboxMessageInput,
 ) -> Result<MailboxMessage, String> {
     let body = input.body.trim();
@@ -449,7 +459,7 @@ fn send_mailbox_message_internal(
     }
 
     let priority = normalize_priority(input.priority.as_deref())?;
-    let project_id = resolve_project_id_for_send(connection, &sender, &input)?;
+    let project_id = resolve_project_id_for_send(connection, &sender, session_id, &input)?;
     let task_id = input.task_id.as_deref().map(str::to_string);
     let recipient = resolve_recipient(connection, &project_id, task_id.as_deref(), &input)?;
     let now = now_iso();
@@ -613,6 +623,7 @@ fn resolve_sender(
 fn resolve_project_id_for_send(
     connection: &Connection,
     sender: &ResolvedSender,
+    session_id: Option<&str>,
     input: &SendMailboxMessageInput,
 ) -> Result<String, String> {
     if let Some(task_id) = input.task_id.as_deref() {
@@ -629,18 +640,31 @@ fn resolve_project_id_for_send(
         return Ok(project_id.to_string());
     }
 
+    if let Some(session_id) = session_id {
+        if let Some(project_id) =
+            session_ownership::load_session_project_id(connection, session_id)?
+        {
+            return Ok(project_id);
+        }
+    }
+
     if sender.sender_type == "agent" {
         if let Some(sender_id) = sender.sender_id.as_deref() {
-            if let Some(project_id) = connection
-                .query_row(
-                    "SELECT project_id FROM agent_runtime_states WHERE agent_id = ?1 ORDER BY updated_at DESC LIMIT 1",
-                    [sender_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(|error| format!("Unable to resolve sender project for agent {sender_id}: {error}"))?
+            let authorization = AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: sender_id.to_string(),
+            };
+            if let Some(agent_session_id) =
+                session_ownership::load_worker_session_from_authorization(
+                    connection,
+                    &authorization,
+                )?
             {
-                return Ok(project_id);
+                if let Some(project_id) =
+                    session_ownership::load_session_project_id(connection, &agent_session_id)?
+                {
+                    return Ok(project_id);
+                }
             }
         }
     }
@@ -815,7 +839,7 @@ fn resolve_visible_assignment_mail_scope(
     let Some(session_id) = session_id else {
         return Ok(None);
     };
-    let assignment = task_runtime::get_active_assignment_for_session(connection, session_id)?;
+    let assignment = session_ownership::load_session_open_assignment(connection, session_id)?;
     if let Some(assignment) = assignment {
         task_runtime::validate_assignment_authorization(&assignment, Some(authorization))?;
         return Ok(Some(assignment));
@@ -838,7 +862,7 @@ fn resolve_assignment_scope_without_authorization(
     let Some(session_id) = session_id else {
         return Ok(None);
     };
-    task_runtime::get_active_assignment_for_session(connection, session_id)
+    session_ownership::load_session_open_assignment(connection, session_id)
 }
 
 fn resolve_project_id_for_session(
@@ -849,37 +873,7 @@ fn resolve_project_id_for_session(
         return Ok(None);
     };
 
-    if let Some(project_id) = connection
-        .query_row(
-            r#"
-            SELECT t.project_id
-            FROM task_lane_assignments tla
-            JOIN tasks t ON t.id = tla.task_id
-            WHERE tla.session_id = ?1
-            ORDER BY tla.updated_at DESC, tla.created_at DESC
-            LIMIT 1
-            "#,
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| {
-            format!("Unable to resolve session project from assignment {session_id}: {error}")
-        })?
-    {
-        return Ok(Some(project_id));
-    }
-
-    connection
-        .query_row(
-            "SELECT project_id FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| {
-            format!("Unable to resolve session project from agent runtime {session_id}: {error}")
-        })
+    session_ownership::load_session_project_id(connection, session_id)
 }
 
 fn resolve_project_id_for_task(
@@ -1286,6 +1280,7 @@ mod tests {
         let error = resolve_project_id_for_send(
             &connection,
             &sender,
+            None,
             &SendMailboxMessageInput {
                 project_id: Some("project-missing".into()),
                 task_id: None,
@@ -1298,6 +1293,48 @@ mod tests {
         )
         .expect_err("unknown projects should be rejected");
         assert!(error.contains("Project project-missing was not found"));
+    }
+
+    #[test]
+    fn agent_send_defaults_to_current_session_project() {
+        let connection = open_test_connection("messages-agent-send-session-project");
+        let now = crate::state::now_iso();
+        seed_agent(&connection, "agent-1", "Agent 1", &now);
+        connection.execute(
+            "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-2', 'project-2', 'Project 2', NULL, 'P2', NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("secondary project should seed");
+        connection.execute(
+            "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('project-2', 'agent-1', 'idle', 'session-agent', '/tmp/runtime', NULL, NULL, NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("runtime state should seed");
+        connection.execute(
+            "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, agent_id, worker_type, worker_id, owner_worker_type, owner_worker_id, transcript_exists, lifecycle_state, created_at, updated_at) VALUES ('session-agent', 'orchestra', '/tmp/session-agent.jsonl', '/tmp/session-agent.jsonl', 'Agent Session', 'agent_main', 'active', 'active', ?1, ?1, 'agent-1', 'agent', 'agent-1', 'agent', 'agent-1', 0, 'active', ?1, ?1)",
+            params![now.as_str()],
+        ).expect("session row should seed");
+
+        let sender = ResolvedSender {
+            sender_type: "agent".into(),
+            sender_id: Some("agent-1".into()),
+            sender_label: "Agent 1".into(),
+        };
+        let project_id = resolve_project_id_for_send(
+            &connection,
+            &sender,
+            Some("session-agent"),
+            &SendMailboxMessageInput {
+                project_id: None,
+                task_id: None,
+                recipient_type: "user".into(),
+                recipient_id: None,
+                sender_label: None,
+                body: "hello".into(),
+                priority: None,
+            },
+        )
+        .expect("project id should resolve");
+
+        assert_eq!(project_id, "orchestra");
     }
 
     #[test]

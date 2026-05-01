@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -300,6 +303,8 @@ pub fn close_session_context(
     } else {
         None
     };
+    let (primary_task_id, primary_workflow_id, primary_lane_id, primary_assignment_id) =
+        current_session_binding(connection, session_id)?;
     let (task_id, workflow_id, lane_id, assignment_id) = if input.clear_assignment_binding {
         (
             None::<String>,
@@ -308,7 +313,12 @@ pub fn close_session_context(
             None::<String>,
         )
     } else {
-        current_session_binding(connection, session_id)?
+        (
+            primary_task_id.clone(),
+            primary_workflow_id.clone(),
+            primary_lane_id.clone(),
+            primary_assignment_id.clone(),
+        )
     };
     let (transcript_exists, file_size, file_mtime_ms) =
         transcript_file_metadata(seed.session_path.as_path());
@@ -324,24 +334,24 @@ pub fn close_session_context(
                 workflow_id = ?6,
                 lane_id = ?7,
                 assignment_id = ?8,
-                primary_task_id = ?5,
-                primary_workflow_id = ?6,
-                primary_lane_id = ?7,
-                primary_assignment_id = ?8,
-                session_status = ?9,
+                primary_task_id = ?9,
+                primary_workflow_id = ?10,
+                primary_lane_id = ?11,
+                primary_assignment_id = ?12,
+                session_status = ?13,
                 list_visibility = CASE
                     WHEN hidden_reason IS NOT NULL OR dismissed_at IS NOT NULL THEN 'hidden'
-                    ELSE ?10
+                    ELSE ?14
                 END,
-                lifecycle_state = ?11,
-                transcript_exists = ?12,
-                file_size = ?13,
-                file_mtime_ms = ?14,
-                last_indexed_at = ?15,
-                last_seen_at = ?15,
-                updated_at = ?15,
-                closed_at = ?16,
-                archived_at = COALESCE(?17, archived_at)
+                lifecycle_state = ?15,
+                transcript_exists = ?16,
+                file_size = ?17,
+                file_mtime_ms = ?18,
+                last_indexed_at = ?19,
+                last_seen_at = ?19,
+                updated_at = ?19,
+                closed_at = ?20,
+                archived_at = COALESCE(?21, archived_at)
             WHERE id = ?1
             "#,
             params![
@@ -353,6 +363,10 @@ pub fn close_session_context(
                 workflow_id,
                 lane_id,
                 assignment_id,
+                primary_task_id,
+                primary_workflow_id,
+                primary_lane_id,
+                primary_assignment_id,
                 session_status_for_lifecycle(input.lifecycle_state),
                 list_visibility_for_lifecycle(input.lifecycle_state),
                 input.lifecycle_state,
@@ -1099,13 +1113,23 @@ mod tests {
         assert_eq!(bound.2.as_deref(), Some("assignment-1"));
         close_active_assignment_session(&connection, &created.record.id, Some("project-1"), true)
             .unwrap();
-        let closed: (String, Option<String>, Option<String>, Option<String>) = connection.query_row(
-            "SELECT lifecycle_state, task_id, assignment_id, archived_at FROM sessions WHERE id = ?1",
-            [&created.record.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        let closed: (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = connection.query_row(
+            "SELECT lifecycle_state, task_id, assignment_id, primary_task_id, primary_assignment_id, archived_at FROM sessions WHERE id = ?1",
+            [&created.record.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         ).unwrap();
         assert_eq!(closed.0, LIFECYCLE_ARCHIVED);
         assert!(closed.1.is_none());
         assert!(closed.2.is_none());
-        assert!(closed.3.is_some());
+        assert_eq!(closed.3.as_deref(), Some("task-1"));
+        assert_eq!(closed.4.as_deref(), Some("assignment-1"));
+        assert!(closed.5.is_some());
     }
 }

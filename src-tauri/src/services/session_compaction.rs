@@ -2,7 +2,7 @@
 use rusqlite::params;
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::services::{agents, task_runtime};
+use crate::services::{agents, session_ownership, task_runtime};
 
 pub const DEFAULT_COMPACTION_WINDOW: &str = "10%";
 
@@ -129,6 +129,17 @@ fn load_session_compaction_scope(
     connection: &Connection,
     session_id: &str,
 ) -> Result<SessionCompactionScope, String> {
+    match session_ownership::load_session_worker_context(connection, session_id) {
+        Ok(Some(context)) => {
+            return Ok(SessionCompactionScope {
+                agent_id: context.agent_id,
+                role_id: context.role_id,
+            });
+        }
+        Ok(None) => {}
+        Err(_) => {}
+    }
+
     if let Some((agent_id, role_id)) = connection
         .query_row(
             r#"
@@ -185,38 +196,6 @@ fn load_session_compaction_scope(
             assignment.worker_type.as_str(),
             assignment.worker_id.as_deref(),
             assignment.role_instance_id.as_deref(),
-        );
-    }
-
-    let latest_assignment = connection
-        .query_row(
-            r#"
-            SELECT worker_type, worker_id, role_instance_id
-            FROM task_lane_assignments
-            WHERE session_id = ?1
-            ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, id DESC
-            LIMIT 1
-            "#,
-            [session_id],
-            |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|error| {
-            format!("Unable to query latest session assignment scope {session_id}: {error}")
-        })?;
-
-    if let Some((worker_type, worker_id, role_instance_id)) = latest_assignment {
-        return scope_from_worker_assignment(
-            connection,
-            worker_type.as_deref().unwrap_or_default(),
-            worker_id.as_deref(),
-            role_instance_id.as_deref(),
         );
     }
 
@@ -394,6 +373,58 @@ mod tests {
                 .expect("global policy should resolve");
         assert_eq!(resolved_global.window_spec, "10%");
         assert_eq!(resolved_global.source, "global");
+    }
+
+    #[test]
+    fn resolves_closed_task_session_from_canonical_owner_links() {
+        let mut connection = Connection::open_in_memory().expect("in-memory db should open");
+        apply_migrations(&connection).expect("migrations should apply");
+        let now = "2026-04-21T00:00:00Z";
+        connection.execute("INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'P', NULL, ?1, ?1)", params![now]).expect("project should seed");
+
+        let role = create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Closed Session Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+                compaction_window: Some("33%".into()),
+            },
+        )
+        .expect("role should create");
+
+        connection.execute(
+            "INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at) VALUES ('workflow-1', 'workflow-1', 'Workflow 1', NULL, 0, ?1, ?1)",
+            params![now],
+        ).expect("workflow should seed");
+        connection.execute(
+            "INSERT INTO workflow_lanes (id, workflow_id, lane_key, name, description, lane_order, assigned_entity_type, assigned_entity_id, entry_prompt_template, use_separate_worktree, require_user_approval_on_success, success_transition_type, success_target_lane_id, failure_transition_type, failure_target_lane_id, user_intervention_target_lane_id, created_at, updated_at) VALUES ('lane-1', 'workflow-1', 'implement', 'Implement', NULL, 0, 'role', ?1, NULL, 0, 0, 'end', NULL, 'end', NULL, NULL, ?2, ?2)",
+            params![role.id.as_str(), now],
+        ).expect("workflow lane should seed");
+        connection.execute(
+            "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, whip_max_attempts, auto_blocked_by_dependencies, archived, source_schedule_id, source_schedule_occurrence_id, created_at, updated_at) VALUES ('task-closed', 'project-1', 1, 'P-1', 'Closed task', NULL, 'task', 'completed', 'P1', 'workflow-1', 'lane-1', 'role', ?1, NULL, NULL, 10, 0, 0, NULL, NULL, ?2, ?2)",
+            params![role.id.as_str(), now],
+        ).expect("task should seed");
+        connection.execute(
+            "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-closed', 'task-closed', 'workflow-1', 'lane-1', 'role', ?1, 'completed', NULL, '/tmp/runtime', NULL, NULL, 'Prompt', NULL, NULL, 0, NULL, ?2, ?2, ?2, ?2)",
+            params![role.id.as_str(), now],
+        ).expect("assignment should seed");
+        connection.execute(
+            "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, role_id, role_instance_id, primary_task_id, primary_workflow_id, primary_lane_id, primary_assignment_id, owner_worker_type, owner_worker_id, transcript_exists, lifecycle_state, closed_at, created_at, updated_at) VALUES ('session-closed', 'project-1', '/tmp/session-closed.jsonl', '/tmp/session-closed.jsonl', 'Closed Session', 'task_assignment', 'closed', 'closed', ?1, ?1, ?2, NULL, 'task-closed', 'workflow-1', 'lane-1', 'assignment-closed', 'role', ?2, 0, 'closed', ?1, ?1, ?1)",
+            params![now, role.id.as_str()],
+        ).expect("session row should seed");
+
+        let resolved =
+            resolve_session_compaction_policy(&connection, "session-closed", Some("10%"))
+                .expect("closed task session should resolve role policy");
+        assert_eq!(resolved.window_spec, "33%");
+        assert_eq!(resolved.source, "role");
     }
 
     #[test]

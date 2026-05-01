@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 use uuid::Uuid;
@@ -28,7 +27,7 @@ use crate::{
         session_compaction::{
             parse_compaction_window_spec, resolve_session_compaction_policy, CompactionWindowSpec,
         },
-        task_runtime,
+        session_ownership,
     },
 };
 
@@ -1214,23 +1213,15 @@ pub fn schedule_session_retirement(
         let should_skip = database::open_connection()
             .ok()
             .and_then(|connection| {
-                let is_persistent_agent_session = connection
-                    .query_row(
-                        "SELECT 1 FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
-                        [session_id.as_str()],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .optional()
+                session_ownership::load_session_worker_context(&connection, &session_id)
                     .ok()
                     .flatten()
-                    .is_some();
-                if is_persistent_agent_session {
-                    return Some(true);
-                }
-
-                task_runtime::get_active_assignment_for_session(&connection, &session_id)
-                    .ok()
-                    .map(|assignment| assignment.is_some())
+                    .map(|context| {
+                        context.current_assignment_id.is_some()
+                            || (context.context_source
+                                == session_ownership::CONTEXT_SOURCE_AGENT_MAIN_SESSION
+                                && context.agent_id.is_some())
+                    })
             })
             .unwrap_or(false);
 
@@ -1979,76 +1970,10 @@ fn runtime_authorization_context_for_connection(
     connection: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<Option<AuthorizationContext>, String> {
-    if let Some(active_assignment) =
-        task_runtime::get_active_assignment_for_session(connection, session_id)?
+    if let Some(authorization) =
+        session_ownership::load_session_authorization_actor(connection, session_id)?
     {
-        if active_assignment.worker_type == "role" {
-            if let Some(role_instance_id) = active_assignment.role_instance_id {
-                return Ok(Some(AuthorizationContext {
-                    actor_type: "role_instance".into(),
-                    actor_id: role_instance_id,
-                }));
-            }
-        }
-
-        if active_assignment.worker_type == "agent" {
-            if let Some(agent_id) = active_assignment.worker_id {
-                return Ok(Some(AuthorizationContext {
-                    actor_type: "agent".into(),
-                    actor_id: agent_id,
-                }));
-            }
-        }
-    }
-
-    let agent_id = connection
-        .query_row(
-            "SELECT agent_id FROM agent_runtime_states WHERE main_session_id = ?1 LIMIT 1",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| {
-            format!("Unable to resolve agent runtime authorization context: {error}")
-        })?;
-
-    if let Some(agent_id) = agent_id {
-        return Ok(Some(AuthorizationContext {
-            actor_type: "agent".into(),
-            actor_id: agent_id,
-        }));
-    }
-
-    let role_instance_id = connection
-        .query_row(
-            "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve session authorization context: {error}"))?;
-
-    if let Some(role_instance_id) = role_instance_id {
-        return Ok(Some(AuthorizationContext {
-            actor_type: "role_instance".into(),
-            actor_id: role_instance_id,
-        }));
-    }
-
-    let agent_id = connection
-        .query_row(
-            "SELECT worker_id FROM task_lane_assignments WHERE session_id = ?1 AND worker_type = 'agent' AND status IN ('queued', 'active') LIMIT 1",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve agent session authorization context: {error}"))?;
-
-    if let Some(agent_id) = agent_id {
-        return Ok(Some(AuthorizationContext {
-            actor_type: "agent".into(),
-            actor_id: agent_id,
-        }));
+        return Ok(Some(authorization));
     }
 
     Ok(Some(AuthorizationContext {

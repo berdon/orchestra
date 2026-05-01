@@ -5,7 +5,7 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ use crate::{
             default_orchestra_root, orchestra_pi_agent_skills_dir,
             orchestra_pi_skill_snapshots_dir, sanitize_slug,
         },
-        pi_sessions, projects, task_runtime,
+        session_ownership,
     },
 };
 
@@ -277,12 +277,7 @@ pub(crate) fn resolve_managed_pi_skill_launch_plan_for_connection(
     orchestra_root: &Path,
     session_id: &str,
 ) -> Result<ManagedPiSkillLaunchPlan, String> {
-    let session_project_id = load_session_project_id(connection, session_id)?;
-    let context = resolve_managed_runtime_context_for_connection(
-        connection,
-        session_id,
-        session_project_id.as_deref(),
-    )?;
+    let context = resolve_managed_runtime_context_for_connection(connection, session_id)?;
     build_managed_pi_skill_launch_plan(connection, orchestra_root, context)
 }
 
@@ -291,12 +286,7 @@ pub(crate) fn get_managed_pi_skill_runtime_diagnostics_for_connection(
     orchestra_root: &Path,
     session_id: &str,
 ) -> Result<ManagedSkillRuntimeDiagnostics, String> {
-    let session_project_id = load_session_project_id(connection, session_id)?;
-    let context = resolve_managed_runtime_context_for_connection(
-        connection,
-        session_id,
-        session_project_id.as_deref(),
-    )?;
+    let context = resolve_managed_runtime_context_for_connection(connection, session_id)?;
     Ok(build_managed_pi_skill_resolution(connection, orchestra_root, context)?.diagnostics)
 }
 
@@ -459,184 +449,24 @@ fn build_managed_pi_skill_launch_plan(
     })
 }
 
-fn load_session_project_id(
-    connection: &Connection,
-    session_id: &str,
-) -> Result<Option<String>, String> {
-    let context = match pi_sessions::find_session_context_for_session(session_id) {
-        Ok(context) => context,
-        Err(_) => return Ok(None),
-    };
-    Ok(
-        projects::get_project_by_slug(connection, &context.project_slug)
-            .map_err(|error| {
-                format!(
-                    "Unable to resolve project {} for session {session_id}: {error}",
-                    context.project_slug
-                )
-            })?
-            .map(|project| project.id),
-    )
-}
-
 fn resolve_managed_runtime_context_for_connection(
     connection: &Connection,
     session_id: &str,
-    session_project_id: Option<&str>,
 ) -> Result<ManagedSkillRuntimeContext, String> {
-    if let Some(assignment) =
-        task_runtime::get_active_assignment_for_session(connection, session_id)?
-    {
-        let project_id = connection
-            .query_row(
-                "SELECT project_id FROM tasks WHERE id = ?1 LIMIT 1",
-                [assignment.task_id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .map_err(|error| {
-                format!(
-                    "Unable to resolve project for active assignment {}: {error}",
-                    assignment.id
-                )
-            })?;
-        let (agent_id, role_id) = scope_from_assignment(connection, &assignment)?;
-        return Ok(ManagedSkillRuntimeContext {
-            session_id: Some(session_id.to_string()),
-            project_id,
-            role_id,
-            agent_id,
-            workflow_id: Some(assignment.workflow_id),
-            workflow_lane_id: Some(assignment.lane_id),
-            context_source: "task_assignment".into(),
-        });
-    }
-
-    if let Some((project_id, agent_id, role_id)) = connection
-        .query_row(
-            r#"
-            SELECT ars.project_id, ars.agent_id, a.role_id
-            FROM agent_runtime_states ars
-            LEFT JOIN agents a ON a.id = ars.agent_id
-            WHERE ars.main_session_id = ?1
-            LIMIT 1
-            "#,
-            [session_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|error| {
-            format!("Unable to resolve agent runtime scope for session {session_id}: {error}")
-        })?
-    {
-        return Ok(ManagedSkillRuntimeContext {
-            session_id: Some(session_id.to_string()),
-            project_id,
-            role_id,
-            agent_id: Some(agent_id),
-            workflow_id: None,
-            workflow_lane_id: None,
-            context_source: "agent_main_session".into(),
-        });
-    }
-
-    if let Some(role_id) = connection
-        .query_row(
-            "SELECT role_id FROM role_instances WHERE session_id = ?1 LIMIT 1",
-            [session_id],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .optional()
-        .map_err(|error| {
-            format!("Unable to resolve role instance scope for session {session_id}: {error}")
-        })?
-        .flatten()
-    {
-        let project_id = session_project_id.ok_or_else(|| {
-            format!(
-                "Session {session_id} is bound to a role instance but has no project session context"
-            )
+    let context = session_ownership::load_session_worker_context(connection, session_id)?
+        .ok_or_else(|| {
+            format!("Unable to resolve managed runtime project context for session {session_id}")
         })?;
-        return Ok(ManagedSkillRuntimeContext {
-            session_id: Some(session_id.to_string()),
-            project_id: project_id.to_string(),
-            role_id: Some(role_id),
-            agent_id: None,
-            workflow_id: None,
-            workflow_lane_id: None,
-            context_source: "role_instance_session".into(),
-        });
-    }
 
-    let project_id = session_project_id.ok_or_else(|| {
-        format!("Unable to resolve managed runtime project context for session {session_id}")
-    })?;
     Ok(ManagedSkillRuntimeContext {
         session_id: Some(session_id.to_string()),
-        project_id: project_id.to_string(),
-        role_id: None,
-        agent_id: None,
-        workflow_id: None,
-        workflow_lane_id: None,
-        context_source: "project_session".into(),
+        project_id: context.project_id,
+        role_id: context.role_id,
+        agent_id: context.agent_id,
+        workflow_id: context.workflow_id,
+        workflow_lane_id: context.workflow_lane_id,
+        context_source: context.context_source,
     })
-}
-
-fn scope_from_assignment(
-    connection: &Connection,
-    assignment: &crate::models::TaskLaneAssignment,
-) -> Result<(Option<String>, Option<String>), String> {
-    match assignment.worker_type.as_str() {
-        "agent" => {
-            let Some(agent_id) = assignment.worker_id.clone() else {
-                return Ok((None, None));
-            };
-            let role_id = connection
-                .query_row(
-                    "SELECT role_id FROM agents WHERE id = ?1 LIMIT 1",
-                    [agent_id.as_str()],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()
-                .map_err(|error| {
-                    format!(
-                        "Unable to resolve inherited role for agent {}: {error}",
-                        agent_id
-                    )
-                })?
-                .flatten();
-            Ok((Some(agent_id), role_id))
-        }
-        "role" => {
-            if let Some(role_id) = assignment.worker_id.clone() {
-                return Ok((None, Some(role_id)));
-            }
-            let Some(role_instance_id) = assignment.role_instance_id.as_deref() else {
-                return Ok((None, None));
-            };
-            let role_id = connection
-                .query_row(
-                    "SELECT role_id FROM role_instances WHERE id = ?1 LIMIT 1",
-                    [role_instance_id],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()
-                .map_err(|error| {
-                    format!(
-                        "Unable to resolve role for role instance {}: {error}",
-                        role_instance_id
-                    )
-                })?
-                .flatten();
-            Ok((None, role_id))
-        }
-        _ => Ok((None, None)),
-    }
 }
 
 fn load_runtime_skill_candidates(
@@ -1758,12 +1588,8 @@ mod tests {
             )
             .expect("assignment should seed");
 
-        let context = resolve_managed_runtime_context_for_connection(
-            &connection,
-            "session-1",
-            Some("project-1"),
-        )
-        .expect("context should resolve");
+        let context = resolve_managed_runtime_context_for_connection(&connection, "session-1")
+            .expect("context should resolve");
 
         assert_eq!(context.project_id, "project-1");
         assert_eq!(context.agent_id.as_deref(), Some("agent-1"));
@@ -1787,12 +1613,8 @@ mod tests {
             )
             .expect("agent runtime should seed");
 
-        let context = resolve_managed_runtime_context_for_connection(
-            &connection,
-            "session-agent",
-            Some("project-1"),
-        )
-        .expect("context should resolve");
+        let context = resolve_managed_runtime_context_for_connection(&connection, "session-agent")
+            .expect("context should resolve");
 
         assert_eq!(context.project_id, "project-1");
         assert_eq!(context.agent_id.as_deref(), Some("agent-1"));

@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
@@ -29,7 +29,8 @@ use crate::{
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
         pi_sessions, policies, project_settings, projects, reminders, role_runtime, roles,
-        session_management, task_attachments, task_file_references, task_runtime, tasks, workflows,
+        session_management, session_ownership, task_attachments, task_file_references,
+        task_runtime, tasks, workflows,
     },
 };
 
@@ -2482,7 +2483,7 @@ fn resolve_active_worker_task_context(
 ) -> Result<(String, String), String> {
     if let Some(session_id) = session_id {
         if let Some(assignment) =
-            task_runtime::get_active_assignment_for_session(connection, session_id)?
+            session_ownership::load_session_open_assignment(connection, session_id)?
         {
             if task_runtime::assignment_owned_by_worker_authorization(&assignment, authorization) {
                 return Ok((assignment.task_id, assignment.lane_id));
@@ -2495,42 +2496,26 @@ fn resolve_active_worker_task_context(
             .to_string()
     })?;
 
+    if let Some(worker_session_id) =
+        session_ownership::load_worker_session_from_authorization(connection, authorization)?
+    {
+        if let Some(assignment) =
+            session_ownership::load_session_open_assignment(connection, &worker_session_id)?
+        {
+            if task_runtime::assignment_owned_by_worker_authorization(
+                &assignment,
+                Some(authorization),
+            ) {
+                return Ok((assignment.task_id, assignment.lane_id));
+            }
+        }
+    }
+
     match authorization.actor_type.as_str() {
-        "agent" => connection
-            .query_row(
-                r#"
-                SELECT task_id, lane_id
-                FROM task_lane_assignments
-                WHERE worker_type = 'agent'
-                  AND worker_id = ?1
-                  AND status = 'active'
-                ORDER BY updated_at DESC, created_at DESC, id DESC
-                LIMIT 1
-                "#,
-                [authorization.actor_id.as_str()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(|error| format!("Unable to resolve active agent task context: {error}"))?
-            .ok_or_else(|| "This agent does not have an active task assignment.".to_string()),
-        "role_instance" => connection
-            .query_row(
-                r#"
-                SELECT task_id, lane_id
-                FROM task_lane_assignments
-                WHERE role_instance_id = ?1
-                  AND status = 'active'
-                ORDER BY updated_at DESC, created_at DESC, id DESC
-                LIMIT 1
-                "#,
-                [authorization.actor_id.as_str()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(|error| format!("Unable to resolve active role task context: {error}"))?
-            .ok_or_else(|| {
-                "This role instance does not have an active task assignment.".to_string()
-            }),
+        "agent" => Err("This agent does not have an active task assignment.".to_string()),
+        "role_instance" => {
+            Err("This role instance does not have an active task assignment.".to_string())
+        }
         _ => Err(
             "Only active agent and role sessions can infer the current task todo context.".into(),
         ),

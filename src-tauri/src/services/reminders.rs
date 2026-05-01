@@ -9,7 +9,7 @@ use crate::{
     models::{AuthorizationContext, SendMailboxMessageInput},
     services::{
         agent_dispatch, agents, app_events, database, live_sessions, messages, pi_sessions,
-        role_runtime, task_runtime,
+        role_runtime, session_ownership,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -522,59 +522,45 @@ fn resolve_agent_target_context(
     session_id: Option<&str>,
 ) -> Result<ReminderTargetContext, String> {
     if let Some(session_id) = session_id {
-        if let Some(assignment) =
-            task_runtime::get_active_assignment_for_session(connection, session_id)?
+        if let Some(context) =
+            session_ownership::load_session_worker_context(connection, session_id)?
         {
-            if assignment.worker_type == ACTOR_AGENT
-                && assignment.worker_id.as_deref() == Some(agent_id)
-            {
+            if context.agent_id.as_deref() == Some(agent_id) {
                 return Ok(ReminderTargetContext {
-                    project_id: resolve_project_id_for_task(connection, &assignment.task_id)?,
+                    project_id: context.project_id,
                     session_id: session_id.to_string(),
-                    task_id: Some(assignment.task_id),
+                    task_id: context.task_id,
                 });
             }
         }
-
-        if let Some(project_id) = connection
-            .query_row(
-                "SELECT project_id FROM agent_runtime_states WHERE agent_id = ?1 AND main_session_id = ?2 LIMIT 1",
-                params![agent_id, session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| format!("Unable to resolve agent reminder project: {error}"))?
-        {
-            return Ok(ReminderTargetContext {
-                project_id,
-                session_id: session_id.to_string(),
-                task_id: None,
-            });
-        }
     }
 
-    let (project_id, runtime_session_id) = connection
-        .query_row(
-            "SELECT project_id, COALESCE(main_session_id, '') FROM agent_runtime_states WHERE agent_id = ?1 ORDER BY updated_at DESC LIMIT 1",
-            [agent_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve latest agent reminder context: {error}"))?
-        .unwrap_or_else(|| ("orchestra".into(), session_id.unwrap_or_default().to_string()));
-
-    let resolved_session_id = if let Some(session_id) = session_id {
-        session_id.to_string()
-    } else if !runtime_session_id.trim().is_empty() {
-        runtime_session_id
-    } else {
-        String::new()
+    let authorization = AuthorizationContext {
+        actor_type: ACTOR_AGENT.into(),
+        actor_id: agent_id.to_string(),
     };
+    let resolved_session_id =
+        session_ownership::load_worker_session_from_authorization(connection, &authorization)?
+            .or_else(|| session_id.map(str::to_string))
+            .unwrap_or_default();
+
+    if resolved_session_id.trim().is_empty() {
+        return Ok(ReminderTargetContext {
+            project_id: "orchestra".into(),
+            session_id: String::new(),
+            task_id: None,
+        });
+    }
+
+    let context = session_ownership::load_session_worker_context(connection, &resolved_session_id)?
+        .ok_or_else(|| {
+            "Unable to resolve agent reminder context from canonical session ownership".to_string()
+        })?;
 
     Ok(ReminderTargetContext {
-        project_id,
+        project_id: context.project_id,
         session_id: resolved_session_id,
-        task_id: None,
+        task_id: context.task_id,
     })
 }
 
@@ -584,33 +570,41 @@ fn resolve_role_instance_target_context(
     session_id: Option<&str>,
 ) -> Result<ReminderTargetContext, String> {
     if let Some(session_id) = session_id {
-        if let Some(assignment) =
-            task_runtime::get_active_assignment_for_session(connection, session_id)?
+        if let Some(context) =
+            session_ownership::load_session_worker_context(connection, session_id)?
         {
-            if assignment.role_instance_id.as_deref() == Some(role_instance_id) {
+            if context.role_instance_id.as_deref() == Some(role_instance_id)
+                && context.current_assignment_id.is_some()
+                && context.task_id.is_some()
+            {
                 return Ok(ReminderTargetContext {
-                    project_id: resolve_project_id_for_task(connection, &assignment.task_id)?,
+                    project_id: context.project_id,
                     session_id: session_id.to_string(),
-                    task_id: Some(assignment.task_id),
+                    task_id: context.task_id,
                 });
             }
         }
     }
 
-    let (task_id, assignment_session_id) = connection
-        .query_row(
-            "SELECT task_id, session_id FROM task_lane_assignments WHERE role_instance_id = ?1 AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
-            [role_instance_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve role reminder context: {error}"))?
+    let authorization = AuthorizationContext {
+        actor_type: ACTOR_ROLE_INSTANCE.into(),
+        actor_id: role_instance_id.to_string(),
+    };
+    let resolved_session_id =
+        session_ownership::load_worker_session_from_authorization(connection, &authorization)?
+            .or_else(|| session_id.map(str::to_string))
+            .ok_or_else(|| "Role reminders require an active assignment session.".to_string())?;
+    let context = session_ownership::load_session_worker_context(connection, &resolved_session_id)?
         .ok_or_else(|| "Role reminders require an active assignment session.".to_string())?;
 
+    if context.current_assignment_id.is_none() || context.task_id.is_none() {
+        return Err("Role reminders require an active assignment session.".to_string());
+    }
+
     Ok(ReminderTargetContext {
-        project_id: resolve_project_id_for_task(connection, &task_id)?,
-        session_id: assignment_session_id.unwrap_or_default(),
-        task_id: Some(task_id),
+        project_id: context.project_id,
+        session_id: resolved_session_id,
+        task_id: context.task_id,
     })
 }
 

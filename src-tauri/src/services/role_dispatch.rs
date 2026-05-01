@@ -5,8 +5,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::{
     models::{RoleInstance, RoleOperationsDetail},
     services::{
-        git_worktrees, pi_sessions, projects, role_runtime, roles, session_records,
-        task_repositories, task_runtime, tasks, workflows,
+        git_worktrees, pi_sessions, projects, role_runtime, roles, session_ownership,
+        session_records, task_repositories, task_runtime, tasks, workflows,
     },
 };
 
@@ -113,23 +113,26 @@ pub fn dispatch_role_queue(
 
 pub fn complete_role_run(session_id: &str) -> Result<(), String> {
     let mut connection = crate::services::database::open_connection()?;
-    let Some(instance_id) = connection
-        .query_row(
-            "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve role instance for session {session_id}: {error}"))?
+    complete_role_run_with_connection(&mut connection, session_id)
+}
+
+fn complete_role_run_with_connection(
+    connection: &mut Connection,
+    session_id: &str,
+) -> Result<(), String> {
+    let Some(instance_id) =
+        session_ownership::load_session_authorization_actor(connection, session_id)?
+            .filter(|authorization| authorization.actor_type == "role_instance")
+            .map(|authorization| authorization.actor_id)
     else {
         return Ok(());
     };
 
-    if task_runtime::get_active_assignment_for_session(&connection, session_id)?.is_some() {
+    if session_ownership::load_session_open_assignment(connection, session_id)?.is_some() {
         return Ok(());
     }
 
-    let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
+    let instance = role_runtime::get_role_instance(connection, &instance_id)?;
     let now = crate::state::now_iso();
     let tx = connection
         .transaction()
@@ -154,23 +157,27 @@ pub fn complete_role_run(session_id: &str) -> Result<(), String> {
 
 pub fn fail_role_run(session_id: &str, error_message: &str) -> Result<(), String> {
     let mut connection = crate::services::database::open_connection()?;
-    let Some(instance_id) = connection
-        .query_row(
-            "SELECT id FROM role_instances WHERE session_id = ?1 AND status IN ('running', 'waiting', 'idle') LIMIT 1",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to resolve role instance for session {session_id}: {error}"))?
+    fail_role_run_with_connection(&mut connection, session_id, error_message)
+}
+
+fn fail_role_run_with_connection(
+    connection: &mut Connection,
+    session_id: &str,
+    error_message: &str,
+) -> Result<(), String> {
+    let Some(instance_id) =
+        session_ownership::load_session_authorization_actor(connection, session_id)?
+            .filter(|authorization| authorization.actor_type == "role_instance")
+            .map(|authorization| authorization.actor_id)
     else {
         return Ok(());
     };
 
-    if task_runtime::get_active_assignment_for_session(&connection, session_id)?.is_some() {
+    if session_ownership::load_session_open_assignment(connection, session_id)?.is_some() {
         return Ok(());
     }
 
-    let instance = role_runtime::get_role_instance(&connection, &instance_id)?;
+    let instance = role_runtime::get_role_instance(connection, &instance_id)?;
     let now = crate::state::now_iso();
     let tx = connection
         .transaction()
@@ -1286,7 +1293,7 @@ mod tests {
         assert_eq!(detail_before.active_instance_count, 1);
         assert_eq!(detail_before.assigned_count, 1);
 
-        complete_role_run(&session_id)
+        complete_role_run_with_connection(&mut connection, &session_id)
             .expect("agent_end completion should not drop active assignment capacity");
 
         let detail_after = role_runtime::get_role_operations(&connection, &role.id)
@@ -1374,7 +1381,7 @@ mod tests {
         .expect("task should dispatch");
         let session_id = assignment.session_id.clone().expect("session should exist");
 
-        fail_role_run(&session_id, "process ended")
+        fail_role_run_with_connection(&mut connection, &session_id, "process ended")
             .expect("process end should not drop active assignment state");
 
         let detail_after = role_runtime::get_role_operations(&connection, &role.id)

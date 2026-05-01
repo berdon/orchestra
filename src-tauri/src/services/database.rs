@@ -2057,8 +2057,17 @@ fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> 
             id,
             project_id,
             session_path,
+            transcript_path,
             title,
             session_kind,
+            session_status,
+            list_visibility,
+            first_seen_at,
+            last_seen_at,
+            transcript_exists,
+            file_size,
+            file_mtime_ms,
+            last_indexed_at,
             lifecycle_state,
             created_at,
             updated_at
@@ -2067,8 +2076,17 @@ fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> 
             catalog.session_id,
             projects.id,
             catalog.session_path,
+            catalog.session_path,
             catalog.title,
             'standalone',
+            CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
+            CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
+            catalog.created_at,
+            catalog.updated_at,
+            1,
+            catalog.file_size,
+            catalog.file_mtime_ms,
+            catalog.last_indexed_at,
             CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
             catalog.created_at,
             catalog.updated_at
@@ -3372,6 +3390,116 @@ mod tests {
         assert!(indexes
             .iter()
             .any(|name| name == "idx_task_comments_anchor"));
+    }
+
+    #[test]
+    fn migrates_legacy_session_catalog_rows_into_sessions_without_relying_on_column_defaults() {
+        let path = unique_temp_db("sessions-catalog-backfill");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+
+        let connection = Connection::open(&path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE projects (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    task_prefix TEXT NOT NULL,
+                    default_repository_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at)
+                VALUES ('project-1', 'legacy-migration-proj', 'Legacy Migration Project', NULL, 'LEG', NULL, '2026-03-18T00:00:00Z', '2026-03-18T00:00:00Z');
+
+                CREATE TABLE session_catalog (
+                    session_id TEXT PRIMARY KEY,
+                    project_slug TEXT NOT NULL,
+                    session_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    file_mtime_ms INTEGER NOT NULL,
+                    last_indexed_at TEXT NOT NULL
+                );
+
+                INSERT INTO session_catalog (
+                    session_id, project_slug, session_path, created_at, updated_at, title, status, file_size, file_mtime_ms, last_indexed_at
+                ) VALUES (
+                    'session-1', 'legacy-migration-proj', '/tmp/session-1.jsonl', '2026-03-18T00:00:01Z', '2026-03-18T00:00:02Z', 'Legacy Session', 'closed', 42, 1234, '2026-03-18T00:00:02Z'
+                );
+
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT,
+                    session_path TEXT NOT NULL DEFAULT '' UNIQUE,
+                    transcript_path TEXT,
+                    title TEXT NOT NULL,
+                    session_kind TEXT NOT NULL,
+                    session_status TEXT NOT NULL,
+                    list_visibility TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    transcript_exists INTEGER NOT NULL,
+                    file_size INTEGER,
+                    file_mtime_ms INTEGER,
+                    last_indexed_at TEXT,
+                    lifecycle_state TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                "#,
+            )
+            .expect("legacy session tables should seed");
+        drop(connection);
+
+        initialize_database_at(&path).expect("database migration should succeed");
+        let connection = Connection::open(&path).expect("migrated database should open");
+
+        let row = connection
+            .query_row(
+                "SELECT project_id, transcript_path, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, file_size, file_mtime_ms, last_indexed_at, lifecycle_state FROM sessions WHERE id = 'session-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, String>(10)?,
+                    ))
+                },
+            )
+            .expect("backfilled session should load");
+
+        assert_eq!(
+            row,
+            (
+                Some("project-1".into()),
+                Some("/tmp/session-1.jsonl".into()),
+                "closed".into(),
+                "closed".into(),
+                "2026-03-18T00:00:01Z".into(),
+                "2026-03-18T00:00:02Z".into(),
+                0,
+                Some(42),
+                Some(1234),
+                Some("2026-03-18T00:00:02Z".into()),
+                "closed".into(),
+            )
+        );
     }
 
     #[test]
