@@ -285,16 +285,13 @@ const SessionComposer = memo(function SessionComposer({
   const [showSessionActions, setShowSessionActions] = useState(false);
   const sessionControlBusy = session.controlOperation?.status === "running";
   const composerDisabled = sessionReadOnly || !sessionMessageable;
-  const canCreateNewSession = Boolean(onCreateNewSession) && !composerDisabled && !sessionPending && !sessionControlBusy;
+  const sessionActionsDisabled = sessionReadOnly || sessionPending || sessionControlBusy;
+  const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly;
   const canCompactSession = Boolean(onCompactSession)
-    && !composerDisabled
-    && !sessionPending
-    && !sessionControlBusy
+    && !sessionActionsDisabled
     && session.controlCapabilities?.compact.status !== "unsupported";
   const canReloadSession = Boolean(onReloadSession)
-    && !composerDisabled
-    && !sessionPending
-    && !sessionControlBusy
+    && !sessionActionsDisabled
     && session.controlCapabilities?.reload.status !== "unsupported";
 
   useEffect(() => {

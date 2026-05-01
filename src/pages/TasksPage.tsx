@@ -1299,9 +1299,10 @@ export function TasksPage({
           `manual-whip-${Date.now()}`,
         );
       }
-      await orchestraClient.tasks.manualWhip(route.taskId);
+      const updatedTask = await orchestraClient.tasks.manualWhip(route.taskId);
+      setTaskDetail((current) => (sameData(current, updatedTask) ? current : updatedTask));
       await loadTasksData();
-      await loadTaskDetail(route.taskId);
+      await loadTaskDetail(route.taskId, { preserveDraft: true, silent: true });
     }, "Unable to send manual task whip.");
   }
 
@@ -1310,10 +1311,23 @@ export function TasksPage({
       return;
     }
     await runDetailAction("reset", async () => {
-      await orchestraClient.tasks.stopActivity(route.taskId);
+      await orchestraClient.tasks.resetRuntime(route.taskId);
+      let refreshedTask = await orchestraClient.tasks.get(route.taskId);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (refreshedTask.status === "ready" && !refreshedTask.activeLaneAssignment) {
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        refreshedTask = await orchestraClient.tasks.get(route.taskId);
+      }
+      setTaskDetail((current) => (sameData(current, refreshedTask) ? current : refreshedTask));
+      setTaskDraft((current) => {
+        const nextDraft = taskToDraft(refreshedTask);
+        return sameData(current, nextDraft) ? current : nextDraft;
+      });
+      setTaskDraftDirty(false);
       await loadTasksData();
-      await loadTaskDetail(route.taskId);
-    }, "Unable to stop current task activity.");
+    }, "Unable to reset task runtime.");
   }
 
   async function handleRetryTaskLane() {

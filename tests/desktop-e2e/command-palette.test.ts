@@ -65,7 +65,7 @@ describe("desktop command palette", () => {
       );
       expect(submitted).toBe(true);
 
-      await waitForSelector(sessionId, '[data-role="new-task"]');
+      await waitForSelector(sessionId, '[data-role="task-title"]');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

@@ -110,7 +110,7 @@ describe("desktop task quick comment file mentions", () => {
         button.click();
         return true;
       `);
-      await waitForText(sessionId, 'Tracked repository file changes and references');
+      await waitForText(sessionId, 'Tracked repo files');
       const selectedLabel = await executeScript<string>(sessionId, `
         const select = document.querySelector('[data-role="task-file-references"] select');
         if (!(select instanceof HTMLSelectElement)) return '';

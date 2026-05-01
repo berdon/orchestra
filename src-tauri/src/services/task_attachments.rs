@@ -485,11 +485,8 @@ mod tests {
             let mut connection = in_memory_connection();
             let task_id = create_task_record(&mut connection);
             let root = default_orchestra_root().expect("orchestra root");
-            let download_dir = task_attachments_dir(
-                &root,
-                DEFAULT_PROJECT_ID,
-                &format!("{task_id}-downloads"),
-            );
+            let download_dir =
+                task_attachments_dir(&root, DEFAULT_PROJECT_ID, &format!("{task_id}-downloads"));
             if download_dir.exists() {
                 fs::remove_dir_all(&download_dir).ok();
             }

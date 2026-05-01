@@ -323,6 +323,32 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
     Ok(duplicate_ids)
 }
 
+fn latest_lane_assignment_status(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT status
+            FROM task_lane_assignments
+            WHERE task_id = ?1 AND lane_id = ?2
+            ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, created_at DESC, id DESC
+            LIMIT 1
+            "#,
+            params![task_id, lane_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to query latest assignment status for task {} lane {}: {}",
+                task_id, lane_id, error
+            )
+        })
+}
+
 fn task_is_runnable_for_worker_runtime(
     connection: &Connection,
     task: &TaskDetail,
@@ -337,6 +363,15 @@ fn task_is_runnable_for_worker_runtime(
     }
 
     if task.current_lane_id.as_deref() != Some(lane_id) {
+        return Ok(false);
+    }
+
+    if task.status == "ready"
+        && matches!(
+            latest_lane_assignment_status(connection, &task.id, lane_id)?.as_deref(),
+            Some(ASSIGNMENT_STATUS_CANCELED)
+        )
+    {
         return Ok(false);
     }
 
@@ -898,6 +933,14 @@ pub fn stop_task_activity(
                 normalized_notes.clone(),
                 &now,
             )?;
+            if let Some(session_id) = active_assignment.session_id.as_deref() {
+                let _ = session_records::close_active_assignment_session(
+                    &tx,
+                    session_id,
+                    Some(task.project_id.as_str()),
+                    false,
+                );
+            }
         }
     }
 
@@ -938,7 +981,7 @@ pub fn stop_task_activity(
 
         if let Some(role_instance_id) = active_assignment.role_instance_id.as_deref() {
             tx.execute(
-                "UPDATE role_instances SET status = 'idle', current_queue_entry_id = NULL, last_error = ?3, updated_at = ?2 WHERE id = ?1",
+                "UPDATE role_instances SET status = 'canceled', current_queue_entry_id = NULL, session_id = NULL, last_error = ?3, updated_at = ?2 WHERE id = ?1",
                 params![role_instance_id, now, normalized_notes.as_deref()],
             )
             .map_err(|error| format!("Unable to reset role instance for task {task_id}: {error}"))?;
@@ -1103,6 +1146,15 @@ pub fn reset_role_assignments_to_queue(
                 note.clone(),
                 &now,
             )?;
+            if let Some(session_id) = assignment.session_id.as_deref() {
+                let task = tasks::get_task_context(&tx, &assignment.task_id)?;
+                let _ = session_records::close_active_assignment_session(
+                    &tx,
+                    session_id,
+                    Some(task.project_id.as_str()),
+                    false,
+                );
+            }
         }
 
         tx.commit().map_err(|error| {
@@ -1158,6 +1210,17 @@ pub fn find_stale_task_assignment_candidates(
     Ok(candidates)
 }
 
+fn canonical_session_is_available(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<bool, String> {
+    let Some(row) = session_records::load_session_row(connection, session_id)? else {
+        return Ok(false);
+    };
+
+    Ok(!row.session_path.as_os_str().is_empty() && row.session_path.exists())
+}
+
 fn stale_assignment_reason(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
@@ -1187,11 +1250,11 @@ fn stale_assignment_reason(
         ));
     }
 
-    if assignment.status == ASSIGNMENT_STATUS_ACTIVE {
+    if assignment.status == ASSIGNMENT_STATUS_ACTIVE && !blocked_active_assignment {
         let Some(session_id) = assignment.session_id.as_deref() else {
             return Ok(Some("active assignment is missing a session".into()));
         };
-        if pi_sessions::find_session_context_for_session(session_id).is_err() {
+        if !canonical_session_is_available(connection, session_id)? {
             return Ok(Some(format!("assignment session {session_id} is missing")));
         }
     }
@@ -1296,7 +1359,7 @@ fn stale_assignment_reason(
                         "assigned role instance {role_instance_id} is missing a session"
                     )));
                 };
-                if pi_sessions::find_session_context_for_session(&session_id).is_err() {
+                if !canonical_session_is_available(connection, &session_id)? {
                     return Ok(Some(format!(
                         "assigned role instance session {session_id} is missing"
                     )));
@@ -1452,6 +1515,15 @@ pub fn activate_queued_role_assignments(
 }
 
 pub fn dispatch_task_lane(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+) -> Result<TaskLaneAssignment, String> {
+    dispatch_task_lane_in_transaction(connection, project_root, session_dir, task_id)
+}
+
+fn dispatch_task_lane_in_transaction(
     connection: &mut Connection,
     project_root: &Path,
     session_dir: &Path,
@@ -2158,6 +2230,23 @@ pub fn start_assignment_follow_up(
     }
 
     start_assignment_delivery(app, state, session_dir, assignment, "follow_up", prompt)
+}
+
+pub fn start_assignment_prompt_message(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    prompt: &str,
+) -> Result<(), String> {
+    if assignment.status != ASSIGNMENT_STATUS_ACTIVE {
+        return Err(format!(
+            "Task lane assignment {} is not active and cannot accept prompt work",
+            assignment.id
+        ));
+    }
+
+    start_assignment_prompt(app, state, session_dir, assignment, prompt)
 }
 
 fn ensure_assignment_runtime(
@@ -5318,7 +5407,8 @@ mod tests {
             WorkflowLaneInput, WorkflowUpsertInput,
         },
         services::{
-            agents, database, pi_sessions, projects, roles, session_list, tasks, workflows,
+            agents, database, pi_sessions, projects, roles, session_list, session_records, tasks,
+            workflows,
         },
     };
 
@@ -5579,6 +5669,47 @@ mod tests {
                 ],
             )
             .expect("repository should insert");
+    }
+
+    fn insert_canonical_session_row(
+        connection: &Connection,
+        session_id: &str,
+        project_id: Option<&str>,
+        session_kind: &str,
+        task_id: Option<&str>,
+        workflow_id: Option<&str>,
+        lane_id: Option<&str>,
+        assignment_id: Option<&str>,
+        worker_type: Option<&str>,
+        worker_id: Option<&str>,
+        agent_id: Option<&str>,
+        role_instance_id: Option<&str>,
+        runtime_cwd: Option<&str>,
+    ) {
+        let now = now_iso();
+        let session_path = format!("/tmp/{session_id}.jsonl");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, task_id, workflow_id, lane_id, assignment_id, primary_task_id, primary_workflow_id, primary_lane_id, primary_assignment_id, worker_type, worker_id, owner_worker_type, owner_worker_id, agent_id, role_instance_id, runtime_cwd, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, ?4, ?5, 'active', 'active', ?6, ?6, ?7, ?8, ?9, ?10, ?7, ?8, ?9, ?10, ?11, ?12, ?11, ?12, ?13, ?14, ?15, 0, 'active', ?6, ?6)",
+                params![
+                    session_id,
+                    project_id,
+                    session_path,
+                    format!("Session {session_id}"),
+                    session_kind,
+                    now.as_str(),
+                    task_id,
+                    workflow_id,
+                    lane_id,
+                    assignment_id,
+                    worker_type,
+                    worker_id,
+                    agent_id,
+                    role_instance_id,
+                    runtime_cwd,
+                ],
+            )
+            .expect("canonical session row should insert");
     }
 
     #[test]
@@ -7288,11 +7419,18 @@ mod tests {
 
         let redispatched =
             maybe_auto_dispatch_task(&mut connection, &project_root, &session_dir, &task.id)
-                .expect("task should redispatch")
-                .expect("redispatched assignment should exist");
-        assert_eq!(redispatched.status, "active");
+                .expect("auto dispatch check should succeed");
+        assert!(
+            redispatched.is_none(),
+            "manually reset ready work should not be auto-dispatched immediately"
+        );
+
+        let manually_redispatched =
+            dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("task should still redispatch manually");
+        assert_eq!(manually_redispatched.status, "active");
         assert_ne!(
-            redispatched.session_id.as_deref(),
+            manually_redispatched.session_id.as_deref(),
             Some(stale_session_id.as_str())
         );
     }
@@ -8320,6 +8458,21 @@ mod tests {
                 params![agent.id.as_str(), now.as_str()],
             )
             .expect("agent runtime state should insert");
+        insert_canonical_session_row(
+            &connection,
+            "session-complete-whip",
+            Some("orchestra"),
+            session_records::SESSION_KIND_AGENT_MAIN,
+            Some(task.id.as_str()),
+            Some(workflow.id.as_str()),
+            Some("lane-agent-complete"),
+            Some("assignment-complete-whip"),
+            Some("agent"),
+            Some(agent.id.as_str()),
+            Some(agent.id.as_str()),
+            None,
+            Some("/tmp/runtime-complete-whip"),
+        );
 
         let stale_candidate = find_task_whip_candidates(&connection)
             .expect("whip candidates should resolve")
@@ -8818,6 +8971,21 @@ mod tests {
                 params![task.id.as_str(), workflow.id.as_str(), role.id.as_str(), root.display().to_string(), now.as_str()],
             )
             .expect("assignment should insert");
+        insert_canonical_session_row(
+            &connection,
+            "session-role-complete",
+            Some("orchestra"),
+            session_records::SESSION_KIND_ROLE_INSTANCE,
+            Some(task.id.as_str()),
+            Some(workflow.id.as_str()),
+            Some("lane-role-complete"),
+            Some("assignment-role-complete"),
+            Some("role"),
+            Some(role.id.as_str()),
+            None,
+            Some("instance-role-complete"),
+            Some(root.display().to_string().as_str()),
+        );
 
         let updated =
             complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
@@ -8921,6 +9089,21 @@ mod tests {
                 params![task.id.as_str(), workflow.id.as_str(), agent.id.as_str(), root.display().to_string(), now.as_str()],
             )
             .expect("assignment should insert");
+        insert_canonical_session_row(
+            &connection,
+            "session-agent-complete",
+            Some("orchestra"),
+            session_records::SESSION_KIND_AGENT_MAIN,
+            Some(task.id.as_str()),
+            Some(workflow.id.as_str()),
+            Some("lane-agent-complete"),
+            Some("assignment-agent-complete"),
+            Some("agent"),
+            Some(agent.id.as_str()),
+            Some(agent.id.as_str()),
+            None,
+            Some(root.display().to_string().as_str()),
+        );
 
         let updated =
             complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
@@ -10460,6 +10643,27 @@ mod tests {
                 ],
             )
             .expect("active assignment should insert");
+        insert_canonical_session_row(
+            &connection,
+            session.record.id.as_str(),
+            Some("project-blocked-active-stale"),
+            session_records::SESSION_KIND_AGENT_MAIN,
+            Some(task.id.as_str()),
+            Some(workflow.id.as_str()),
+            Some("lane-agent"),
+            Some("assignment-blocked-active-stale"),
+            Some("agent"),
+            Some(agent.id.as_str()),
+            Some(agent.id.as_str()),
+            None,
+            Some(project_root.display().to_string().as_str()),
+        );
+        connection
+            .execute(
+                "UPDATE sessions SET session_path = ?2, transcript_path = ?2, transcript_exists = 1 WHERE id = ?1",
+                params![session.record.id.as_str(), session.path.display().to_string()],
+            )
+            .expect("canonical session path should match the real transcript");
 
         let blocked = tasks::update_task(
             &mut connection,
@@ -10689,6 +10893,21 @@ mod tests {
                 ],
             )
             .expect("current assignment should insert");
+        insert_canonical_session_row(
+            &connection,
+            "session-current",
+            Some("orchestra"),
+            session_records::SESSION_KIND_AGENT_MAIN,
+            Some(task.id.as_str()),
+            Some(workflow.id.as_str()),
+            Some("lane-review"),
+            Some("assignment-current"),
+            Some("agent"),
+            Some(agent.id.as_str()),
+            Some(agent.id.as_str()),
+            None,
+            None,
+        );
 
         let updated = complete_lane_as_success(
             &mut connection,

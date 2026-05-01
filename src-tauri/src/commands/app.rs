@@ -30,7 +30,8 @@ use crate::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
         },
-        pi_setup, project_settings, projects, roles, system_notifications, tasks, workflows,
+        pi_setup, project_settings, projects, roles, session_records, system_notifications, tasks,
+        workflows,
     },
     state::AppState,
 };
@@ -607,11 +608,28 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
             runtime_cwd.display()
         )
     })?;
-    let created_session = crate::services::pi_sessions::create_session_file(
+    let runtime_cwd_display = runtime_cwd.display().to_string();
+    let created_session = session_records::create_session_record(
+        &connection,
         &runtime_cwd,
         &context.session_dir,
-        Some("Seeded whip idle session"),
-        false,
+        session_records::CreateSessionRecordInput {
+            project_id: Some(&project.id),
+            title: Some("Seeded whip idle session"),
+            session_kind: session_records::SESSION_KIND_STANDALONE,
+            agent_id: None,
+            role_instance_id: None,
+            task_id: None,
+            workflow_id: None,
+            lane_id: None,
+            assignment: None,
+            worker_type: None,
+            worker_id: None,
+            runtime_cwd: Some(runtime_cwd_display.as_str()),
+            subscribed: false,
+            agent_runtime: None,
+            update_role_instance_session: false,
+        },
     )?;
     let session_id = created_session.record.id.clone();
     let now = crate::state::now_iso();
@@ -621,20 +639,38 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
 
     connection.execute(
         "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, NULL, NULL, ?7, ?7)",
-        rusqlite::params![role_instance_id, role.id, role.name, queue_entry_id, session_id, runtime_cwd.display().to_string(), now.as_str()],
+        rusqlite::params![&role_instance_id, &role.id, &role.name, &queue_entry_id, &session_id, &runtime_cwd_display, now.as_str()],
     ).map_err(|error| format!("Unable to seed role instance for task whip scenario: {error}"))?;
     connection.execute(
         "INSERT INTO role_queue_entries (id, role_id, status, source_type, source_task_id, source_workflow_id, source_lane_id, title, summary, entry_prompt, assigned_instance_id, created_at, updated_at, started_at, completed_at) VALUES (?1, ?2, 'assigned', 'workflow_lane', ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?9, ?9, NULL)",
-        rusqlite::params![queue_entry_id, role.id, task.id, workflow.id, lane_id, format!("{} · {}", task.number, task.title), "Seeded whip prompt", role_instance_id, now.as_str()],
+        rusqlite::params![&queue_entry_id, &role.id, &task.id, &workflow.id, &lane_id, format!("{} · {}", task.number, task.title), "Seeded whip prompt", &role_instance_id, now.as_str()],
     ).map_err(|error| format!("Unable to seed role queue entry for task whip scenario: {error}"))?;
     connection.execute(
         "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'role', ?5, 'active', ?6, ?7, ?8, ?9, ?10, 0, NULL, ?11, NULL, ?11, ?11)",
-        rusqlite::params![assignment_id, task.id, workflow.id, lane_id, role.id, session_id, runtime_cwd.display().to_string(), queue_entry_id, role_instance_id, "Seeded idle assignment prompt", now.as_str()],
+        rusqlite::params![&assignment_id, &task.id, &workflow.id, &lane_id, &role.id, &session_id, &runtime_cwd_display, &queue_entry_id, &role_instance_id, "Seeded idle assignment prompt", now.as_str()],
     ).map_err(|error| format!("Unable to seed task lane assignment for task whip scenario: {error}"))?;
     connection.execute(
         "INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at) VALUES (?1, ?2, ?3, ?4, 'needs_user', NULL, ?5, NULL)",
-        rusqlite::params![format!("lane-run-{}", uuid::Uuid::new_v4().simple()), task.id, lane_id, session_id, now.as_str()],
+        rusqlite::params![format!("lane-run-{}", uuid::Uuid::new_v4().simple()), &task.id, &lane_id, &session_id, now.as_str()],
     ).map_err(|error| format!("Unable to seed lane run for task whip scenario: {error}"))?;
+
+    session_records::bind_session_context(
+        &connection,
+        &session_id,
+        session_records::SessionContextBinding {
+            project_id: Some(&project.id),
+            session_kind: Some(session_records::SESSION_KIND_TASK_ASSIGNMENT),
+            worker_type: Some("role"),
+            worker_id: Some(&role.id),
+            agent_id: None,
+            role_instance_id: Some(&role_instance_id),
+            task_id: Some(&task.id),
+            workflow_id: Some(&workflow.id),
+            lane_id: Some(&lane_id),
+            assignment_id: Some(&assignment_id),
+            runtime_cwd: Some(runtime_cwd.as_path()),
+        },
+    )?;
 
     Ok(DebugTaskWhipScenario {
         project_id: project.id,

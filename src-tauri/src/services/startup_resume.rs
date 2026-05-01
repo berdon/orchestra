@@ -1,4 +1,4 @@
-use std::thread;
+use std::{thread, time::Duration};
 
 use tauri::{AppHandle, Manager};
 
@@ -10,11 +10,36 @@ use crate::{
 pub fn resume_active_session_work_on_startup(app: AppHandle) {
     thread::spawn(move || {
         let state = app.state::<AppState>();
-        if let Err(error) = run_resume_active_session_work_on_startup(app.clone(), &state) {
+        let mut last_runtime_error = None;
+
+        for attempt in 0..30 {
+            match state.sync_pi_runtime_health() {
+                Ok(_) => {
+                    if let Err(error) =
+                        run_resume_active_session_work_on_startup(app.clone(), &state)
+                    {
+                        state.log(
+                            "error",
+                            "startup.resume.failed",
+                            &format!("Unable to resume active session work on startup: {error}"),
+                        );
+                    }
+                    return;
+                }
+                Err(error) => {
+                    last_runtime_error = Some(error);
+                    if attempt < 29 {
+                        thread::sleep(Duration::from_secs(2));
+                    }
+                }
+            }
+        }
+
+        if let Some(error) = last_runtime_error {
             state.log(
-                "error",
-                "startup.resume.failed",
-                &format!("Unable to resume active session work on startup: {error}"),
+                "warn",
+                "startup.resume.skipped",
+                &format!("Skipping startup resume because PI is unavailable: {error}"),
             );
         }
     });
@@ -24,15 +49,6 @@ fn run_resume_active_session_work_on_startup(
     app: AppHandle,
     state: &AppState,
 ) -> Result<usize, String> {
-    if let Err(error) = state.sync_pi_runtime_health() {
-        state.log(
-            "warn",
-            "startup.resume.skipped",
-            &format!("Skipping startup resume because PI is unavailable: {error}"),
-        );
-        return Ok(0);
-    }
-
     let connection = database::open_connection()?;
     let candidates = task_runtime::list_restart_resume_candidates(&connection)?;
     drop(connection);
@@ -55,7 +71,7 @@ fn run_resume_active_session_work_on_startup(
         let message = task_runtime::build_restart_resume_message(&connection, &assignment)?;
         let context = pi_sessions::session_context_for_project_id(&candidate.project_id)?;
 
-        match task_runtime::start_assignment_follow_up(
+        match task_runtime::start_assignment_prompt_message(
             app.clone(),
             state,
             context.session_dir.clone(),

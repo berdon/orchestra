@@ -3401,9 +3401,18 @@ export function App() {
     setIsSubmitting(true);
     setSessionActionError(null);
 
+    const effectiveChatAgentId = options?.chatAgentId
+      ?? selectedChatAgent?.id
+      ?? selectedChatAgentSnapshot?.agent.id
+      ?? selectedChatAgentId
+      ?? chatSessionAgentIdRef.current
+      ?? lastKnownChatSessionAgentIdRef.current
+      ?? null;
+
     console.info("[orchestra][session-create:start]", {
       sourceSessionId: sessionId ?? null,
-      chatAgentId: options?.chatAgentId ?? null,
+      chatAgentId: effectiveChatAgentId,
+      requestedChatAgentId: options?.chatAgentId ?? null,
       activeProjectId: activeProject?.id ?? null,
       activeProjectSlug: activeProject?.slug ?? null,
       selectedChatAgentId,
@@ -3411,36 +3420,44 @@ export function App() {
     });
 
     try {
-      const nextSession = sessionId
-        ? await orchestraClient.sessions.createContextual(sessionId, activeProject?.slug ?? null, options?.chatAgentId ?? null)
-        : await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null, options?.chatAgentId ?? null);
+      const createdSession = effectiveChatAgentId
+        ? await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null, effectiveChatAgentId)
+        : sessionId
+          ? await orchestraClient.sessions.createContextual(sessionId, activeProject?.slug ?? null, null)
+          : await orchestraClient.sessions.create(undefined, activeProject?.slug ?? null, null);
+      const nextSession = effectiveChatAgentId
+        ? await ensureAgentSession(effectiveChatAgentId, activeProject?.id ?? null)
+        : createdSession;
       console.info("[orchestra][session-create:success]", {
         sourceSessionId: sessionId ?? null,
         createdSessionId: nextSession.id,
         createdSessionTitle: nextSession.title,
-        chatAgentId: options?.chatAgentId ?? null,
+        rawCreatedSessionId: createdSession.id,
+        chatAgentId: effectiveChatAgentId,
+        requestedChatAgentId: options?.chatAgentId ?? null,
         activeProjectId: activeProject?.id ?? null,
         activeProjectSlug: activeProject?.slug ?? null,
       });
       mergeSessionRecord(nextSession, { select: false });
       setPendingSessionOpenRequest(null);
-      if (!options?.chatAgentId) {
+      if (!effectiveChatAgentId) {
         setSelectedSessionId(nextSession.id);
       }
 
-      if (options?.chatAgentId) {
+      if (effectiveChatAgentId) {
         setChatSessionId(nextSession.id);
-        setSelectedChatAgentId(options.chatAgentId);
-        chatSessionAgentIdRef.current = options.chatAgentId;
+        setSelectedChatAgentId(effectiveChatAgentId);
+        chatSessionAgentIdRef.current = effectiveChatAgentId;
         lastKnownChatSessionRef.current = nextSession;
         lastKnownChatSessionIdRef.current = nextSession.id;
-        lastKnownChatSessionAgentIdRef.current = options.chatAgentId;
+        lastKnownChatSessionAgentIdRef.current = effectiveChatAgentId;
         void loadChatAgents({ background: true });
       }
     } catch (error) {
       console.error("[orchestra][session-create:error]", {
         sourceSessionId: sessionId ?? null,
-        chatAgentId: options?.chatAgentId ?? null,
+        chatAgentId: effectiveChatAgentId,
+        requestedChatAgentId: options?.chatAgentId ?? null,
         activeProjectId: activeProject?.id ?? null,
         activeProjectSlug: activeProject?.slug ?? null,
         error,
@@ -4173,7 +4190,20 @@ export function App() {
             onOpenTask={navigateToTask}
             onOpenAgent={navigateToChatAgent}
             onOpenRole={navigateToRole}
-            onCreateNewSession={() => void handleCreateFreshSession(chatSession?.id, { chatAgentId: selectedChatAgent?.id ?? null })}
+            onCreateNewSession={() => void handleCreateFreshSession(
+              chatSession?.id
+              ?? chatSessionId
+              ?? selectedChatAgentSnapshot?.runtimeState.mainSessionId
+              ?? lastKnownChatSessionIdRef.current,
+              {
+                chatAgentId:
+                  selectedChatAgent?.id
+                  ?? selectedChatAgentSnapshot?.agent.id
+                  ?? selectedChatAgentId
+                  ?? lastKnownChatSessionAgentIdRef.current
+                  ?? null,
+              },
+            )}
             onOpenPiSettings={canManageHarnessSettings ? navigateToHarnessSettings : undefined}
             onCompactSession={() => handleCompactExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}
             onReloadSession={() => handleReloadExistingSession(chatSession?.terminalAttached ? null : chatSession?.id)}

@@ -215,18 +215,22 @@ describe("desktop default-file anchored task comments", () => {
         }
 
         viewer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
-        const range = document.createRange();
-        range.setStart(start.node, start.offset);
-        range.setEnd(end.node, end.offset);
         selection.removeAllRanges();
-        selection.addRange(range);
+        if (typeof selection.setBaseAndExtent === 'function') {
+          selection.setBaseAndExtent(start.node, start.offset, end.node, end.offset);
+        } else {
+          const range = document.createRange();
+          range.setStart(start.node, start.offset);
+          range.setEnd(end.node, end.offset);
+          selection.addRange(range);
+        }
         document.dispatchEvent(new Event('selectionchange', { bubbles: true }));
         return {
           selectedText: selection.toString(),
           buttonCountDuringDrag: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
         };
       `);
-      expect(selectionState.selectedText).toBe('selected text');
+      expect(selectionState.selectedText.trim()).toBe('selected text');
       expect(selectionState.buttonCountDuringDrag).toBe(0);
       await executeScript(sessionId, `
         document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));

@@ -47,6 +47,10 @@ pub struct SessionManagementQuery {
     #[serde(default)]
     pub catalog_present: Option<bool>,
     #[serde(default)]
+    pub legacy_catalog_present: Option<bool>,
+    #[serde(default)]
+    pub legacy_list_entry_present: Option<bool>,
+    #[serde(default)]
     pub file_exists: Option<bool>,
     #[serde(default)]
     pub limit: Option<usize>,
@@ -100,6 +104,8 @@ pub struct ManagedSessionSummary {
     pub dismissed_at: Option<String>,
     pub transcript_path: Option<String>,
     pub catalog_present: bool,
+    pub legacy_catalog_present: bool,
+    pub legacy_list_entry_present: bool,
     pub file_exists: bool,
     pub derived_session_id: Option<String>,
     pub header_session_id: Option<String>,
@@ -325,6 +331,8 @@ fn query_has_explicit_target(query: &SessionManagementQuery) -> bool {
         || query.hidden.is_some()
         || query.dismissed.is_some()
         || query.catalog_present.is_some()
+        || query.legacy_catalog_present.is_some()
+        || query.legacy_list_entry_present.is_some()
         || query.file_exists.is_some()
 }
 
@@ -1075,6 +1083,8 @@ fn to_summary(entry: &InventoryEntry) -> ManagedSessionSummary {
             .or_else(|| canonical.map(|canonical| canonical.session_path.display().to_string()))
             .or_else(|| catalog.map(|catalog| catalog.session_path.display().to_string())),
         catalog_present: catalog.is_some(),
+        legacy_catalog_present: catalog.is_some(),
+        legacy_list_entry_present: list_entry.is_some(),
         file_exists: entry.transcript.is_some()
             || canonical.is_some_and(|canonical| canonical.transcript_exists),
         derived_session_id: entry
@@ -1155,8 +1165,13 @@ fn entry_matches_query(entry: &InventoryEntry, query: &SessionManagementQuery) -
             return false;
         }
     }
-    if let Some(catalog_present) = query.catalog_present {
-        if summary.catalog_present != catalog_present {
+    if let Some(catalog_present) = query.legacy_catalog_present.or(query.catalog_present) {
+        if summary.legacy_catalog_present != catalog_present {
+            return false;
+        }
+    }
+    if let Some(list_entry_present) = query.legacy_list_entry_present {
+        if summary.legacy_list_entry_present != list_entry_present {
             return false;
         }
     }
@@ -1983,6 +1998,14 @@ mod tests {
                 "Hide and restore session",
                 "idle",
             );
+            session_records::repair_session_row_from_transcript_path(
+                &connection,
+                session_id,
+                Some("project-1"),
+                None,
+                &path,
+            )
+            .expect("canonical session row should repair");
 
             let initial = get_session_diagnostics(&connection, None, None, session_id)
                 .expect("initial diagnostics should load");
@@ -2045,13 +2068,7 @@ mod tests {
                 hidden_diagnostics.summary.hidden_reason.as_deref(),
                 Some(session_list::SESSION_HIDDEN_REASON_USER_DISMISSED)
             );
-            assert_eq!(
-                hidden_diagnostics
-                    .list_entry
-                    .as_ref()
-                    .and_then(|entry| entry.hidden_reason.as_deref()),
-                Some(session_list::SESSION_HIDDEN_REASON_USER_DISMISSED)
-            );
+            assert!(hidden_diagnostics.list_entry.is_none());
 
             let restored = restore_sessions(
                 &connection,

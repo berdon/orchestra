@@ -12,7 +12,7 @@ use crate::{
         agent_dispatch, agent_runtime, agent_terminal, app_events, database,
         live_sessions::{ensure_runtime, maybe_runtime},
         pi_sessions::{find_session_context_for_session, get_session_path},
-        pi_setup, session_attachments,
+        pi_setup, session_attachments, session_records,
     },
     state::AppState,
 };
@@ -153,6 +153,28 @@ pub async fn ensure_agent_session(
     let session_id = runtime_state
         .main_session_id
         .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
+
+    let connection = database::open_connection()?;
+    session_records::bind_session_context(
+        &connection,
+        &session_id,
+        session_records::SessionContextBinding {
+            project_id: Some(resolved_project_id.as_str()),
+            session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+            worker_type: Some("agent"),
+            worker_id: Some(agent_id.as_str()),
+            agent_id: Some(agent_id.as_str()),
+            role_instance_id: None,
+            task_id: None,
+            workflow_id: None,
+            lane_id: None,
+            assignment_id: None,
+            runtime_cwd: runtime_state
+                .runtime_cwd
+                .as_deref()
+                .map(std::path::Path::new),
+        },
+    )?;
 
     state.log(
         "info",

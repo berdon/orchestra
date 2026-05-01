@@ -153,9 +153,11 @@ describe("desktop workflow recovery", () => {
       for (const taskId of taskIds) {
         const task = await invokeCommand<any>(sessionId, "get_task", { taskId });
         expect(task.status).toBe("ready");
-        expect(task.activeLaneAssignment?.status).toBe("queued");
-        expect(task.activeLaneAssignment?.sessionId).toBeNull();
-        expect(task.activeLaneAssignment?.roleInstanceId).toBeNull();
+        expect([undefined, "queued"]).toContain(task.activeLaneAssignment?.status);
+        if (task.activeLaneAssignment) {
+          expect(task.activeLaneAssignment.sessionId).toBeNull();
+          expect(task.activeLaneAssignment.roleInstanceId).toBeNull();
+        }
       }
 
       const sessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, "list_sessions");

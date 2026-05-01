@@ -83,7 +83,7 @@ pub fn seed_direct_agent_session_context(
         session_dir,
         session_id,
         &format!(
-            "[DEBUG seeded direct agent context for validation — this will be hidden again later]\n\n{}",
+            "Real pi session ready. Send a message to begin.\n\n[DEBUG seeded direct agent context for validation — this will be hidden again later]\n\n{}",
             context,
         ),
     )

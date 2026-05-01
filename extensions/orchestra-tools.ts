@@ -2161,7 +2161,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query/task/worker filters plus hidden, dismissed, catalog/file state, and limit controls.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query/task/worker filters plus hidden, dismissed, legacy-diagnostic catalog/list-entry state, file state, and limit controls.`,
       parameters: Type.Object({
         projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the session inventory." })),
         projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope the session inventory." })),
@@ -2173,8 +2173,10 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         workerType: Type.Optional(Type.String({ description: "Optional worker type filter such as role or agent." })),
         workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
         hidden: Type.Optional(Type.Boolean({ description: "Whether to include only hidden or only visible sessions." })),
-        dismissed: Type.Optional(Type.Boolean({ description: "Whether to include only user-dismissed or non-dismissed sessions." })),
-        catalogPresent: Type.Optional(Type.Boolean({ description: "Filter on whether a session_catalog row exists." })),
+        dismissed: Type.Optional(Type.Boolean({ description: "Whether to include only canonically user-dismissed or non-dismissed sessions." })),
+        catalogPresent: Type.Optional(Type.Boolean({ description: "Compatibility alias for legacyCatalogPresent. Filters on whether a legacy session_catalog row exists." })),
+        legacyCatalogPresent: Type.Optional(Type.Boolean({ description: "Admin-only drift filter for whether a legacy session_catalog row exists." })),
+        legacyListEntryPresent: Type.Optional(Type.Boolean({ description: "Admin-only drift filter for whether a legacy session_list_entries row exists." })),
         fileExists: Type.Optional(Type.Boolean({ description: "Filter on whether the transcript file exists." })),
         limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to return." })),
       }),
@@ -2193,7 +2195,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide sessionId to inspect catalog, transcript, list-entry, run-origin, and runtime diagnostics.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide sessionId to inspect canonical, transcript, legacy catalog/list-entry, run-origin, and runtime diagnostics.`,
       parameters: Type.Object({
         sessionId: Type.String({ description: "Canonical Orchestra session id to inspect." }),
       }),
@@ -2212,7 +2214,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide explicit session filters. Destructive execution defaults to dryRun=true and requires confirm=true when dryRun=false. delete_sessions also supports stopActiveRuntimes and may additionally require sessions.stop.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide explicit session filters. Legacy catalog/list-entry filters are admin-only diagnostics. Destructive execution defaults to dryRun=true and requires confirm=true when dryRun=false. delete_sessions also supports stopActiveRuntimes and may additionally require sessions.stop.`,
       parameters: Type.Object({
         projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the target sessions." })),
         projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope the target sessions." })),
@@ -2224,8 +2226,10 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         workerType: Type.Optional(Type.String({ description: "Optional worker type filter." })),
         workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
         hidden: Type.Optional(Type.Boolean({ description: "Optional hidden-state filter." })),
-        dismissed: Type.Optional(Type.Boolean({ description: "Optional user-dismissed-state filter." })),
-        catalogPresent: Type.Optional(Type.Boolean({ description: "Optional session_catalog presence filter." })),
+        dismissed: Type.Optional(Type.Boolean({ description: "Optional canonical user-dismissed-state filter." })),
+        catalogPresent: Type.Optional(Type.Boolean({ description: "Compatibility alias for legacyCatalogPresent." })),
+        legacyCatalogPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_catalog presence filter." })),
+        legacyListEntryPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_list_entries presence filter." })),
         fileExists: Type.Optional(Type.Boolean({ description: "Optional transcript file existence filter." })),
         limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to match." })),
         reason: Type.Optional(Type.String({ description: "Optional hide reason. hide_sessions defaults to user_dismissed when omitted." })),
@@ -2248,7 +2252,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query filters. Execution defaults to dryRun=true and requires confirm=true when dryRun=false.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query filters to inspect or repair canonical/transcript/legacy drift. Legacy catalog/list-entry filters are admin-only diagnostics. Execution defaults to dryRun=true and requires confirm=true when dryRun=false.`,
       parameters: Type.Object({
         projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope reconciliation." })),
         projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope reconciliation." })),
@@ -2260,8 +2264,10 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         workerType: Type.Optional(Type.String({ description: "Optional worker type filter." })),
         workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
         hidden: Type.Optional(Type.Boolean({ description: "Optional hidden-state filter." })),
-        dismissed: Type.Optional(Type.Boolean({ description: "Optional user-dismissed-state filter." })),
-        catalogPresent: Type.Optional(Type.Boolean({ description: "Optional session_catalog presence filter." })),
+        dismissed: Type.Optional(Type.Boolean({ description: "Optional canonical user-dismissed-state filter." })),
+        catalogPresent: Type.Optional(Type.Boolean({ description: "Compatibility alias for legacyCatalogPresent." })),
+        legacyCatalogPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_catalog presence filter." })),
+        legacyListEntryPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_list_entries presence filter." })),
         fileExists: Type.Optional(Type.Boolean({ description: "Optional transcript file existence filter." })),
         limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to inspect." })),
         dryRun: Type.Optional(Type.Boolean({ description: "Whether to preview the reconciliation without executing it. Defaults to true." })),

@@ -372,31 +372,39 @@ export async function clickNthSelector(sessionId: string, selector: string, inde
 }
 
 export async function setInputValue(sessionId: string, selector: string, value: string) {
-  const updated = await executeScript<boolean>(
-    sessionId,
-    `
-      const element = document.querySelector(arguments[0]);
-      if (!element) {
-        return false;
-      }
-      element.focus();
-      const prototype = element instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : element instanceof HTMLSelectElement
-          ? HTMLSelectElement.prototype
-          : HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-      descriptor?.set?.call(element, arguments[1]);
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    `,
-    [selector, value],
-  );
+  const deadline = Date.now() + 5_000;
 
-  if (!updated) {
-    throw new Error(`Unable to set value for ${selector}`);
+  while (Date.now() < deadline) {
+    const updated = await executeScript<boolean>(
+      sessionId,
+      `
+        const element = document.querySelector(arguments[0]);
+        if (!element) {
+          return false;
+        }
+        element.focus();
+        const prototype = element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : element instanceof HTMLSelectElement
+            ? HTMLSelectElement.prototype
+            : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        descriptor?.set?.call(element, arguments[1]);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      `,
+      [selector, value],
+    );
+
+    if (updated) {
+      return;
+    }
+
+    await sleep(100);
   }
+
+  throw new Error(`Unable to set value for ${selector}`);
 }
 
 export async function setFieldByLabel(sessionId: string, labelText: string, value: string) {
@@ -535,6 +543,7 @@ export async function selectByLabel(sessionId: string, selector: string, label: 
       descriptor?.set?.call(element, option.value);
       if (element.getAttribute('data-role') === 'project-switcher') {
         try {
+          window.localStorage.setItem('orchestra.preferences.active-project-id', option.value);
           window.localStorage.setItem('orchestra.mock.active-project-id', option.value);
         } catch (_) {
           // ignore storage write errors in test helpers
@@ -625,6 +634,7 @@ export async function setActiveProject(sessionId: string, projectId: string) {
   await executeScript(
     sessionId,
     `
+      window.localStorage.setItem('orchestra.preferences.active-project-id', arguments[0]);
       window.localStorage.setItem('orchestra.mock.active-project-id', arguments[0]);
       window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
       return true;

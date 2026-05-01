@@ -20,10 +20,9 @@ use crate::{
             maybe_auto_compact, maybe_runtime, perform_session_compaction, perform_session_reload,
         },
         pi_sessions::{
-            all_session_contexts, delete_session_file, detect_session_context,
-            find_session_context_for_session, get_session, get_session_header_cwd,
-            get_session_stats as load_session_stats_from_file, session_context_for_project_id,
-            set_session_model as apply_session_model,
+            detect_session_context, find_session_context_for_session, get_session,
+            get_session_header_cwd, get_session_stats as load_session_stats_from_file,
+            session_context_for_project_id, set_session_model as apply_session_model,
         },
         pi_setup, role_dispatch, role_runtime, roles, session_list, session_records, task_runtime,
     },
@@ -77,6 +76,78 @@ fn update_agent_main_session_for_created_session(
     )?;
 
     Ok(())
+}
+
+fn resolve_session_create_title(
+    explicit_title: Option<&str>,
+    agent: Option<&crate::models::AgentDefinition>,
+) -> Option<String> {
+    explicit_title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .or_else(|| agent.map(|agent| format!("{} main session", agent.name)))
+}
+
+fn create_contextual_agent_main_successor(
+    connection: &mut rusqlite::Connection,
+    runtime_root: &Path,
+    session_dir: &Path,
+    title: &str,
+    project_id: &str,
+    agent: &crate::models::AgentDefinition,
+    runtime_state: &crate::models::AgentRuntimeState,
+) -> Result<crate::services::pi_sessions::StoredSession, String> {
+    let runtime_cwd = runtime_state
+        .runtime_cwd
+        .clone()
+        .unwrap_or_else(|| runtime_root.display().to_string());
+    let tx = connection.transaction().map_err(|error| {
+        format!("Unable to start contextual agent main-session creation transaction: {error}")
+    })?;
+    let created = session_records::create_session_record(
+        &tx,
+        runtime_root,
+        session_dir,
+        session_records::CreateSessionRecordInput {
+            project_id: Some(project_id),
+            title: Some(title),
+            session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+            agent_id: Some(agent.id.as_str()),
+            role_instance_id: None,
+            task_id: None,
+            workflow_id: None,
+            lane_id: None,
+            assignment: None,
+            worker_type: None,
+            worker_id: None,
+            runtime_cwd: Some(runtime_cwd.as_str()),
+            subscribed: false,
+            agent_runtime: Some(session_records::AgentRuntimeBinding {
+                project_id,
+                agent_id: agent.id.as_str(),
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                status: &runtime_state.status,
+                last_error: runtime_state.last_error.as_deref(),
+            }),
+            update_role_instance_session: false,
+        },
+    )?;
+    task_runtime::apply_agent_session_defaults(
+        runtime_root,
+        session_dir,
+        &created.record.id,
+        agent,
+    )?;
+    tx.commit().map_err(|error| {
+        format!(
+            "Unable to commit contextual agent main-session creation for project {}: {error}",
+            project_id
+        )
+    })?;
+
+    Ok(created)
 }
 
 fn session_project_id(connection: &rusqlite::Connection, session_id: &str) -> Option<String> {
@@ -153,6 +224,13 @@ struct ContextualSessionCreation {
     rotated_from_session_id: Option<String>,
     affected_task_id: Option<String>,
     project_id: Option<String>,
+    direct_agent_context_seed: Option<DirectAgentContextSeed>,
+}
+
+#[derive(Debug, Clone)]
+struct DirectAgentContextSeed {
+    agent_id: String,
+    active_project_id: Option<String>,
 }
 
 fn ensure_session_runtime_root(path: &Path) -> Result<(), String> {
@@ -579,7 +657,9 @@ pub(crate) fn decorate_session_record_with_connection(
     ));
 
     match (surface, visibility.as_ref()) {
-        (_, Some(session_list::SessionListVisibility::Active)) => record.status = "active".into(),
+        (SessionDecorationSurface::List, Some(session_list::SessionListVisibility::Active)) => {
+            record.status = "active".into();
+        }
         (_, Some(session_list::SessionListVisibility::Closed)) => record.status = "closed".into(),
         (SessionDecorationSurface::List, Some(session_list::SessionListVisibility::Hidden(_))) => {
             record.status = "closed".into();
@@ -592,7 +672,9 @@ pub(crate) fn decorate_session_record_with_connection(
                 record.status = "closed".into();
             }
         }
-        (_, Some(session_list::SessionListVisibility::Unchanged)) | (_, None) => {}
+        (_, Some(session_list::SessionListVisibility::Active))
+        | (_, Some(session_list::SessionListVisibility::Unchanged))
+        | (_, None) => {}
     }
 
     Ok(record)
@@ -626,10 +708,9 @@ fn load_decorated_session_record(
         .map(|row| row.to_record(subscribed))
         .ok_or_else(|| format!("Session {session_id} was not found"))?;
 
-    if let Ok(detail_record) = get_session(session_dir, session_id, subscribed) {
-        record.events = detail_record.events;
-        record.status = detail_record.status;
-    }
+    let detail_record = get_session(session_dir, session_id, subscribed)?;
+    record.events = detail_record.events;
+    record.status = detail_record.status;
 
     decorate_session_record_with_connection(
         &connection,
@@ -726,12 +807,6 @@ fn log_session_command_failure(
     );
 }
 
-fn load_dismissed_session_ids(
-    connection: &rusqlite::Connection,
-) -> Result<HashSet<String>, String> {
-    session_list::load_hidden_session_ids(connection)
-}
-
 fn dismiss_session_entry(
     connection: &rusqlite::Connection,
     session_id: &str,
@@ -746,16 +821,41 @@ fn restore_session_entry(
     session_list::restore_user_dismissed_session(connection, session_id)
 }
 
-fn cleanup_dismissed_sessions(connection: &rusqlite::Connection) -> Result<Vec<String>, String> {
-    let session_ids = session_list::cleanup_user_dismissed_sessions(connection)?;
+fn collect_listed_session_records_from_rows(
+    connection: &rusqlite::Connection,
+    rows: Vec<session_records::CanonicalSessionRow>,
+    subscribed: &HashSet<String>,
+    terminal_attached_session_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
+    let mut seen_session_ids = HashSet::new();
+    let mut sessions = Vec::new();
 
-    for session_id in &session_ids {
-        if let Ok(context) = find_session_context_for_session(session_id) {
-            let _ = delete_session_file(&context.session_dir, session_id);
+    for row in rows {
+        if !seen_session_ids.insert(row.id.clone()) {
+            continue;
         }
+        let base_record = row.to_record(subscribed.contains(&row.id));
+        let decorated = decorate_session_record_with_connection(
+            connection,
+            terminal_attached_session_ids,
+            base_record,
+            false,
+            SessionDecorationSurface::List,
+        )?;
+        if matches!(
+            decorated.list_visibility,
+            Some(SessionListVisibilityState::Hidden)
+        ) && session_list::hide_session_from_normal_list(
+            row.hidden_reason.as_deref(),
+            row.dismissed_at.as_deref(),
+        ) {
+            continue;
+        }
+        sessions.push(decorated);
     }
 
-    Ok(session_ids)
+    sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(sessions)
 }
 
 pub(crate) fn list_command_sessions_with_connection(
@@ -764,41 +864,34 @@ pub(crate) fn list_command_sessions_with_connection(
     subscribed: &HashSet<String>,
     terminal_attached_session_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
-    cleanup_dismissed_sessions(connection)?;
-    let mut seen_session_ids = HashSet::new();
-    let mut sessions = Vec::new();
-
+    let mut all_rows = Vec::new();
     for context in contexts {
         let project_id = project_id_for_slug(connection, &context.project_slug);
-        let rows = session_records::list_session_rows(
+        all_rows.extend(session_records::list_session_rows(
             connection,
             project_id.as_deref(),
             Some(&context.session_dir),
-        )?;
-        for row in rows {
-            if !seen_session_ids.insert(row.id.clone()) {
-                continue;
-            }
-            let base_record = row.to_record(subscribed.contains(&row.id));
-            let decorated = decorate_session_record_with_connection(
-                connection,
-                terminal_attached_session_ids,
-                base_record,
-                false,
-                SessionDecorationSurface::List,
-            )?;
-            if matches!(
-                decorated.list_visibility,
-                Some(SessionListVisibilityState::Hidden)
-            ) {
-                continue;
-            }
-            sessions.push(decorated);
-        }
+        )?);
     }
+    collect_listed_session_records_from_rows(
+        connection,
+        all_rows,
+        subscribed,
+        terminal_attached_session_ids,
+    )
+}
 
-    sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    Ok(sessions)
+fn list_all_command_sessions_with_connection(
+    connection: &rusqlite::Connection,
+    subscribed: &HashSet<String>,
+    terminal_attached_session_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
+    collect_listed_session_records_from_rows(
+        connection,
+        session_records::list_session_rows(connection, None, None)?,
+        subscribed,
+        terminal_attached_session_ids,
+    )
 }
 
 #[tauri::command]
@@ -810,17 +903,22 @@ pub async fn list_sessions(
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let sessions = spawn_blocking(move || {
         let connection = database::open_connection()?;
-        let contexts = match project_id.as_deref() {
-            Some(project_id) => vec![session_context_for_project_id(project_id)?],
-            None => all_session_contexts()?,
-        };
-
-        list_command_sessions_with_connection(
-            &connection,
-            &contexts,
-            &subscribed,
-            &terminal_attached_session_ids,
-        )
+        match project_id.as_deref() {
+            Some(project_id) => {
+                let contexts = vec![session_context_for_project_id(project_id)?];
+                list_command_sessions_with_connection(
+                    &connection,
+                    &contexts,
+                    &subscribed,
+                    &terminal_attached_session_ids,
+                )
+            }
+            None => list_all_command_sessions_with_connection(
+                &connection,
+                &subscribed,
+                &terminal_attached_session_ids,
+            ),
+        }
     })
     .await
     .map_err(|error| format!("Unable to join list_sessions task: {error}"))??;
@@ -877,6 +975,16 @@ pub async fn create_session(
     pi_setup::require_pi_setup_ready().map_err(|error| {
         format!("Unable to create session because Pi setup is incomplete: {error}")
     })?;
+    state.log(
+        "info",
+        "sessions.create.request",
+        &format!(
+            "Create session request title={} project_slug={} agent_id={}",
+            title.as_deref().unwrap_or("<none>"),
+            project_slug.as_deref().unwrap_or("<default>"),
+            agent_id.as_deref().unwrap_or("<none>"),
+        ),
+    );
     let title_for_task = title.clone();
     let project_slug_for_task = project_slug.clone();
     let agent_id_for_task = agent_id.clone();
@@ -898,13 +1006,19 @@ pub async fn create_session(
                 )
             })?;
         let runtime_cwd = context.project_root.display().to_string();
+        let agent = agent_id_for_create
+            .as_deref()
+            .map(|agent_id| agents::get_agent(&connection, agent_id))
+            .transpose()?;
+        let resolved_title =
+            resolve_session_create_title(title_for_task.as_deref(), agent.as_ref());
         let created = session_records::create_session_record(
             &connection,
             &context.project_root,
             &context.session_dir,
             session_records::CreateSessionRecordInput {
                 project_id: project_id.as_deref(),
-                title: title_for_task.as_deref(),
+                title: resolved_title.as_deref(),
                 session_kind: if agent_id_for_create.is_some() {
                     session_records::SESSION_KIND_AGENT_MAIN
                 } else {
@@ -933,13 +1047,12 @@ pub async fn create_session(
                 update_role_instance_session: false,
             },
         )?;
-        if let Some(ref agent_id_str) = agent_id_for_create {
-            let agent = agents::get_agent(&connection, agent_id_str)?;
+        if let Some(agent) = agent.as_ref() {
             agent_dispatch::seed_direct_agent_session_context(
                 &connection,
                 &context.session_dir,
                 &created.record.id,
-                &agent,
+                agent,
                 project_id.as_deref(),
             )?;
         }
@@ -949,13 +1062,14 @@ pub async fn create_session(
     .map_err(|error| format!("Unable to join create_session task: {error}"))??;
 
     state.set_session_subscription(&created.record.id, true)?;
-    let _ = ensure_runtime(
+    let runtime = ensure_runtime(
         &state.session_runtimes,
         app.clone(),
         project_root,
         session_dir.clone(),
         &created.record.id,
     )?;
+    runtime.set_subscribed(true);
     state.log(
         "info",
         "sessions.create",
@@ -1058,14 +1172,26 @@ pub async fn create_contextual_session(
         );
     }
 
+    state.log(
+        "info",
+        "sessions.create_contextual.request",
+        &format!(
+            "Create contextual session request source={} project_slug={} agent_id={}",
+            session_id,
+            project_slug.as_deref().unwrap_or("<default>"),
+            agent_id.as_deref().unwrap_or("<none>"),
+        ),
+    );
     let session_id_for_task = session_id.clone();
     let project_slug_for_task = project_slug.clone();
     let agent_id_for_task = agent_id.clone();
+    let agent_id_for_post_commit = agent_id.clone();
     let agent_id_for_create = agent_id_for_task.clone();
     let prepared = spawn_blocking(move || {
         let mut connection = database::open_connection()?;
         let old_context = find_session_context_for_session(&session_id_for_task)?;
         let old_record = get_session(&old_context.session_dir, &session_id_for_task, false)?;
+        let old_row = session_records::load_session_row(&connection, &session_id_for_task)?;
         let now = crate::state::now_iso();
 
         if let Some(assignment) =
@@ -1258,7 +1384,234 @@ pub async fn create_contextual_session(
                 rotated_from_session_id: Some(session_id_for_task),
                 affected_task_id: Some(assignment.task_id),
                 project_id: Some(assignment_result.0),
+                direct_agent_context_seed: None,
             });
+        }
+
+        if let Some(canonical_agent_main) = old_row.as_ref().filter(|row| {
+            row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+                && row.agent_id.as_deref().is_some()
+        }) {
+            let source_agent_id = agent_id_for_task
+                .as_deref()
+                .unwrap_or_else(|| {
+                    canonical_agent_main
+                        .agent_id
+                        .as_deref()
+                        .expect("filtered canonical agent main rows always have an agent id")
+                });
+            if canonical_agent_main.agent_id.as_deref() == Some(source_agent_id) {
+                let chat_context_project_id = project_slug_for_task
+                    .as_deref()
+                    .and_then(|slug| project_id_for_slug(&connection, slug))
+                    .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
+                if let Some(project_id) = chat_context_project_id
+                    .clone()
+                    .or_else(|| canonical_agent_main.project_id.clone())
+                {
+                    let runtime_state = agent_runtime::get_agent_runtime_state_for_project(
+                        &connection,
+                        &project_id,
+                        source_agent_id,
+                    )?
+                    .unwrap_or_else(|| crate::models::AgentRuntimeState {
+                        project_id: project_id.clone(),
+                        agent_id: source_agent_id.to_string(),
+                        status: canonical_agent_main.session_status.clone(),
+                        main_session_id: Some(session_id_for_task.clone()),
+                        runtime_cwd: canonical_agent_main
+                            .runtime_cwd
+                            .clone()
+                            .or_else(|| Some(old_context.project_root.display().to_string())),
+                        current_queue_entry_id: None,
+                        last_dispatch_at: None,
+                        last_error: None,
+                        terminal_attached: false,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                    });
+                    let agent = agents::get_agent(&connection, source_agent_id)?;
+                    let runtime_root = runtime_state
+                        .runtime_cwd
+                        .clone()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| old_context.project_root.clone());
+                    ensure_session_runtime_root(&runtime_root)?;
+                    let created = create_contextual_agent_main_successor(
+                        &mut connection,
+                        &runtime_root,
+                        &old_context.session_dir,
+                        old_record.title.as_str(),
+                        project_id.as_str(),
+                        &agent,
+                        &runtime_state,
+                    )?;
+                    return Ok(ContextualSessionCreation {
+                        project_root: runtime_root,
+                        session_dir: old_context.session_dir,
+                        new_session_id: created.record.id,
+                        rotated_from_session_id: Some(session_id_for_task),
+                        affected_task_id: None,
+                        project_id: Some(project_id),
+                        direct_agent_context_seed: Some(DirectAgentContextSeed {
+                            agent_id: source_agent_id.to_string(),
+                            active_project_id: chat_context_project_id,
+                        }),
+                    });
+                }
+            }
+        }
+
+        let chat_context_project_id = project_slug_for_task
+            .as_deref()
+            .and_then(|slug| project_id_for_slug(&connection, slug))
+            .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
+
+        if let Some(source_canonical_agent_main) = old_row.as_ref().filter(|row| {
+            row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+                && row.agent_id.as_deref().is_some()
+                && agent_id_for_task
+                    .as_deref()
+                    .map(|requested_agent_id| row.agent_id.as_deref() == Some(requested_agent_id))
+                    .unwrap_or(true)
+        }) {
+            let source_agent_id = source_canonical_agent_main
+                .agent_id
+                .as_deref()
+                .expect("filtered canonical agent main rows always have an agent id");
+            let project_id = chat_context_project_id
+                .clone()
+                .or_else(|| source_canonical_agent_main.project_id.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "Unable to resolve project for contextual agent main-session rotation from {}",
+                        session_id_for_task
+                    )
+                })?;
+            let runtime_state = agent_runtime::get_agent_runtime_state_for_project(
+                &connection,
+                &project_id,
+                source_agent_id,
+            )?
+            .unwrap_or(crate::models::AgentRuntimeState {
+                project_id: project_id.clone(),
+                agent_id: source_agent_id.to_string(),
+                status: "idle".into(),
+                main_session_id: Some(session_id_for_task.clone()),
+                runtime_cwd: source_canonical_agent_main
+                    .runtime_cwd
+                    .clone()
+                    .or_else(|| Some(old_context.project_root.display().to_string())),
+                current_queue_entry_id: None,
+                last_dispatch_at: None,
+                last_error: None,
+                terminal_attached: false,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+            let agent = agents::get_agent(&connection, source_agent_id)?;
+            let runtime_root = runtime_state
+                .runtime_cwd
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| old_context.project_root.clone());
+            ensure_session_runtime_root(&runtime_root)?;
+            let created = create_contextual_agent_main_successor(
+                &mut connection,
+                &runtime_root,
+                &old_context.session_dir,
+                old_record.title.as_str(),
+                project_id.as_str(),
+                &agent,
+                &runtime_state,
+            )?;
+            update_agent_main_session_for_created_session(
+                &connection,
+                Some(project_id.as_str()),
+                source_agent_id,
+                &created.record.id,
+            )?;
+            return Ok(ContextualSessionCreation {
+                project_root: runtime_root,
+                session_dir: old_context.session_dir,
+                new_session_id: created.record.id,
+                rotated_from_session_id: Some(session_id_for_task),
+                affected_task_id: None,
+                project_id: Some(project_id.clone()),
+                direct_agent_context_seed: Some(DirectAgentContextSeed {
+                    agent_id: source_agent_id.to_string(),
+                    active_project_id: chat_context_project_id.or_else(|| Some(project_id)),
+                }),
+            });
+        }
+
+        if let Some(requested_agent_id) = agent_id_for_task.as_deref() {
+            let canonical_agent_main = old_row.as_ref().filter(|row| {
+                row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+                    && row.agent_id.as_deref() == Some(requested_agent_id)
+            });
+            if let Some(project_id) = chat_context_project_id.clone()
+                .or_else(|| canonical_agent_main.and_then(|row| row.project_id.clone()))
+            {
+                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(
+                    &connection,
+                    &project_id,
+                    requested_agent_id,
+                )?
+                .or_else(|| {
+                    canonical_agent_main.map(|row| crate::models::AgentRuntimeState {
+                        project_id: project_id.clone(),
+                        agent_id: requested_agent_id.to_string(),
+                        status: "idle".into(),
+                        main_session_id: Some(session_id_for_task.clone()),
+                        runtime_cwd: row
+                            .runtime_cwd
+                            .clone()
+                            .or_else(|| Some(old_context.project_root.display().to_string())),
+                        current_queue_entry_id: None,
+                        last_dispatch_at: None,
+                        last_error: None,
+                        terminal_attached: false,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                    })
+                }) {
+                    let agent = agents::get_agent(&connection, requested_agent_id)?;
+                    let runtime_root = runtime_state
+                        .runtime_cwd
+                        .clone()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| old_context.project_root.clone());
+                    ensure_session_runtime_root(&runtime_root)?;
+                    let created = create_contextual_agent_main_successor(
+                        &mut connection,
+                        &runtime_root,
+                        &old_context.session_dir,
+                        old_record.title.as_str(),
+                        project_id.as_str(),
+                        &agent,
+                        &runtime_state,
+                    )?;
+                    update_agent_main_session_for_created_session(
+                        &connection,
+                        Some(project_id.as_str()),
+                        requested_agent_id,
+                        &created.record.id,
+                    )?;
+                    return Ok(ContextualSessionCreation {
+                        project_root: runtime_root,
+                        session_dir: old_context.session_dir,
+                        new_session_id: created.record.id,
+                        rotated_from_session_id: Some(session_id_for_task),
+                        affected_task_id: None,
+                        project_id: Some(project_id),
+                        direct_agent_context_seed: Some(DirectAgentContextSeed {
+                            agent_id: requested_agent_id.to_string(),
+                            active_project_id: chat_context_project_id,
+                        }),
+                    });
+                }
+            }
         }
 
         let agent_runtime_row = connection
@@ -1279,6 +1632,78 @@ pub async fn create_contextual_session(
                     session_id_for_task
                 )
             })?;
+
+        if let Some(canonical_agent_main) = old_row.as_ref().filter(|row| {
+            row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+                && row.agent_id.as_deref().is_some()
+        }) {
+            let source_agent_id = canonical_agent_main
+                .agent_id
+                .as_deref()
+                .expect("filtered canonical agent main rows always have an agent id");
+            let chat_context_project_id = project_slug_for_task
+                .as_deref()
+                .and_then(|slug| project_id_for_slug(&connection, slug))
+                .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
+            if let Some(project_id) = chat_context_project_id
+                .clone()
+                .or_else(|| canonical_agent_main.project_id.clone())
+            {
+                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(
+                    &connection,
+                    &project_id,
+                    source_agent_id,
+                )?
+                .or_else(|| {
+                    Some(crate::models::AgentRuntimeState {
+                        project_id: project_id.clone(),
+                        agent_id: source_agent_id.to_string(),
+                        status: "idle".into(),
+                        main_session_id: Some(session_id_for_task.clone()),
+                        runtime_cwd: canonical_agent_main
+                            .runtime_cwd
+                            .clone()
+                            .or_else(|| Some(old_context.project_root.display().to_string())),
+                        current_queue_entry_id: None,
+                        last_dispatch_at: None,
+                        last_error: None,
+                        terminal_attached: false,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                    })
+                }) {
+                    let agent = agents::get_agent(&connection, source_agent_id)?;
+                    let runtime_root = runtime_state
+                        .runtime_cwd
+                        .clone()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| old_context.project_root.clone());
+                    ensure_session_runtime_root(&runtime_root)?;
+                    let created = create_contextual_agent_main_successor(
+                        &mut connection,
+                        &runtime_root,
+                        &old_context.session_dir,
+                        old_record.title.as_str(),
+                        project_id.as_str(),
+                        &agent,
+                        &runtime_state,
+                    )?;
+
+                    return Ok(ContextualSessionCreation {
+                        project_root: runtime_root,
+                        session_dir: old_context.session_dir,
+                        new_session_id: created.record.id,
+                        rotated_from_session_id: Some(session_id_for_task),
+                        affected_task_id: None,
+                        project_id: Some(project_id),
+                        direct_agent_context_seed: Some(DirectAgentContextSeed {
+                            agent_id: source_agent_id.to_string(),
+                            active_project_id: chat_context_project_id,
+                        }),
+                    });
+                }
+            }
+        }
 
         if let Some((project_id, agent_id)) = agent_runtime_row {
             let chat_context_project_id = project_slug_for_task
@@ -1303,64 +1728,15 @@ pub async fn create_contextual_session(
                 .map(PathBuf::from)
                 .unwrap_or_else(|| old_context.project_root.clone());
             ensure_session_runtime_root(&runtime_root)?;
-            let runtime_cwd = runtime_state
-                .runtime_cwd
-                .clone()
-                .unwrap_or_else(|| runtime_root.display().to_string());
-            let tx = connection.transaction().map_err(|error| {
-                format!(
-                    "Unable to start contextual agent main-session rotation transaction: {error}"
-                )
-            })?;
-            let created = session_records::rotate_session_record(
-                &tx,
+            let created = create_contextual_agent_main_successor(
+                &mut connection,
                 &runtime_root,
                 &old_context.session_dir,
-                &session_id_for_task,
-                session_records::RotateSessionRecordInput {
-                    project_id: Some(project_id.as_str()),
-                    title: Some(old_record.title.as_str()),
-                    session_kind: session_records::SESSION_KIND_AGENT_MAIN,
-                    agent_id: Some(agent_id.as_str()),
-                    role_instance_id: None,
-                    task_id: None,
-                    workflow_id: None,
-                    lane_id: None,
-                    assignment: None,
-                    worker_type: None,
-                    worker_id: None,
-                    runtime_cwd: Some(runtime_cwd.as_str()),
-                    subscribed: false,
-                    agent_runtime: Some(session_records::AgentRuntimeBinding {
-                        project_id: project_id.as_str(),
-                        agent_id: agent_id.as_str(),
-                        runtime_cwd: Some(runtime_cwd.as_str()),
-                        current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
-                        status: &runtime_state.status,
-                        last_error: runtime_state.last_error.as_deref(),
-                    }),
-                    update_role_instance_session: false,
-                },
-            )?;
-            task_runtime::apply_agent_session_defaults(
-                &runtime_root,
-                &old_context.session_dir,
-                &created.record.id,
+                old_record.title.as_str(),
+                project_id.as_str(),
                 &agent,
+                &runtime_state,
             )?;
-            agent_dispatch::seed_direct_agent_session_context(
-                &tx,
-                &old_context.session_dir,
-                &created.record.id,
-                &agent,
-                chat_context_project_id.as_deref(),
-            )?;
-            tx.commit().map_err(|error| {
-                format!(
-                    "Unable to commit contextual agent main-session rotation for project {}: {error}",
-                    project_id
-                )
-            })?;
 
             return Ok(ContextualSessionCreation {
                 project_root: runtime_root,
@@ -1369,7 +1745,64 @@ pub async fn create_contextual_session(
                 rotated_from_session_id: Some(session_id_for_task),
                 affected_task_id: None,
                 project_id: Some(project_id),
+                direct_agent_context_seed: Some(DirectAgentContextSeed {
+                    agent_id,
+                    active_project_id: chat_context_project_id,
+                }),
             });
+        }
+
+        if let Some(requested_agent_id) = agent_id_for_task.as_deref() {
+            let chat_context_project_id = project_slug_for_task
+                .as_deref()
+                .and_then(|slug| project_id_for_slug(&connection, slug))
+                .or_else(|| project_id_for_slug(&connection, &old_context.project_slug));
+            if let Some(project_id) = chat_context_project_id.clone() {
+                if let Some(runtime_state) = agent_runtime::get_agent_runtime_state_for_project(
+                    &connection,
+                    &project_id,
+                    requested_agent_id,
+                )? {
+                    if let Some(current_main_session_id) = runtime_state
+                        .main_session_id
+                        .as_deref()
+                        .filter(|current| *current != session_id_for_task)
+                    {
+                        let agent = agents::get_agent(&connection, requested_agent_id)?;
+                        let current_context = find_session_context_for_session(current_main_session_id)?;
+                        let current_record =
+                            get_session(&current_context.session_dir, current_main_session_id, false)?;
+                        let runtime_root = runtime_state
+                            .runtime_cwd
+                            .clone()
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| current_context.project_root.clone());
+                        ensure_session_runtime_root(&runtime_root)?;
+                        let created = create_contextual_agent_main_successor(
+                            &mut connection,
+                            &runtime_root,
+                            &current_context.session_dir,
+                            current_record.title.as_str(),
+                            project_id.as_str(),
+                            &agent,
+                            &runtime_state,
+                        )?;
+
+                        return Ok(ContextualSessionCreation {
+                            project_root: runtime_root,
+                            session_dir: current_context.session_dir,
+                            new_session_id: created.record.id,
+                            rotated_from_session_id: Some(current_main_session_id.to_string()),
+                            affected_task_id: None,
+                            project_id: Some(project_id),
+                            direct_agent_context_seed: Some(DirectAgentContextSeed {
+                                agent_id: requested_agent_id.to_string(),
+                                active_project_id: chat_context_project_id,
+                            }),
+                        });
+                    }
+                }
+            }
         }
 
         let role_instance_row = connection
@@ -1454,9 +1887,76 @@ pub async fn create_contextual_session(
                 rotated_from_session_id: Some(prior_session_id),
                 affected_task_id: None,
                 project_id: role_project_id,
+                direct_agent_context_seed: None,
             });
         }
 
+        if let Some(requested_agent_id) = agent_id_for_task.as_deref() {
+            if let Some(existing_row) = old_row.as_ref().filter(|row| {
+                row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+                    && row.agent_id.as_deref() == Some(requested_agent_id)
+            }) {
+                let project_id = existing_row
+                    .project_id
+                    .clone()
+                    .or_else(|| project_id_for_slug(&connection, &old_context.project_slug))
+                    .ok_or_else(|| {
+                        format!(
+                            "Unable to resolve project for fallback agent main-session rotation from {}",
+                            session_id_for_task
+                        )
+                    })?;
+                let runtime_state = agent_runtime::get_agent_runtime_state_for_project(
+                    &connection,
+                    &project_id,
+                    requested_agent_id,
+                )?
+                .unwrap_or(crate::models::AgentRuntimeState {
+                    project_id: project_id.clone(),
+                    agent_id: requested_agent_id.to_string(),
+                    status: "idle".into(),
+                    main_session_id: Some(session_id_for_task.clone()),
+                    runtime_cwd: existing_row
+                        .runtime_cwd
+                        .clone()
+                        .or_else(|| Some(old_context.project_root.display().to_string())),
+                    current_queue_entry_id: None,
+                    last_dispatch_at: None,
+                    last_error: None,
+                    terminal_attached: false,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                });
+                let agent = agents::get_agent(&connection, requested_agent_id)?;
+                let runtime_root = runtime_state
+                    .runtime_cwd
+                    .clone()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| old_context.project_root.clone());
+                ensure_session_runtime_root(&runtime_root)?;
+                let created = create_contextual_agent_main_successor(
+                    &mut connection,
+                    &runtime_root,
+                    &old_context.session_dir,
+                    old_record.title.as_str(),
+                    project_id.as_str(),
+                    &agent,
+                    &runtime_state,
+                )?;
+                return Ok(ContextualSessionCreation {
+                    project_root: runtime_root,
+                    session_dir: old_context.session_dir,
+                    new_session_id: created.record.id,
+                    rotated_from_session_id: Some(session_id_for_task),
+                    affected_task_id: None,
+                    project_id: Some(project_id.clone()),
+                    direct_agent_context_seed: Some(DirectAgentContextSeed {
+                        agent_id: requested_agent_id.to_string(),
+                        active_project_id: Some(project_id),
+                    }),
+                });
+            }
+        }
         let context = if let Some(project_slug) = project_slug_for_task.as_deref() {
             detect_session_context(Some(project_slug))?
         } else {
@@ -1470,7 +1970,9 @@ pub async fn create_contextual_session(
             &context.session_dir,
             session_records::CreateSessionRecordInput {
                 project_id: project_id.as_deref(),
-                title: None,
+                title: agent_id_for_create
+                    .as_deref()
+                    .map(|_| old_record.title.as_str()),
                 session_kind: if agent_id_for_create.is_some() {
                     session_records::SESSION_KIND_AGENT_MAIN
                 } else {
@@ -1499,7 +2001,6 @@ pub async fn create_contextual_session(
                 update_role_instance_session: false,
             },
         )?;
-
         Ok(ContextualSessionCreation {
             project_root: context.project_root,
             session_dir: context.session_dir,
@@ -1507,6 +2008,7 @@ pub async fn create_contextual_session(
             rotated_from_session_id: None,
             affected_task_id: None,
             project_id,
+            direct_agent_context_seed: None,
         })
     })
     .await
@@ -1520,12 +2022,16 @@ pub async fn create_contextual_session(
         state.set_session_subscription(previous_session_id, false)?;
     }
 
+    let actual_new_session_dir = find_session_context_for_session(&prepared.new_session_id)
+        .map(|context| context.session_dir)
+        .unwrap_or_else(|_| prepared.session_dir.clone());
+
     state.set_session_subscription(&prepared.new_session_id, true)?;
     let runtime = ensure_runtime(
         &state.session_runtimes,
         app.clone(),
         prepared.project_root,
-        prepared.session_dir.clone(),
+        actual_new_session_dir.clone(),
         &prepared.new_session_id,
     )?;
     runtime.set_subscribed(true);
@@ -1533,10 +2039,25 @@ pub async fn create_contextual_session(
     let project_id = prepared.project_id.clone();
     let rotated_from_session_id = prepared.rotated_from_session_id.clone();
     let affected_task_id = prepared.affected_task_id.clone();
-    let session_dir = prepared.session_dir.clone();
+    let direct_agent_context_seed = prepared.direct_agent_context_seed.clone();
+    let fallback_session_dir = actual_new_session_dir;
+    if let Some(seed) = direct_agent_context_seed.as_ref() {
+        let connection = database::open_connection()?;
+        let agent = agents::get_agent(&connection, &seed.agent_id)?;
+        agent_dispatch::seed_direct_agent_session_context(
+            &connection,
+            &fallback_session_dir,
+            &prepared.new_session_id,
+            &agent,
+            seed.active_project_id.as_deref(),
+        )?;
+    }
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let new_session_id_for_task = prepared.new_session_id.clone();
     let decorated_record = spawn_blocking(move || {
+        let session_dir = find_session_context_for_session(&new_session_id_for_task)
+            .map(|context| context.session_dir)
+            .unwrap_or(fallback_session_dir);
         load_decorated_session_record(
             &session_dir,
             &new_session_id_for_task,
@@ -1581,7 +2102,7 @@ pub async fn create_contextual_session(
                 "replacedSessionId": rotated_from_session_id.clone(),
             }),
         );
-        if let Some(ref agent_id_str) = agent_id_for_task {
+        if let Some(ref agent_id_str) = agent_id_for_post_commit {
             update_agent_main_session_for_created_session(
                 &connection,
                 project_id.as_deref(),
@@ -2419,6 +2940,30 @@ mod tests {
         dir
     }
 
+    fn make_agent_definition(name: &str) -> crate::models::AgentDefinition {
+        crate::models::AgentDefinition {
+            id: "agent-1".into(),
+            slug: "agent-1".into(),
+            name: name.into(),
+            description: None,
+            system_prompt: None,
+            provider: None,
+            model: None,
+            role_id: None,
+            scope: "project".into(),
+            project_id: Some("project-1".into()),
+            thinking_level: "medium".into(),
+            compaction_window: None,
+            policy_ids: Vec::new(),
+            direct_permissions: Vec::new(),
+            system: false,
+            immutable: false,
+            archived: false,
+            created_at: "2026-03-21T00:00:00Z".into(),
+            updated_at: "2026-03-21T00:00:00Z".into(),
+        }
+    }
+
     fn make_list_test_context(label: &str, project_slug: &str) -> SessionContext {
         let root = unique_temp_dir(label);
         let orchestra_root = root.join("orchestra-root");
@@ -2735,6 +3280,12 @@ mod tests {
                 ],
             )
             .expect("lane run insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Completed task session', 'task_assignment', 'closed', 'closed', ?3, ?3, 0, 'closed', ?3, ?3)",
+                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical session row should insert");
 
         let decorated = decorate_session_record_with_connection(
             &connection,
@@ -2752,14 +3303,21 @@ mod tests {
     fn dismiss_and_restore_session_entries_round_trip() {
         let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Session 1', 'standalone', 'idle', 'active', ?3, ?3, 0, 'active', ?3, ?3)",
+                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical session row should insert");
 
         dismiss_session_entry(&connection, "session-1").expect("dismiss should succeed");
-        let dismissed = load_dismissed_session_ids(&connection).expect("dismissed ids should load");
+        let dismissed =
+            session_list::load_hidden_session_ids(&connection).expect("dismissed ids should load");
         assert!(dismissed.contains("session-1"));
 
         restore_session_entry(&connection, "session-1").expect("restore should succeed");
-        let dismissed_after =
-            load_dismissed_session_ids(&connection).expect("dismissed ids should reload");
+        let dismissed_after = session_list::load_hidden_session_ids(&connection)
+            .expect("dismissed ids should reload");
         assert!(!dismissed_after.contains("session-1"));
     }
 
@@ -2767,17 +3325,106 @@ mod tests {
     fn cleanup_stale_dismissed_sessions_removes_old_entries() {
         let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, hidden_reason, dismissed_at, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Stale Session', 'standalone', 'closed', 'hidden', ?3, ?4, ?5, ?5, 0, 'closed', ?5, ?5)",
+                rusqlite::params![
+                    "stale-session",
+                    "/tmp/stale-session.jsonl",
+                    session_list::SESSION_HIDDEN_REASON_USER_DISMISSED,
+                    "2000-01-01T00:00:00Z",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("stale canonical session row should insert");
 
-        connection.execute(
-            "INSERT INTO session_list_entries (session_id, dismissed_at, created_at, updated_at) VALUES (?1, ?2, ?2, ?2)",
-            rusqlite::params!["stale-session", "2000-01-01T00:00:00Z"],
-        ).expect("stale dismiss entry should insert");
-
-        let cleaned = cleanup_dismissed_sessions(&connection).expect("cleanup should succeed");
+        let cleaned = session_list::cleanup_user_dismissed_sessions(&connection)
+            .expect("cleanup should succeed");
         assert_eq!(cleaned, vec!["stale-session".to_string()]);
-        let dismissed_after =
-            load_dismissed_session_ids(&connection).expect("dismissed ids should reload");
+        let dismissed_after = session_list::load_hidden_session_ids(&connection)
+            .expect("dismissed ids should reload");
         assert!(dismissed_after.is_empty());
+    }
+
+    #[test]
+    fn list_sessions_reads_canonical_rows_without_legacy_tables() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+        connection
+            .execute_batch("DROP TABLE session_catalog; DROP TABLE session_list_entries;")
+            .expect("legacy tables should drop");
+
+        let context = make_list_test_context(
+            "orchestra-command-session-list-no-legacy-tables",
+            "command-session-list-no-legacy-tables-test",
+        );
+        let session_path = write_list_test_session(
+            &context,
+            "2026-03-21T00-01-00Z_session-1.jsonl",
+            "session-1",
+            "Canonical session",
+            "2026-03-21T00:01:00Z",
+        );
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-1",
+            None,
+            None,
+            &session_path,
+        )
+        .expect("canonical session row should repair");
+
+        let listed = list_command_sessions_with_connection(
+            &connection,
+            std::slice::from_ref(&context),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("session list should succeed without legacy tables");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "session-1");
+    }
+
+    #[test]
+    fn global_session_list_keeps_detached_persistent_agent_sessions_visible() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'ORC', NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("project insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES ('task-1', 'project-1', 1, 'ORC-1', 'Completed task', NULL, 'task', 'completed', 'P1', NULL, NULL, 'agent', 'agent-1', NULL, NULL, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("task insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, task_id, primary_task_id, worker_type, worker_id, owner_worker_type, owner_worker_id, agent_id, transcript_exists, lifecycle_state, created_at, updated_at) VALUES ('session-1', 'project-1', '/tmp/session-1.jsonl', '/tmp/session-1.jsonl', 'Agent 1 main session', 'agent_main', 'active', 'active', NULL, 'task-1', 'agent', 'agent-1', 'agent', 'agent-1', 'agent-1', 0, 'active', '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("session insert should succeed");
+
+        let listed = list_all_command_sessions_with_connection(
+            &connection,
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("global session list should succeed");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "session-1");
+        assert_eq!(listed[0].title, "Agent 1 main session");
     }
 
     #[test]
@@ -2840,6 +3487,12 @@ mod tests {
                 ],
             )
             .expect("assignment insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Handed off session', 'task_assignment', 'closed', 'closed', ?3, ?3, 0, 'closed', ?3, ?3)",
+                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical session row should insert");
 
         let decorated = decorate_session_record_with_connection(
             &connection,
@@ -2911,6 +3564,12 @@ mod tests {
                 ],
             )
             .expect("awaiting approval assignment insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Awaiting approval session', 'task_assignment', 'active', 'active', ?3, ?3, 0, 'active', ?3, ?3)",
+                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical session row should insert");
 
         let decorated = decorate_session_record_with_connection(
             &connection,
@@ -2947,6 +3606,14 @@ mod tests {
             "Dismissed session",
             "2026-03-21T00:00:00Z",
         );
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-dismissed",
+            None,
+            None,
+            &dismissed_path,
+        )
+        .expect("dismissed canonical session row should repair");
         dismiss_session_entry(&connection, "session-dismissed")
             .expect("dismissed entry should insert");
 
@@ -3011,15 +3678,6 @@ mod tests {
             &session_path,
         )
         .expect("primary canonical session row should repair");
-        session_records::repair_session_row_from_transcript_path(
-            &connection,
-            "session-dismissed",
-            None,
-            None,
-            &dismissed_path,
-        )
-        .expect("dismissed canonical session row should repair");
-
         let listed = list_command_sessions_with_connection(
             &connection,
             std::slice::from_ref(&context),
@@ -3036,7 +3694,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_active_assignment_sessions_open() {
+    fn detail_surface_preserves_transcript_status_for_active_assignment_sessions() {
         let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
 
@@ -3093,13 +3751,100 @@ mod tests {
                 ],
             )
             .expect("assignment insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'In-flight session', 'task_assignment', 'active', 'active', ?3, ?3, 0, 'active', ?3, ?3)",
+                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical session row should insert");
 
+        let mut record = make_session_record("session-1");
+        record.status = "idle".into();
         let decorated = decorate_session_record_with_connection(
             &connection,
             &std::collections::HashSet::new(),
-            make_session_record("session-1"),
+            record,
             false,
             SessionDecorationSurface::Detail,
+        )
+        .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "idle");
+    }
+
+    #[test]
+    fn list_surface_marks_active_assignment_sessions_active() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, ?9, ?10, ?11, NULL, NULL, 0, ?12, ?13)
+                "#,
+                rusqlite::params![
+                    "task-1",
+                    "project-1",
+                    1,
+                    "ORC-1",
+                    "In-flight task",
+                    "task",
+                    "in_progress",
+                    "P1",
+                    "lane-1",
+                    "role",
+                    "role-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("task insert should succeed");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id,
+                    runtime_cwd, role_queue_entry_id, role_instance_id, prompt, started_at,
+                    completed_at, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, NULL, ?9, NULL, ?10, ?11)
+                "#,
+                rusqlite::params![
+                    "assignment-1",
+                    "task-1",
+                    "workflow-1",
+                    "lane-1",
+                    "role",
+                    "role-1",
+                    "active",
+                    "session-1",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                    "2026-03-21T00:00:00Z",
+                ],
+            )
+            .expect("assignment insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'In-flight session', 'task_assignment', 'idle', 'active', ?3, ?3, 0, 'active', ?3, ?3)",
+                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical session row should insert");
+
+        let mut record = make_session_record("session-1");
+        record.status = "idle".into();
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            record,
+            false,
+            SessionDecorationSurface::List,
         )
         .expect("session decoration should succeed");
 
@@ -3123,6 +3868,12 @@ mod tests {
                 rusqlite::params!["2026-03-21T00:00:00Z"],
             )
             .expect("agent runtime insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, agent_id, worker_type, worker_id, owner_worker_type, owner_worker_id, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Hidden agent session', 'agent_main', 'idle', 'active', 'agent-1', 'agent', 'agent-1', 'agent', 'agent-1', ?3, ?3, 0, 'active', ?3, ?3)",
+                rusqlite::params!["session-agent-hidden", "/tmp/session-agent-hidden.jsonl", "2026-03-21T00:00:00Z"],
+            )
+            .expect("canonical agent session row should insert");
         dismiss_session_entry(&connection, "session-agent-hidden")
             .expect("hidden entry should insert");
 
@@ -3204,7 +3955,7 @@ mod tests {
     }
 
     #[test]
-    fn list_sessions_auto_hides_completed_task_sessions() {
+    fn list_sessions_keeps_completed_task_sessions_visible_as_closed() {
         let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
 
@@ -3256,12 +4007,306 @@ mod tests {
         )
         .expect("session list should succeed");
 
-        assert!(listed.is_empty());
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "session-completed");
+        assert_eq!(listed[0].status, "closed");
         assert_eq!(
             session_list::load_hidden_session_reason(&connection, "session-completed")
-                .expect("hidden reason should load")
-                .as_deref(),
-            Some(session_list::SESSION_HIDDEN_REASON_TASK_COMPLETED)
+                .expect("hidden reason should load"),
+            None
         );
+    }
+
+    #[test]
+    fn resolve_session_create_title_prefers_explicit_title_and_defaults_agent_main_name() {
+        let agent = make_agent_definition("Supervisor");
+
+        assert_eq!(
+            resolve_session_create_title(Some("Custom title"), Some(&agent)),
+            Some("Custom title".to_string())
+        );
+        assert_eq!(
+            resolve_session_create_title(Some("   "), Some(&agent)),
+            Some("Supervisor main session".to_string())
+        );
+        assert_eq!(
+            resolve_session_create_title(None, Some(&agent)),
+            Some("Supervisor main session".to_string())
+        );
+        assert_eq!(resolve_session_create_title(None, None), None);
+    }
+
+    #[test]
+    fn list_sessions_keeps_persistent_agent_main_sessions_visible_after_task_completion() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("agent insert should succeed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES ('task-1', 'project-1', 1, 'ORC-1', 'Completed task', NULL, 'task', 'completed', 'P1', NULL, NULL, 'unassigned', NULL, NULL, NULL, 0, ?1, ?1)
+                "#,
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("task insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at) VALUES ('lane-run-1', 'task-1', 'lane-1', 'session-agent-completed', 'success', NULL, ?1, ?2)",
+                rusqlite::params!["2026-03-21T00:00:00Z", "2026-03-21T00:01:00Z"],
+            )
+            .expect("lane run insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('project-1', 'agent-1', 'idle', 'session-agent-completed', '/tmp/runtime', NULL, NULL, NULL, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("agent runtime insert should succeed");
+
+        let context = make_list_test_context(
+            "orchestra-command-completed-agent-main-session-list",
+            "command-completed-agent-main-session-list-test",
+        );
+        let session_path = write_list_test_session(
+            &context,
+            "2026-03-21T00-00-00Z_session-agent-completed.jsonl",
+            "session-agent-completed",
+            "Agent 1 main session",
+            "2026-03-21T00:00:00Z",
+        );
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-agent-completed",
+            None,
+            None,
+            &session_path,
+        )
+        .expect("completed agent canonical session row should repair");
+        connection
+            .execute(
+                "UPDATE sessions SET session_kind = 'agent_main', agent_id = 'agent-1', worker_type = 'agent', worker_id = 'agent-1', owner_worker_type = 'agent', owner_worker_id = 'agent-1' WHERE id = 'session-agent-completed'",
+                [],
+            )
+            .expect("canonical session row should be marked as an agent main session");
+
+        let listed = list_command_sessions_with_connection(
+            &connection,
+            std::slice::from_ref(&context),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("session list should succeed");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "session-agent-completed");
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, "session-agent-completed")
+                .expect("hidden reason should load"),
+            None
+        );
+    }
+
+    #[test]
+    fn contextual_agent_main_successor_keeps_prior_main_session_visible_in_lists() {
+        let mut connection =
+            rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'ORC', NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("project insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'supervisor', 'Supervisor', 'off', '[]', 0, 0, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent insert should succeed");
+
+        let context = make_list_test_context(
+            "orchestra-command-contextual-agent-main-successor",
+            "project-1",
+        );
+        let runtime_cwd = context.project_root.display().to_string();
+        let original = session_records::create_session_record(
+            &connection,
+            &context.project_root,
+            &context.session_dir,
+            session_records::CreateSessionRecordInput {
+                project_id: Some("project-1"),
+                title: Some("Supervisor main session"),
+                session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                agent_id: Some("agent-1"),
+                role_instance_id: None,
+                task_id: None,
+                workflow_id: None,
+                lane_id: None,
+                assignment: None,
+                worker_type: None,
+                worker_id: None,
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: false,
+                agent_runtime: Some(session_records::AgentRuntimeBinding {
+                    project_id: "project-1",
+                    agent_id: "agent-1",
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                    current_queue_entry_id: None,
+                    status: "idle",
+                    last_error: None,
+                }),
+                update_role_instance_session: false,
+            },
+        )
+        .expect("original agent main session should be created");
+
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES (?1, ?2, 'idle', ?3, ?4, NULL, NULL, NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                rusqlite::params!["project-1", "agent-1", original.record.id.as_str(), runtime_cwd.as_str()],
+            )
+            .expect("agent runtime row should insert");
+        let runtime_state = crate::models::AgentRuntimeState {
+            project_id: "project-1".to_string(),
+            agent_id: "agent-1".to_string(),
+            status: "idle".to_string(),
+            main_session_id: Some(original.record.id.clone()),
+            runtime_cwd: Some(runtime_cwd.clone()),
+            current_queue_entry_id: None,
+            last_dispatch_at: None,
+            last_error: None,
+            terminal_attached: false,
+            created_at: "2026-03-21T00:00:00Z".to_string(),
+            updated_at: "2026-03-21T00:00:00Z".to_string(),
+        };
+        let agent = agents::get_agent(&connection, "agent-1").expect("agent lookup should succeed");
+        let successor = create_contextual_agent_main_successor(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            "Supervisor main session",
+            "project-1",
+            &agent,
+            &runtime_state,
+        )
+        .expect("contextual agent main successor should be created");
+        update_agent_main_session_for_created_session(
+            &connection,
+            Some("project-1"),
+            "agent-1",
+            &successor.record.id,
+        )
+        .expect("agent runtime state should point at the successor main session");
+
+        let listed = list_command_sessions_with_connection(
+            &connection,
+            std::slice::from_ref(&context),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .expect("session list should succeed");
+        let supervisor_sessions = listed
+            .iter()
+            .filter(|session| session.title == "Supervisor main session")
+            .collect::<Vec<_>>();
+
+        assert_eq!(supervisor_sessions.len(), 2);
+        assert!(listed
+            .iter()
+            .any(|session| session.id == original.record.id));
+        assert!(listed
+            .iter()
+            .any(|session| session.id == successor.record.id));
+        let original_row = session_records::load_session_row(&connection, &original.record.id)
+            .expect("original row lookup should succeed")
+            .expect("original row should exist");
+        assert_eq!(
+            original_row.lifecycle_state,
+            session_records::LIFECYCLE_ACTIVE
+        );
+    }
+
+    #[test]
+    fn get_session_detail_prefers_transcript_title_and_status_over_stale_canonical_row_fields() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        let context = make_list_test_context(
+            "orchestra-command-session-detail-hydration",
+            "command-session-detail-hydration-test",
+        );
+        let session_path = context
+            .session_dir
+            .join("2026-03-21T00-00-00Z_session-detail.jsonl");
+        let content = format!(
+            "{}\n{}\n{}\n",
+            serde_json::json!({
+                "type": "session",
+                "version": 3,
+                "id": "session-detail",
+                "timestamp": "2026-03-21T00:00:00Z",
+                "cwd": context.project_root.display().to_string(),
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": "msg-user",
+                "timestamp": "2026-03-21T00:00:01Z",
+                "message": {
+                    "role": "user",
+                    "content": [{ "type": "text", "text": "Name this session from the first user message" }],
+                    "timestamp": 1773835261000i64,
+                }
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": "msg-assistant",
+                "timestamp": "2026-03-21T00:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Done" }],
+                    "timestamp": 1773835262000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-detail",
+            None,
+            None,
+            &session_path,
+        )
+        .expect("canonical session row should repair");
+        connection
+            .execute(
+                "UPDATE sessions SET title = '', session_status = 'closed', updated_at = '2026-03-21T00:00:00Z' WHERE id = 'session-detail'",
+                [],
+            )
+            .expect("canonical session row should be made stale for detail hydration");
+
+        let record = crate::services::pi_sessions::get_session(
+            &context.session_dir,
+            "session-detail",
+            false,
+        )
+        .expect("session detail should load");
+
+        assert_eq!(
+            record.title,
+            "Name this session from the first user message"
+        );
+        assert_eq!(record.status, "idle");
+        assert_eq!(record.updated_at, "2026-03-21T00:00:02+00:00");
     }
 }

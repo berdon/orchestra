@@ -20,7 +20,7 @@ export function getStoredActiveProjectSlug() {
 export function setStoredActiveProject(projectId: string | null, projectSlug?: string | null) {
   if (projectId) {
     window.localStorage.setItem(ACTIVE_PROJECT_ID_STORAGE_KEY, projectId);
-    window.localStorage.removeItem(LEGACY_ACTIVE_PROJECT_ID_STORAGE_KEY);
+    window.localStorage.setItem(LEGACY_ACTIVE_PROJECT_ID_STORAGE_KEY, projectId);
   } else {
     window.localStorage.removeItem(ACTIVE_PROJECT_ID_STORAGE_KEY);
     window.localStorage.removeItem(LEGACY_ACTIVE_PROJECT_ID_STORAGE_KEY);

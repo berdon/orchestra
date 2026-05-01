@@ -100,7 +100,7 @@ describe("desktop task comment file mention links", () => {
         button.click();
         return true;
       `);
-      await waitForText(sessionId, "Tracked repository file changes and references");
+      await waitForText(sessionId, "Tracked repo files");
       let repoFileState: { selectedLabel: string; cardTop: number | null } | null = null;
       const deadline = Date.now() + 10_000;
       while (Date.now() < deadline) {

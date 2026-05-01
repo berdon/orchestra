@@ -1,5 +1,6 @@
 use std::{thread, time::Duration};
 
+use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
 
 const DISPATCHER_MIN_INTERVAL: Duration = Duration::from_secs(5);
 const DISPATCHER_MAX_INTERVAL: Duration = Duration::from_secs(60);
+const STALE_ASSIGNMENT_GRACE_PERIOD_SECS: i64 = 30;
 
 pub fn start_dispatcher_loop(app: AppHandle) {
     thread::spawn(move || {
@@ -162,6 +164,17 @@ fn next_dispatcher_interval(current: Duration, actions: usize) -> Duration {
     ))
 }
 
+fn stale_assignment_is_past_grace_window(updated_at: &str) -> bool {
+    DateTime::parse_from_rfc3339(updated_at)
+        .map(|timestamp| {
+            Utc::now()
+                .signed_duration_since(timestamp.with_timezone(&Utc))
+                .num_seconds()
+                >= STALE_ASSIGNMENT_GRACE_PERIOD_SECS
+        })
+        .unwrap_or(true)
+}
+
 fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<usize, String> {
     let connection = database::open_connection()?;
     let candidates = task_runtime::find_stale_task_assignment_candidates(&connection)?;
@@ -178,19 +191,33 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
         if current_assignment.status != "active" && current_assignment.status != "queued" {
             continue;
         }
+        if !stale_assignment_is_past_grace_window(&current_assignment.updated_at) {
+            continue;
+        }
+
+        let Some(current_candidate) =
+            task_runtime::find_stale_task_assignment_candidates(&connection)?
+                .into_iter()
+                .find(|current| current.assignment_id == candidate.assignment_id)
+        else {
+            continue;
+        };
 
         let _cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
             &mut connection,
-            &candidate.task_id,
-            Some(candidate.reason.clone()),
+            &current_candidate.task_id,
+            Some(current_candidate.reason.clone()),
         )?;
-        let task = crate::services::tasks::get_task_context(&connection, &candidate.task_id)?;
+        let task =
+            crate::services::tasks::get_task_context(&connection, &current_candidate.task_id)?;
         state.log(
             "warn",
             "task.runtime.stale_assignment_recovered",
             &format!(
                 "Recovered stale assignment {} for task {}: {}",
-                candidate.assignment_id, candidate.task_id, candidate.reason
+                current_candidate.assignment_id,
+                current_candidate.task_id,
+                current_candidate.reason
             ),
         );
         let _ = app_events::emit_task_change(
@@ -198,7 +225,7 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
             "task.runtime.stale_assignment_recovered",
             [task.id.clone()],
         );
-        if let Some(session_id) = candidate.session_id.clone() {
+        if let Some(session_id) = current_candidate.session_id.clone() {
             let _ = app_events::emit_session_change(
                 &app,
                 "task.runtime.stale_assignment_recovered",
@@ -212,12 +239,13 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
             );
         }
 
-        let candidate_context = pi_sessions::session_context_for_project_id(&candidate.project_id)?;
+        let candidate_context =
+            pi_sessions::session_context_for_project_id(&current_candidate.project_id)?;
         if let Some(assignment) = task_runtime::maybe_auto_dispatch_task(
             &mut connection,
             &candidate_context.project_root,
             &candidate_context.session_dir,
-            &candidate.task_id,
+            &current_candidate.task_id,
         )? {
             task_runtime::start_assignment_run(
                 app.clone(),

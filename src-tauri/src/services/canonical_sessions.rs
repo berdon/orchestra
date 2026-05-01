@@ -741,7 +741,7 @@ fn build_canonical_session_row(
                 Some(session_list::SESSION_HIDDEN_REASON_STALE_ROLE_SESSION.to_string()),
                 None,
             )
-        } else if session_status == "active" {
+        } else if matches!(session_status.as_str(), "active" | "idle") {
             ("active".to_string(), None, None)
         } else {
             ("closed".to_string(), None, None)
@@ -1008,10 +1008,10 @@ fn workflow_lane_key(workflow_id: &str, lane_id: &str) -> String {
 }
 
 fn canonicalize_transcript_status(status: &str) -> String {
-    if status == "active" {
-        "active".to_string()
-    } else {
-        "closed".to_string()
+    match status {
+        "active" => "active".to_string(),
+        "idle" => "idle".to_string(),
+        _ => "closed".to_string(),
     }
 }
 

@@ -171,12 +171,12 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     (
         "list_sessions",
-        "List and filter Orchestra sessions",
+        "List and filter Orchestra sessions with optional admin drift filters",
         "sessions.read",
     ),
     (
         "get_session_diagnostics",
-        "Inspect detailed Orchestra session diagnostics",
+        "Inspect detailed Orchestra session diagnostics across canonical, transcript, and legacy state",
         "sessions.read",
     ),
     ("create_session", "Create a session", "sessions.create"),
@@ -209,7 +209,7 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     (
         "reconcile_sessions",
-        "Reconcile orphaned or stale session catalog/list/origin state",
+        "Reconcile explicit session drift across canonical, transcript, and legacy state",
         "sessions.delete",
     ),
     (

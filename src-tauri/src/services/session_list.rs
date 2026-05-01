@@ -41,6 +41,7 @@ pub struct SessionListDecoration {
 
 #[derive(Debug, Clone, Default)]
 struct HistoricalSessionBinding {
+    current_task_id: Option<String>,
     task_id: Option<String>,
     task_project_id: Option<String>,
     task_number: Option<String>,
@@ -52,9 +53,7 @@ struct HistoricalSessionBinding {
 }
 
 pub fn load_hidden_session_ids(connection: &Connection) -> Result<HashSet<String>, String> {
-    let mut hidden_ids = HashSet::new();
-
-    let mut session_statement = connection
+    let mut statement = connection
         .prepare(
             r#"
             SELECT id
@@ -63,43 +62,26 @@ pub fn load_hidden_session_ids(connection: &Connection) -> Result<HashSet<String
             "#,
         )
         .map_err(|error| format!("Unable to prepare canonical hidden session query: {error}"))?;
-    let session_rows = session_statement
+    let rows = statement
         .query_map([], |row| row.get::<_, String>(0))
         .map_err(|error| format!("Unable to query canonical hidden sessions: {error}"))?;
-    for session_id in session_rows {
-        hidden_ids.insert(
-            session_id
-                .map_err(|error| format!("Unable to read canonical hidden session id: {error}"))?,
-        );
-    }
+    rows.collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("Unable to read canonical hidden session ids: {error}"))
+}
 
-    let mut legacy_statement = connection
-        .prepare(
-            r#"
-            SELECT session_id
-            FROM session_list_entries
-            WHERE dismissed_at IS NOT NULL OR hidden_reason IS NOT NULL
-            "#,
+pub fn hide_session_from_normal_list(reason: Option<&str>, dismissed_at: Option<&str>) -> bool {
+    dismissed_at.is_some()
+        || matches!(
+            reason,
+            Some(SESSION_HIDDEN_REASON_USER_DISMISSED | SESSION_HIDDEN_REASON_STALE_ROLE_SESSION)
         )
-        .map_err(|error| format!("Unable to prepare legacy hidden session query: {error}"))?;
-    let legacy_rows = legacy_statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("Unable to query legacy hidden sessions: {error}"))?;
-    for session_id in legacy_rows {
-        hidden_ids.insert(
-            session_id
-                .map_err(|error| format!("Unable to read legacy hidden session id: {error}"))?,
-        );
-    }
-
-    Ok(hidden_ids)
 }
 
 pub fn load_hidden_session_reason(
     connection: &Connection,
     session_id: &str,
 ) -> Result<Option<String>, String> {
-    let canonical_reason = connection
+    connection
         .query_row(
             r#"
             SELECT COALESCE(hidden_reason, CASE WHEN dismissed_at IS NOT NULL THEN ?2 ELSE NULL END)
@@ -113,44 +95,13 @@ pub fn load_hidden_session_reason(
         .optional()
         .map_err(|error| {
             format!("Unable to query canonical hidden session reason for {session_id}: {error}")
-        })?
-        .flatten();
-    if canonical_reason.is_some() {
-        return Ok(canonical_reason);
-    }
-
-    connection
-        .query_row(
-            r#"
-            SELECT COALESCE(hidden_reason, CASE WHEN dismissed_at IS NOT NULL THEN ?2 ELSE NULL END)
-            FROM session_list_entries
-            WHERE session_id = ?1
-            LIMIT 1
-            "#,
-            params![session_id, SESSION_HIDDEN_REASON_USER_DISMISSED],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .optional()
-        .map_err(|error| format!("Unable to query hidden session reason for {session_id}: {error}"))
+        })
         .map(|value| value.flatten())
 }
 
 pub fn hide_session(connection: &Connection, session_id: &str, reason: &str) -> Result<(), String> {
     let now = crate::state::now_iso();
-    connection
-        .execute(
-            r#"
-            INSERT INTO session_list_entries (session_id, dismissed_at, hidden_reason, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?2, ?2)
-            ON CONFLICT(session_id) DO UPDATE SET
-                dismissed_at = excluded.dismissed_at,
-                hidden_reason = excluded.hidden_reason,
-                updated_at = excluded.updated_at
-            "#,
-            params![session_id, now, reason],
-        )
-        .map_err(|error| format!("Unable to hide session {session_id}: {error}"))?;
-    connection
+    let updated = connection
         .execute(
             r#"
             UPDATE sessions
@@ -163,8 +114,13 @@ pub fn hide_session(connection: &Connection, session_id: &str, reason: &str) -> 
             params![session_id, reason, now],
         )
         .map_err(|error| {
-            format!("Unable to mirror hidden state onto canonical session {session_id}: {error}")
+            format!("Unable to update canonical hidden state for {session_id}: {error}")
         })?;
+    if updated == 0 {
+        return Err(format!(
+            "Session {session_id} is missing its canonical session row; run reconcile_sessions before hiding it"
+        ));
+    }
     Ok(())
 }
 
@@ -182,15 +138,7 @@ pub fn restore_user_dismissed_session(
         )),
         _ => {
             let now = crate::state::now_iso();
-            connection
-                .execute(
-                    "DELETE FROM session_list_entries WHERE session_id = ?1",
-                    [session_id],
-                )
-                .map_err(|error| {
-                    format!("Unable to restore dismissed session {session_id}: {error}")
-                })?;
-            connection
+            let updated = connection
                 .execute(
                     r#"
                     UPDATE sessions
@@ -210,6 +158,11 @@ pub fn restore_user_dismissed_session(
                         "Unable to restore canonical session visibility for {session_id}: {error}"
                     )
                 })?;
+            if updated == 0 {
+                return Err(format!(
+                    "Session {session_id} is missing its canonical session row; run reconcile_sessions before restoring it"
+                ));
+            }
             Ok(())
         }
     }
@@ -220,8 +173,8 @@ pub fn cleanup_user_dismissed_sessions(connection: &Connection) -> Result<Vec<St
     let mut statement = connection
         .prepare(
             r#"
-            SELECT session_id
-            FROM session_list_entries
+            SELECT id
+            FROM sessions
             WHERE dismissed_at IS NOT NULL
               AND dismissed_at <= ?1
               AND COALESCE(hidden_reason, ?2) = ?2
@@ -243,11 +196,23 @@ pub fn cleanup_user_dismissed_sessions(connection: &Connection) -> Result<Vec<St
     for session_id in &session_ids {
         connection
             .execute(
-                "DELETE FROM session_list_entries WHERE session_id = ?1",
-                [session_id],
+                r#"
+                UPDATE sessions
+                SET hidden_reason = NULL,
+                    dismissed_at = NULL,
+                    list_visibility = CASE
+                        WHEN lifecycle_state = 'active' THEN 'active'
+                        ELSE 'closed'
+                    END,
+                    updated_at = ?2
+                WHERE id = ?1
+                "#,
+                params![session_id, crate::state::now_iso()],
             )
             .map_err(|error| {
-                format!("Unable to clear dismissed session cleanup entry {session_id}: {error}")
+                format!(
+                    "Unable to clear canonical dismissed session visibility for {session_id}: {error}"
+                )
             })?;
     }
 
@@ -266,17 +231,41 @@ pub fn auto_archive_session_for_task_status(
         return Ok(None);
     };
 
-    let hidden_reason = match task_status {
-        "completed" => Some(SESSION_HIDDEN_REASON_TASK_COMPLETED),
-        "canceled" => Some(SESSION_HIDDEN_REASON_TASK_CANCELED),
-        _ => None,
-    };
-    let Some(hidden_reason) = hidden_reason else {
+    let canonical_row = session_records::load_session_row(connection, session_id)?;
+    if canonical_row.as_ref().is_some_and(|row| {
+        row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+            && row.task_id.is_none()
+            && row.primary_assignment_id.is_none()
+    }) {
         return Ok(None);
-    };
+    }
 
-    hide_session(connection, session_id, hidden_reason)?;
-    Ok(Some(session_id.to_string()))
+    if assignment.worker_type == "agent"
+        && assignment
+            .worker_id
+            .as_deref()
+            .is_some_and(|agent_id| {
+                canonical_row.as_ref().is_some_and(|row| {
+                    row.task_id.is_none()
+                        && row.primary_assignment_id.is_none()
+                        && connection
+                            .query_row(
+                                "SELECT 1 FROM agent_runtime_states WHERE agent_id = ?1 AND main_session_id = ?2 LIMIT 1",
+                                params![agent_id, session_id],
+                                |_| Ok(()),
+                            )
+                            .optional()
+                            .ok()
+                            .flatten()
+                            .is_some()
+                })
+            })
+    {
+        return Ok(None);
+    }
+
+    let _ = task_status;
+    Ok(None)
 }
 
 fn load_active_task_metadata(
@@ -299,7 +288,7 @@ fn load_active_task_metadata(
             r#"
             SELECT t.id, t.project_id, t.number, t.title
             FROM sessions s
-            JOIN task_lane_assignments tla ON tla.id = COALESCE(s.assignment_id, s.primary_assignment_id)
+            JOIN task_lane_assignments tla ON tla.id = s.assignment_id
             JOIN tasks t ON t.id = tla.task_id
             WHERE s.id = ?1
               AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
@@ -402,20 +391,13 @@ fn classify_session_visibility(
         return Ok(SessionListVisibility::Active);
     }
 
+    let persistent_agent_session = persistent_agent_name.is_some();
+    if persistent_agent_session {
+        return Ok(SessionListVisibility::Unchanged);
+    }
+
     match historical_binding.task_status.as_deref() {
-        Some("completed") => {
-            hide_session(connection, session_id, SESSION_HIDDEN_REASON_TASK_COMPLETED)?;
-            return Ok(SessionListVisibility::Hidden(
-                SESSION_HIDDEN_REASON_TASK_COMPLETED.to_string(),
-            ));
-        }
-        Some("canceled") => {
-            hide_session(connection, session_id, SESSION_HIDDEN_REASON_TASK_CANCELED)?;
-            return Ok(SessionListVisibility::Hidden(
-                SESSION_HIDDEN_REASON_TASK_CANCELED.to_string(),
-            ));
-        }
-        Some(_) => {
+        Some("completed") | Some("canceled") | Some(_) => {
             if historical_binding.task_id.is_some() {
                 return Ok(SessionListVisibility::Closed);
             }
@@ -500,6 +482,7 @@ fn load_historical_session_binding(
         .query_row(
             r#"
             SELECT
+                s.task_id,
                 COALESCE(s.task_id, s.primary_task_id),
                 t.project_id,
                 t.number,
@@ -526,14 +509,15 @@ fn load_historical_session_binding(
             [session_id],
             |row| {
                 Ok(HistoricalSessionBinding {
-                    task_id: row.get::<_, Option<String>>(0)?,
-                    task_project_id: row.get::<_, Option<String>>(1)?,
-                    task_number: row.get::<_, Option<String>>(2)?,
-                    task_title: row.get::<_, Option<String>>(3)?,
-                    task_status: row.get::<_, Option<String>>(4)?,
-                    assignment_status: row.get::<_, Option<String>>(5)?,
-                    worker_type: row.get::<_, Option<String>>(6)?,
-                    worker_name: row.get::<_, Option<String>>(7)?,
+                    current_task_id: row.get::<_, Option<String>>(0)?,
+                    task_id: row.get::<_, Option<String>>(1)?,
+                    task_project_id: row.get::<_, Option<String>>(2)?,
+                    task_number: row.get::<_, Option<String>>(3)?,
+                    task_title: row.get::<_, Option<String>>(4)?,
+                    task_status: row.get::<_, Option<String>>(5)?,
+                    assignment_status: row.get::<_, Option<String>>(6)?,
+                    worker_type: row.get::<_, Option<String>>(7)?,
+                    worker_name: row.get::<_, Option<String>>(8)?,
                 })
             },
         )
@@ -579,6 +563,7 @@ fn load_historical_session_binding(
             [session_id],
             |row| {
                 Ok(HistoricalSessionBinding {
+                    current_task_id: row.get::<_, Option<String>>(0)?,
                     task_id: row.get::<_, Option<String>>(0)?,
                     task_project_id: row.get::<_, Option<String>>(1)?,
                     task_number: row.get::<_, Option<String>>(2)?,
@@ -594,6 +579,9 @@ fn load_historical_session_binding(
         .map_err(|error| format!("Unable to load session list metadata {session_id}: {error}"))?
         .unwrap_or_default();
 
+    if binding.current_task_id.is_none() {
+        binding.current_task_id = fallback.current_task_id;
+    }
     if binding.task_id.is_none() {
         binding.task_id = fallback.task_id;
     }
@@ -644,6 +632,7 @@ fn load_lane_run_session_binding(
             [session_id],
             |row| {
                 Ok(HistoricalSessionBinding {
+                    current_task_id: row.get::<_, Option<String>>(0)?,
                     task_id: row.get::<_, Option<String>>(0)?,
                     task_project_id: row.get::<_, Option<String>>(1)?,
                     task_number: row.get::<_, Option<String>>(2)?,
@@ -664,7 +653,7 @@ fn load_persistent_agent_name(
     session_id: &str,
 ) -> Result<Option<String>, String> {
     if let Some(row) = session_records::load_session_row(connection, session_id)? {
-        if row.effective_task_id().is_none() {
+        if row.session_kind == session_records::SESSION_KIND_AGENT_MAIN || row.task_id.is_none() {
             if let Some(agent_id) = row.agent_id.as_deref().or(row.effective_worker_id()) {
                 let agent_name = connection
                     .query_row(
@@ -708,7 +697,7 @@ fn load_role_binding_name(
     session_id: &str,
 ) -> Result<Option<String>, String> {
     if let Some(row) = session_records::load_session_row(connection, session_id)? {
-        if row.effective_task_id().is_none() {
+        if row.task_id.is_none() {
             if let Some(role_id) = row.role_id.as_deref().or(row.effective_worker_id()) {
                 let role_name = connection
                     .query_row(
@@ -745,4 +734,200 @@ fn load_role_binding_name(
         .optional()
         .map_err(|error| format!("Unable to load role session metadata {session_id}: {error}"))
         .map(|value| value.flatten())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::database;
+
+    #[test]
+    fn detached_persistent_agent_session_stays_visible_after_completed_task() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, 'ORC', NULL, ?4, ?4)",
+                params!["project-1", "project-1", "Project 1", "2026-03-21T00:00:00Z"],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES (?1, ?2, ?3, 'off', '[]', 0, 0, 0, ?4, ?4)",
+                params!["agent-1", "agent-1", "Agent 1", "2026-03-21T00:00:00Z"],
+            )
+            .expect("agent should insert");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES (?1, ?2, 1, ?3, ?4, NULL, 'task', 'completed', 'P1', NULL, NULL, 'agent', ?5, NULL, NULL, 0, ?6, ?6)",
+                params![
+                    "task-1",
+                    "project-1",
+                    "ORC-1",
+                    "Completed task",
+                    "agent-1",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("task should insert");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, task_id, primary_task_id, worker_type, worker_id, owner_worker_type, owner_worker_id, agent_id, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, ?4, 'agent_main', 'active', 'active', NULL, ?5, 'agent', 'agent-1', 'agent', 'agent-1', 'agent-1', 0, 'active', ?6, ?6)",
+                params![
+                    "session-1",
+                    "project-1",
+                    "/tmp/session-1.jsonl",
+                    "Agent 1 main session",
+                    "task-1",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("session should insert");
+
+        let decoration = load_session_list_decoration(&connection, "session-1")
+            .expect("session decoration should load");
+
+        assert!(decoration.persistent_agent_session);
+        assert_eq!(
+            decoration.visibility,
+            Some(SessionListVisibility::Unchanged)
+        );
+        assert_eq!(
+            load_hidden_session_reason(&connection, "session-1")
+                .expect("hidden reason should load"),
+            None
+        );
+    }
+
+    #[test]
+    fn task_bound_persistent_agent_session_stays_visible_after_completed_task() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, 'ORC', NULL, ?4, ?4)",
+                params!["project-1", "project-1", "Project 1", "2026-03-21T00:00:00Z"],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES (?1, ?2, ?3, 'off', '[]', 0, 0, 0, ?4, ?4)",
+                params!["agent-1", "agent-1", "Agent 1", "2026-03-21T00:00:00Z"],
+            )
+            .expect("agent should insert");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES (?1, ?2, 'idle', ?3, '/tmp/runtime', NULL, NULL, NULL, ?4, ?4)",
+                params!["project-1", "agent-1", "session-1", "2026-03-21T00:00:00Z"],
+            )
+            .expect("agent runtime should insert");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES (?1, ?2, 1, ?3, ?4, NULL, 'task', 'completed', 'P1', NULL, NULL, 'agent', ?5, NULL, NULL, 0, ?6, ?6)",
+                params![
+                    "task-1",
+                    "project-1",
+                    "ORC-1",
+                    "Completed task",
+                    "agent-1",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("task should insert");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, task_id, primary_task_id, worker_type, worker_id, owner_worker_type, owner_worker_id, agent_id, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, ?4, 'agent_main', 'active', 'active', ?5, ?5, 'agent', 'agent-1', 'agent', 'agent-1', 'agent-1', 0, 'active', ?6, ?6)",
+                params![
+                    "session-1",
+                    "project-1",
+                    "/tmp/session-1.jsonl",
+                    "Agent 1 main session",
+                    "task-1",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("session should insert");
+
+        let decoration = load_session_list_decoration(&connection, "session-1")
+            .expect("session decoration should load");
+
+        assert!(decoration.persistent_agent_session);
+        assert_eq!(decoration.task_id.as_deref(), Some("task-1"));
+        assert_eq!(
+            decoration.visibility,
+            Some(SessionListVisibility::Unchanged)
+        );
+        assert_eq!(
+            load_hidden_session_reason(&connection, "session-1")
+                .expect("hidden reason should load"),
+            None
+        );
+    }
+
+    #[test]
+    fn auto_archive_skips_agent_main_sessions_even_after_task_completion() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'ORC', NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("project should insert");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent should insert");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, worker_type, worker_id, owner_worker_type, owner_worker_id, agent_id, transcript_exists, lifecycle_state, created_at, updated_at) VALUES ('session-1', 'project-1', '/tmp/session-1.jsonl', '/tmp/session-1.jsonl', 'Agent 1 main session', 'agent_main', 'active', 'active', 'agent', 'agent-1', 'agent', 'agent-1', 'agent-1', 0, 'active', '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("session should insert");
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_states (project_id, agent_id, status, main_session_id, runtime_cwd, current_queue_entry_id, last_dispatch_at, last_error, created_at, updated_at) VALUES ('project-1', 'agent-1', 'idle', 'session-1', '/tmp/runtime', NULL, NULL, NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent runtime should insert");
+
+        let assignment = TaskLaneAssignment {
+            id: "assignment-1".into(),
+            task_id: "task-1".into(),
+            workflow_id: "workflow-1".into(),
+            lane_id: "lane-1".into(),
+            worker_type: "agent".into(),
+            worker_id: Some("agent-1".into()),
+            status: "completed".into(),
+            session_id: Some("session-1".into()),
+            runtime_cwd: Some("/tmp/runtime".into()),
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: None,
+            pending_outcome: None,
+            completion_notes: None,
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: "2026-03-21T00:00:00Z".into(),
+            completed_at: Some("2026-03-21T00:01:00Z".into()),
+            created_at: "2026-03-21T00:00:00Z".into(),
+            updated_at: "2026-03-21T00:01:00Z".into(),
+        };
+
+        assert_eq!(
+            auto_archive_session_for_task_status(&connection, &assignment, "completed")
+                .expect("auto archive should succeed"),
+            None
+        );
+        assert_eq!(
+            load_hidden_session_reason(&connection, "session-1")
+                .expect("hidden reason should load"),
+            None
+        );
+    }
 }

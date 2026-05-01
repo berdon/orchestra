@@ -1040,12 +1040,16 @@ pub(crate) async fn dispatch_task_lane_via_app(
         &task_id,
     )?;
     let state = app.state::<AppState>();
-    task_runtime::start_assignment_run(
+    if let Err(error) = task_runtime::start_assignment_run(
         app.clone(),
         &state,
         context.session_dir.clone(),
         &assignment,
-    )?;
+    ) {
+        if error != "This session is already processing a message" {
+            return Err(error);
+        }
+    }
     if let Some(session_id) = assignment.session_id.clone() {
         emit_session_change(&app, "task.dispatch", [session_id]);
     }
@@ -1634,9 +1638,28 @@ pub async fn stop_task_activity(
 }
 
 #[tauri::command]
-pub fn reset_task_runtime(task_id: String) -> Result<TaskDetail, String> {
+pub fn reset_task_runtime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<TaskDetail, String> {
     let mut connection = database::open_connection()?;
-    task_runtime::reset_task_runtime(&mut connection, &task_id)
+    let previous_assignment = tasks::get_task_context(&connection, &task_id)
+        .ok()
+        .and_then(|task| task.active_lane_assignment);
+    let task = task_runtime::reset_task_runtime(&mut connection, &task_id)?;
+
+    state.log(
+        "info",
+        "task.runtime.reset",
+        &format!("Reset task runtime for task {}", task_id),
+    );
+    let _ = emit_task_change(&app, "task.runtime.reset", [task.id.clone()]);
+    if let Some(session_id) = previous_assignment.and_then(|assignment| assignment.session_id) {
+        let _ = emit_session_change(&app, "task.runtime.reset", [session_id]);
+    }
+
+    Ok(task)
 }
 
 #[tauri::command]

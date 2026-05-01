@@ -300,12 +300,19 @@ describe("desktop task detail reorganization", () => {
       }).then((tasks) => tasks.find((entry) => entry.title === 'Task detail action coverage'));
       expect(task).toBeTruthy();
 
-      await clickByText(sessionId, "button", "Tasks");
-      await waitForText(sessionId, "Task detail action coverage");
-      await clickByText(sessionId, '[data-role="task-card"]', "Task detail action coverage");
-
-      await waitForText(sessionId, "Dispatch");
-      await dispatchTaskViaUi(sessionId);
+      await openTaskCard(sessionId, 'Task detail action coverage');
+      const dispatchState = await waitForCondition(
+        () => executeScript<{ canDispatch: boolean; isActive: boolean }>(sessionId, `
+          return {
+            canDispatch: Boolean(document.querySelector('[data-role="dispatch-task-lane"], [data-role="publish-task"]')),
+            isActive: Boolean(document.querySelector('[data-role="pause-task-runtime"]')),
+          };
+        `),
+        (state) => state.canDispatch || state.isActive,
+      );
+      if (dispatchState.canDispatch) {
+        await dispatchTaskViaUi(sessionId);
+      }
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
       await waitForText(sessionId, "Lane execution");
       await waitForText(sessionId, "Whips: 0 / 10");

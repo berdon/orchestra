@@ -1029,7 +1029,7 @@ export function TaskDetailPage({
               </div>
             ) : (
               <div className="task-section-list">
-                <p className="supporting-copy">No active worker right now.</p>
+                <p className="supporting-copy">No active runtime assignment for this task.</p>
               </div>
             )}
 

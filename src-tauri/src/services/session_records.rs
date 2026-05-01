@@ -101,16 +101,11 @@ pub struct CanonicalSessionRow {
     pub lifecycle_state: String,
     pub created_at: String,
     pub updated_at: String,
-    pub catalog_created_at: Option<String>,
-    pub catalog_updated_at: Option<String>,
-    pub catalog_status: Option<String>,
-    pub catalog_title: Option<String>,
 }
 
 impl CanonicalSessionRow {
     pub fn effective_title(&self) -> String {
         normalized_non_empty(self.title.as_str())
-            .or_else(|| self.catalog_title.clone())
             .unwrap_or_else(|| format!("Session {}", &self.id[..self.id.len().min(8)]))
     }
 
@@ -118,21 +113,15 @@ impl CanonicalSessionRow {
         if self.lifecycle_state != LIFECYCLE_ACTIVE {
             return "closed".to_string();
         }
-        self.catalog_status
-            .clone()
-            .unwrap_or_else(|| self.session_status.clone())
+        self.session_status.clone()
     }
 
     pub fn effective_created_at(&self) -> String {
-        self.catalog_created_at
-            .clone()
-            .unwrap_or_else(|| self.created_at.clone())
+        self.created_at.clone()
     }
 
     pub fn effective_updated_at(&self) -> String {
-        self.catalog_updated_at
-            .clone()
-            .unwrap_or_else(|| self.updated_at.clone())
+        self.updated_at.clone()
     }
 
     pub fn effective_task_id(&self) -> Option<&str> {
@@ -244,7 +233,6 @@ pub fn create_session_record(
         input.title,
         input.subscribed,
     )?;
-    let project_slug = project_slug_for_session_dir(session_dir)?;
     let write_result = (|| {
         upsert_session_row(
             connection,
@@ -282,14 +270,13 @@ pub fn create_session_record(
                 updated_at: stored.record.updated_at.as_str(),
             },
         )?;
-        pi_sessions::index_stored_session(connection, &project_slug, &stored)?;
         apply_legacy_bindings(connection, &stored.record.id, &input)?;
         Ok::<_, String>(())
     })();
 
     if let Err(error) = write_result {
         let _ = connection.execute("DELETE FROM sessions WHERE id = ?1", [&stored.record.id]);
-        let _ = pi_sessions::delete_session_file(session_dir, &stored.record.id);
+        let _ = std::fs::remove_file(&stored.path);
         return Err(error);
     }
 
@@ -589,10 +576,6 @@ fn map_canonical_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Canoni
         lifecycle_state: row.get::<_, String>(28)?,
         created_at: row.get::<_, String>(29)?,
         updated_at: row.get::<_, String>(30)?,
-        catalog_created_at: row.get::<_, Option<String>>(31)?,
-        catalog_updated_at: row.get::<_, Option<String>>(32)?,
-        catalog_status: row.get::<_, Option<String>>(33)?,
-        catalog_title: row.get::<_, Option<String>>(34)?,
     })
 }
 
@@ -630,13 +613,12 @@ fn canonical_session_row_query() -> &'static str {
         s.lifecycle_state,
         s.created_at,
         s.updated_at,
-        sc.created_at,
-        sc.updated_at,
-        sc.status,
-        sc.title
+        NULL,
+        NULL,
+        NULL,
+        NULL
     FROM sessions s
     LEFT JOIN projects p ON p.id = s.project_id
-    LEFT JOIN session_catalog sc ON sc.session_id = s.id
     "#
 }
 
@@ -657,7 +639,7 @@ pub fn list_session_rows(
     session_dir: Option<&Path>,
 ) -> Result<Vec<CanonicalSessionRow>, String> {
     let query = format!(
-        "{} ORDER BY COALESCE(sc.updated_at, s.updated_at) DESC, s.id DESC",
+        "{} ORDER BY s.updated_at DESC, s.id DESC",
         canonical_session_row_query()
     );
     let mut statement = connection
@@ -1546,9 +1528,9 @@ fn load_session_seed(
     connection: &Connection,
     session_id: &str,
     project_id_override: Option<&str>,
-    session_kind_override: Option<&str>,
+    _session_kind_override: Option<&str>,
 ) -> Result<SessionSeed, String> {
-    if let Some(seed) = connection
+    connection
         .query_row(
             "SELECT COALESCE(NULLIF(session_path, ''), transcript_path), title, created_at, project_id, COALESCE(runtime_cwd, transcript_cwd) FROM sessions WHERE id = ?1 LIMIT 1",
             [session_id],
@@ -1567,57 +1549,11 @@ fn load_session_seed(
         )
         .optional()
         .map_err(|error| format!("Unable to load canonical session seed for {session_id}: {error}"))?
-    {
-        return Ok(seed);
-    }
-
-    let context = pi_sessions::find_session_context_for_session(session_id)?;
-    let record = pi_sessions::get_session(&context.session_dir, session_id, false)?;
-    let session_path = pi_sessions::get_session_path(&context.session_dir, session_id)?;
-    let runtime_cwd = seed_runtime_cwd(&record, &context.session_dir);
-
-    upsert_session_row(
-        connection,
-        SessionRowWrite {
-            session_id: record.id.as_str(),
-            project_id: project_id_override,
-            session_path: session_path.as_path(),
-            title: record.title.as_str(),
-            session_kind: session_kind_override.unwrap_or(SESSION_KIND_STANDALONE),
-            agent_id: None,
-            role_instance_id: None,
-            task_id: None,
-            workflow_id: None,
-            lane_id: None,
-            assignment_id: None,
-            worker_type: None,
-            worker_id: None,
-            runtime_cwd: runtime_cwd.as_deref(),
-            lifecycle_state: LIFECYCLE_ACTIVE,
-            supersedes_session_id: None,
-            superseded_by_session_id: None,
-            closed_at: None,
-            archived_at: None,
-            created_at: record.created_at.as_str(),
-            updated_at: record.updated_at.as_str(),
-        },
-    )?;
-
-    Ok(SessionSeed {
-        session_id: record.id,
-        session_path,
-        title: record.title,
-        created_at: record.created_at,
-        project_id: project_id_override.map(str::to_string),
-        runtime_cwd,
-    })
-}
-
-fn seed_runtime_cwd(record: &SessionRecord, session_dir: &Path) -> Option<String> {
-    pi_sessions::get_session_header_cwd(session_dir, &record.id)
-        .ok()
-        .flatten()
-        .map(|path| path.display().to_string())
+        .ok_or_else(|| {
+            format!(
+                "Session {session_id} is missing its canonical session row; run explicit session reconciliation before retrying this operation"
+            )
+        })
 }
 
 fn project_slug_for_session_dir(session_dir: &Path) -> Result<String, String> {

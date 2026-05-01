@@ -95,7 +95,7 @@ describe("desktop task repo files tab", () => {
       expect(task).toBeTruthy();
 
       await clickByText(sessionId, '[role="tab"]', 'Repo files');
-      await waitForText(sessionId, 'Tracked repository file changes and references');
+      await waitForText(sessionId, 'Tracked repo files');
       await selectByLabel(sessionId, '[data-role="task-file-reference-repository"]', 'Repo Files Repo');
       await waitForSelectedLabel(sessionId, '[data-role="task-file-reference-repository"]', 'Repo Files Repo');
       await setInputValue(sessionId, '[data-role="task-file-reference-path"]', 'docs/design.md');
@@ -214,7 +214,7 @@ describe("desktop task repo files tab", () => {
       writeFileSync(join(taskWorktreePath, relativePath), 'Generated inside the task worktree\n', 'utf8');
 
       await clickByText(sessionId, '[role="tab"]', 'Repo files');
-      await waitForText(sessionId, 'Tracked repository file changes and references');
+      await waitForText(sessionId, 'Tracked repo files');
       await selectByLabel(sessionId, '[data-role="task-file-reference-repository"]', 'Repo Files Worktree Repo');
       await waitForSelectedLabel(sessionId, '[data-role="task-file-reference-repository"]', 'Repo Files Worktree Repo');
       await setInputValue(sessionId, '[data-role="task-file-reference-path"]', relativePath);

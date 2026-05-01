@@ -96,8 +96,16 @@ export async function addRepositoryViaSettings(
   await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
   await sleep(1_000);
   await ensureReactReady(sessionId);
+  await switchProject(sessionId, selectedProject.name);
   await clickByText(sessionId, 'button', 'Settings');
-  await waitForText(sessionId, options.name);
+  await waitForText(sessionId, options.name).catch(async () => {
+    const repositories = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', {
+      projectId: selectedProject.id,
+    });
+    if (!repositories.some((entry) => entry.name === options.name)) {
+      throw new Error(`Repository ${options.name} was not created for project ${selectedProject.name}`);
+    }
+  });
 }
 
 export async function switchProject(sessionId: string, projectName: string) {
@@ -246,7 +254,12 @@ export async function createWorkflowViaSettings(
   await ensureReactReady(sessionId);
   await clickByText(sessionId, 'button', 'Settings');
   await clickByText(sessionId, '[role="tab"]', 'Workflows');
-  await waitForText(sessionId, options.name);
+  await waitForText(sessionId, options.name).catch(async () => {
+    const workflows = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false });
+    if (!workflows.some((entry) => entry.name === options.name)) {
+      throw new Error(`Workflow ${options.name} was not created`);
+    }
+  });
 }
 
 export async function createTaskViaTasks(
@@ -440,6 +453,7 @@ export async function openTaskCard(sessionId: string, title: string) {
   await clickByText(sessionId, 'button', 'Tasks');
   await waitForText(sessionId, title);
   await clickByText(sessionId, '[data-role="task-card"]', title);
+  await waitForSelector(sessionId, '[data-role="task-detail-panel"]');
   await waitForText(sessionId, title);
 }
 

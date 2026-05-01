@@ -24,7 +24,7 @@ use crate::{
             configured_project_root, default_orchestra_root, discover_dev_checkout_root,
             infer_project_slug, pi_agent_dir, project_session_dir, sanitize_slug,
         },
-        projects, session_list, session_records,
+        projects, session_records,
     },
 };
 
@@ -691,27 +691,28 @@ fn resolve_session_path_with_canonical(
     context: &SessionContext,
     session_id: &str,
 ) -> Result<Option<PathBuf>, String> {
-    if let Some(row) = session_records::load_session_row(connection, session_id)? {
-        if canonical_row_matches_context(&row, context) {
-            if let Some(path) = canonical_session_path(&row) {
-                if validate_catalog_session_path(path, session_id) {
-                    return Ok(Some(path.to_path_buf()));
-                }
-            }
-        }
+    let Some(row) = session_records::load_session_row(connection, session_id)? else {
+        return Ok(None);
+    };
+
+    if !canonical_row_matches_context(&row, context) {
+        return Ok(None);
     }
 
-    if let Some(repaired) = repair_canonical_session_row(connection, session_id)? {
-        if canonical_row_matches_context(&repaired, context) {
-            if let Some(path) = canonical_session_path(&repaired) {
-                if validate_catalog_session_path(path, session_id) {
-                    return Ok(Some(path.to_path_buf()));
-                }
-            }
-        }
+    let Some(path) = canonical_session_path(&row) else {
+        return Err(format!(
+            "Session {session_id} is missing a canonical transcript path; run explicit session reconciliation to repair it"
+        ));
+    };
+
+    if !validate_catalog_session_path(path, session_id) {
+        return Err(format!(
+            "Session {session_id} has a stale canonical transcript path {}; run explicit session reconciliation to repair it",
+            path.display()
+        ));
     }
 
-    Ok(None)
+    Ok(Some(path.to_path_buf()))
 }
 
 fn refresh_session_catalog(
@@ -844,7 +845,6 @@ pub fn list_sessions_with_connection(
     connection: &rusqlite::Connection,
     context: &SessionContext,
     subscribed_ids: &HashSet<String>,
-    dismissed_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
     let project_id = project_id_for_context(connection, context);
     let rows = session_records::list_session_rows(
@@ -856,8 +856,7 @@ pub fn list_sessions_with_connection(
     Ok(rows
         .into_iter()
         .filter(|row| {
-            !dismissed_ids.contains(&row.id)
-                && row.hidden_reason.is_none()
+            row.hidden_reason.is_none()
                 && row.dismissed_at.is_none()
                 && row.list_visibility != "hidden"
         })
@@ -867,26 +866,17 @@ pub fn list_sessions_with_connection(
 
 pub fn find_session_context_for_session(session_id: &str) -> Result<SessionContext, String> {
     let connection = database::open_connection()?;
-    if let Some(row) = session_records::load_session_row(&connection, session_id)? {
-        if validate_catalog_session_path(&row.session_path, session_id) {
-            if let Some(context) = canonical_session_context(&row)? {
-                return Ok(context);
-            }
-        }
-        if let Some(context) =
-            repair_session_context_for_session(&connection, session_id, Some(&row))?
-        {
-            return Ok(context);
-        }
-    }
+    let Some(row) = session_records::load_session_row(&connection, session_id)? else {
+        return Err(format!(
+            "Session {session_id} was not found in canonical session rows; run explicit session reconciliation to inspect legacy drift"
+        ));
+    };
 
-    if let Some(context) = repair_session_context_for_session(&connection, session_id, None)? {
-        return Ok(context);
-    }
-
-    Err(format!(
-        "Session {session_id} was not found in canonical session rows or targeted legacy repair hints"
-    ))
+    canonical_session_context(&row)?.ok_or_else(|| {
+        format!(
+            "Session {session_id} is missing canonical project/context metadata; run explicit session reconciliation to repair it"
+        )
+    })
 }
 
 pub(crate) fn session_file_header_cwd(path: &Path) -> Result<Option<PathBuf>, String> {
@@ -907,7 +897,6 @@ fn create_session_file_internal(
     session_dir: &Path,
     title: Option<&str>,
     subscribed: bool,
-    update_catalog: bool,
 ) -> Result<StoredSession, String> {
     fs::create_dir_all(session_dir).map_err(|error| {
         format!(
@@ -973,15 +962,7 @@ fn create_session_file_internal(
         )
     })?;
 
-    let stored = parse_session_file(&session_path, subscribed)?;
-    if update_catalog {
-        if let Some(context) = session_context_for_session_dir(session_dir) {
-            if let Ok(connection) = database::open_connection() {
-                let _ = upsert_session_catalog_entry(&connection, &context.project_slug, &stored);
-            }
-        }
-    }
-    Ok(stored)
+    parse_session_file(&session_path, subscribed)
 }
 
 pub(crate) fn create_session_file_unindexed(
@@ -990,15 +971,7 @@ pub(crate) fn create_session_file_unindexed(
     title: Option<&str>,
     subscribed: bool,
 ) -> Result<StoredSession, String> {
-    create_session_file_internal(project_root, session_dir, title, subscribed, false)
-}
-
-pub(crate) fn index_stored_session(
-    connection: &rusqlite::Connection,
-    project_slug: &str,
-    stored: &StoredSession,
-) -> Result<(), String> {
-    upsert_session_catalog_entry(connection, project_slug, stored)
+    create_session_file_internal(project_root, session_dir, title, subscribed)
 }
 
 pub fn create_session_file(
@@ -1007,7 +980,7 @@ pub fn create_session_file(
     title: Option<&str>,
     subscribed: bool,
 ) -> Result<StoredSession, String> {
-    create_session_file_internal(project_root, session_dir, title, subscribed, true)
+    create_session_file_internal(project_root, session_dir, title, subscribed)
 }
 
 pub fn list_sessions(
@@ -1016,8 +989,7 @@ pub fn list_sessions(
 ) -> Result<Vec<SessionRecord>, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        let hidden_ids = session_list::load_hidden_session_ids(&connection)?;
-        return list_sessions_with_connection(&connection, &context, subscribed_ids, &hidden_ids);
+        return list_sessions_with_connection(&connection, &context, subscribed_ids);
     }
 
     let mut sessions = list_stored_session_summaries(session_dir, subscribed_ids)?;
@@ -1036,11 +1008,14 @@ pub fn get_session(
 pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        if let Some(path) = resolve_session_path_with_canonical(&connection, &context, session_id)?
-        {
-            return Ok(path);
-        }
-        return Err(format!("Unable to find session {session_id}"));
+        return resolve_session_path_with_canonical(&connection, &context, session_id)?.ok_or_else(
+            || {
+                format!(
+                    "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
+                    context.project_slug
+                )
+            },
+        );
     }
 
     resolve_session(session_dir, session_id, true).map(|session| session.path)
@@ -1050,11 +1025,6 @@ pub fn delete_session_file(session_dir: &Path, session_id: &str) -> Result<(), S
     let path = get_session_path(session_dir, session_id)?;
     fs::remove_file(&path)
         .map_err(|error| format!("Unable to delete session file {}: {error}", path.display()))?;
-    if session_context_for_session_dir(session_dir).is_some() {
-        if let Ok(connection) = database::open_connection() {
-            let _ = remove_session_catalog_entry(&connection, session_id);
-        }
-    }
     Ok(())
 }
 
@@ -1383,32 +1353,26 @@ fn resolve_session(
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
         let path = resolve_session_path_with_canonical(&connection, &context, session_id)?
-            .ok_or_else(|| format!("Unable to find session {session_id}"))?;
+            .ok_or_else(|| {
+                format!(
+                    "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
+                    context.project_slug
+                )
+            })?;
 
-        let Some(row) = session_records::load_session_row(&connection, session_id)? else {
-            return parse_session_file(&path, subscribed);
-        };
+        let row = session_records::load_session_row(&connection, session_id)?.ok_or_else(|| {
+            format!(
+                "Session {session_id} was not found in canonical session rows; run explicit session reconciliation to inspect legacy drift"
+            )
+        })?;
 
+        let parsed = parse_session_file(&path, subscribed)?;
         let mut record = row.to_record(subscribed);
-        match parse_session_file(&path, subscribed) {
-            Ok(parsed) => {
-                if row.catalog_title.is_none() && row.title.trim().is_empty() {
-                    record.title = parsed.record.title;
-                }
-                if row.catalog_status.is_none() {
-                    record.status = parsed.record.status;
-                }
-                if record.created_at.trim().is_empty() {
-                    record.created_at = parsed.record.created_at;
-                }
-                if record.updated_at.trim().is_empty() {
-                    record.updated_at = parsed.record.updated_at;
-                }
-                record.events = parsed.record.events;
-                Ok(StoredSession { path, record })
-            }
-            Err(_) => Ok(StoredSession { path, record }),
-        }
+        record.title = parsed.record.title;
+        record.status = parsed.record.status;
+        record.updated_at = parsed.record.updated_at;
+        record.events = parsed.record.events;
+        Ok(StoredSession { path, record })
     } else {
         if !session_dir.exists() {
             return Err(format!(
@@ -2871,6 +2835,7 @@ struct PartialStreamEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::session_list;
     use std::{
         env,
         time::{SystemTime, UNIX_EPOCH},
@@ -3446,17 +3411,25 @@ process.stdin.on('end', () => process.exit(0));
             "Visible session",
             "2026-03-20T10:00:00Z",
         );
-        write_catalog_test_session(
+        let dismissed_path = write_catalog_test_session(
             &context,
             &format!("2026-03-20T10-00-01Z_{dismissed_session_id}.jsonl"),
             &dismissed_session_id,
             "Dismissed session",
             "2026-03-20T10:00:01Z",
         );
-        write_catalog_dismiss_entry(&connection, &dismissed_session_id);
+        crate::services::session_records::repair_session_row_from_transcript_path(
+            &connection,
+            &dismissed_session_id,
+            None,
+            None,
+            &dismissed_path,
+        )
+        .expect("dismissed canonical session row should repair");
+        session_list::dismiss_session(&connection, &dismissed_session_id)
+            .expect("dismissed session should hide canonically");
 
-        let dismissed_ids =
-            session_list::load_hidden_session_ids(&connection).expect("dismissed ids should load");
+        let dismissed_ids = HashSet::from([dismissed_session_id.clone()]);
         let stats = refresh_session_catalog(&connection, &context, &dismissed_ids)
             .expect("catalog refresh should succeed");
         assert_eq!(stats.parsed_files, 1);
@@ -3465,9 +3438,8 @@ process.stdin.on('end', () => process.exit(0));
         crate::services::canonical_sessions::backfill_sessions_table(&connection)
             .expect("canonical session backfill should succeed");
 
-        let listed =
-            list_sessions_with_connection(&connection, &context, &HashSet::new(), &dismissed_ids)
-                .expect("canonical-backed list should succeed");
+        let listed = list_sessions_with_connection(&connection, &context, &HashSet::new())
+            .expect("canonical-backed list should succeed");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, visible_session_id);
 
@@ -3573,9 +3545,8 @@ process.stdin.on('end', () => process.exit(0));
         )
         .expect("second canonical session repair should succeed");
 
-        let records =
-            list_sessions_with_connection(&connection, &context, &HashSet::new(), &HashSet::new())
-                .expect("canonical-backed list should succeed");
+        let records = list_sessions_with_connection(&connection, &context, &HashSet::new())
+            .expect("canonical-backed list should succeed");
         let updated_record = records
             .iter()
             .find(|record| record.id == first_session_id)
@@ -3635,6 +3606,86 @@ process.stdin.on('end', () => process.exit(0));
             repaired.expect("catalog row should exist").session_path,
             session_path
         );
+    }
+
+    #[test]
+    fn canonical_path_resolution_does_not_fallback_to_legacy_catalog_rows() {
+        let context =
+            make_catalog_test_context("orchestra-canonical-session-path-no-legacy-fallback");
+        let connection = in_memory_session_catalog_connection();
+        seed_catalog_test_project(&connection, &context);
+        let session_id = Uuid::new_v4().to_string();
+        let session_path = write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-00Z_{session_id}.jsonl"),
+            &session_id,
+            "Legacy only",
+            "2026-03-20T10:00:00Z",
+        );
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO session_catalog (
+                    session_id, project_slug, session_path, created_at, updated_at,
+                    title, status, file_size, file_mtime_ms, last_indexed_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "#,
+                params![
+                    session_id.clone(),
+                    context.project_slug.clone(),
+                    session_path.display().to_string(),
+                    "2026-03-20T10:00:00Z",
+                    "2026-03-20T10:00:00Z",
+                    "Legacy only",
+                    "idle",
+                    1i64,
+                    1i64,
+                    "2026-03-20T10:00:00Z",
+                ],
+            )
+            .expect("legacy catalog row should insert");
+
+        let resolved = resolve_session_path_with_canonical(&connection, &context, &session_id)
+            .expect("canonical path resolution should succeed");
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn canonical_path_resolution_reports_stale_canonical_transcript_paths() {
+        let context = make_catalog_test_context("orchestra-canonical-session-path-stale-canonical");
+        let connection = in_memory_session_catalog_connection();
+        seed_catalog_test_project(&connection, &context);
+        let session_id = Uuid::new_v4().to_string();
+        let session_path = write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-00Z_{session_id}.jsonl"),
+            &session_id,
+            "Stale canonical path",
+            "2026-03-20T10:00:00Z",
+        );
+        let project_id = format!("project-{}", context.project_slug);
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            &session_id,
+            Some(project_id.as_str()),
+            None,
+            &session_path,
+        )
+        .expect("canonical session repair should succeed");
+        let stale_path = context.session_dir.join("missing.jsonl");
+        connection
+            .execute(
+                "UPDATE sessions SET session_path = ?2, transcript_path = ?2 WHERE id = ?1",
+                params![session_id, stale_path.display().to_string()],
+            )
+            .expect("canonical session path should update");
+
+        let error = resolve_session_path_with_canonical(&connection, &context, &session_id)
+            .expect_err("stale canonical path should fail fast");
+        assert!(error.contains("stale canonical transcript path"));
+        assert!(error.contains("explicit session reconciliation"));
     }
 
     #[test]

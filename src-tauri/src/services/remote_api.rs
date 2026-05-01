@@ -67,7 +67,7 @@ use crate::{
     services::{
         agent_dispatch, app_events, database, harness_settings, messages, notifications,
         orchestra_paths::discover_dev_checkout_root, pi_oauth, pi_runtime, pi_sessions, pi_setup,
-        projects, remote_access, tasks,
+        projects, remote_access, session_records, task_runtime, tasks,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle},
 };
@@ -2812,11 +2812,28 @@ fn seed_hosted_web_e2e_fixture() -> Result<HostedWebE2eFixture, String> {
     )?;
 
     let context = pi_sessions::detect_session_context(Some(&project_slug))?;
-    let stored_session = pi_sessions::create_session_file(
+    let runtime_cwd = context.project_root.display().to_string();
+    let stored_session = session_records::create_session_record(
+        &connection,
         &context.project_root,
         &context.session_dir,
-        Some("Hosted web seeded session"),
-        true,
+        session_records::CreateSessionRecordInput {
+            project_id: Some(&project_id),
+            title: Some("Hosted web seeded session"),
+            session_kind: session_records::SESSION_KIND_STANDALONE,
+            agent_id: None,
+            role_instance_id: None,
+            task_id: None,
+            workflow_id: None,
+            lane_id: None,
+            assignment: None,
+            worker_type: None,
+            worker_id: None,
+            runtime_cwd: Some(runtime_cwd.as_str()),
+            subscribed: true,
+            agent_runtime: None,
+            update_role_instance_session: false,
+        },
     )?;
     let session_path =
         pi_sessions::get_session_path(&context.session_dir, &stored_session.record.id)?;
@@ -5817,9 +5834,24 @@ async fn post_task_reset_runtime(
     Path(task_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
-    task_commands::reset_task_runtime(task_id)
-        .map(Json)
-        .map_err(command_api_error)
+    let mut connection = database::open_connection().map_err(command_api_error)?;
+    let previous_assignment = tasks::get_task_context(&connection, &task_id)
+        .ok()
+        .and_then(|task| task.active_lane_assignment);
+    let task =
+        task_runtime::reset_task_runtime(&mut connection, &task_id).map_err(command_api_error)?;
+
+    context.app.state::<AppState>().log(
+        "info",
+        "task.runtime.reset",
+        &format!("Reset task runtime for task {}", task_id),
+    );
+    let _ = app_events::emit_task_change(&context.app, "task.runtime.reset", [task.id.clone()]);
+    if let Some(session_id) = previous_assignment.and_then(|assignment| assignment.session_id) {
+        let _ = app_events::emit_session_change(&context.app, "task.runtime.reset", [session_id]);
+    }
+
+    Ok(Json(task))
 }
 
 async fn post_task_approve(
