@@ -944,6 +944,44 @@ pub fn add_task_attachment(
 }
 
 #[tauri::command]
+pub fn download_task_attachment(
+    state: State<'_, AppState>,
+    attachment_id: String,
+    destination_path: Option<String>,
+) -> Result<Option<String>, String> {
+    let connection = database::open_connection()?;
+    let attachment = task_attachments::load_attachment(&connection, &attachment_id)?;
+    let destination = if let Some(destination_path) = destination_path {
+        Some(std::path::PathBuf::from(destination_path))
+    } else {
+        rfd::FileDialog::new()
+            .set_file_name(&attachment.file_name)
+            .save_file()
+    };
+
+    let Some(destination_path) = destination else {
+        state.log(
+            "info",
+            "task.attachment.download.cancelled",
+            &format!("Download cancelled for attachment {}", attachment_id),
+        );
+        return Ok(None);
+    };
+
+    task_attachments::copy_attachment_to_path(&connection, &attachment_id, &destination_path)?;
+    state.log(
+        "info",
+        "task.attachment.downloaded",
+        &format!(
+            "Downloaded attachment {} to {}",
+            attachment_id,
+            destination_path.display()
+        ),
+    );
+    Ok(Some(destination_path.display().to_string()))
+}
+
+#[tauri::command]
 pub fn remove_task_attachment(
     app: AppHandle,
     state: State<'_, AppState>,

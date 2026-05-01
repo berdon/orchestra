@@ -99,6 +99,7 @@ import type {
 } from "./client";
 import { createLocalNotificationsExtension } from "./localNotificationsExtension";
 import type { OrchestraHostAdminExtension } from "./extensions";
+import { triggerBrowserDownload } from "./browserDownloads";
 import { RemoteApiEventManager } from "./remoteApiEvents";
 import {
   createRemoteApiTaskListQuery,
@@ -1197,6 +1198,13 @@ export function createRemoteApiOrchestraClientBinding(
           path: `/api/v1/tasks/${encodeURIComponent(taskId)}/attachments`,
           body: input,
         });
+      },
+      downloadAttachment: async (attachmentId) => {
+        transport.assertCapability("tasks.downloadAttachment", bootstrap.capabilities.tasks.attachments);
+        const response = await transport.requestBlob("tasks.downloadAttachment", {
+          path: `/api/v1/task-attachments/${encodeURIComponent(attachmentId)}/content`,
+        });
+        triggerBrowserDownload(response.blob, response.fileName ?? `attachment-${attachmentId}`);
       },
       removeAttachment: (attachmentId) => {
         transport.assertCapability("tasks.removeAttachment", bootstrap.capabilities.tasks.attachments);

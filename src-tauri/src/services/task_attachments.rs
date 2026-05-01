@@ -167,7 +167,72 @@ pub fn load_attachment(
     connection: &Connection,
     attachment_id: &str,
 ) -> Result<TaskAttachment, String> {
-    let row = connection
+    let row = load_attachment_row(connection, attachment_id)?;
+    build_attachment(row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7)
+}
+
+pub fn load_attachment_bytes(
+    connection: &Connection,
+    attachment_id: &str,
+) -> Result<(TaskAttachment, Vec<u8>), String> {
+    let attachment = load_attachment(connection, attachment_id)?;
+    let path = PathBuf::from(&attachment.stored_path);
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("Unable to read task attachment {}: {error}", path.display()))?;
+    Ok((attachment, bytes))
+}
+
+pub fn copy_attachment_to_path(
+    connection: &Connection,
+    attachment_id: &str,
+    destination_path: &Path,
+) -> Result<TaskAttachment, String> {
+    let attachment = load_attachment(connection, attachment_id)?;
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Unable to create attachment download directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::copy(&attachment.stored_path, destination_path).map_err(|error| {
+        format!(
+            "Unable to copy task attachment {} to {}: {error}",
+            attachment.stored_path,
+            destination_path.display()
+        )
+    })?;
+    Ok(attachment)
+}
+
+pub fn content_disposition_file_name(file_name: &str) -> String {
+    sanitize_file_name(file_name)
+        .chars()
+        .map(|ch| match ch {
+            '"' | '\r' | '\n' => '_',
+            _ => ch,
+        })
+        .collect()
+}
+
+fn load_attachment_row(
+    connection: &Connection,
+    attachment_id: &str,
+) -> Result<
+    (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        String,
+    ),
+    String,
+> {
+    connection
         .query_row(
             r#"
             SELECT id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at
@@ -190,9 +255,7 @@ pub fn load_attachment(
         )
         .optional()
         .map_err(|error| format!("Unable to load task attachment {attachment_id}: {error}"))?
-        .ok_or_else(|| format!("Task attachment {attachment_id} was not found"))?;
-
-    build_attachment(row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7)
+        .ok_or_else(|| format!("Task attachment {attachment_id} was not found"))
 }
 
 fn build_attachment(
@@ -361,5 +424,71 @@ mod tests {
             remove_task_attachment(&connection, &attachment.id).expect("remove attachment");
         assert_eq!(removed.id, attachment.id);
         assert!(!PathBuf::from(&removed.stored_path).exists());
+    }
+
+    #[test]
+    fn loads_raw_attachment_bytes_even_when_preview_is_skipped() {
+        let mut connection = in_memory_connection();
+        let task_id = create_task_record(&mut connection);
+        let large_text = "a".repeat(MAX_TEXT_PREVIEW_BYTES + 1);
+        let attachment = add_task_attachment(
+            &mut connection,
+            &task_id,
+            TaskAttachmentInput {
+                file_name: "large.txt".into(),
+                media_type: "text/plain".into(),
+                base64_data: STANDARD.encode(large_text.as_bytes()),
+                caption: None,
+            },
+        )
+        .expect("add attachment");
+
+        assert_eq!(attachment.preview_text, None);
+        let (loaded_attachment, bytes) =
+            load_attachment_bytes(&connection, &attachment.id).expect("load bytes");
+        assert_eq!(loaded_attachment.file_name, "large.txt");
+        assert_eq!(bytes, large_text.as_bytes());
+    }
+
+    #[test]
+    fn copies_attachment_to_destination_path() {
+        let mut connection = in_memory_connection();
+        let task_id = create_task_record(&mut connection);
+        let root = default_orchestra_root().expect("orchestra root");
+        let download_dir =
+            task_attachments_dir(&root, DEFAULT_PROJECT_ID, &format!("{task_id}-downloads"));
+        if download_dir.exists() {
+            fs::remove_dir_all(&download_dir).ok();
+        }
+        let destination_path = download_dir.join("copied.bin");
+        let source_bytes = vec![0_u8, 159, 255, 42, 7];
+        let attachment = add_task_attachment(
+            &mut connection,
+            &task_id,
+            TaskAttachmentInput {
+                file_name: "payload.bin".into(),
+                media_type: "application/octet-stream".into(),
+                base64_data: STANDARD.encode(&source_bytes),
+                caption: None,
+            },
+        )
+        .expect("add attachment");
+
+        let copied_attachment =
+            copy_attachment_to_path(&connection, &attachment.id, &destination_path)
+                .expect("copy attachment");
+        assert_eq!(copied_attachment.file_name, "payload.bin");
+        assert_eq!(
+            fs::read(&destination_path).expect("read copied attachment"),
+            source_bytes
+        );
+    }
+
+    #[test]
+    fn content_disposition_file_name_strips_header_unsafe_characters() {
+        assert_eq!(
+            content_disposition_file_name("quoted\"name\n.txt"),
+            "quoted_name_.txt"
+        );
     }
 }

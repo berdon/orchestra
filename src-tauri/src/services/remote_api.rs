@@ -924,30 +924,22 @@ mod tests {
         Ok(body)
     }
 
-    fn perform_authenticated_json_request_with_options(
+    fn perform_authenticated_raw_request_with_options(
         app: &tauri::App,
         auth_header: &str,
         method: &str,
         uri: &str,
         extra_headers: &[(&str, &str)],
-        body: Option<Value>,
-    ) -> Result<(StatusCode, Value), String> {
+        body: Option<Body>,
+    ) -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
         let router = build_remote_api_context(app.handle().clone());
         let mut request = Request::builder().method(method).uri(uri);
         request = request.header(header::AUTHORIZATION, auth_header);
         for (name, value) in extra_headers {
             request = request.header(*name, *value);
         }
-        let request_body = if let Some(body) = body {
-            request = request.header(header::CONTENT_TYPE, "application/json");
-            Body::from(serde_json::to_vec(&body).map_err(|error| {
-                format!("failed to encode remote API parity JSON body {uri}: {error}")
-            })?)
-        } else {
-            Body::empty()
-        };
         let request = request
-            .body(request_body)
+            .body(body.unwrap_or_else(Body::empty))
             .map_err(|error| format!("failed to build remote API parity request {uri}: {error}"))?;
         let response = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -960,6 +952,7 @@ mod tests {
                     .map_err(|error| format!("remote API parity request {uri} failed: {error}"))
             })?;
         let status = response.status();
+        let headers = response.headers().clone();
         let body = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -971,9 +964,91 @@ mod tests {
                         format!("failed to read remote API parity response body {uri}: {error}")
                     })
             })?;
+        Ok((status, headers, body.to_vec()))
+    }
+
+    fn perform_authenticated_json_request_with_options(
+        app: &tauri::App,
+        auth_header: &str,
+        method: &str,
+        uri: &str,
+        extra_headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Result<(StatusCode, Value), String> {
+        let request_body = if let Some(body) = body {
+            Some(Body::from(serde_json::to_vec(&body).map_err(|error| {
+                format!("failed to encode remote API parity JSON body {uri}: {error}")
+            })?))
+        } else {
+            None
+        };
+        let mut request_headers = extra_headers.to_vec();
+        if request_body.is_some() {
+            request_headers.push(("content-type", "application/json"));
+        }
+        let (status, _headers, body) = perform_authenticated_raw_request_with_options(
+            app,
+            auth_header,
+            method,
+            uri,
+            &request_headers,
+            request_body,
+        )?;
         let json_body = serde_json::from_slice(&body)
             .map_err(|error| format!("failed to decode remote API parity JSON {uri}: {error}"))?;
         Ok((status, json_body))
+    }
+
+    fn perform_authenticated_binary_request(
+        app: &tauri::App,
+        auth_header: &str,
+        uri: &str,
+    ) -> Result<(StatusCode, HeaderMap, Vec<u8>), String> {
+        let router = build_remote_api_context(app.handle().clone());
+        let request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header(header::AUTHORIZATION, auth_header)
+            .body(Body::empty())
+            .map_err(|error| {
+                format!("failed to build remote API parity binary request {uri}: {error}")
+            })?;
+        let response = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("failed to build remote API parity binary runtime: {error}"))?
+            .block_on(async move {
+                router.oneshot(request).await.map_err(|error| {
+                    format!("remote API parity binary request {uri} failed: {error}")
+                })
+            })?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                format!("failed to build remote API parity binary body runtime: {error}")
+            })?
+            .block_on(async move {
+                to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .map_err(|error| {
+                        format!(
+                            "failed to read remote API parity binary response body {uri}: {error}"
+                        )
+                    })
+            })?;
+        Ok((status, headers, body.to_vec()))
+    }
+
+    #[test]
+    fn remote_api_serves_attachment_download_content_with_headers() {
+        let _probe_lock = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("task_attachment_content", &[])
+            .expect("task attachment content production probe should pass");
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -1782,6 +1857,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             post(post_task_attachment_create),
         )
         .route(
+            "/api/v1/task-attachments/:attachment_id/content",
+            get(get_task_attachment_content_route),
+        )
+        .route(
             "/api/v1/task-attachments/:attachment_id",
             delete(delete_task_attachment_record),
         )
@@ -2157,6 +2236,108 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                         return Err(format!(
                             "hosted-web frontend-route probe returned unexpected HTML: {}",
                             frontend_html
+                        ));
+                    }
+                    Ok(())
+                }
+                "task_attachment_content" => {
+                    use base64::Engine as _;
+
+                    let mut connection = database::open_connection().map_err(|error| {
+                        format!("task attachment probe could not open database: {error}")
+                    })?;
+                    let project_id = crate::services::projects::require_requested_or_default_project_id(
+                        &connection,
+                        None,
+                        "Task attachment probe requires a default project.",
+                    )
+                    .map_err(|error| {
+                        format!("task attachment probe could not resolve project: {error}")
+                    })?;
+                    let task = tasks::create_task(
+                        &mut connection,
+                        Some(&project_id),
+                        TaskUpsertInput {
+                            title: "Attachment route probe".into(),
+                            description: None,
+                            task_type: "task".into(),
+                            tags: vec![],
+                            status: "ready".into(),
+                            priority: "P2".into(),
+                            workflow_id: None,
+                            current_lane_id: None,
+                            assignee_type: "unassigned".into(),
+                            assignee_id: None,
+                            repository_id: None,
+                            repository_ids: vec![],
+                            parent_task_id: None,
+                            whip_max_attempts: Some(10),
+                            archived: Some(false),
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("task attachment probe could not create task: {error}")
+                    })?;
+                    let attachment = crate::services::task_attachments::add_task_attachment(
+                        &mut connection,
+                        &task.id,
+                        TaskAttachmentInput {
+                            file_name: "notes.txt".into(),
+                            media_type: "text/plain".into(),
+                            base64_data: base64::engine::general_purpose::STANDARD
+                                .encode("downloadable bytes"),
+                            caption: None,
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("task attachment probe could not add attachment: {error}")
+                    })?;
+
+                    let response = client
+                        .get(format!(
+                            "{base_url}/api/v1/task-attachments/{}/content",
+                            attachment.id
+                        ))
+                        .header("authorization", &auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!("task attachment content probe request failed: {error}")
+                        })?;
+                    if response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "task attachment content probe returned {}",
+                            response.status()
+                        ));
+                    }
+                    let headers = response.headers().clone();
+                    let body = response.bytes().await.map_err(|error| {
+                        format!("task attachment content probe body failed to read: {error}")
+                    })?;
+                    if headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok())
+                        != Some("text/plain")
+                    {
+                        return Err(format!(
+                            "task attachment content probe returned unexpected content type: {:?}",
+                            headers.get(header::CONTENT_TYPE)
+                        ));
+                    }
+                    if headers
+                        .get(header::CONTENT_DISPOSITION)
+                        .and_then(|value| value.to_str().ok())
+                        != Some("attachment; filename=\"notes.txt\"")
+                    {
+                        return Err(format!(
+                            "task attachment content probe returned unexpected content disposition: {:?}",
+                            headers.get(header::CONTENT_DISPOSITION)
+                        ));
+                    }
+                    if body.as_ref() != b"downloadable bytes" {
+                        return Err(format!(
+                            "task attachment content probe returned unexpected bytes: {:?}",
+                            body
                         ));
                     }
                     Ok(())
@@ -5377,6 +5558,43 @@ async fn post_task_attachment_create(
     )
     .map(Json)
     .map_err(command_api_error)
+}
+
+async fn get_task_attachment_content_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(attachment_id): Path<String>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    let connection = database::open_connection().map_err(command_api_error)?;
+    let (attachment, bytes) =
+        crate::services::task_attachments::load_attachment_bytes(&connection, &attachment_id)
+            .map_err(command_api_error)?;
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&attachment.media_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&bytes.len().to_string()).map_err(|error| {
+            internal_api_error(format!("Unable to set attachment length header: {error}"))
+        })?,
+    );
+    response_headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"{}\"",
+            crate::services::task_attachments::content_disposition_file_name(&attachment.file_name)
+        ))
+        .map_err(|error| {
+            internal_api_error(format!("Unable to set attachment filename header: {error}"))
+        })?,
+    );
+
+    Ok((response_headers, bytes).into_response())
 }
 
 async fn delete_task_attachment_record(

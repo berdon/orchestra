@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { appendMockSessionEvent, buildMockSessionEvents, expectTranscriptAutoScrollOn } from "./session-scroll-helpers";
 
@@ -2993,6 +2994,15 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('.task-attachment-card__text')).toContainText("Attachment preview text");
   await expect(page.locator('.task-attachment-card__image')).toHaveCount(1);
 
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .locator('.task-attachment-card', { hasText: 'notes.txt' })
+    .locator('[data-role="download-task-attachment"]')
+    .click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("notes.txt");
+  expect(await readFile((await download.path())!, "utf8")).toBe("Attachment preview text");
+
   await page.locator('[data-role="task-detail-tab-comments"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("Pause and re-check the task context before you continue.");
@@ -3031,6 +3041,50 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="task-attention-queue"]')).toContainText("Review me");
   await page.locator('[data-role="task-filter-review"]').click();
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Review me");
+});
+
+test("task attachment downloads preserve filenames and contents in browser mode", async ({ page }, testInfo) => {
+  const textPayload = Buffer.from("Download me from Orchestra.");
+  const binaryPayload = Buffer.from([0, 159, 255, 42, 7]);
+
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+  await page.locator('[data-role="task-detail-tab-attachments"]').click();
+  await page.locator('[data-role="task-attachment-input"]').setInputFiles([
+    {
+      name: "download-notes.txt",
+      mimeType: "text/plain",
+      buffer: textPayload,
+    },
+    {
+      name: "archive.bin",
+      mimeType: "application/octet-stream",
+      buffer: binaryPayload,
+    },
+  ]);
+
+  const [textDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator(".task-attachment-card").filter({ hasText: "download-notes.txt" }).locator('[data-role="download-task-attachment"]').click(),
+  ]);
+  expect(textDownload.suggestedFilename()).toBe("download-notes.txt");
+  const textDownloadPath = testInfo.outputPath("download-notes.txt");
+  await textDownload.saveAs(textDownloadPath);
+  expect(await readFile(textDownloadPath, "utf8")).toBe(textPayload.toString("utf8"));
+
+  const [binaryDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator(".task-attachment-card").filter({ hasText: "archive.bin" }).locator('[data-role="download-task-attachment"]').click(),
+  ]);
+  expect(binaryDownload.suggestedFilename()).toBe("archive.bin");
+  const binaryDownloadPath = testInfo.outputPath("archive.bin");
+  await binaryDownload.saveAs(binaryDownloadPath);
+  expect(await readFile(binaryDownloadPath)).toEqual(binaryPayload);
 });
 
 test("task comment unread badges hide on completed tasks but still clear for active tasks when comments are opened", async ({ page }) => {

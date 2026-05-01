@@ -150,6 +150,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 afterEach(() => {
   FakeWebSocket.instances = [];
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("remote api orchestra client", () => {
@@ -192,6 +193,74 @@ describe("remote api orchestra client", () => {
     expect(FakeWebSocket.instances[0]?.url).toBe("wss://orchestra.example.test/api/v1/ws?token=token-123");
     FakeWebSocket.instances[0]?.emitConnected();
     await expect(subscribePromise).resolves.toEqual(expect.any(Function));
+  });
+
+  test("downloads task attachments through the remote binary route", async () => {
+    const anchor = {
+      click: vi.fn(),
+      remove: vi.fn(),
+      style: { display: "" },
+      href: "",
+      download: "",
+    };
+    const appendChild = vi.fn();
+    const createElement = vi.fn(() => anchor);
+    const createObjectURL = vi.fn(() => "blob:attachment-download");
+    const revokeObjectURL = vi.fn();
+
+    vi.stubGlobal("document", {
+      createElement,
+      body: { appendChild },
+    });
+    const originalCreateObjectUrl = URL.createObjectURL;
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: revokeObjectURL });
+
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://orchestra.example.test/api/v1/task-attachments/task-attachment-1/content");
+      expect(init).toMatchObject({
+        method: "GET",
+        credentials: "same-origin",
+      });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          "Content-Disposition": 'attachment; filename="notes.txt"',
+          "Content-Type": "text/plain",
+        }),
+        blob: async () => new Blob(["downloaded attachment"], { type: "text/plain" }),
+        text: async () => "",
+      } satisfies Partial<Response> as Response;
+    });
+
+    try {
+      const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+        fetchImpl,
+      });
+
+      await expect(binding.client.tasks.downloadAttachment("task-attachment-1")).resolves.toBeUndefined();
+      expect(createElement).toHaveBeenCalledWith("a");
+      expect(anchor.href).toBe("blob:attachment-download");
+      expect(anchor.download).toBe("notes.txt");
+      expect(appendChild).toHaveBeenCalledWith(anchor);
+      expect(anchor.click).toHaveBeenCalledTimes(1);
+      expect(anchor.remove).toHaveBeenCalledTimes(1);
+      await Promise.resolve();
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:attachment-download");
+    } finally {
+      if (originalCreateObjectUrl) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: originalCreateObjectUrl });
+      } else {
+        delete (URL as typeof URL & { createObjectURL?: typeof createObjectURL }).createObjectURL;
+      }
+      if (originalRevokeObjectUrl) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: originalRevokeObjectUrl });
+      } else {
+        delete (URL as typeof URL & { revokeObjectURL?: typeof revokeObjectURL }).revokeObjectURL;
+      }
+    }
   });
 
   test("routes shared managed-skills methods through the remote API surface", async () => {

@@ -26,6 +26,7 @@ import {
   upsertMockSession,
 } from "./mockOrchestra/sessions";
 import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
+import { createDownloadBlob, triggerBrowserDownload } from "./orchestraClient/browserDownloads";
 import { getTaskTags } from "./taskListQuery";
 import { getEffectiveTaskReviewAssignmentStatus } from "./taskReviewState";
 import {
@@ -102,6 +103,7 @@ const SESSION_STORAGE_KEY = "orchestra.mock.sessions";
 const SESSION_MODEL_STORAGE_KEY = "orchestra.mock.session-models";
 const WORKFLOW_STORAGE_KEY = "orchestra.mock.workflows";
 const TASK_STORAGE_KEY = "orchestra.mock.tasks";
+const TASK_ATTACHMENT_BYTES_STORAGE_KEY = "orchestra.mock.task-attachment-bytes";
 const TASK_FILE_CONTENT_STORAGE_KEY = "orchestra.mock.file-contents";
 const TASK_DEPENDENCY_STORAGE_KEY = "orchestra.mock.task-dependencies";
 const TASK_COMMENT_USER_RECEIPT_STORAGE_KEY =
@@ -581,6 +583,14 @@ function countMockUnreadTaskComments(
 
 function setStoredValue<T>(key: string, value: T) {
   window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+function getStoredMockAttachmentBytes() {
+  return getStoredValue<Record<string, { base64Data: string; mediaType: string; fileName: string }>>(TASK_ATTACHMENT_BYTES_STORAGE_KEY) ?? {};
+}
+
+function saveStoredMockAttachmentBytes(value: Record<string, { base64Data: string; mediaType: string; fileName: string }>) {
+  setStoredValue(TASK_ATTACHMENT_BYTES_STORAGE_KEY, value);
 }
 
 function getStoredMailboxMessages() {
@@ -7959,6 +7969,14 @@ export async function addTaskAttachment(
           : entry,
       ),
     );
+    saveStoredMockAttachmentBytes({
+      ...getStoredMockAttachmentBytes(),
+      [attachment.id]: {
+        base64Data: input.base64Data,
+        mediaType: attachment.mediaType,
+        fileName: attachment.fileName,
+      },
+    });
     appendMockLog(
       "info",
       "task.attachment.added",
@@ -7976,6 +7994,25 @@ export async function addTaskAttachment(
   }
 
   return invoke<TaskAttachment>("add_task_attachment", { taskId, input });
+}
+
+export async function downloadTaskAttachment(
+  attachmentId: string,
+): Promise<void> {
+  if (!isTauriAvailable()) {
+    const stored = getStoredMockAttachmentBytes()[attachmentId];
+    if (!stored) {
+      throw new Error(`Task attachment ${attachmentId} was not found`);
+    }
+
+    triggerBrowserDownload(
+      createDownloadBlob(stored.base64Data, stored.mediaType),
+      stored.fileName,
+    );
+    return;
+  }
+
+  await invoke<string | null>("download_task_attachment", { attachmentId });
 }
 
 export async function removeTaskAttachment(
@@ -8005,6 +8042,9 @@ export async function removeTaskAttachment(
     }
 
     const removedAttachment = removed as TaskAttachment;
+    const storedBytes = { ...getStoredMockAttachmentBytes() };
+    delete storedBytes[attachmentId];
+    saveStoredMockAttachmentBytes(storedBytes);
     saveMockTasks(updated);
     appendMockLog(
       "info",

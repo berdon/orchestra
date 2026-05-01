@@ -965,6 +965,18 @@ export function TasksPage({
     }
   }
 
+  async function handleDownloadAttachment(attachmentId: string) {
+    if (route.kind !== "detail") {
+      return;
+    }
+    setTaskActionError(null);
+    try {
+      await orchestraClient.tasks.downloadAttachment(attachmentId);
+    } catch (error) {
+      setTaskActionError(toUiErrorState(error, "Unable to download attachment."));
+    }
+  }
+
   async function handleRemoveAttachment(attachmentId: string) {
     if (route.kind !== "detail") {
       return;
@@ -1568,6 +1580,7 @@ export function TasksPage({
             dependencyViewMode={dependencyViewMode}
             loading={loadingTaskDetail || taskDetailRenderState === "detail_pending"}
             onAddAttachment={(files) => void handleAttachmentInputChange(files)}
+            onDownloadAttachment={(attachmentId) => void handleDownloadAttachment(attachmentId)}
             onAddComment={(draft) => handleAddComment(draft)}
             onAddTaskTodo={(description, laneId) => void handleAddTaskTodo(description, laneId)}
             onDeleteComment={(commentId) => handleDeleteComment(commentId)}

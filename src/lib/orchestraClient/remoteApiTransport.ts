@@ -20,8 +20,14 @@ export interface RemoteApiOrchestraClientOptions {
   getBearerToken?: () => string | null | undefined;
 }
 
-type RemoteApiResponseParser = "json" | "text" | "none";
+type RemoteApiResponseParser = "json" | "text" | "blob" | "none";
 type RemoteApiQueryValue = string | number | boolean | null | undefined | Array<string | number | boolean>;
+
+export interface RemoteApiBlobResponse {
+  blob: Blob;
+  fileName: string | null;
+  mediaType: string | null;
+}
 
 interface RemoteApiRequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
@@ -48,6 +54,7 @@ export interface RemoteApiTransport {
   getWebSocketUrl(operation: string): string;
   requestJson<T>(operation: string, options: RemoteApiRequestOptions): Promise<T>;
   requestText(operation: string, options: RemoteApiRequestOptions): Promise<string>;
+  requestBlob(operation: string, options: RemoteApiRequestOptions): Promise<RemoteApiBlobResponse>;
   requestVoid(operation: string, options: RemoteApiRequestOptions): Promise<void>;
 }
 
@@ -110,6 +117,29 @@ function parseRemoteApiErrorText(rawText: string, fallback: string): ParsedRemot
       details: rawText,
     };
   }
+}
+
+function parseContentDispositionFileName(headerValue: string | null) {
+  if (!headerValue) {
+    return null;
+  }
+
+  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const quotedMatch = headerValue.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const unquotedMatch = headerValue.match(/filename=([^;]+)/i);
+  return unquotedMatch?.[1]?.trim() ?? null;
 }
 
 function buildQueryString(query?: Record<string, RemoteApiQueryValue>) {
@@ -419,6 +449,14 @@ export function createRemoteApiTransport(
       return undefined as T;
     }
 
+    if (parseAs === "blob") {
+      return {
+        blob: await response.blob(),
+        fileName: parseContentDispositionFileName(response.headers.get("Content-Disposition")),
+        mediaType: response.headers.get("Content-Type"),
+      } as T;
+    }
+
     const rawText = await response.text();
     if (parseAs === "text") {
       return rawText as T;
@@ -450,6 +488,8 @@ export function createRemoteApiTransport(
       request<T>(operation, { ...options, parseAs: "json" }),
     requestText: (operation: string, options: RemoteApiRequestOptions) =>
       request<string>(operation, { ...options, parseAs: "text" }),
+    requestBlob: (operation: string, options: RemoteApiRequestOptions) =>
+      request<RemoteApiBlobResponse>(operation, { ...options, parseAs: "blob" }),
     requestVoid: (operation: string, options: RemoteApiRequestOptions) =>
       request<void>(operation, { ...options, parseAs: "none" }),
   };

@@ -1,6 +1,6 @@
 fn main() {
     let case = std::env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("usage: remote_api_route_probe <frontend_bootstrap|session_message|hosted_web_entrypoint|task_list_parity|inbox_parity|sessions_parity|skills_parity|skills_permissions>");
+        eprintln!("usage: remote_api_route_probe <frontend_bootstrap|session_message|hosted_web_entrypoint|task_attachment_content|task_list_parity|inbox_parity|sessions_parity|skills_parity|skills_permissions>");
         std::process::exit(2);
     });
 

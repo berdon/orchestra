@@ -347,6 +347,9 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     removeFileReference: (referenceId) => invokeTauri<TaskFileReference>("remove_task_file_reference", { referenceId }),
     getFileContent: (path) => invokeTauri<string>("get_task_file_content", { path }),
     addAttachment: (taskId, input: TaskAttachmentInput) => invokeTauri<TaskAttachment>("add_task_attachment", { taskId, input }),
+    downloadAttachment: async (attachmentId) => {
+      await invokeTauri<string | null>("download_task_attachment", { attachmentId });
+    },
     removeAttachment: (attachmentId) => invokeTauri<TaskAttachment>("remove_task_attachment", { attachmentId }),
     listSchedules: async (projectId) =>
       invokeTauri<TaskScheduleSummary[]>("list_task_schedules", {

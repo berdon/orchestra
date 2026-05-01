@@ -170,6 +170,7 @@ function createStubServices(): {
         removeFileReference: vi.fn(async () => { throw new Error("unused"); }),
         getFileContent: vi.fn(async () => ""),
         addAttachment: vi.fn(async () => { throw new Error("unused"); }),
+        downloadAttachment: vi.fn(async () => undefined),
         removeAttachment: vi.fn(async () => { throw new Error("unused"); }),
         listSchedules: vi.fn(async () => []),
         getSchedule: vi.fn(async () => { throw new Error("unused"); }),

@@ -95,6 +95,7 @@ interface TaskDetailPageProps {
   onRemoveDependency: (dependencyId: string) => void;
   onSelectBlocker: (taskId: string) => void;
   onAddAttachment: (files: FileList | null) => void;
+  onDownloadAttachment: (attachmentId: string) => void;
   onRemoveAttachment: (attachmentId: string) => void;
   onFileReferenceDraftChange: (draft: TaskFileReferenceInput) => void;
   onDependencyViewModeChange: (mode: TaskDependencyViewMode) => void;
@@ -374,6 +375,7 @@ export function TaskDetailPage({
   onRemoveDependency,
   onSelectBlocker,
   onAddAttachment,
+  onDownloadAttachment,
   onRemoveAttachment,
   onFileReferenceDraftChange,
   onDependencyViewModeChange,
@@ -1493,7 +1495,10 @@ export function TaskDetailPage({
                   <article className="task-attachment-card" key={attachment.id}>
                     <div className="workflow-section__header">
                       <strong>{attachment.fileName}</strong>
-                      <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
+                      <div className="button-row">
+                        <button className="secondary-button" data-attachment-id={attachment.id} data-role="download-task-attachment" type="button" onClick={() => onDownloadAttachment(attachment.id)}>Download</button>
+                        <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
+                      </div>
                     </div>
                     <p className="muted-copy">{attachment.mediaType} · {Math.max(1, Math.round(attachment.byteSize / 1024))} KB</p>
                     {attachment.imageDataUrl ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl} /> : null}

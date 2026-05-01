@@ -335,6 +335,7 @@ export interface OrchestraTaskService {
   removeFileReference(referenceId: string): Promise<TaskFileReference>;
   getFileContent(path: string): Promise<string>;
   addAttachment(taskId: string, input: TaskAttachmentInput): Promise<TaskAttachment>;
+  downloadAttachment(attachmentId: string): Promise<void>;
   removeAttachment(attachmentId: string): Promise<TaskAttachment>;
   listSchedules(projectId?: string | null): Promise<TaskScheduleSummary[]>;
   getSchedule(scheduleId: string): Promise<TaskScheduleDetail>;
