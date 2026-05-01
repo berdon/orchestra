@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::{fs, path::{Path, PathBuf}};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -216,25 +216,46 @@ pub fn bind_session_context(
         binding.session_kind,
     )?;
     let now = now_iso();
+    let assignment_id = existing_assignment_id(connection, binding.assignment_id)?;
+    let (transcript_exists, file_size, file_mtime_ms) =
+        transcript_file_metadata(seed.session_path.as_path());
     connection
         .execute(
             r#"
             UPDATE sessions
             SET project_id = COALESCE(?2, project_id),
                 session_path = ?3,
+                transcript_path = ?3,
                 title = ?4,
                 session_kind = COALESCE(?5, session_kind),
-                agent_id = ?6,
-                role_instance_id = ?7,
-                task_id = ?8,
-                workflow_id = ?9,
-                lane_id = ?10,
-                assignment_id = ?11,
-                worker_type = ?12,
-                worker_id = ?13,
-                runtime_cwd = COALESCE(?14, runtime_cwd),
-                lifecycle_state = ?15,
-                updated_at = ?16,
+                session_status = ?6,
+                list_visibility = CASE
+                    WHEN hidden_reason IS NOT NULL OR dismissed_at IS NOT NULL THEN 'hidden'
+                    ELSE ?7
+                END,
+                agent_id = ?8,
+                role_instance_id = ?9,
+                task_id = ?10,
+                workflow_id = ?11,
+                lane_id = ?12,
+                assignment_id = ?13,
+                primary_task_id = ?10,
+                primary_workflow_id = ?11,
+                primary_lane_id = ?12,
+                primary_assignment_id = ?13,
+                worker_type = ?14,
+                worker_id = ?15,
+                owner_worker_type = ?14,
+                owner_worker_id = ?15,
+                runtime_cwd = COALESCE(?16, runtime_cwd),
+                transcript_cwd = COALESCE(?16, transcript_cwd),
+                lifecycle_state = ?17,
+                transcript_exists = ?18,
+                file_size = ?19,
+                file_mtime_ms = ?20,
+                last_indexed_at = ?21,
+                last_seen_at = ?21,
+                updated_at = ?21,
                 closed_at = NULL,
                 archived_at = NULL
             WHERE id = ?1
@@ -245,16 +266,21 @@ pub fn bind_session_context(
                 seed.session_path.display().to_string(),
                 seed.title,
                 binding.session_kind,
+                session_status_for_lifecycle(LIFECYCLE_ACTIVE),
+                list_visibility_for_lifecycle(LIFECYCLE_ACTIVE),
                 binding.agent_id,
                 binding.role_instance_id,
                 binding.task_id,
                 binding.workflow_id,
                 binding.lane_id,
-                existing_assignment_id(connection, binding.assignment_id)?,
+                assignment_id,
                 binding.worker_type,
                 binding.worker_id,
                 binding.runtime_cwd.map(|path| path.display().to_string()),
                 LIFECYCLE_ACTIVE,
+                if transcript_exists { 1 } else { 0 },
+                file_size,
+                file_mtime_ms,
                 now,
             ],
         )
@@ -284,21 +310,38 @@ pub fn close_session_context(
     } else {
         current_session_binding(connection, session_id)?
     };
+    let (transcript_exists, file_size, file_mtime_ms) =
+        transcript_file_metadata(seed.session_path.as_path());
     connection
         .execute(
             r#"
             UPDATE sessions
             SET project_id = COALESCE(?2, project_id),
                 session_path = ?3,
+                transcript_path = ?3,
                 title = ?4,
                 task_id = ?5,
                 workflow_id = ?6,
                 lane_id = ?7,
                 assignment_id = ?8,
-                lifecycle_state = ?9,
-                updated_at = ?10,
-                closed_at = ?11,
-                archived_at = COALESCE(?12, archived_at)
+                primary_task_id = ?5,
+                primary_workflow_id = ?6,
+                primary_lane_id = ?7,
+                primary_assignment_id = ?8,
+                session_status = ?9,
+                list_visibility = CASE
+                    WHEN hidden_reason IS NOT NULL OR dismissed_at IS NOT NULL THEN 'hidden'
+                    ELSE ?10
+                END,
+                lifecycle_state = ?11,
+                transcript_exists = ?12,
+                file_size = ?13,
+                file_mtime_ms = ?14,
+                last_indexed_at = ?15,
+                last_seen_at = ?15,
+                updated_at = ?15,
+                closed_at = ?16,
+                archived_at = COALESCE(?17, archived_at)
             WHERE id = ?1
             "#,
             params![
@@ -310,7 +353,12 @@ pub fn close_session_context(
                 workflow_id,
                 lane_id,
                 assignment_id,
+                session_status_for_lifecycle(input.lifecycle_state),
+                list_visibility_for_lifecycle(input.lifecycle_state),
                 input.lifecycle_state,
+                if transcript_exists { 1 } else { 0 },
+                file_size,
+                file_mtime_ms,
                 now,
                 now,
                 archived_at,
@@ -367,6 +415,11 @@ struct SessionRowWrite<'a> {
 }
 
 fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Result<(), String> {
+    let transcript_path = row.session_path.display().to_string();
+    let role_id = existing_role_id(connection, row.role_instance_id)?;
+    let (transcript_exists, file_size, file_mtime_ms) = transcript_file_metadata(row.session_path);
+    let last_indexed_at = transcript_exists.then_some(row.updated_at);
+
     connection
         .execute(
             r#"
@@ -374,17 +427,36 @@ fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Resu
                 id,
                 project_id,
                 session_path,
+                transcript_path,
                 title,
                 session_kind,
+                session_status,
+                list_visibility,
+                hidden_reason,
+                dismissed_at,
+                first_seen_at,
+                last_seen_at,
                 agent_id,
+                role_id,
                 role_instance_id,
                 task_id,
                 workflow_id,
                 lane_id,
                 assignment_id,
+                primary_task_id,
+                primary_workflow_id,
+                primary_lane_id,
+                primary_assignment_id,
                 worker_type,
                 worker_id,
+                owner_worker_type,
+                owner_worker_id,
                 runtime_cwd,
+                transcript_cwd,
+                transcript_exists,
+                file_size,
+                file_mtime_ms,
+                last_indexed_at,
                 lifecycle_state,
                 supersedes_session_id,
                 superseded_by_session_id,
@@ -394,26 +466,46 @@ fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Resu
                 updated_at
             )
             VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                ?16, ?17, ?18, ?19, ?20, ?21
+                ?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, ?13, ?14, ?15, ?16, ?17, ?18, ?17, ?18, ?19,
+                ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?8, ?9
             )
             ON CONFLICT(id) DO UPDATE SET
                 project_id = COALESCE(excluded.project_id, sessions.project_id),
                 session_path = excluded.session_path,
+                transcript_path = excluded.transcript_path,
                 title = excluded.title,
                 session_kind = COALESCE(excluded.session_kind, sessions.session_kind),
+                session_status = excluded.session_status,
+                list_visibility = CASE
+                    WHEN sessions.hidden_reason IS NOT NULL OR sessions.dismissed_at IS NOT NULL THEN 'hidden'
+                    ELSE excluded.list_visibility
+                END,
                 agent_id = COALESCE(excluded.agent_id, sessions.agent_id),
+                role_id = COALESCE(excluded.role_id, sessions.role_id),
                 role_instance_id = COALESCE(excluded.role_instance_id, sessions.role_instance_id),
                 task_id = excluded.task_id,
                 workflow_id = excluded.workflow_id,
                 lane_id = excluded.lane_id,
                 assignment_id = excluded.assignment_id,
+                primary_task_id = excluded.primary_task_id,
+                primary_workflow_id = excluded.primary_workflow_id,
+                primary_lane_id = excluded.primary_lane_id,
+                primary_assignment_id = excluded.primary_assignment_id,
                 worker_type = COALESCE(excluded.worker_type, sessions.worker_type),
                 worker_id = COALESCE(excluded.worker_id, sessions.worker_id),
+                owner_worker_type = COALESCE(excluded.owner_worker_type, sessions.owner_worker_type),
+                owner_worker_id = COALESCE(excluded.owner_worker_id, sessions.owner_worker_id),
                 runtime_cwd = COALESCE(excluded.runtime_cwd, sessions.runtime_cwd),
+                transcript_cwd = COALESCE(excluded.transcript_cwd, sessions.transcript_cwd),
+                transcript_exists = excluded.transcript_exists,
+                file_size = excluded.file_size,
+                file_mtime_ms = excluded.file_mtime_ms,
+                last_indexed_at = excluded.last_indexed_at,
                 lifecycle_state = excluded.lifecycle_state,
                 supersedes_session_id = COALESCE(excluded.supersedes_session_id, sessions.supersedes_session_id),
-                superseded_by_session_id = excluded.superseded_by_session_id,
+                superseded_by_session_id = COALESCE(excluded.superseded_by_session_id, sessions.superseded_by_session_id),
+                last_seen_at = excluded.last_seen_at,
                 updated_at = excluded.updated_at,
                 closed_at = excluded.closed_at,
                 archived_at = excluded.archived_at
@@ -421,10 +513,15 @@ fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Resu
             params![
                 row.session_id,
                 row.project_id,
-                row.session_path.display().to_string(),
+                transcript_path,
                 row.title,
                 row.session_kind,
+                session_status_for_lifecycle(row.lifecycle_state),
+                list_visibility_for_lifecycle(row.lifecycle_state),
+                row.created_at,
+                row.updated_at,
                 row.agent_id,
+                role_id,
                 row.role_instance_id,
                 row.task_id,
                 row.workflow_id,
@@ -433,13 +530,15 @@ fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Resu
                 row.worker_type,
                 row.worker_id,
                 row.runtime_cwd,
+                if transcript_exists { 1 } else { 0 },
+                file_size,
+                file_mtime_ms,
+                last_indexed_at,
                 row.lifecycle_state,
                 row.supersedes_session_id,
                 row.superseded_by_session_id,
                 row.closed_at,
                 row.archived_at,
-                row.created_at,
-                row.updated_at,
             ],
         )
         .map_err(|error| format!("Unable to upsert canonical session row {}: {error}", row.session_id))?;
@@ -506,6 +605,55 @@ fn existing_assignment_id<'a>(
     Ok(exists.then_some(assignment_id))
 }
 
+fn existing_role_id(
+    connection: &Connection,
+    role_instance_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(role_instance_id) = role_instance_id else {
+        return Ok(None);
+    };
+    connection
+        .query_row(
+            "SELECT role_id FROM role_instances WHERE id = ?1 LIMIT 1",
+            [role_instance_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to resolve role binding for instance {role_instance_id}: {error}")
+        })
+}
+
+fn session_status_for_lifecycle(lifecycle_state: &str) -> &'static str {
+    if lifecycle_state == LIFECYCLE_ACTIVE {
+        "active"
+    } else {
+        "closed"
+    }
+}
+
+fn list_visibility_for_lifecycle(lifecycle_state: &str) -> &'static str {
+    if lifecycle_state == LIFECYCLE_ACTIVE {
+        "active"
+    } else {
+        "closed"
+    }
+}
+
+fn transcript_file_metadata(session_path: &Path) -> (bool, Option<i64>, Option<i64>) {
+    let Ok(metadata) = fs::metadata(session_path) else {
+        return (false, None, None);
+    };
+
+    let file_mtime_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64);
+
+    (true, Some(metadata.len() as i64), file_mtime_ms)
+}
+
 fn current_session_binding(
     connection: &Connection,
     session_id: &str,
@@ -520,7 +668,7 @@ fn current_session_binding(
 > {
     connection
         .query_row(
-            "SELECT task_id, workflow_id, lane_id, assignment_id FROM sessions WHERE id = ?1",
+            "SELECT COALESCE(task_id, primary_task_id), COALESCE(workflow_id, primary_workflow_id), COALESCE(lane_id, primary_lane_id), COALESCE(assignment_id, primary_assignment_id) FROM sessions WHERE id = ?1",
             [session_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -537,7 +685,7 @@ fn load_session_seed(
 ) -> Result<SessionSeed, String> {
     if let Some(seed) = connection
         .query_row(
-            "SELECT session_path, title, created_at, project_id, runtime_cwd FROM sessions WHERE id = ?1 LIMIT 1",
+            "SELECT COALESCE(NULLIF(session_path, ''), transcript_path), title, created_at, project_id, COALESCE(runtime_cwd, transcript_cwd) FROM sessions WHERE id = ?1 LIMIT 1",
             [session_id],
             |row| {
                 Ok(SessionSeed {
@@ -767,17 +915,36 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 project_id TEXT,
                 session_path TEXT NOT NULL UNIQUE,
+                transcript_path TEXT,
                 title TEXT NOT NULL,
                 session_kind TEXT NOT NULL,
+                session_status TEXT NOT NULL DEFAULT 'active',
+                list_visibility TEXT NOT NULL DEFAULT 'active',
+                hidden_reason TEXT,
+                dismissed_at TEXT,
+                first_seen_at TEXT NOT NULL DEFAULT '',
+                last_seen_at TEXT NOT NULL DEFAULT '',
+                owner_worker_type TEXT,
+                owner_worker_id TEXT,
                 agent_id TEXT,
+                role_id TEXT,
                 role_instance_id TEXT,
                 task_id TEXT,
                 workflow_id TEXT,
                 lane_id TEXT,
                 assignment_id TEXT,
+                primary_task_id TEXT,
+                primary_workflow_id TEXT,
+                primary_lane_id TEXT,
+                primary_assignment_id TEXT,
                 worker_type TEXT,
                 worker_id TEXT,
                 runtime_cwd TEXT,
+                transcript_cwd TEXT,
+                transcript_exists INTEGER NOT NULL DEFAULT 1,
+                file_size INTEGER,
+                file_mtime_ms INTEGER,
+                last_indexed_at TEXT,
                 lifecycle_state TEXT NOT NULL DEFAULT 'active',
                 supersedes_session_id TEXT,
                 superseded_by_session_id TEXT,

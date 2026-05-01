@@ -2483,6 +2483,31 @@ mod tests {
             .expect("agent insert should succeed");
         connection
             .execute(
+                "INSERT INTO workflows (id, slug, name, description, archived, created_at, updated_at) VALUES ('workflow-1', 'workflow-1', 'Workflow 1', NULL, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("workflow insert should succeed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO workflow_lanes (
+                    id, workflow_id, lane_key, name, description, lane_order, assigned_entity_type,
+                    assigned_entity_id, entry_prompt_template, use_separate_worktree,
+                    require_user_approval_on_success, success_transition_type,
+                    success_target_lane_id, failure_transition_type, failure_target_lane_id,
+                    user_intervention_target_lane_id, created_at, updated_at
+                )
+                VALUES (
+                    'lane-1', 'workflow-1', 'lane-1', 'Lane 1', NULL, 0, 'agent', 'agent-1', NULL,
+                    0, 0, 'end', NULL, 'end', NULL, NULL,
+                    '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z'
+                )
+                "#,
+                [],
+            )
+            .expect("workflow lane insert should succeed");
+        connection
+            .execute(
                 r#"
                 INSERT INTO tasks (
                     id, project_id, sequence_number, number, title, description, task_type, status,
@@ -2491,7 +2516,7 @@ mod tests {
                 )
                 VALUES (
                     'task-1', 'project-1', 1, 'ORC-1', 'Rotating task', NULL, 'task', 'in_progress',
-                    'P1', NULL, NULL, 'unassigned', NULL, NULL, NULL, 0,
+                    'P1', 'workflow-1', 'lane-1', 'unassigned', NULL, NULL, NULL, 0,
                     '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z'
                 )
                 "#,

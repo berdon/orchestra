@@ -421,17 +421,36 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 id TEXT PRIMARY KEY,
                 project_id TEXT,
                 session_path TEXT NOT NULL UNIQUE,
+                transcript_path TEXT,
                 title TEXT NOT NULL,
                 session_kind TEXT NOT NULL,
+                session_status TEXT NOT NULL DEFAULT 'active',
+                list_visibility TEXT NOT NULL DEFAULT 'active',
+                hidden_reason TEXT,
+                dismissed_at TEXT,
+                first_seen_at TEXT NOT NULL DEFAULT '',
+                last_seen_at TEXT NOT NULL DEFAULT '',
+                owner_worker_type TEXT,
+                owner_worker_id TEXT,
                 agent_id TEXT,
+                role_id TEXT,
                 role_instance_id TEXT,
                 task_id TEXT,
                 workflow_id TEXT,
                 lane_id TEXT,
                 assignment_id TEXT,
+                primary_task_id TEXT,
+                primary_workflow_id TEXT,
+                primary_lane_id TEXT,
+                primary_assignment_id TEXT,
                 worker_type TEXT,
                 worker_id TEXT,
                 runtime_cwd TEXT,
+                transcript_cwd TEXT,
+                transcript_exists INTEGER NOT NULL DEFAULT 1,
+                file_size INTEGER,
+                file_mtime_ms INTEGER,
+                last_indexed_at TEXT,
                 lifecycle_state TEXT NOT NULL DEFAULT 'active',
                 supersedes_session_id TEXT,
                 superseded_by_session_id TEXT,
@@ -441,6 +460,20 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL,
                 FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE SET NULL,
+                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE SET NULL,
+                FOREIGN KEY(role_instance_id) REFERENCES role_instances(id) ON DELETE SET NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+                FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
+                FOREIGN KEY(assignment_id) REFERENCES task_lane_assignments(id) ON DELETE SET NULL,
+                FOREIGN KEY(workflow_id, lane_id)
+                    REFERENCES workflow_lanes(workflow_id, id)
+                    ON DELETE SET NULL,
+                FOREIGN KEY(primary_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_assignment_id) REFERENCES task_lane_assignments(id) ON DELETE SET NULL,
+                FOREIGN KEY(primary_workflow_id, primary_lane_id)
+                    REFERENCES workflow_lanes(workflow_id, id)
+                    ON DELETE SET NULL,
                 FOREIGN KEY(supersedes_session_id) REFERENCES sessions(id) ON DELETE SET NULL,
                 FOREIGN KEY(superseded_by_session_id) REFERENCES sessions(id) ON DELETE SET NULL
             );
@@ -932,76 +965,6 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_lanes_workflow_order
                 ON workflow_lanes(workflow_id, lane_order);
-
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                session_kind TEXT NOT NULL,
-                owner_worker_type TEXT,
-                owner_worker_id TEXT,
-                agent_id TEXT,
-                role_id TEXT,
-                role_instance_id TEXT,
-                primary_task_id TEXT,
-                primary_workflow_id TEXT,
-                primary_lane_id TEXT,
-                primary_assignment_id TEXT,
-                transcript_path TEXT,
-                transcript_cwd TEXT,
-                transcript_exists INTEGER NOT NULL DEFAULT 1,
-                file_size INTEGER,
-                file_mtime_ms INTEGER,
-                last_indexed_at TEXT,
-                title TEXT NOT NULL,
-                session_status TEXT NOT NULL,
-                list_visibility TEXT NOT NULL,
-                hidden_reason TEXT,
-                dismissed_at TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_seen_at TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE SET NULL,
-                FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE SET NULL,
-                FOREIGN KEY(role_instance_id) REFERENCES role_instances(id) ON DELETE SET NULL,
-                FOREIGN KEY(primary_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
-                FOREIGN KEY(primary_workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
-                FOREIGN KEY(primary_assignment_id) REFERENCES task_lane_assignments(id) ON DELETE SET NULL,
-                FOREIGN KEY(primary_workflow_id, primary_lane_id)
-                    REFERENCES workflow_lanes(workflow_id, id)
-                    ON DELETE SET NULL
-            );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_transcript_path
-                ON sessions(transcript_path)
-                WHERE transcript_path IS NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_project_updated
-                ON sessions(project_id, updated_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_project_visibility
-                ON sessions(project_id, list_visibility, updated_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_primary_task
-                ON sessions(primary_task_id, updated_at DESC)
-                WHERE primary_task_id IS NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_primary_task_lane
-                ON sessions(primary_task_id, primary_lane_id, list_visibility, updated_at DESC)
-                WHERE primary_task_id IS NOT NULL AND primary_lane_id IS NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_agent_main
-                ON sessions(project_id, agent_id, updated_at DESC)
-                WHERE agent_id IS NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_role_instance
-                ON sessions(role_instance_id, updated_at DESC)
-                WHERE role_instance_id IS NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_owner_worker
-                ON sessions(owner_worker_type, owner_worker_id, updated_at DESC)
-                WHERE owner_worker_type IS NOT NULL AND owner_worker_id IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS domain_events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1985,17 +1948,36 @@ fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> 
     let required_columns = [
         ("project_id", "TEXT"),
         ("session_path", "TEXT NOT NULL DEFAULT ''"),
+        ("transcript_path", "TEXT"),
         ("title", "TEXT NOT NULL DEFAULT ''"),
         ("session_kind", "TEXT NOT NULL DEFAULT 'standalone'"),
+        ("session_status", "TEXT NOT NULL DEFAULT 'active'"),
+        ("list_visibility", "TEXT NOT NULL DEFAULT 'active'"),
+        ("hidden_reason", "TEXT"),
+        ("dismissed_at", "TEXT"),
+        ("first_seen_at", "TEXT NOT NULL DEFAULT ''"),
+        ("last_seen_at", "TEXT NOT NULL DEFAULT ''"),
+        ("owner_worker_type", "TEXT"),
+        ("owner_worker_id", "TEXT"),
         ("agent_id", "TEXT"),
+        ("role_id", "TEXT"),
         ("role_instance_id", "TEXT"),
         ("task_id", "TEXT"),
         ("workflow_id", "TEXT"),
         ("lane_id", "TEXT"),
         ("assignment_id", "TEXT"),
+        ("primary_task_id", "TEXT"),
+        ("primary_workflow_id", "TEXT"),
+        ("primary_lane_id", "TEXT"),
+        ("primary_assignment_id", "TEXT"),
         ("worker_type", "TEXT"),
         ("worker_id", "TEXT"),
         ("runtime_cwd", "TEXT"),
+        ("transcript_cwd", "TEXT"),
+        ("transcript_exists", "INTEGER NOT NULL DEFAULT 1"),
+        ("file_size", "INTEGER"),
+        ("file_mtime_ms", "INTEGER"),
+        ("last_indexed_at", "TEXT"),
         ("lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"),
         ("supersedes_session_id", "TEXT"),
         ("superseded_by_session_id", "TEXT"),
@@ -2020,13 +2002,29 @@ fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> 
     }
 
     connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_transcript_path ON sessions(transcript_path) WHERE transcript_path IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions transcript index: {error}"))?;
+    connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON sessions(project_id, updated_at DESC)",
         [],
     ).map_err(|error| format!("Unable to create sessions project index: {error}"))?;
     connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_visibility ON sessions(project_id, list_visibility, updated_at DESC)",
+        [],
+    ).map_err(|error| format!("Unable to create sessions project visibility index: {error}"))?;
+    connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_task_updated ON sessions(task_id, updated_at DESC) WHERE task_id IS NOT NULL",
         [],
     ).map_err(|error| format!("Unable to create sessions task index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_primary_task ON sessions(primary_task_id, updated_at DESC) WHERE primary_task_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions primary-task index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_primary_task_lane ON sessions(primary_task_id, primary_lane_id, list_visibility, updated_at DESC) WHERE primary_task_id IS NOT NULL AND primary_lane_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions primary-task lane index: {error}"))?;
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_assignment ON sessions(assignment_id) WHERE assignment_id IS NOT NULL",
         [],
@@ -2036,9 +2034,17 @@ fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> 
         [],
     ).map_err(|error| format!("Unable to create sessions agent index: {error}"))?;
     connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_agent_main ON sessions(project_id, agent_id, updated_at DESC) WHERE agent_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions agent-main index: {error}"))?;
+    connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_role_instance ON sessions(role_instance_id, updated_at DESC) WHERE role_instance_id IS NOT NULL",
         [],
     ).map_err(|error| format!("Unable to create sessions role-instance index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_owner_worker ON sessions(owner_worker_type, owner_worker_id, updated_at DESC) WHERE owner_worker_type IS NOT NULL AND owner_worker_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions owner-worker index: {error}"))?;
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_lifecycle_updated ON sessions(lifecycle_state, updated_at DESC)",
         [],
