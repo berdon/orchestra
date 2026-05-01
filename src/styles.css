@@ -3397,16 +3397,14 @@ strong {
   align-items: start;
 }
 
+.task-overview-controls__desktop-filters,
+.task-overview-controls__mobile-row,
 .task-overview-controls__mobile-filter {
-  display: none;
+  min-width: 0;
 }
 
-.task-overview-controls__mobile-filter-label {
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
+.task-overview-controls__mobile-row {
+  display: none;
 }
 
 .task-overview-controls__mobile-filter-select {
@@ -5319,6 +5317,20 @@ strong {
 }
 
 @media (max-width: 900px) {
+  .task-overview-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .task-overview-controls__desktop-filters {
+    display: none;
+  }
+
+  .task-overview-controls__mobile-row {
+    display: block;
+  }
+
   .task-overview-controls__mobile-filter {
     min-width: 0;
     display: grid;

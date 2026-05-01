@@ -658,8 +658,13 @@ test("tasks overview mobile row combines board filter select with the view toggl
   await seedMobileTaskOverviewControlsData(page);
   await openTasksOverviewOnMobile(page);
 
+  const mobileControls = page.locator('[data-role="task-overview-mobile-controls"]');
   const mobileFilterSelect = page.locator('[data-role="task-filter-select-mobile"]');
+  await expect(mobileControls).toBeVisible();
+  await expect(mobileControls).not.toContainText("Filter");
+  await expect(mobileControls.getByRole("button")).toHaveCount(0);
   await expect(mobileFilterSelect).toBeVisible();
+  await expect(mobileFilterSelect).toHaveAttribute("aria-label", "Task board filter");
   await expect(mobileFilterSelect).toHaveValue("all");
   await expect(page.locator('[data-role="task-nav-filters"]')).toBeHidden();
   await expect(page.locator('[data-role="task-view-toggle"]')).toBeVisible();
@@ -667,7 +672,7 @@ test("tasks overview mobile row combines board filter select with the view toggl
   await expect(page.locator('[data-role="task-view-table"]')).toBeVisible();
 
   const controlsLayout = await page.locator(".task-overview-controls").evaluate((element) => {
-    const mobileFilter = element.querySelector(".task-overview-controls__mobile-filter");
+    const mobileFilter = element.querySelector('[data-role="task-overview-mobile-controls"]');
     const viewToggle = element.querySelector('[data-role="task-view-toggle"]');
     if (!(mobileFilter instanceof HTMLElement) || !(viewToggle instanceof HTMLElement)) {
       throw new Error("Expected mobile filter and view toggle inside task overview controls");

@@ -115,37 +115,41 @@ export function TasksOverviewPage({
     <section className="tasks-overview-page">
       <section className="tasks-overview-stack">
         <div className="task-overview-controls">
-          <div className="task-nav-filters task-nav-filters--horizontal" data-role="task-nav-filters">
-            {boardFilterOptions.map(([key, label, count]) => (
-              <button
-                key={key}
-                className={overviewState.boardFilter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
-                data-role={`task-filter-${key}`}
-                type="button"
-                onClick={() => updateOverviewState((current) => ({ ...current, boardFilter: key }))}
-              >
-                <span>{label}</span>
-                <span>{count}</span>
-              </button>
-            ))}
+          <div className="task-overview-controls__desktop-filters">
+            <div className="task-nav-filters task-nav-filters--horizontal" data-role="task-nav-filters">
+              {boardFilterOptions.map(([key, label, count]) => (
+                <button
+                  key={key}
+                  className={overviewState.boardFilter === key ? "task-nav-filter task-nav-filter--active" : "task-nav-filter"}
+                  data-role={`task-filter-${key}`}
+                  type="button"
+                  onClick={() => updateOverviewState((current) => ({ ...current, boardFilter: key }))}
+                >
+                  <span>{label}</span>
+                  <span>{count}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
-          <label className="task-overview-controls__mobile-filter">
-            <span className="task-overview-controls__mobile-filter-label">Filter</span>
-            <select
-              className="select-input task-overview-controls__mobile-filter-select"
-              data-role="task-filter-select-mobile"
-              value={overviewState.boardFilter}
-              onChange={(event) => updateOverviewState((current) => ({
-                ...current,
-                boardFilter: event.target.value as TaskOverviewState["boardFilter"],
-              }))}
-            >
-              {boardFilterOptions.map(([key, label, count]) => (
-                <option key={key} value={key}>{label} ({count})</option>
-              ))}
-            </select>
-          </label>
+          <div className="task-overview-controls__mobile-row" data-role="task-overview-mobile-controls">
+            <div className="task-overview-controls__mobile-filter">
+              <select
+                aria-label="Task board filter"
+                className="select-input task-overview-controls__mobile-filter-select"
+                data-role="task-filter-select-mobile"
+                value={overviewState.boardFilter}
+                onChange={(event) => updateOverviewState((current) => ({
+                  ...current,
+                  boardFilter: event.target.value as TaskOverviewState["boardFilter"],
+                }))}
+              >
+                {boardFilterOptions.map(([key, label, count]) => (
+                  <option key={key} value={key}>{label} ({count})</option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           <div className="task-view-toggle" data-role="task-view-toggle">
             <button
