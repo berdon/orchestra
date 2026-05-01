@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use chrono::{Duration, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::{models::TaskLaneAssignment, services::task_runtime};
+use crate::{
+    models::TaskLaneAssignment,
+    services::{session_records, task_runtime},
+};
 
 pub const SESSION_HIDDEN_REASON_USER_DISMISSED: &str = "user_dismissed";
 pub const SESSION_HIDDEN_REASON_TASK_COMPLETED: &str = "task_completed";
@@ -49,7 +52,28 @@ struct HistoricalSessionBinding {
 }
 
 pub fn load_hidden_session_ids(connection: &Connection) -> Result<HashSet<String>, String> {
-    let mut statement = connection
+    let mut hidden_ids = HashSet::new();
+
+    let mut session_statement = connection
+        .prepare(
+            r#"
+            SELECT id
+            FROM sessions
+            WHERE hidden_reason IS NOT NULL OR dismissed_at IS NOT NULL OR list_visibility = 'hidden'
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare canonical hidden session query: {error}"))?;
+    let session_rows = session_statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Unable to query canonical hidden sessions: {error}"))?;
+    for session_id in session_rows {
+        hidden_ids.insert(
+            session_id
+                .map_err(|error| format!("Unable to read canonical hidden session id: {error}"))?,
+        );
+    }
+
+    let mut legacy_statement = connection
         .prepare(
             r#"
             SELECT session_id
@@ -57,18 +81,44 @@ pub fn load_hidden_session_ids(connection: &Connection) -> Result<HashSet<String
             WHERE dismissed_at IS NOT NULL OR hidden_reason IS NOT NULL
             "#,
         )
-        .map_err(|error| format!("Unable to prepare hidden session query: {error}"))?;
-    let rows = statement
+        .map_err(|error| format!("Unable to prepare legacy hidden session query: {error}"))?;
+    let legacy_rows = legacy_statement
         .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("Unable to query hidden sessions: {error}"))?;
-    rows.collect::<Result<HashSet<_>, _>>()
-        .map_err(|error| format!("Unable to read hidden sessions: {error}"))
+        .map_err(|error| format!("Unable to query legacy hidden sessions: {error}"))?;
+    for session_id in legacy_rows {
+        hidden_ids.insert(
+            session_id
+                .map_err(|error| format!("Unable to read legacy hidden session id: {error}"))?,
+        );
+    }
+
+    Ok(hidden_ids)
 }
 
 pub fn load_hidden_session_reason(
     connection: &Connection,
     session_id: &str,
 ) -> Result<Option<String>, String> {
+    let canonical_reason = connection
+        .query_row(
+            r#"
+            SELECT COALESCE(hidden_reason, CASE WHEN dismissed_at IS NOT NULL THEN ?2 ELSE NULL END)
+            FROM sessions
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+            params![session_id, SESSION_HIDDEN_REASON_USER_DISMISSED],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to query canonical hidden session reason for {session_id}: {error}")
+        })?
+        .flatten();
+    if canonical_reason.is_some() {
+        return Ok(canonical_reason);
+    }
+
     connection
         .query_row(
             r#"
@@ -100,6 +150,21 @@ pub fn hide_session(connection: &Connection, session_id: &str, reason: &str) -> 
             params![session_id, now, reason],
         )
         .map_err(|error| format!("Unable to hide session {session_id}: {error}"))?;
+    connection
+        .execute(
+            r#"
+            UPDATE sessions
+            SET hidden_reason = ?2,
+                dismissed_at = ?3,
+                list_visibility = 'hidden',
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+            params![session_id, reason, now],
+        )
+        .map_err(|error| {
+            format!("Unable to mirror hidden state onto canonical session {session_id}: {error}")
+        })?;
     Ok(())
 }
 
@@ -116,6 +181,7 @@ pub fn restore_user_dismissed_session(
             "Session {session_id} was auto-archived ({reason}) and cannot be resumed from the session list"
         )),
         _ => {
+            let now = crate::state::now_iso();
             connection
                 .execute(
                     "DELETE FROM session_list_entries WHERE session_id = ?1",
@@ -123,6 +189,26 @@ pub fn restore_user_dismissed_session(
                 )
                 .map_err(|error| {
                     format!("Unable to restore dismissed session {session_id}: {error}")
+                })?;
+            connection
+                .execute(
+                    r#"
+                    UPDATE sessions
+                    SET hidden_reason = NULL,
+                        dismissed_at = NULL,
+                        list_visibility = CASE
+                            WHEN lifecycle_state = 'active' THEN 'active'
+                            ELSE 'closed'
+                        END,
+                        updated_at = ?2
+                    WHERE id = ?1
+                    "#,
+                    params![session_id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to restore canonical session visibility for {session_id}: {error}"
+                    )
                 })?;
             Ok(())
         }
@@ -193,18 +279,69 @@ pub fn auto_archive_session_for_task_status(
     Ok(Some(session_id.to_string()))
 }
 
-pub fn load_session_list_decoration(
+fn load_active_task_metadata(
     connection: &Connection,
     session_id: &str,
-) -> Result<SessionListDecoration, String> {
+) -> Result<
+    (
+        (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        bool,
+    ),
+    String,
+> {
+    if let Some(metadata) = connection
+        .query_row(
+            r#"
+            SELECT t.id, t.project_id, t.number, t.title
+            FROM sessions s
+            JOIN task_lane_assignments tla ON tla.id = COALESCE(s.assignment_id, s.primary_assignment_id)
+            JOIN tasks t ON t.id = tla.task_id
+            WHERE s.id = ?1
+              AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
+              AND t.status NOT IN ('completed', 'canceled')
+              AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            format!("Unable to load canonical active task metadata {session_id}: {error}")
+        })?
+    {
+        return Ok((metadata, true));
+    }
+
     let active_assignment =
         task_runtime::get_active_assignment_for_session(connection, session_id)?;
-    let active_task_metadata = active_assignment
+    let metadata = active_assignment
         .as_ref()
         .map(|assignment| load_task_metadata(connection, &assignment.task_id))
         .transpose()?
         .flatten()
         .unwrap_or((None, None, None, None));
+    Ok((metadata, active_assignment.is_some()))
+}
+
+pub fn load_session_list_decoration(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<SessionListDecoration, String> {
+    let (active_task_metadata, has_active_assignment) =
+        load_active_task_metadata(connection, session_id)?;
     let mut historical_binding = load_historical_session_binding(connection, session_id)?;
     if historical_binding.task_id.is_none() {
         if let Some(lane_run_binding) = load_lane_run_session_binding(connection, session_id)? {
@@ -240,7 +377,7 @@ pub fn load_session_list_decoration(
     let visibility = classify_session_visibility(
         connection,
         session_id,
-        active_assignment.as_ref(),
+        has_active_assignment,
         &historical_binding,
         persistent_agent_name.as_ref(),
         role_binding_name.as_ref(),
@@ -252,7 +389,7 @@ pub fn load_session_list_decoration(
 fn classify_session_visibility(
     connection: &Connection,
     session_id: &str,
-    active_assignment: Option<&TaskLaneAssignment>,
+    has_active_assignment: bool,
     historical_binding: &HistoricalSessionBinding,
     persistent_agent_name: Option<&String>,
     role_binding_name: Option<&String>,
@@ -261,7 +398,7 @@ fn classify_session_visibility(
         return Ok(SessionListVisibility::Hidden(reason));
     }
 
-    if active_assignment.is_some() {
+    if has_active_assignment {
         return Ok(SessionListVisibility::Active);
     }
 
@@ -359,7 +496,52 @@ fn load_historical_session_binding(
     connection: &Connection,
     session_id: &str,
 ) -> Result<HistoricalSessionBinding, String> {
-    connection
+    let mut binding = connection
+        .query_row(
+            r#"
+            SELECT
+                COALESCE(s.task_id, s.primary_task_id),
+                t.project_id,
+                t.number,
+                t.title,
+                t.status,
+                tla.status,
+                COALESCE(s.worker_type, s.owner_worker_type),
+                CASE
+                    WHEN COALESCE(s.worker_type, s.owner_worker_type) = 'agent' THEN a.name
+                    WHEN COALESCE(s.worker_type, s.owner_worker_type) = 'role' THEN r.name
+                    WHEN COALESCE(s.worker_type, s.owner_worker_type) = 'user' THEN 'User'
+                    ELSE NULL
+                END AS worker_name
+            FROM sessions s
+            LEFT JOIN tasks t ON t.id = COALESCE(s.task_id, s.primary_task_id)
+            LEFT JOIN task_lane_assignments tla ON tla.id = COALESCE(s.assignment_id, s.primary_assignment_id)
+            LEFT JOIN agents a ON COALESCE(s.worker_type, s.owner_worker_type) = 'agent'
+                AND a.id = COALESCE(s.worker_id, s.owner_worker_id, s.agent_id)
+            LEFT JOIN roles r ON COALESCE(s.worker_type, s.owner_worker_type) = 'role'
+                AND r.id = COALESCE(s.worker_id, s.owner_worker_id, s.role_id)
+            WHERE s.id = ?1
+            LIMIT 1
+            "#,
+            [session_id],
+            |row| {
+                Ok(HistoricalSessionBinding {
+                    task_id: row.get::<_, Option<String>>(0)?,
+                    task_project_id: row.get::<_, Option<String>>(1)?,
+                    task_number: row.get::<_, Option<String>>(2)?,
+                    task_title: row.get::<_, Option<String>>(3)?,
+                    task_status: row.get::<_, Option<String>>(4)?,
+                    assignment_status: row.get::<_, Option<String>>(5)?,
+                    worker_type: row.get::<_, Option<String>>(6)?,
+                    worker_name: row.get::<_, Option<String>>(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load canonical session list metadata {session_id}: {error}"))?
+        .unwrap_or_default();
+
+    let fallback = connection
         .query_row(
             r#"
             SELECT
@@ -409,8 +591,35 @@ fn load_historical_session_binding(
             },
         )
         .optional()
-        .map_err(|error| format!("Unable to load session list metadata {session_id}: {error}"))
-        .map(|value| value.unwrap_or_default())
+        .map_err(|error| format!("Unable to load session list metadata {session_id}: {error}"))?
+        .unwrap_or_default();
+
+    if binding.task_id.is_none() {
+        binding.task_id = fallback.task_id;
+    }
+    if binding.task_project_id.is_none() {
+        binding.task_project_id = fallback.task_project_id;
+    }
+    if binding.task_number.is_none() {
+        binding.task_number = fallback.task_number;
+    }
+    if binding.task_title.is_none() {
+        binding.task_title = fallback.task_title;
+    }
+    if binding.task_status.is_none() {
+        binding.task_status = fallback.task_status;
+    }
+    if binding.assignment_status.is_none() {
+        binding.assignment_status = fallback.assignment_status;
+    }
+    if binding.worker_type.is_none() {
+        binding.worker_type = fallback.worker_type;
+    }
+    if binding.worker_name.is_none() {
+        binding.worker_name = fallback.worker_name;
+    }
+
+    Ok(binding)
 }
 
 fn load_lane_run_session_binding(
@@ -454,6 +663,29 @@ fn load_persistent_agent_name(
     connection: &Connection,
     session_id: &str,
 ) -> Result<Option<String>, String> {
+    if let Some(row) = session_records::load_session_row(connection, session_id)? {
+        if row.effective_task_id().is_none() {
+            if let Some(agent_id) = row.agent_id.as_deref().or(row.effective_worker_id()) {
+                let agent_name = connection
+                    .query_row(
+                        "SELECT name FROM agents WHERE id = ?1 LIMIT 1",
+                        [agent_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        format!(
+                            "Unable to load canonical agent session metadata {session_id}: {error}"
+                        )
+                    })?
+                    .flatten();
+                if agent_name.is_some() {
+                    return Ok(agent_name);
+                }
+            }
+        }
+    }
+
     connection
         .query_row(
             r#"
@@ -475,6 +707,29 @@ fn load_role_binding_name(
     connection: &Connection,
     session_id: &str,
 ) -> Result<Option<String>, String> {
+    if let Some(row) = session_records::load_session_row(connection, session_id)? {
+        if row.effective_task_id().is_none() {
+            if let Some(role_id) = row.role_id.as_deref().or(row.effective_worker_id()) {
+                let role_name = connection
+                    .query_row(
+                        "SELECT name FROM roles WHERE id = ?1 LIMIT 1",
+                        [role_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        format!(
+                            "Unable to load canonical role session metadata {session_id}: {error}"
+                        )
+                    })?
+                    .flatten();
+                if role_name.is_some() {
+                    return Ok(role_name);
+                }
+            }
+        }
+    }
+
     connection
         .query_row(
             r#"

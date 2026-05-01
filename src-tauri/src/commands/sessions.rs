@@ -22,9 +22,8 @@ use crate::{
         pi_sessions::{
             all_session_contexts, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
-            get_session_stats as load_session_stats_from_file,
-            list_sessions_with_connection as list_real_sessions_with_connection,
-            session_context_for_project_id, set_session_model as apply_session_model,
+            get_session_stats as load_session_stats_from_file, session_context_for_project_id,
+            set_session_model as apply_session_model,
         },
         pi_setup, role_dispatch, role_runtime, roles, session_list, session_records, task_runtime,
     },
@@ -622,8 +621,23 @@ fn load_decorated_session_record(
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     surface: SessionDecorationSurface,
 ) -> Result<SessionRecord, String> {
-    let record = get_session(session_dir, session_id, subscribed)?;
-    decorate_session_record(terminal_attached_session_ids, record, true, surface)
+    let connection = database::open_connection()?;
+    let mut record = session_records::load_session_row(&connection, session_id)?
+        .map(|row| row.to_record(subscribed))
+        .ok_or_else(|| format!("Session {session_id} was not found"))?;
+
+    if let Ok(detail_record) = get_session(session_dir, session_id, subscribed) {
+        record.events = detail_record.events;
+        record.status = detail_record.status;
+    }
+
+    decorate_session_record_with_connection(
+        &connection,
+        terminal_attached_session_ids,
+        record,
+        true,
+        surface,
+    )
 }
 
 fn attach_session_control_metadata(
@@ -751,32 +765,38 @@ pub(crate) fn list_command_sessions_with_connection(
     terminal_attached_session_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
     cleanup_dismissed_sessions(connection)?;
-    let dismissed_ids = load_dismissed_session_ids(connection)?;
+    let mut seen_session_ids = HashSet::new();
     let mut sessions = Vec::new();
-    for record in contexts
-        .iter()
-        .map(|context| {
-            list_real_sessions_with_connection(connection, context, subscribed, &dismissed_ids)
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-    {
-        let decoration = session_list::load_session_list_decoration(connection, &record.id)?;
-        if matches!(
-            decoration.visibility,
-            Some(session_list::SessionListVisibility::Hidden(_))
-        ) {
-            continue;
-        }
-        sessions.push(decorate_session_record_with_connection(
+
+    for context in contexts {
+        let project_id = project_id_for_slug(connection, &context.project_slug);
+        let rows = session_records::list_session_rows(
             connection,
-            terminal_attached_session_ids,
-            record,
-            false,
-            SessionDecorationSurface::List,
-        )?);
+            project_id.as_deref(),
+            Some(&context.session_dir),
+        )?;
+        for row in rows {
+            if !seen_session_ids.insert(row.id.clone()) {
+                continue;
+            }
+            let base_record = row.to_record(subscribed.contains(&row.id));
+            let decorated = decorate_session_record_with_connection(
+                connection,
+                terminal_attached_session_ids,
+                base_record,
+                false,
+                SessionDecorationSurface::List,
+            )?;
+            if matches!(
+                decorated.list_visibility,
+                Some(SessionListVisibilityState::Hidden)
+            ) {
+                continue;
+            }
+            sessions.push(decorated);
+        }
     }
+
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     Ok(sessions)
 }
@@ -2423,7 +2443,7 @@ mod tests {
         session_id: &str,
         title: &str,
         timestamp: &str,
-    ) {
+    ) -> PathBuf {
         let session_path = context.session_dir.join(file_name);
         let content = format!(
             "{}\n{}\n{}\n",
@@ -2453,6 +2473,7 @@ mod tests {
             })
         );
         fs::write(&session_path, content).expect("session file should be writable");
+        session_path
     }
 
     #[test]
@@ -2912,14 +2933,14 @@ mod tests {
             "orchestra-command-session-list",
             "command-session-list-test",
         );
-        write_list_test_session(
+        let session_path = write_list_test_session(
             &context,
             "2026-03-21T00-01-00Z_session-1.jsonl",
             "session-1",
             "Awaiting approval session",
             "2026-03-21T00:01:00Z",
         );
-        write_list_test_session(
+        let dismissed_path = write_list_test_session(
             &context,
             "2026-03-21T00-00-00Z_session-dismissed.jsonl",
             "session-dismissed",
@@ -2982,6 +3003,22 @@ mod tests {
                 ],
             )
             .expect("awaiting approval assignment insert should succeed");
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-1",
+            None,
+            None,
+            &session_path,
+        )
+        .expect("primary canonical session row should repair");
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-dismissed",
+            None,
+            None,
+            &dismissed_path,
+        )
+        .expect("dismissed canonical session row should repair");
 
         let listed = list_command_sessions_with_connection(
             &connection,
@@ -3133,13 +3170,21 @@ mod tests {
             "orchestra-command-stale-role-session-list",
             "command-stale-role-session-list-test",
         );
-        write_list_test_session(
+        let session_path = write_list_test_session(
             &context,
             "2026-03-21T00-00-00Z_session-stale-role.jsonl",
             "session-stale-role",
             "Stale role session",
             "2026-03-21T00:00:00Z",
         );
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-stale-role",
+            None,
+            None,
+            &session_path,
+        )
+        .expect("stale role canonical session row should repair");
 
         let listed = list_command_sessions_with_connection(
             &connection,
@@ -3187,13 +3232,21 @@ mod tests {
             "orchestra-command-completed-session-list",
             "command-completed-session-list-test",
         );
-        write_list_test_session(
+        let session_path = write_list_test_session(
             &context,
             "2026-03-21T00-00-00Z_session-completed.jsonl",
             "session-completed",
             "Completed task session",
             "2026-03-21T00:00:00Z",
         );
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            "session-completed",
+            None,
+            None,
+            &session_path,
+        )
+        .expect("completed canonical session row should repair");
 
         let listed = list_command_sessions_with_connection(
             &connection,

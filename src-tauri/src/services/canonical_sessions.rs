@@ -829,11 +829,15 @@ fn upsert_canonical_session_row(
     connection: &Connection,
     row: &CanonicalSessionRow,
 ) -> Result<(), String> {
+    let session_path = row
+        .transcript_path
+        .clone()
+        .unwrap_or_else(|| format!("missing://{}", row.id));
     connection
         .execute(
             r#"
             INSERT INTO sessions (
-                id, project_id, session_kind, owner_worker_type, owner_worker_id,
+                id, project_id, session_path, session_kind, owner_worker_type, owner_worker_id,
                 agent_id, role_id, role_instance_id,
                 primary_task_id, primary_workflow_id, primary_lane_id, primary_assignment_id,
                 transcript_path, transcript_cwd, transcript_exists, file_size, file_mtime_ms,
@@ -841,15 +845,16 @@ fn upsert_canonical_session_row(
                 dismissed_at, first_seen_at, last_seen_at, created_at, updated_at
             )
             VALUES (
-                ?1, ?2, ?3, ?4, ?5,
-                ?6, ?7, ?8,
-                ?9, ?10, ?11, ?12,
-                ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20, ?21, ?22,
-                ?23, ?24, ?25, ?26, ?27
+                ?1, ?2, ?3, ?4, ?5, ?6,
+                ?7, ?8, ?9,
+                ?10, ?11, ?12, ?13,
+                ?14, ?15, ?16, ?17, ?18,
+                ?19, ?20, ?21, ?22, ?23,
+                ?24, ?25, ?26, ?27, ?28
             )
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
+                session_path = excluded.session_path,
                 session_kind = excluded.session_kind,
                 owner_worker_type = excluded.owner_worker_type,
                 owner_worker_id = excluded.owner_worker_id,
@@ -879,6 +884,7 @@ fn upsert_canonical_session_row(
             params![
                 row.id,
                 row.project_id,
+                row.transcript_path.clone().unwrap_or_default(),
                 row.session_kind,
                 row.owner_worker_type,
                 row.owner_worker_id,
@@ -889,7 +895,7 @@ fn upsert_canonical_session_row(
                 row.primary_workflow_id,
                 row.primary_lane_id,
                 row.primary_assignment_id,
-                row.transcript_path,
+                session_path,
                 row.transcript_cwd,
                 if row.transcript_exists { 1 } else { 0 },
                 row.file_size,

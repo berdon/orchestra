@@ -12,7 +12,10 @@ use uuid::Uuid;
 use crate::{
     commands::sessions::{decorate_session_record_with_connection, SessionDecorationSurface},
     models::{SessionRecord, SessionRuntimeDetails},
-    services::{app_events, domain_events, live_sessions, pi_sessions, projects, session_list},
+    services::{
+        app_events, domain_events, live_sessions, pi_sessions, projects, session_list,
+        session_records,
+    },
     state::AppState,
 };
 
@@ -267,6 +270,7 @@ struct InventoryEntry {
     project_id: Option<String>,
     project_slug: Option<String>,
     context: Option<pi_sessions::SessionContext>,
+    canonical: Option<session_records::CanonicalSessionRow>,
     catalog: Option<SessionCatalogRow>,
     list_entry: Option<SessionListRow>,
     transcript: Option<TranscriptFileRecord>,
@@ -728,12 +732,49 @@ fn build_inventory(
         .transpose()?
         .unwrap_or_default();
 
+    let canonical_rows =
+        session_records::list_session_rows(connection, query.project_id.as_deref(), None)?;
     let catalog_rows = load_session_catalog_rows(connection, &project_slugs)?;
     let list_rows = load_session_list_rows(connection)?;
     let run_origin_rows = load_session_run_origins(connection)?;
     let files = scan_transcript_files(&contexts)?;
 
     let mut entries = HashMap::<String, InventoryEntry>::new();
+
+    for canonical in canonical_rows {
+        let session_id = canonical.id.clone();
+        let project_slug = canonical.project_slug.clone();
+        let context = project_slug
+            .as_deref()
+            .and_then(|project_slug| pi_sessions::detect_session_context(Some(project_slug)).ok());
+        let base_record = canonical.to_record(runtime_snapshot(state, &session_id).subscribed);
+        let record = decorate_session_record_with_connection(
+            connection,
+            &terminal_attached,
+            base_record.clone(),
+            true,
+            SessionDecorationSurface::Detail,
+        )
+        .ok()
+        .or(Some(base_record));
+        entries.insert(
+            session_id.clone(),
+            InventoryEntry {
+                session_id: session_id.clone(),
+                project_id: canonical.project_id.clone(),
+                project_slug,
+                context,
+                canonical: Some(canonical),
+                catalog: None,
+                list_entry: None,
+                transcript: None,
+                run_origins: Vec::new(),
+                record,
+                runtime: runtime_snapshot(state, &session_id),
+                issues: Vec::new(),
+            },
+        );
+    }
 
     for catalog in catalog_rows {
         let session_id = catalog.session_id.clone();
@@ -747,6 +788,7 @@ fn build_inventory(
                 project_id,
                 project_slug: Some(project_slug),
                 context,
+                canonical: None,
                 catalog: None,
                 list_entry: None,
                 transcript: None,
@@ -766,6 +808,7 @@ fn build_inventory(
                 project_id,
                 project_slug: Some(context.project_slug.clone()),
                 context: Some(context.clone()),
+                canonical: None,
                 catalog: None,
                 list_entry: None,
                 transcript: None,
@@ -786,6 +829,7 @@ fn build_inventory(
                 project_id: None,
                 project_slug: None,
                 context: None,
+                canonical: None,
                 catalog: None,
                 list_entry: None,
                 transcript: None,
@@ -806,6 +850,7 @@ fn build_inventory(
                 project_id: None,
                 project_slug: None,
                 context: None,
+                canonical: None,
                 catalog: None,
                 list_entry: None,
                 transcript: None,
@@ -821,9 +866,15 @@ fn build_inventory(
     for entry in entries.values_mut() {
         if entry.project_slug.is_none() {
             entry.project_slug = entry
-                .catalog
+                .canonical
                 .as_ref()
-                .map(|catalog| catalog.project_slug.clone())
+                .and_then(|canonical| canonical.project_slug.clone())
+                .or_else(|| {
+                    entry
+                        .catalog
+                        .as_ref()
+                        .map(|catalog| catalog.project_slug.clone())
+                })
                 .or_else(|| {
                     entry
                         .context
@@ -833,9 +884,15 @@ fn build_inventory(
         }
         if entry.project_id.is_none() {
             entry.project_id = entry
-                .project_slug
-                .as_deref()
-                .and_then(|project_slug| project_id_for_slug(connection, project_slug));
+                .canonical
+                .as_ref()
+                .and_then(|canonical| canonical.project_id.clone())
+                .or_else(|| {
+                    entry
+                        .project_slug
+                        .as_deref()
+                        .and_then(|project_slug| project_id_for_slug(connection, project_slug))
+                });
         }
         if entry.context.is_none() {
             entry.context = entry.project_slug.as_deref().and_then(|project_slug| {
@@ -843,28 +900,9 @@ fn build_inventory(
             });
         }
 
-        if let (Some(context), Some(transcript)) =
-            (entry.context.as_ref(), entry.transcript.as_ref())
-        {
-            let record = pi_sessions::get_session(
-                &context.session_dir,
-                &entry.session_id,
-                entry.runtime.subscribed,
-            )
-            .ok()
-            .and_then(|record| {
-                decorate_session_record_with_connection(
-                    connection,
-                    &terminal_attached,
-                    record,
-                    true,
-                    SessionDecorationSurface::Detail,
-                )
-                .ok()
-            });
-            entry.record = record;
+        if entry.canonical.is_none() {
+            entry.issues.push("canonical_missing".into());
         }
-
         if entry.catalog.is_none() {
             entry.issues.push("catalog_missing".into());
         }
@@ -891,10 +929,18 @@ fn build_inventory(
                 entry.issues.push("catalog_path_mismatch".into());
             }
         }
-        if entry.list_entry.is_some() && entry.catalog.is_none() && entry.transcript.is_none() {
+        if entry.list_entry.is_some()
+            && entry.canonical.is_none()
+            && entry.catalog.is_none()
+            && entry.transcript.is_none()
+        {
             entry.issues.push("orphan_list_entry".into());
         }
-        if !entry.run_origins.is_empty() && entry.catalog.is_none() && entry.transcript.is_none() {
+        if !entry.run_origins.is_empty()
+            && entry.canonical.is_none()
+            && entry.catalog.is_none()
+            && entry.transcript.is_none()
+        {
             entry.issues.push("orphan_run_origin".into());
         }
     }
@@ -911,6 +957,12 @@ fn build_inventory(
                     .as_ref()
                     .map(|catalog| catalog.updated_at.as_str())
             })
+            .or_else(|| {
+                right
+                    .canonical
+                    .as_ref()
+                    .map(|canonical| canonical.updated_at.as_str())
+            })
             .unwrap_or("");
         let left_updated = left
             .record
@@ -921,6 +973,11 @@ fn build_inventory(
                     .as_ref()
                     .map(|catalog| catalog.updated_at.as_str())
             })
+            .or_else(|| {
+                left.canonical
+                    .as_ref()
+                    .map(|canonical| canonical.updated_at.as_str())
+            })
             .unwrap_or("");
         right_updated.cmp(left_updated)
     });
@@ -929,15 +986,25 @@ fn build_inventory(
 
 fn to_summary(entry: &InventoryEntry) -> ManagedSessionSummary {
     let record = entry.record.as_ref();
+    let canonical = entry.canonical.as_ref();
     let catalog = entry.catalog.as_ref();
     let list_entry = entry.list_entry.as_ref();
-    let hidden_reason = list_entry.and_then(|row| {
-        row.hidden_reason.clone().or_else(|| {
-            row.dismissed_at
-                .as_ref()
-                .map(|_| session_list::SESSION_HIDDEN_REASON_USER_DISMISSED.to_string())
+    let hidden_reason = list_entry
+        .and_then(|row| {
+            row.hidden_reason.clone().or_else(|| {
+                row.dismissed_at
+                    .as_ref()
+                    .map(|_| session_list::SESSION_HIDDEN_REASON_USER_DISMISSED.to_string())
+            })
         })
-    });
+        .or_else(|| canonical.and_then(|row| row.hidden_reason.clone()))
+        .or_else(|| {
+            canonical.and_then(|row| {
+                row.dismissed_at
+                    .as_ref()
+                    .map(|_| session_list::SESSION_HIDDEN_REASON_USER_DISMISSED.to_string())
+            })
+        });
     let dismissed =
         hidden_reason.as_deref() == Some(session_list::SESSION_HIDDEN_REASON_USER_DISMISSED);
     let hidden = hidden_reason.is_some();
@@ -947,6 +1014,7 @@ fn to_summary(entry: &InventoryEntry) -> ManagedSessionSummary {
         project_slug: entry.project_slug.clone(),
         title: record
             .map(|record| record.title.clone())
+            .or_else(|| canonical.map(|canonical| canonical.effective_title()))
             .or_else(|| catalog.map(|catalog| catalog.title.clone()))
             .or_else(|| {
                 entry
@@ -962,6 +1030,7 @@ fn to_summary(entry: &InventoryEntry) -> ManagedSessionSummary {
             }),
         status: record
             .map(|record| record.status.clone())
+            .or_else(|| canonical.map(|canonical| canonical.effective_status()))
             .or_else(|| catalog.map(|catalog| catalog.status.clone()))
             .or_else(|| {
                 entry
@@ -976,25 +1045,38 @@ fn to_summary(entry: &InventoryEntry) -> ManagedSessionSummary {
                     "unknown".into()
                 }
             }),
-        task_id: record.and_then(|record| record.task_id.clone()),
+        task_id: record
+            .and_then(|record| record.task_id.clone())
+            .or_else(|| {
+                canonical.and_then(|canonical| canonical.effective_task_id().map(str::to_string))
+            }),
         task_number: record.and_then(|record| record.task_number.clone()),
         task_title: record.and_then(|record| record.task_title.clone()),
         active_task_id: record.and_then(|record| record.active_task_id.clone()),
         active_task_number: record.and_then(|record| record.active_task_number.clone()),
         active_task_title: record.and_then(|record| record.active_task_title.clone()),
-        worker_type: record.and_then(|record| record.worker_type.clone()),
+        worker_type: record
+            .and_then(|record| record.worker_type.clone())
+            .or_else(|| {
+                canonical
+                    .and_then(|canonical| canonical.effective_worker_type().map(str::to_string))
+            }),
         worker_name: record.and_then(|record| record.worker_name.clone()),
         hidden,
         dismissed,
         hidden_reason,
-        dismissed_at: list_entry.and_then(|row| row.dismissed_at.clone()),
+        dismissed_at: list_entry
+            .and_then(|row| row.dismissed_at.clone())
+            .or_else(|| canonical.and_then(|row| row.dismissed_at.clone())),
         transcript_path: entry
             .transcript
             .as_ref()
             .map(|transcript| transcript.path.display().to_string())
+            .or_else(|| canonical.map(|canonical| canonical.session_path.display().to_string()))
             .or_else(|| catalog.map(|catalog| catalog.session_path.display().to_string())),
         catalog_present: catalog.is_some(),
-        file_exists: entry.transcript.is_some(),
+        file_exists: entry.transcript.is_some()
+            || canonical.is_some_and(|canonical| canonical.transcript_exists),
         derived_session_id: entry
             .transcript
             .as_ref()
@@ -1392,6 +1474,7 @@ pub fn delete_sessions(
     for entry in matched.iter() {
         let summary = to_summary(entry);
         let mut actions = vec![
+            "delete_canonical_session_row".into(),
             "delete_session_catalog_row".into(),
             "delete_session_list_entry".into(),
             "delete_session_run_origins".into(),
@@ -1429,6 +1512,17 @@ pub fn delete_sessions(
                 .map_err(|error| {
                     format!(
                         "Unable to delete session run origins for {}: {error}",
+                        summary.session_id
+                    )
+                })?;
+            connection
+                .execute(
+                    "DELETE FROM sessions WHERE id = ?1",
+                    [summary.session_id.as_str()],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to delete canonical session row for {}: {error}",
                         summary.session_id
                     )
                 })?;
@@ -1575,20 +1669,12 @@ pub fn reconcile_sessions(
 
         if skipped_reasons.is_empty() && !input.dry_run {
             if entry.catalog.is_none() {
-                if let (Some(context), Some(_transcript)) =
+                if let (Some(context), Some(transcript)) =
                     (entry.context.as_ref(), entry.transcript.as_ref())
                 {
-                    let stored =
-                        pi_sessions::get_session(&context.session_dir, &summary.session_id, false)?;
-                    let transcript_path = entry
-                        .transcript
-                        .as_ref()
-                        .map(|transcript| transcript.path.display().to_string())
-                        .ok_or_else(|| {
-                            format!("Missing transcript path for {}", summary.session_id)
-                        })?;
-                    let file_path = PathBuf::from(transcript_path.clone());
-                    let (file_size, file_mtime_ms) = session_file_fingerprint(&file_path)?;
+                    let stored = pi_sessions::summarize_session_for_catalog(&transcript.path)?;
+                    let transcript_path = transcript.path.display().to_string();
+                    let (file_size, file_mtime_ms) = session_file_fingerprint(&transcript.path)?;
                     connection
                         .execute(
                             r#"
@@ -1612,10 +1698,10 @@ pub fn reconcile_sessions(
                                 summary.session_id,
                                 context.project_slug,
                                 transcript_path,
-                                stored.created_at,
-                                stored.updated_at,
-                                stored.title,
-                                stored.status,
+                                stored.record.created_at,
+                                stored.record.updated_at,
+                                stored.record.title,
+                                stored.record.status,
                                 file_size as i64,
                                 file_mtime_ms,
                                 crate::state::now_iso(),

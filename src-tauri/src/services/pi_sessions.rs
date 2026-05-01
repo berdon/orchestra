@@ -24,7 +24,7 @@ use crate::{
             configured_project_root, default_orchestra_root, discover_dev_checkout_root,
             infer_project_slug, pi_agent_dir, project_session_dir, sanitize_slug,
         },
-        projects, session_list,
+        projects, session_list, session_records,
     },
 };
 
@@ -151,6 +151,132 @@ fn session_context_for_session_dir(session_dir: &Path) -> Option<SessionContext>
     } else {
         None
     }
+}
+
+fn canonical_session_context(
+    row: &session_records::CanonicalSessionRow,
+) -> Result<Option<SessionContext>, String> {
+    if let Some(project_slug) = row.project_slug.as_deref() {
+        if let Ok(context) = detect_session_context(Some(project_slug)) {
+            return Ok(Some(context));
+        }
+    }
+    if let Some(context) = row
+        .session_path
+        .parent()
+        .and_then(session_context_for_session_dir)
+    {
+        return Ok(Some(context));
+    }
+    if let Some(project_id) = row.project_id.as_deref() {
+        return session_context_for_project_id(project_id).map(Some);
+    }
+    Ok(None)
+}
+
+fn project_id_for_context(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+) -> Option<String> {
+    projects::get_project_by_slug(connection, &context.project_slug)
+        .ok()
+        .flatten()
+        .map(|project| project.id)
+}
+
+fn try_repair_session_from_path(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+    context: &SessionContext,
+    path: &Path,
+) -> Result<bool, String> {
+    if !validate_catalog_session_path(path, session_id) {
+        return Ok(false);
+    }
+    let project_id = project_id_for_context(connection, context);
+    match session_records::repair_session_row_from_transcript_path(
+        connection,
+        session_id,
+        project_id.as_deref(),
+        None,
+        path,
+    ) {
+        Ok(_) => match maybe_repair_session_catalog_entry(connection, context, path) {
+            Ok(()) => Ok(true),
+            Err(error)
+                if error.contains("Unable to read session file")
+                    || error.contains("Unable to inspect session file") =>
+            {
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        },
+        Err(error)
+            if error.contains("Unable to read session file")
+                || error.contains("Unable to inspect session file") =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn repair_session_context_for_session(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+    existing_row: Option<&session_records::CanonicalSessionRow>,
+) -> Result<Option<SessionContext>, String> {
+    let mut candidate_contexts = Vec::<SessionContext>::new();
+    let mut push_context = |context: Option<SessionContext>| {
+        if let Some(context) = context {
+            if !candidate_contexts
+                .iter()
+                .any(|existing| existing.session_dir == context.session_dir)
+            {
+                candidate_contexts.push(context);
+            }
+        }
+    };
+
+    if let Some(row) = existing_row {
+        let context = canonical_session_context(row)?;
+        push_context(context.clone());
+        if let Some(context) = context {
+            if try_repair_session_from_path(connection, session_id, &context, &row.session_path)? {
+                return Ok(Some(context));
+            }
+        }
+    }
+
+    if let Some(entry) = load_session_catalog_entry(connection, session_id)? {
+        if let Ok(context) = detect_session_context(Some(&entry.project_slug)) {
+            if try_repair_session_from_path(connection, session_id, &context, &entry.session_path)?
+            {
+                return Ok(Some(context));
+            }
+            push_context(Some(context));
+        }
+    }
+
+    for project_slug in
+        session_records::candidate_project_slugs_for_session(connection, session_id)?
+    {
+        push_context(detect_session_context(Some(&project_slug)).ok());
+    }
+
+    for context in all_session_contexts()? {
+        push_context(Some(context));
+    }
+
+    for context in candidate_contexts {
+        if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
+            if try_repair_session_from_path(connection, session_id, &context, &path)? {
+                return Ok(Some(context));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn derive_session_id_from_path(path: &Path) -> Option<String> {
@@ -459,6 +585,135 @@ fn resolve_session_path_with_catalog(
     Ok(discovered)
 }
 
+fn canonical_session_path(row: &session_records::CanonicalSessionRow) -> Option<&Path> {
+    (!row.session_path.as_os_str().is_empty()).then_some(row.session_path.as_path())
+}
+
+fn canonical_row_matches_context(
+    row: &session_records::CanonicalSessionRow,
+    context: &SessionContext,
+) -> bool {
+    row.project_slug.as_deref() == Some(context.project_slug.as_str())
+        || canonical_session_path(row).is_some_and(|path| path.starts_with(&context.session_dir))
+}
+
+fn resolve_context_from_canonical_row(
+    row: &session_records::CanonicalSessionRow,
+) -> Option<SessionContext> {
+    if let Some(project_slug) = row.project_slug.as_deref() {
+        return detect_session_context(Some(project_slug)).ok();
+    }
+    if let Some(project_id) = row.project_id.as_deref() {
+        return session_context_for_project_id(project_id).ok();
+    }
+    canonical_session_path(row)
+        .and_then(Path::parent)
+        .and_then(session_context_for_session_dir)
+}
+
+fn repair_canonical_session_row_from_path(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+    session_id: &str,
+    path: &Path,
+) -> Result<Option<session_records::CanonicalSessionRow>, String> {
+    if !validate_catalog_session_path(path, session_id) {
+        return Ok(None);
+    }
+
+    let project_id =
+        projects::get_project_by_slug(connection, &context.project_slug)?.map(|project| project.id);
+    let repaired = session_records::repair_session_row_from_transcript_path(
+        connection,
+        session_id,
+        project_id.as_deref(),
+        None,
+        path,
+    )?;
+    maybe_repair_session_catalog_entry(connection, context, path)?;
+    Ok(Some(repaired))
+}
+
+fn repair_canonical_session_row(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<session_records::CanonicalSessionRow>, String> {
+    let mut candidate_contexts = Vec::<SessionContext>::new();
+    let mut seen_project_slugs = HashSet::<String>::new();
+
+    if let Some(entry) = load_session_catalog_entry(connection, session_id)? {
+        if let Ok(context) = detect_session_context(Some(&entry.project_slug)) {
+            if seen_project_slugs.insert(context.project_slug.clone()) {
+                if let Some(repaired) = repair_canonical_session_row_from_path(
+                    connection,
+                    &context,
+                    session_id,
+                    &entry.session_path,
+                )? {
+                    return Ok(Some(repaired));
+                }
+                candidate_contexts.push(context);
+            }
+        }
+    }
+
+    for project_slug in
+        session_records::candidate_project_slugs_for_session(connection, session_id)?
+    {
+        if let Ok(context) = detect_session_context(Some(&project_slug)) {
+            if seen_project_slugs.insert(context.project_slug.clone()) {
+                candidate_contexts.push(context);
+            }
+        }
+    }
+
+    for context in all_session_contexts()? {
+        if seen_project_slugs.insert(context.project_slug.clone()) {
+            candidate_contexts.push(context);
+        }
+    }
+
+    for context in candidate_contexts {
+        if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
+            if let Some(repaired) =
+                repair_canonical_session_row_from_path(connection, &context, session_id, &path)?
+            {
+                return Ok(Some(repaired));
+            }
+        }
+    }
+
+    Ok(session_records::load_session_row(connection, session_id)?)
+}
+
+fn resolve_session_path_with_canonical(
+    connection: &rusqlite::Connection,
+    context: &SessionContext,
+    session_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(row) = session_records::load_session_row(connection, session_id)? {
+        if canonical_row_matches_context(&row, context) {
+            if let Some(path) = canonical_session_path(&row) {
+                if validate_catalog_session_path(path, session_id) {
+                    return Ok(Some(path.to_path_buf()));
+                }
+            }
+        }
+    }
+
+    if let Some(repaired) = repair_canonical_session_row(connection, session_id)? {
+        if canonical_row_matches_context(&repaired, context) {
+            if let Some(path) = canonical_session_path(&repaired) {
+                if validate_catalog_session_path(path, session_id) {
+                    return Ok(Some(path.to_path_buf()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn refresh_session_catalog(
     connection: &rusqlite::Connection,
     context: &SessionContext,
@@ -591,32 +846,46 @@ pub fn list_sessions_with_connection(
     subscribed_ids: &HashSet<String>,
     dismissed_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
-    refresh_session_catalog(connection, context, dismissed_ids)?;
-    load_session_catalog_records(
+    let project_id = project_id_for_context(connection, context);
+    let rows = session_records::list_session_rows(
         connection,
-        &context.project_slug,
-        subscribed_ids,
-        dismissed_ids,
-    )
+        project_id.as_deref(),
+        Some(&context.session_dir),
+    )?;
+
+    Ok(rows
+        .into_iter()
+        .filter(|row| {
+            !dismissed_ids.contains(&row.id)
+                && row.hidden_reason.is_none()
+                && row.dismissed_at.is_none()
+                && row.list_visibility != "hidden"
+        })
+        .map(|row| row.to_record(subscribed_ids.contains(&row.id)))
+        .collect())
 }
 
 pub fn find_session_context_for_session(session_id: &str) -> Result<SessionContext, String> {
     let connection = database::open_connection()?;
-    if let Some(entry) = load_session_catalog_entry(&connection, session_id)? {
-        if validate_catalog_session_path(&entry.session_path, session_id) {
-            return detect_session_context(Some(&entry.project_slug));
+    if let Some(row) = session_records::load_session_row(&connection, session_id)? {
+        if validate_catalog_session_path(&row.session_path, session_id) {
+            if let Some(context) = canonical_session_context(&row)? {
+                return Ok(context);
+            }
         }
-        remove_session_catalog_entry(&connection, session_id)?;
-    }
-
-    for context in all_session_contexts()? {
-        if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
-            maybe_repair_session_catalog_entry(&connection, &context, &path)?;
+        if let Some(context) =
+            repair_session_context_for_session(&connection, session_id, Some(&row))?
+        {
             return Ok(context);
         }
     }
+
+    if let Some(context) = repair_session_context_for_session(&connection, session_id, None)? {
+        return Ok(context);
+    }
+
     Err(format!(
-        "Session {session_id} was not found in any Orchestra project session directory"
+        "Session {session_id} was not found in canonical session rows or targeted legacy repair hints"
     ))
 }
 
@@ -767,7 +1036,8 @@ pub fn get_session(
 pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        if let Some(path) = resolve_session_path_with_catalog(&connection, &context, session_id)? {
+        if let Some(path) = resolve_session_path_with_canonical(&connection, &context, session_id)?
+        {
             return Ok(path);
         }
         return Err(format!("Unable to find session {session_id}"));
@@ -1112,40 +1382,63 @@ fn resolve_session(
 ) -> Result<StoredSession, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        if let Some(path) = resolve_session_path_with_catalog(&connection, &context, session_id)? {
+        let path = resolve_session_path_with_canonical(&connection, &context, session_id)?
+            .ok_or_else(|| format!("Unable to find session {session_id}"))?;
+
+        let Some(row) = session_records::load_session_row(&connection, session_id)? else {
             return parse_session_file(&path, subscribed);
+        };
+
+        let mut record = row.to_record(subscribed);
+        match parse_session_file(&path, subscribed) {
+            Ok(parsed) => {
+                if row.catalog_title.is_none() && row.title.trim().is_empty() {
+                    record.title = parsed.record.title;
+                }
+                if row.catalog_status.is_none() {
+                    record.status = parsed.record.status;
+                }
+                if record.created_at.trim().is_empty() {
+                    record.created_at = parsed.record.created_at;
+                }
+                if record.updated_at.trim().is_empty() {
+                    record.updated_at = parsed.record.updated_at;
+                }
+                record.events = parsed.record.events;
+                Ok(StoredSession { path, record })
+            }
+            Err(_) => Ok(StoredSession { path, record }),
         }
-        return Err(format!("Unable to find session {session_id}"));
-    }
-
-    if !session_dir.exists() {
-        return Err(format!(
-            "Session directory {} does not exist yet",
-            session_dir.display()
-        ));
-    }
-
-    let entries = fs::read_dir(session_dir).map_err(|error| {
-        format!(
-            "Unable to read session directory {}: {error}",
-            session_dir.display()
-        )
-    })?;
-
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
-            continue;
+    } else {
+        if !session_dir.exists() {
+            return Err(format!(
+                "Session directory {} does not exist yet",
+                session_dir.display()
+            ));
         }
 
-        if parse_session_header_id(&path).ok().as_deref() == Some(session_id) {
-            return parse_session_file(&path, subscribed);
-        }
-    }
+        let entries = fs::read_dir(session_dir).map_err(|error| {
+            format!(
+                "Unable to read session directory {}: {error}",
+                session_dir.display()
+            )
+        })?;
 
-    Err(format!("Unable to find session {session_id}"))
+        for entry in entries {
+            let entry = entry
+                .map_err(|error| format!("Unable to inspect session directory entry: {error}"))?;
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+                continue;
+            }
+
+            if parse_session_header_id(&path).ok().as_deref() == Some(session_id) {
+                return parse_session_file(&path, subscribed);
+            }
+        }
+
+        Err(format!("Unable to find session {session_id}"))
+    }
 }
 
 fn parse_session_header(path: &Path) -> Result<Value, String> {
@@ -2622,6 +2915,20 @@ mod tests {
         connection
     }
 
+    fn seed_catalog_test_project(connection: &rusqlite::Connection, context: &SessionContext) {
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, 'ORC', NULL, ?4, ?4)",
+                params![
+                    format!("project-{}", context.project_slug),
+                    context.project_slug.as_str(),
+                    format!("{} project", context.project_slug),
+                    "2026-03-20T10:00:00Z",
+                ],
+            )
+            .expect("catalog test project should seed");
+    }
+
     fn write_catalog_test_session(
         context: &SessionContext,
         file_name: &str,
@@ -3128,6 +3435,7 @@ process.stdin.on('end', () => process.exit(0));
     fn refresh_session_catalog_skips_dismissed_files_before_summary_parsing() {
         let context = make_catalog_test_context("orchestra-session-catalog-dismissed-skip");
         let connection = in_memory_session_catalog_connection();
+        seed_catalog_test_project(&connection, &context);
         let visible_session_id = Uuid::new_v4().to_string();
         let dismissed_session_id = Uuid::new_v4().to_string();
 
@@ -3154,9 +3462,12 @@ process.stdin.on('end', () => process.exit(0));
         assert_eq!(stats.parsed_files, 1);
         assert_eq!(stats.skipped_dismissed_files, 1);
 
+        crate::services::canonical_sessions::backfill_sessions_table(&connection)
+            .expect("canonical session backfill should succeed");
+
         let listed =
             list_sessions_with_connection(&connection, &context, &HashSet::new(), &dismissed_ids)
-                .expect("catalog-backed list should succeed");
+                .expect("canonical-backed list should succeed");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, visible_session_id);
 
@@ -3170,6 +3481,7 @@ process.stdin.on('end', () => process.exit(0));
     fn refresh_session_catalog_only_reparses_changed_files() {
         let context = make_catalog_test_context("orchestra-session-catalog-incremental");
         let connection = in_memory_session_catalog_connection();
+        seed_catalog_test_project(&connection, &context);
         let first_session_id = Uuid::new_v4().to_string();
         let second_session_id = Uuid::new_v4().to_string();
 
@@ -3180,7 +3492,7 @@ process.stdin.on('end', () => process.exit(0));
             "First session",
             "2026-03-20T10:00:00Z",
         );
-        write_catalog_test_session(
+        let second_path = write_catalog_test_session(
             &context,
             &format!("2026-03-20T10-00-01Z_{second_session_id}.jsonl"),
             &second_session_id,
@@ -3243,9 +3555,27 @@ process.stdin.on('end', () => process.exit(0));
             .expect("third refresh should succeed");
         assert_eq!(third_refresh.parsed_files, 1);
 
+        let project_id = format!("project-{}", context.project_slug);
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            &first_session_id,
+            Some(project_id.as_str()),
+            None,
+            &first_path,
+        )
+        .expect("first canonical session repair should succeed");
+        session_records::repair_session_row_from_transcript_path(
+            &connection,
+            &second_session_id,
+            Some(project_id.as_str()),
+            None,
+            &second_path,
+        )
+        .expect("second canonical session repair should succeed");
+
         let records =
             list_sessions_with_connection(&connection, &context, &HashSet::new(), &HashSet::new())
-                .expect("catalog-backed list should succeed");
+                .expect("canonical-backed list should succeed");
         let updated_record = records
             .iter()
             .find(|record| record.id == first_session_id)

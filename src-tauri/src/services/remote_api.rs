@@ -3512,23 +3512,12 @@ fn prepare_session_message_request<R: Runtime>(
 fn load_remote_session_record(state: &AppState, session_id: &str) -> Result<SessionRecord, String> {
     let context = pi_sessions::find_session_context_for_session(session_id)?;
     let subscribed = state.has_session_subscribers(session_id)?;
-    let terminal_attached = state.terminal_attached_session_ids()?;
-    let mut record = pi_sessions::get_session(&context.session_dir, session_id, subscribed)?;
-    let connection = database::open_connection()?;
-    match session_commands::decorate_session_record_with_connection(
-        &connection,
-        &terminal_attached,
-        record.clone(),
-        false,
-        session_commands::SessionDecorationSurface::Detail,
-    ) {
-        Ok(decorated) => Ok(decorated),
-        Err(error) if error.contains("is hidden from the session list") => {
-            record.terminal_attached = terminal_attached.contains(session_id);
-            Ok(record)
-        }
-        Err(error) => Err(error),
-    }
+    session_commands::load_detail_session_record_for_state(
+        state,
+        &context.session_dir,
+        session_id,
+        subscribed,
+    )
 }
 
 fn list_remote_sessions(
