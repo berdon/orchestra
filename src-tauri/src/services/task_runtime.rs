@@ -12,7 +12,7 @@ use crate::{
     services::{
         agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications, pi_sessions,
         project_settings, projects, role_dispatch, role_runtime, roles, session_list,
-        task_repositories, tasks, workflows,
+        session_records, task_repositories, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -575,6 +575,7 @@ pub fn rotate_open_assignment_session(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
     new_session_id: &str,
+    replacement_assignment_id: Option<&str>,
     now: &str,
 ) -> Result<TaskLaneAssignment, String> {
     if !matches!(
@@ -604,7 +605,9 @@ pub fn rotate_open_assignment_session(
     complete_assignment(connection, &assignment.id, ASSIGNMENT_STATUS_CANCELED, now)?;
 
     let replacement = TaskLaneAssignment {
-        id: generate_id("assignment"),
+        id: replacement_assignment_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| generate_id("assignment")),
         task_id: assignment.task_id.clone(),
         workflow_id: assignment.workflow_id.clone(),
         lane_id: assignment.lane_id.clone(),
@@ -777,6 +780,14 @@ pub fn clear_task_runtime_claims_preserving_status(
             normalized_notes.clone(),
             &now,
         )?;
+        if let Some(session_id) = assignment.session_id.as_deref() {
+            let _ = session_records::close_active_assignment_session(
+                &tx,
+                session_id,
+                Some(task.project_id.as_str()),
+                false,
+            );
+        }
     }
 
     let mut changed = false;
@@ -1405,6 +1416,34 @@ pub fn activate_queued_role_assignments(
                 )
             })?
         {
+            if let Some(session_id) = assignment.session_id.as_deref() {
+                if let Ok(task) = tasks::get_task_context(connection, &assignment.task_id) {
+                    if let Ok(session_context) =
+                        pi_sessions::session_context_for_project_id(&task.project_id)
+                    {
+                        let _ = session_records::bind_session_context(
+                            connection,
+                            session_id,
+                            session_records::SessionContextBinding {
+                                project_id: Some(task.project_id.as_str()),
+                                session_kind: Some(session_records::SESSION_KIND_ROLE_INSTANCE),
+                                worker_type: Some("role"),
+                                worker_id: assignment.worker_id.as_deref(),
+                                agent_id: None,
+                                role_instance_id: assignment.role_instance_id.as_deref(),
+                                task_id: Some(assignment.task_id.as_str()),
+                                workflow_id: Some(assignment.workflow_id.as_str()),
+                                lane_id: Some(assignment.lane_id.as_str()),
+                                assignment_id: Some(assignment.id.as_str()),
+                                runtime_cwd: assignment
+                                    .runtime_cwd
+                                    .as_deref()
+                                    .map(std::path::Path::new),
+                            },
+                        );
+                    }
+                }
+            }
             activated.push(assignment);
         }
     }
@@ -2177,7 +2216,6 @@ fn recover_missing_assignment_session(
 ) -> Result<String, String> {
     let task = tasks::get_task_context(connection, &assignment.task_id)?;
     let context = pi_sessions::session_context_for_project_id(&task.project_id)?;
-    let now = now_iso();
 
     match assignment.worker_type.as_str() {
         "agent" => {
@@ -2195,17 +2233,23 @@ fn recover_missing_assignment_session(
             let session_id = runtime_state
                 .main_session_id
                 .ok_or_else(|| format!("Agent {} has no main session", agent.name))?;
-            connection
-                .execute(
-                    "UPDATE task_lane_assignments SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![assignment.id, session_id, now],
-                )
-                .map_err(|error| {
-                    format!(
-                        "Unable to refresh missing agent assignment session {}: {error}",
-                        assignment.id
-                    )
-                })?;
+            let _ = session_records::bind_session_context(
+                connection,
+                &session_id,
+                session_records::SessionContextBinding {
+                    project_id: Some(task.project_id.as_str()),
+                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+                    worker_type: Some("agent"),
+                    worker_id: Some(agent_id),
+                    agent_id: Some(agent_id),
+                    role_instance_id: None,
+                    task_id: Some(task.id.as_str()),
+                    workflow_id: Some(assignment.workflow_id.as_str()),
+                    lane_id: Some(assignment.lane_id.as_str()),
+                    assignment_id: Some(assignment.id.as_str()),
+                    runtime_cwd: Some(std::path::Path::new(runtime_cwd)),
+                },
+            );
             Ok(session_id)
         }
         "role" => {
@@ -2220,11 +2264,30 @@ fn recover_missing_assignment_session(
                     runtime_cwd
                 )
             })?;
-            let created = pi_sessions::create_session_file(
+            let created = session_records::create_session_record(
+                connection,
                 std::path::Path::new(runtime_cwd),
                 &context.session_dir,
-                Some(&format!("{} · {}", role.name, task.title)),
-                false,
+                session_records::CreateSessionRecordInput {
+                    project_id: Some(task.project_id.as_str()),
+                    title: Some(&format!("{} · {}", role.name, task.title)),
+                    session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                    agent_id: None,
+                    role_instance_id: Some(role_instance.id.as_str()),
+                    task_id: Some(task.id.as_str()),
+                    workflow_id: Some(assignment.workflow_id.as_str()),
+                    lane_id: Some(assignment.lane_id.as_str()),
+                    assignment: Some(session_records::AssignmentBinding {
+                        assignment_id: assignment.id.as_str(),
+                        runtime_cwd: Some(runtime_cwd),
+                    }),
+                    worker_type: Some("role"),
+                    worker_id: Some(role.id.as_str()),
+                    runtime_cwd: Some(runtime_cwd),
+                    subscribed: false,
+                    agent_runtime: None,
+                    update_role_instance_session: true,
+                },
             )?;
             if let (Some(provider), Some(model)) = (role.provider.as_deref(), role.model.as_deref())
             {
@@ -2242,28 +2305,6 @@ fn recover_missing_assignment_session(
                 &created.record.id,
                 &role.thinking_level,
             )?;
-            connection
-                .execute(
-                    "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![role_instance.id, created.record.id, now],
-                )
-                .map_err(|error| {
-                    format!(
-                        "Unable to refresh role instance session {}: {error}",
-                        role_instance.id
-                    )
-                })?;
-            connection
-                .execute(
-                    "UPDATE task_lane_assignments SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![assignment.id, created.record.id, now],
-                )
-                .map_err(|error| {
-                    format!(
-                        "Unable to refresh missing role assignment session {}: {error}",
-                        assignment.id
-                    )
-                })?;
             Ok(created.record.id)
         }
         other => Err(format!(
@@ -2882,6 +2923,23 @@ fn dispatch_role_lane(
             session_id,
             now,
         )?;
+        let _ = session_records::bind_session_context(
+            connection,
+            session_id,
+            session_records::SessionContextBinding {
+                project_id: Some(task.project_id.as_str()),
+                session_kind: Some(session_records::SESSION_KIND_ROLE_INSTANCE),
+                worker_type: Some("role"),
+                worker_id: assignment.worker_id.as_deref(),
+                agent_id: None,
+                role_instance_id: assignment.role_instance_id.as_deref(),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some(lane.id.as_str()),
+                assignment_id: Some(assignment_id),
+                runtime_cwd: runtime_cwd.as_deref().map(std::path::Path::new),
+            },
+        );
     }
     Ok(assignment)
 }
@@ -2927,24 +2985,71 @@ fn dispatch_agent_lane(
         Some(runtime_cwd.as_str()),
     )?;
     ensure_task_repository_workspaces(task, &task_workspace_cwd)?;
+    let project_root_cwd = project_root.display().to_string();
     let session_id = if let Some(existing_session_id) = runtime_state.main_session_id.clone() {
         if pi_sessions::find_session_context_for_session(&existing_session_id).is_ok() {
             existing_session_id
         } else {
-            let created = pi_sessions::create_session_file(
+            let created = session_records::create_session_record(
+                connection,
                 project_root,
                 session_dir,
-                Some(&format!("{} main session", agent.name)),
-                false,
+                session_records::CreateSessionRecordInput {
+                    project_id: Some(task.project_id.as_str()),
+                    title: Some(&format!("{} main session", agent.name)),
+                    session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                    agent_id: Some(agent.id.as_str()),
+                    role_instance_id: None,
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment: None,
+                    worker_type: None,
+                    worker_id: None,
+                    runtime_cwd: Some(project_root_cwd.as_str()),
+                    subscribed: false,
+                    agent_runtime: Some(session_records::AgentRuntimeBinding {
+                        project_id: runtime_state.project_id.as_str(),
+                        agent_id: agent.id.as_str(),
+                        runtime_cwd: Some(project_root_cwd.as_str()),
+                        current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                        status: &runtime_state.status,
+                        last_error: runtime_state.last_error.as_deref(),
+                    }),
+                    update_role_instance_session: false,
+                },
             )?;
             created.record.id
         }
     } else {
-        let created = pi_sessions::create_session_file(
+        let created = session_records::create_session_record(
+            connection,
             Path::new(&runtime_cwd),
             session_dir,
-            Some(&format!("{} main session", agent.name)),
-            false,
+            session_records::CreateSessionRecordInput {
+                project_id: Some(task.project_id.as_str()),
+                title: Some(&format!("{} main session", agent.name)),
+                session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                agent_id: Some(agent.id.as_str()),
+                role_instance_id: None,
+                task_id: None,
+                workflow_id: None,
+                lane_id: None,
+                assignment: None,
+                worker_type: None,
+                worker_id: None,
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: false,
+                agent_runtime: Some(session_records::AgentRuntimeBinding {
+                    project_id: runtime_state.project_id.as_str(),
+                    agent_id: agent.id.as_str(),
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                    current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                    status: &runtime_state.status,
+                    last_error: runtime_state.last_error.as_deref(),
+                }),
+                update_role_instance_session: false,
+            },
         )?;
         created.record.id
     };
@@ -2965,7 +3070,7 @@ fn dispatch_agent_lane(
         &runtime_state.project_id,
         &agent.id,
         Some(&session_id),
-        Some(project_root.display().to_string().as_str()),
+        Some(project_root_cwd.as_str()),
         runtime_state.current_queue_entry_id.as_deref(),
         &runtime_state.status,
         runtime_state.last_error.as_deref(),
@@ -3009,7 +3114,7 @@ fn dispatch_agent_lane(
         &runtime_state.project_id,
         &agent.id,
         Some(&session_id),
-        Some(project_root.display().to_string().as_str()),
+        Some(project_root_cwd.as_str()),
         Some(&queue_entry.id),
         "running",
         None,
@@ -3038,6 +3143,24 @@ fn dispatch_agent_lane(
         updated_at: now.to_string(),
     };
     insert_assignment(connection, &assignment)?;
+    let assignment_runtime_cwd = project_root.display().to_string();
+    let _ = session_records::bind_session_context(
+        connection,
+        &session_id,
+        session_records::SessionContextBinding {
+            project_id: Some(task.project_id.as_str()),
+            session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+            worker_type: Some("agent"),
+            worker_id: Some(agent.id.as_str()),
+            agent_id: Some(agent.id.as_str()),
+            role_instance_id: None,
+            task_id: Some(task.id.as_str()),
+            workflow_id: Some(workflow.id.as_str()),
+            lane_id: Some(lane.id.as_str()),
+            assignment_id: Some(assignment_id),
+            runtime_cwd: Some(Path::new(assignment_runtime_cwd.as_str())),
+        },
+    );
     Ok(TaskLaneAssignment {
         session_id: Some(session_id),
         ..assignment
@@ -4072,6 +4195,15 @@ fn finalize_worker_assignment(
                 )?;
             }
         }
+    }
+
+    if let Some(session_id) = assignment.session_id.as_deref() {
+        let _ = session_records::close_active_assignment_session(
+            connection,
+            session_id,
+            Some(task.project_id.as_str()),
+            false,
+        );
     }
 
     let assignment_status = match outcome {

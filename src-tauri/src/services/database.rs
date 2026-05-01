@@ -417,6 +417,34 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_session_catalog_project_path
                 ON session_catalog(project_slug, session_path);
 
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                project_id TEXT,
+                session_path TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                session_kind TEXT NOT NULL,
+                agent_id TEXT,
+                role_instance_id TEXT,
+                task_id TEXT,
+                workflow_id TEXT,
+                lane_id TEXT,
+                assignment_id TEXT,
+                worker_type TEXT,
+                worker_id TEXT,
+                runtime_cwd TEXT,
+                lifecycle_state TEXT NOT NULL DEFAULT 'active',
+                supersedes_session_id TEXT,
+                superseded_by_session_id TEXT,
+                closed_at TEXT,
+                archived_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL,
+                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE SET NULL,
+                FOREIGN KEY(supersedes_session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+                FOREIGN KEY(superseded_by_session_id) REFERENCES sessions(id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS worker_reminders (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -1059,6 +1087,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_tasks_table_columns(connection)?;
     ensure_task_dependencies_table_columns(connection)?;
     ensure_task_tag_tables(connection)?;
+    ensure_sessions_table_columns(connection)?;
     ensure_task_comments_table_columns(connection)?;
     ensure_session_list_entry_columns(connection)?;
     ensure_mailbox_tables(connection)?;
@@ -1946,6 +1975,107 @@ fn ensure_task_schedule_tables(connection: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|error| format!("Unable to ensure task schedule tables: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "sessions")?;
+
+    let required_columns = [
+        ("project_id", "TEXT"),
+        ("session_path", "TEXT NOT NULL DEFAULT ''"),
+        ("title", "TEXT NOT NULL DEFAULT ''"),
+        ("session_kind", "TEXT NOT NULL DEFAULT 'standalone'"),
+        ("agent_id", "TEXT"),
+        ("role_instance_id", "TEXT"),
+        ("task_id", "TEXT"),
+        ("workflow_id", "TEXT"),
+        ("lane_id", "TEXT"),
+        ("assignment_id", "TEXT"),
+        ("worker_type", "TEXT"),
+        ("worker_id", "TEXT"),
+        ("runtime_cwd", "TEXT"),
+        ("lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"),
+        ("supersedes_session_id", "TEXT"),
+        ("superseded_by_session_id", "TEXT"),
+        ("closed_at", "TEXT"),
+        ("archived_at", "TEXT"),
+        ("created_at", "TEXT NOT NULL DEFAULT ''"),
+        ("updated_at", "TEXT NOT NULL DEFAULT ''"),
+    ];
+
+    for (column, definition) in required_columns {
+        if columns.contains(column) {
+            continue;
+        }
+        connection
+            .execute(
+                &format!("ALTER TABLE sessions ADD COLUMN {column} {definition}"),
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add sessions.{column} column during migration: {error}")
+            })?;
+    }
+
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON sessions(project_id, updated_at DESC)",
+        [],
+    ).map_err(|error| format!("Unable to create sessions project index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_task_updated ON sessions(task_id, updated_at DESC) WHERE task_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions task index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_assignment ON sessions(assignment_id) WHERE assignment_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions assignment index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id, updated_at DESC) WHERE agent_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions agent index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_role_instance ON sessions(role_instance_id, updated_at DESC) WHERE role_instance_id IS NOT NULL",
+        [],
+    ).map_err(|error| format!("Unable to create sessions role-instance index: {error}"))?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_lifecycle_updated ON sessions(lifecycle_state, updated_at DESC)",
+        [],
+    ).map_err(|error| format!("Unable to create sessions lifecycle index: {error}"))?;
+
+    connection
+        .execute(
+            r#"
+        INSERT INTO sessions (
+            id,
+            project_id,
+            session_path,
+            title,
+            session_kind,
+            lifecycle_state,
+            created_at,
+            updated_at
+        )
+        SELECT
+            catalog.session_id,
+            projects.id,
+            catalog.session_path,
+            catalog.title,
+            'standalone',
+            CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
+            catalog.created_at,
+            catalog.updated_at
+        FROM session_catalog catalog
+        LEFT JOIN projects ON projects.slug = catalog.project_slug
+        WHERE projects.id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM sessions existing WHERE existing.id = catalog.session_id
+        )
+        "#,
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill canonical sessions rows: {error}"))?;
 
     Ok(())
 }

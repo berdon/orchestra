@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::OptionalExtension;
 use serde_json::json;
 use tauri::{async_runtime::spawn_blocking, AppHandle, State};
 
@@ -20,15 +20,15 @@ use crate::{
             maybe_auto_compact, maybe_runtime, perform_session_compaction, perform_session_reload,
         },
         pi_sessions::{
-            all_session_contexts, create_session_file, delete_session_file, detect_session_context,
+            all_session_contexts, delete_session_file, detect_session_context,
             find_session_context_for_session, get_session, get_session_header_cwd,
             get_session_stats as load_session_stats_from_file,
             list_sessions_with_connection as list_real_sessions_with_connection,
             session_context_for_project_id, set_session_model as apply_session_model,
         },
-        pi_setup, role_dispatch, role_runtime, roles, session_list, task_runtime,
+        pi_setup, role_dispatch, role_runtime, roles, session_list, session_records, task_runtime,
     },
-    state::AppState,
+    state::{generate_id, AppState},
 };
 
 fn record_session_domain_event(
@@ -103,6 +103,48 @@ fn project_id_for_slug(connection: &rusqlite::Connection, project_slug: &str) ->
         .optional()
         .ok()
         .flatten()
+}
+
+fn bind_rotated_assignment_session_context(
+    connection: &rusqlite::Connection,
+    project_id: &str,
+    session_kind: &str,
+    assignment: &crate::models::TaskLaneAssignment,
+) -> Result<(), String> {
+    let session_id = assignment.session_id.as_deref().ok_or_else(|| {
+        format!(
+            "Replacement assignment {} is missing a bound session id",
+            assignment.id
+        )
+    })?;
+    let (agent_id, role_instance_id) = match assignment.worker_type.as_str() {
+        "agent" => (assignment.worker_id.as_deref(), None),
+        "role" => (None, assignment.role_instance_id.as_deref()),
+        other => {
+            return Err(format!(
+                "Unsupported worker type {other} for rotated assignment {}",
+                assignment.id
+            ));
+        }
+    };
+
+    session_records::bind_session_context(
+        connection,
+        session_id,
+        session_records::SessionContextBinding {
+            project_id: Some(project_id),
+            session_kind: Some(session_kind),
+            worker_type: Some(assignment.worker_type.as_str()),
+            worker_id: assignment.worker_id.as_deref(),
+            agent_id,
+            role_instance_id,
+            task_id: Some(assignment.task_id.as_str()),
+            workflow_id: Some(assignment.workflow_id.as_str()),
+            lane_id: Some(assignment.lane_id.as_str()),
+            assignment_id: Some(assignment.id.as_str()),
+            runtime_cwd: assignment.runtime_cwd.as_deref().map(Path::new),
+        },
+    )
 }
 
 struct ContextualSessionCreation {
@@ -818,14 +860,69 @@ pub async fn create_session(
     let title_for_task = title.clone();
     let project_slug_for_task = project_slug.clone();
     let agent_id_for_task = agent_id.clone();
+    let agent_id_for_create = agent_id_for_task.clone();
     let (project_root, session_dir, created) = spawn_blocking(move || {
         let context = detect_session_context(project_slug_for_task.as_deref())?;
-        let created = create_session_file(
+        let connection = database::open_connection()?;
+        let project_id = connection
+            .query_row(
+                "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
+                [context.project_slug.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to resolve project id for session create in {}: {error}",
+                    context.project_slug
+                )
+            })?;
+        let runtime_cwd = context.project_root.display().to_string();
+        let created = session_records::create_session_record(
+            &connection,
             &context.project_root,
             &context.session_dir,
-            title_for_task.as_deref(),
-            true,
+            session_records::CreateSessionRecordInput {
+                project_id: project_id.as_deref(),
+                title: title_for_task.as_deref(),
+                session_kind: if agent_id_for_create.is_some() {
+                    session_records::SESSION_KIND_AGENT_MAIN
+                } else {
+                    session_records::SESSION_KIND_STANDALONE
+                },
+                agent_id: agent_id_for_create.as_deref(),
+                role_instance_id: None,
+                task_id: None,
+                workflow_id: None,
+                lane_id: None,
+                assignment: None,
+                worker_type: None,
+                worker_id: None,
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: true,
+                agent_runtime: agent_id_for_create.as_deref().map(|agent_id| {
+                    session_records::AgentRuntimeBinding {
+                        project_id: project_id.as_deref().unwrap_or("orchestra"),
+                        agent_id,
+                        runtime_cwd: Some(runtime_cwd.as_str()),
+                        current_queue_entry_id: None,
+                        status: "",
+                        last_error: None,
+                    }
+                }),
+                update_role_instance_session: false,
+            },
         )?;
+        if let Some(ref agent_id_str) = agent_id_for_create {
+            let agent = agents::get_agent(&connection, agent_id_str)?;
+            agent_dispatch::seed_direct_agent_session_context(
+                &connection,
+                &context.session_dir,
+                &created.record.id,
+                &agent,
+                project_id.as_deref(),
+            )?;
+        }
         Ok::<_, String>((context.project_root, context.session_dir, created))
     })
     .await
@@ -883,14 +980,6 @@ pub async fn create_session(
             }),
         );
         if let Some(ref agent_id_str) = agent_id_for_task {
-            let agent = agents::get_agent(&connection, agent_id_str)?;
-            agent_dispatch::seed_direct_agent_session_context(
-                &connection,
-                &session_dir,
-                &created.record.id,
-                &agent,
-                project_id.as_deref(),
-            )?;
             update_agent_main_session_for_created_session(
                 &connection,
                 project_id.as_deref(),
@@ -952,6 +1041,7 @@ pub async fn create_contextual_session(
     let session_id_for_task = session_id.clone();
     let project_slug_for_task = project_slug.clone();
     let agent_id_for_task = agent_id.clone();
+    let agent_id_for_create = agent_id_for_task.clone();
     let prepared = spawn_blocking(move || {
         let mut connection = database::open_connection()?;
         let old_context = find_session_context_for_session(&session_id_for_task)?;
@@ -967,12 +1057,6 @@ pub async fn create_contextual_session(
                 .map(PathBuf::from)
                 .unwrap_or_else(|| old_context.project_root.clone());
             ensure_session_runtime_root(&runtime_root)?;
-            let created = create_session_file(
-                &runtime_root,
-                &old_context.session_dir,
-                Some(old_record.title.as_str()),
-                false,
-            )?;
 
             let assignment_result = match assignment.worker_type.as_str() {
                 "agent" => {
@@ -984,13 +1068,6 @@ pub async fn create_contextual_session(
                         &assignment.task_id,
                     )?;
                     let agent = agents::get_agent(&connection, agent_id)?;
-                    task_runtime::apply_agent_session_defaults(
-                        &runtime_root,
-                        &old_context.session_dir,
-                        &created.record.id,
-                        &agent,
-                    )?;
-
                     let tx = connection.transaction().map_err(|error| {
                         format!(
                             "Unable to start contextual agent session rotation transaction: {error}"
@@ -1011,21 +1088,58 @@ pub async fn create_contextual_session(
                         .runtime_cwd
                         .clone()
                         .unwrap_or_else(|| runtime_root.display().to_string());
-                    let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
+                    let replacement_assignment_id = generate_id("assignment");
+                    let created = session_records::rotate_session_record(
                         &tx,
-                        &task.project_id,
-                        agent_id,
-                        Some(&created.record.id),
-                        Some(runtime_cwd.as_str()),
-                        runtime_state.current_queue_entry_id.as_deref(),
-                        &runtime_state.status,
-                        runtime_state.last_error.as_deref(),
+                        &runtime_root,
+                        &old_context.session_dir,
+                        &session_id_for_task,
+                        session_records::RotateSessionRecordInput {
+                            project_id: Some(task.project_id.as_str()),
+                            title: Some(old_record.title.as_str()),
+                            session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                            agent_id: Some(agent_id),
+                            role_instance_id: None,
+                            task_id: Some(task.id.as_str()),
+                            workflow_id: task.workflow_id.as_deref(),
+                            lane_id: Some(assignment.lane_id.as_str()),
+                            assignment: Some(session_records::AssignmentBinding {
+                                assignment_id: replacement_assignment_id.as_str(),
+                                runtime_cwd: Some(runtime_cwd.as_str()),
+                            }),
+                            worker_type: Some("agent"),
+                            worker_id: Some(agent_id),
+                            runtime_cwd: Some(runtime_cwd.as_str()),
+                            subscribed: false,
+                            agent_runtime: Some(session_records::AgentRuntimeBinding {
+                                project_id: task.project_id.as_str(),
+                                agent_id,
+                                runtime_cwd: Some(runtime_cwd.as_str()),
+                                current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                                status: &runtime_state.status,
+                                last_error: runtime_state.last_error.as_deref(),
+                            }),
+                            update_role_instance_session: false,
+                        },
                     )?;
-                    task_runtime::rotate_open_assignment_session(
+                    task_runtime::apply_agent_session_defaults(
+                        &runtime_root,
+                        &old_context.session_dir,
+                        &created.record.id,
+                        &agent,
+                    )?;
+                    let replacement = task_runtime::rotate_open_assignment_session(
                         &tx,
                         &assignment,
                         &created.record.id,
+                        Some(replacement_assignment_id.as_str()),
                         &now,
+                    )?;
+                    bind_rotated_assignment_session_context(
+                        &tx,
+                        task.project_id.as_str(),
+                        session_records::SESSION_KIND_AGENT_MAIN,
+                        &replacement,
                     )?;
                     tx.commit().map_err(|error| {
                         format!(
@@ -1033,7 +1147,7 @@ pub async fn create_contextual_session(
                             assignment.task_id
                         )
                     })?;
-                    Ok::<_, String>(task.project_id)
+                    Ok::<_, String>((task.project_id, created.record.id))
                 }
                 "role" => {
                     let role_instance_id = assignment.role_instance_id.as_deref().ok_or_else(|| {
@@ -1045,13 +1159,6 @@ pub async fn create_contextual_session(
                     let role_instance =
                         role_runtime::get_role_instance(&connection, role_instance_id)?;
                     let role = roles::get_role(&connection, &role_instance.role_id)?;
-                    role_dispatch::apply_role_session_defaults(
-                        &runtime_root,
-                        &old_context.session_dir,
-                        &created.record.id,
-                        &role,
-                    )?;
-
                     let task = crate::services::tasks::get_task_context(
                         &connection,
                         &assignment.task_id,
@@ -1061,21 +1168,55 @@ pub async fn create_contextual_session(
                             "Unable to start contextual role session rotation transaction: {error}"
                         )
                     })?;
-                    tx.execute(
-                        "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-                        params![role_instance.id, created.record.id, now],
-                    )
-                    .map_err(|error| {
-                        format!(
-                            "Unable to rotate role instance session {}: {error}",
-                            role_instance.id
-                        )
-                    })?;
-                    task_runtime::rotate_open_assignment_session(
+                    let runtime_cwd = assignment
+                        .runtime_cwd
+                        .clone()
+                        .unwrap_or_else(|| runtime_root.display().to_string());
+                    let replacement_assignment_id = generate_id("assignment");
+                    let created = session_records::rotate_session_record(
+                        &tx,
+                        &runtime_root,
+                        &old_context.session_dir,
+                        &session_id_for_task,
+                        session_records::RotateSessionRecordInput {
+                            project_id: Some(task.project_id.as_str()),
+                            title: Some(old_record.title.as_str()),
+                            session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                            agent_id: None,
+                            role_instance_id: Some(role_instance.id.as_str()),
+                            task_id: Some(task.id.as_str()),
+                            workflow_id: task.workflow_id.as_deref(),
+                            lane_id: Some(assignment.lane_id.as_str()),
+                            assignment: Some(session_records::AssignmentBinding {
+                                assignment_id: replacement_assignment_id.as_str(),
+                                runtime_cwd: Some(runtime_cwd.as_str()),
+                            }),
+                            worker_type: Some("role"),
+                            worker_id: assignment.worker_id.as_deref(),
+                            runtime_cwd: Some(runtime_cwd.as_str()),
+                            subscribed: false,
+                            agent_runtime: None,
+                            update_role_instance_session: true,
+                        },
+                    )?;
+                    role_dispatch::apply_role_session_defaults(
+                        &runtime_root,
+                        &old_context.session_dir,
+                        &created.record.id,
+                        &role,
+                    )?;
+                    let replacement = task_runtime::rotate_open_assignment_session(
                         &tx,
                         &assignment,
                         &created.record.id,
+                        Some(replacement_assignment_id.as_str()),
                         &now,
+                    )?;
+                    bind_rotated_assignment_session_context(
+                        &tx,
+                        task.project_id.as_str(),
+                        session_records::SESSION_KIND_ROLE_INSTANCE,
+                        &replacement,
                     )?;
                     tx.commit().map_err(|error| {
                         format!(
@@ -1083,28 +1224,20 @@ pub async fn create_contextual_session(
                             assignment.task_id
                         )
                     })?;
-                    Ok::<_, String>(task.project_id)
+                    Ok::<_, String>((task.project_id, created.record.id))
                 }
                 other => Err(format!(
                     "Unsupported assignment worker type {other} for session rotation"
                 )),
-            };
-
-            let project_id = match assignment_result {
-                Ok(project_id) => project_id,
-                Err(error) => {
-                    let _ = delete_session_file(&old_context.session_dir, &created.record.id);
-                    return Err(error);
-                }
-            };
+            }?;
 
             return Ok::<_, String>(ContextualSessionCreation {
                 project_root: runtime_root,
                 session_dir: old_context.session_dir,
-                new_session_id: created.record.id,
+                new_session_id: assignment_result.1,
                 rotated_from_session_id: Some(session_id_for_task),
                 affected_task_id: Some(assignment.task_id),
-                project_id: Some(project_id),
+                project_id: Some(assignment_result.0),
             });
         }
 
@@ -1150,57 +1283,64 @@ pub async fn create_contextual_session(
                 .map(PathBuf::from)
                 .unwrap_or_else(|| old_context.project_root.clone());
             ensure_session_runtime_root(&runtime_root)?;
-            let created = create_session_file(
-                &runtime_root,
-                &old_context.session_dir,
-                Some(old_record.title.as_str()),
-                false,
-            )?;
             let runtime_cwd = runtime_state
                 .runtime_cwd
                 .clone()
                 .unwrap_or_else(|| runtime_root.display().to_string());
-            let update_result = (|| {
-                task_runtime::apply_agent_session_defaults(
-                    &runtime_root,
-                    &old_context.session_dir,
-                    &created.record.id,
-                    &agent,
-                )?;
-                agent_dispatch::seed_direct_agent_session_context(
-                    &connection,
-                    &old_context.session_dir,
-                    &created.record.id,
-                    &agent,
-                    chat_context_project_id.as_deref(),
-                )?;
-                let tx = connection.transaction().map_err(|error| {
-                    format!(
-                        "Unable to start contextual agent main-session rotation transaction: {error}"
-                    )
-                })?;
-                let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
-                    &tx,
-                    &project_id,
-                    &agent_id,
-                    Some(&created.record.id),
-                    Some(runtime_cwd.as_str()),
-                    runtime_state.current_queue_entry_id.as_deref(),
-                    &runtime_state.status,
-                    runtime_state.last_error.as_deref(),
-                )?;
-                tx.commit().map_err(|error| {
-                    format!(
-                        "Unable to commit contextual agent main-session rotation for project {}: {error}",
-                        project_id
-                    )
-                })?;
-                Ok::<_, String>(())
-            })();
-            if let Err(error) = update_result {
-                let _ = delete_session_file(&old_context.session_dir, &created.record.id);
-                return Err(error);
-            }
+            let tx = connection.transaction().map_err(|error| {
+                format!(
+                    "Unable to start contextual agent main-session rotation transaction: {error}"
+                )
+            })?;
+            let created = session_records::rotate_session_record(
+                &tx,
+                &runtime_root,
+                &old_context.session_dir,
+                &session_id_for_task,
+                session_records::RotateSessionRecordInput {
+                    project_id: Some(project_id.as_str()),
+                    title: Some(old_record.title.as_str()),
+                    session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                    agent_id: Some(agent_id.as_str()),
+                    role_instance_id: None,
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment: None,
+                    worker_type: None,
+                    worker_id: None,
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                    subscribed: false,
+                    agent_runtime: Some(session_records::AgentRuntimeBinding {
+                        project_id: project_id.as_str(),
+                        agent_id: agent_id.as_str(),
+                        runtime_cwd: Some(runtime_cwd.as_str()),
+                        current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                        status: &runtime_state.status,
+                        last_error: runtime_state.last_error.as_deref(),
+                    }),
+                    update_role_instance_session: false,
+                },
+            )?;
+            task_runtime::apply_agent_session_defaults(
+                &runtime_root,
+                &old_context.session_dir,
+                &created.record.id,
+                &agent,
+            )?;
+            agent_dispatch::seed_direct_agent_session_context(
+                &tx,
+                &old_context.session_dir,
+                &created.record.id,
+                &agent,
+                chat_context_project_id.as_deref(),
+            )?;
+            tx.commit().map_err(|error| {
+                format!(
+                    "Unable to commit contextual agent main-session rotation for project {}: {error}",
+                    project_id
+                )
+            })?;
 
             return Ok(ContextualSessionCreation {
                 project_root: runtime_root,
@@ -1243,47 +1383,48 @@ pub async fn create_contextual_session(
                 .map(PathBuf::from)
                 .unwrap_or_else(|| old_context.project_root.clone());
             ensure_session_runtime_root(&runtime_root)?;
-            let created = create_session_file(
+            let role_project_id = session_project_id(&connection, &session_id_for_task);
+            let runtime_cwd = runtime_root.display().to_string();
+            let tx = connection.transaction().map_err(|error| {
+                format!(
+                    "Unable to start contextual role-session rotation transaction: {error}"
+                )
+            })?;
+            let created = session_records::rotate_session_record(
+                &tx,
                 &runtime_root,
                 &old_context.session_dir,
-                Some(old_record.title.as_str()),
-                false,
+                &session_id_for_task,
+                session_records::RotateSessionRecordInput {
+                    project_id: role_project_id.as_deref(),
+                    title: Some(old_record.title.as_str()),
+                    session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                    agent_id: None,
+                    role_instance_id: Some(role_instance_id.as_str()),
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment: None,
+                    worker_type: None,
+                    worker_id: None,
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                    subscribed: false,
+                    agent_runtime: None,
+                    update_role_instance_session: true,
+                },
             )?;
-            let role_project_id = session_project_id(&connection, &session_id_for_task);
-            let update_result = (|| {
-                role_dispatch::apply_role_session_defaults(
-                    &runtime_root,
-                    &old_context.session_dir,
-                    &created.record.id,
-                    &role,
-                )?;
-                let tx = connection.transaction().map_err(|error| {
-                    format!(
-                        "Unable to start contextual role-session rotation transaction: {error}"
-                    )
-                })?;
-                tx.execute(
-                    "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![role_instance_id, created.record.id, now],
+            role_dispatch::apply_role_session_defaults(
+                &runtime_root,
+                &old_context.session_dir,
+                &created.record.id,
+                &role,
+            )?;
+            tx.commit().map_err(|error| {
+                format!(
+                    "Unable to commit contextual role-session rotation for instance {}: {error}",
+                    role_instance_id
                 )
-                .map_err(|error| {
-                    format!(
-                        "Unable to update role instance {} to the rotated session: {error}",
-                        role_instance_id
-                    )
-                })?;
-                tx.commit().map_err(|error| {
-                    format!(
-                        "Unable to commit contextual role-session rotation for instance {}: {error}",
-                        role_instance_id
-                    )
-                })?;
-                Ok::<_, String>(())
-            })();
-            if let Err(error) = update_result {
-                let _ = delete_session_file(&old_context.session_dir, &created.record.id);
-                return Err(error);
-            }
+            })?;
 
             let prior_session_id = session_id_for_task.clone();
             return Ok(ContextualSessionCreation {
@@ -1301,11 +1442,42 @@ pub async fn create_contextual_session(
         } else {
             old_context
         };
-        let created = create_session_file(
+        let project_id = project_id_for_slug(&connection, &context.project_slug);
+        let runtime_cwd = context.project_root.display().to_string();
+        let created = session_records::create_session_record(
+            &connection,
             &context.project_root,
             &context.session_dir,
-            None,
-            false,
+            session_records::CreateSessionRecordInput {
+                project_id: project_id.as_deref(),
+                title: None,
+                session_kind: if agent_id_for_create.is_some() {
+                    session_records::SESSION_KIND_AGENT_MAIN
+                } else {
+                    session_records::SESSION_KIND_STANDALONE
+                },
+                agent_id: agent_id_for_create.as_deref(),
+                role_instance_id: None,
+                task_id: None,
+                workflow_id: None,
+                lane_id: None,
+                assignment: None,
+                worker_type: None,
+                worker_id: None,
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: false,
+                agent_runtime: agent_id_for_create.as_deref().map(|agent_id| {
+                    session_records::AgentRuntimeBinding {
+                        project_id: project_id.as_deref().unwrap_or("orchestra"),
+                        agent_id,
+                        runtime_cwd: Some(runtime_cwd.as_str()),
+                        current_queue_entry_id: None,
+                        status: "",
+                        last_error: None,
+                    }
+                }),
+                update_role_instance_session: false,
+            },
         )?;
 
         Ok(ContextualSessionCreation {
@@ -1314,7 +1486,7 @@ pub async fn create_contextual_session(
             new_session_id: created.record.id,
             rotated_from_session_id: None,
             affected_task_id: None,
-            project_id: project_id_for_slug(&connection, &context.project_slug),
+            project_id,
         })
     })
     .await
@@ -2281,6 +2453,192 @@ mod tests {
             })
         );
         fs::write(&session_path, content).expect("session file should be writable");
+    }
+
+    #[test]
+    fn rotated_assignment_successor_rebinds_canonical_context() {
+        let root = unique_temp_dir("rotated-assignment-successor-rebinds-context");
+        let project_root = root.join("project-root");
+        let session_dir = root
+            .join("orchestra-root")
+            .join("project-1")
+            .join("sessions");
+        fs::create_dir_all(&project_root).expect("project root should exist");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'ORC', NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("project insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent insert should succeed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO tasks (
+                    id, project_id, sequence_number, number, title, description, task_type, status,
+                    priority, workflow_id, current_lane_id, assignee_type, assignee_id,
+                    repository_id, parent_task_id, archived, created_at, updated_at
+                )
+                VALUES (
+                    'task-1', 'project-1', 1, 'ORC-1', 'Rotating task', NULL, 'task', 'in_progress',
+                    'P1', NULL, NULL, 'unassigned', NULL, NULL, NULL, 0,
+                    '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z'
+                )
+                "#,
+                [],
+            )
+            .expect("task insert should succeed");
+
+        let runtime_cwd = project_root.to_string_lossy().into_owned();
+        let original = session_records::create_session_record(
+            &connection,
+            &project_root,
+            &session_dir,
+            session_records::CreateSessionRecordInput {
+                project_id: Some("project-1"),
+                title: Some("Original"),
+                session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                agent_id: Some("agent-1"),
+                role_instance_id: None,
+                task_id: Some("task-1"),
+                workflow_id: Some("workflow-1"),
+                lane_id: Some("lane-1"),
+                assignment: None,
+                worker_type: Some("agent"),
+                worker_id: Some("agent-1"),
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: false,
+                agent_runtime: None,
+                update_role_instance_session: false,
+            },
+        )
+        .expect("original session should be created");
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id,
+                    runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome,
+                    completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at,
+                    updated_at
+                )
+                VALUES (
+                    'assignment-1', 'task-1', 'workflow-1', 'lane-1', 'agent', 'agent-1', 'active', ?1,
+                    ?2, NULL, NULL, 'Prompt', NULL, NULL, 0, NULL, '2026-03-21T00:00:00Z', NULL,
+                    '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z'
+                )
+                "#,
+                rusqlite::params![original.record.id.as_str(), runtime_cwd.as_str()],
+            )
+            .expect("assignment insert should succeed");
+        session_records::bind_session_context(
+            &connection,
+            &original.record.id,
+            session_records::SessionContextBinding {
+                project_id: Some("project-1"),
+                session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+                worker_type: Some("agent"),
+                worker_id: Some("agent-1"),
+                agent_id: Some("agent-1"),
+                role_instance_id: None,
+                task_id: Some("task-1"),
+                workflow_id: Some("workflow-1"),
+                lane_id: Some("lane-1"),
+                assignment_id: Some("assignment-1"),
+                runtime_cwd: Some(project_root.as_path()),
+            },
+        )
+        .expect("original session should be bound");
+
+        let open_assignment =
+            task_runtime::get_active_assignment_for_session(&connection, &original.record.id)
+                .expect("assignment lookup should succeed")
+                .expect("active assignment should exist");
+        let replacement_assignment_id = "assignment-2";
+        let rotated = session_records::rotate_session_record(
+            &connection,
+            &project_root,
+            &session_dir,
+            &original.record.id,
+            session_records::RotateSessionRecordInput {
+                project_id: Some("project-1"),
+                title: Some("Original"),
+                session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                agent_id: Some("agent-1"),
+                role_instance_id: None,
+                task_id: Some("task-1"),
+                workflow_id: Some("workflow-1"),
+                lane_id: Some("lane-1"),
+                assignment: Some(session_records::AssignmentBinding {
+                    assignment_id: replacement_assignment_id,
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                }),
+                worker_type: Some("agent"),
+                worker_id: Some("agent-1"),
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: false,
+                agent_runtime: None,
+                update_role_instance_session: false,
+            },
+        )
+        .expect("rotation should create successor session");
+
+        let prebind_assignment_id: Option<String> = connection
+            .query_row(
+                "SELECT assignment_id FROM sessions WHERE id = ?1",
+                [rotated.record.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("rotated session row should exist");
+        assert!(prebind_assignment_id.is_none());
+
+        let replacement = task_runtime::rotate_open_assignment_session(
+            &connection,
+            &open_assignment,
+            &rotated.record.id,
+            Some(replacement_assignment_id),
+            "2026-03-21T00:01:00Z",
+        )
+        .expect("assignment rotation should succeed");
+        bind_rotated_assignment_session_context(
+            &connection,
+            "project-1",
+            session_records::SESSION_KIND_AGENT_MAIN,
+            &replacement,
+        )
+        .expect("replacement session should be rebound");
+
+        let rebound: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = connection
+            .query_row(
+                "SELECT task_id, workflow_id, lane_id, assignment_id, worker_type, agent_id FROM sessions WHERE id = ?1",
+                [rotated.record.id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .expect("rebound session row should exist");
+        assert_eq!(rebound.0.as_deref(), Some("task-1"));
+        assert_eq!(rebound.1.as_deref(), Some("workflow-1"));
+        assert_eq!(rebound.2.as_deref(), Some("lane-1"));
+        assert_eq!(rebound.3.as_deref(), Some(replacement_assignment_id));
+        assert_eq!(rebound.4.as_deref(), Some("agent"));
+        assert_eq!(rebound.5.as_deref(), Some("agent-1"));
     }
 
     #[test]

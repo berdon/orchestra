@@ -5,8 +5,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::{
     models::{RoleInstance, RoleOperationsDetail},
     services::{
-        git_worktrees, pi_sessions, projects, role_runtime, roles, task_repositories, task_runtime,
-        tasks, workflows,
+        git_worktrees, pi_sessions, projects, role_runtime, roles, session_records,
+        task_repositories, task_runtime, tasks, workflows,
     },
 };
 
@@ -239,7 +239,7 @@ pub fn release_role_instance(
     }
 
     tx.execute(
-        "UPDATE role_instances SET status = ?2, current_queue_entry_id = NULL, last_error = ?3, updated_at = ?4 WHERE id = ?1",
+        "UPDATE role_instances SET status = ?2, current_queue_entry_id = NULL, session_id = NULL, last_error = ?3, updated_at = ?4 WHERE id = ?1",
         params![
             instance.id,
             match normalized_outcome.as_str() {
@@ -259,6 +259,11 @@ pub fn release_role_instance(
 
     tx.commit()
         .map_err(|error| format!("Unable to commit role release transaction: {error}"))?;
+
+    if let Some(session_id) = instance.session_id.as_deref() {
+        let _ =
+            session_records::close_active_assignment_session(connection, session_id, None, false);
+    }
 
     let _ = dispatch_role_queue(connection, project_root, session_dir, &instance.role_id)?;
 
@@ -839,24 +844,34 @@ fn ensure_instance_session(
     queue_entry: &crate::models::RoleQueueEntry,
     instance: &RoleInstance,
 ) -> Result<String, String> {
-    let created = pi_sessions::create_session_file(
+    let runtime_cwd_string = runtime_cwd.display().to_string();
+    let project_id = queue_entry
+        .source_task_id
+        .as_deref()
+        .map(|task_id| tasks::get_task_context(connection, task_id).map(|task| task.project_id))
+        .transpose()?;
+    let created = session_records::create_session_record(
+        connection,
         runtime_cwd,
         session_dir,
-        Some(&format!("{} · {}", role.name, queue_entry.title)),
-        false,
+        session_records::CreateSessionRecordInput {
+            project_id: project_id.as_deref(),
+            title: Some(&format!("{} · {}", role.name, queue_entry.title)),
+            session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+            agent_id: None,
+            role_instance_id: Some(instance.id.as_str()),
+            task_id: queue_entry.source_task_id.as_deref(),
+            workflow_id: queue_entry.source_workflow_id.as_deref(),
+            lane_id: queue_entry.source_lane_id.as_deref(),
+            assignment: None,
+            worker_type: Some("role"),
+            worker_id: Some(role.id.as_str()),
+            runtime_cwd: Some(runtime_cwd_string.as_str()),
+            subscribed: false,
+            agent_runtime: None,
+            update_role_instance_session: true,
+        },
     )?;
-
-    connection
-        .execute(
-            "UPDATE role_instances SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-            params![instance.id, created.record.id, crate::state::now_iso()],
-        )
-        .map_err(|error| {
-            format!(
-                "Unable to update session id for role instance {}: {error}",
-                instance.id
-            )
-        })?;
 
     apply_role_session_defaults(runtime_cwd, session_dir, &created.record.id, role)?;
 

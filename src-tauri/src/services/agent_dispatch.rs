@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use crate::{
     models::{AgentDefinition, AgentQueueEntry, AgentRuntimeState},
-    services::{agent_runtime, agents, live_sessions, messages, pi_sessions, projects, roles},
+    services::{
+        agent_runtime, agents, live_sessions, messages, pi_sessions, projects, roles,
+        session_records,
+    },
     state::{generate_id, AppState},
 };
 
@@ -20,7 +23,11 @@ pub fn build_direct_agent_session_context(
         "This is your direct agent chat session. There is no active task assignment unless the user explicitly provides one or asks you to fetch one.".to_string(),
     ];
 
-    if let Some(description) = agent.description.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(description) = agent
+        .description
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         sections.push(format!("Agent description:\n{}", description.trim()));
     }
 
@@ -37,12 +44,20 @@ pub fn build_direct_agent_session_context(
     if let Some(role_id) = agent.role_id.as_deref() {
         let role = roles::get_role(connection, role_id)?;
         sections.push(format!("Assigned role: {} ({})", role.name, role.slug));
-        if let Some(role_prompt) = role.system_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(role_prompt) = role
+            .system_prompt
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             sections.push(format!("Role prompt:\n{}", role_prompt.trim()));
         }
     }
 
-    if let Some(system_prompt) = agent.system_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(system_prompt) = agent
+        .system_prompt
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         sections.push(format!("Agent prompt:\n{}", system_prompt.trim()));
     }
 
@@ -398,9 +413,27 @@ pub fn ensure_main_session(
 
     // Use the effective project_id from the runtime state (may differ for global agents)
     let effective_project_id = &runtime_state.project_id;
+    let runtime_cwd = project_root.display().to_string();
 
     if let Some(session_id) = runtime_state.main_session_id.as_deref() {
         if crate::services::pi_sessions::find_session_context_for_session(session_id).is_ok() {
+            session_records::bind_session_context(
+                &connection,
+                session_id,
+                session_records::SessionContextBinding {
+                    project_id: Some(effective_project_id.as_str()),
+                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+                    worker_type: Some("agent"),
+                    worker_id: Some(agent_id),
+                    agent_id: Some(agent_id),
+                    role_instance_id: None,
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment_id: None,
+                    runtime_cwd: Some(project_root),
+                },
+            )?;
             return Ok(runtime_state);
         }
     }
@@ -411,26 +444,71 @@ pub fn ensure_main_session(
         if crate::services::pi_sessions::find_session_context_for_session(&global_session_id)
             .is_ok()
         {
-            return agent_runtime::update_agent_runtime_dispatch_state_for_project(
+            session_records::bind_session_context(
+                &connection,
+                &global_session_id,
+                session_records::SessionContextBinding {
+                    project_id: Some(effective_project_id.as_str()),
+                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+                    worker_type: Some("agent"),
+                    worker_id: Some(agent_id),
+                    agent_id: Some(agent_id),
+                    role_instance_id: None,
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment_id: None,
+                    runtime_cwd: Some(project_root),
+                },
+            )?;
+            let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
                 &connection,
                 effective_project_id,
                 agent_id,
                 Some(&global_session_id),
-                Some(&project_root.display().to_string()),
+                Some(runtime_cwd.as_str()),
                 runtime_state.current_queue_entry_id.as_deref(),
                 &runtime_state.status,
                 runtime_state.last_error.as_deref(),
-            );
+            )?;
+            return agent_runtime::get_agent_runtime_state_for_project(
+                &connection,
+                effective_project_id,
+                agent_id,
+            )?
+            .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after bind"));
         }
     }
 
     let agent = agents::get_agent(&connection, agent_id)?;
-    let runtime_cwd = project_root.display().to_string();
-    let created = pi_sessions::create_session_file(
+    let created = session_records::create_session_record(
+        &connection,
         project_root,
         session_dir,
-        Some(&format!("{} main session", agent.name)),
-        false,
+        session_records::CreateSessionRecordInput {
+            project_id: Some(effective_project_id.as_str()),
+            title: Some(&format!("{} main session", agent.name)),
+            session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+            agent_id: Some(agent_id),
+            role_instance_id: None,
+            task_id: None,
+            workflow_id: None,
+            lane_id: None,
+            assignment: None,
+            worker_type: None,
+            worker_id: None,
+            runtime_cwd: Some(runtime_cwd.as_str()),
+            subscribed: false,
+            agent_runtime: Some(session_records::AgentRuntimeBinding {
+                project_id: effective_project_id.as_str(),
+                agent_id,
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                status: &runtime_state.status,
+                last_error: runtime_state.last_error.as_deref(),
+            }),
+            update_role_instance_session: false,
+        },
     )?;
     if let (Some(provider), Some(model)) = (agent.provider.as_deref(), agent.model.as_deref()) {
         let _ = pi_sessions::set_session_model(
@@ -454,16 +532,8 @@ pub fn ensure_main_session(
         &agent,
         Some(project_id),
     )?;
-    agent_runtime::update_agent_runtime_dispatch_state_for_project(
-        &connection,
-        effective_project_id,
-        agent_id,
-        Some(&created.record.id),
-        Some(&runtime_cwd),
-        runtime_state.current_queue_entry_id.as_deref(),
-        &runtime_state.status,
-        runtime_state.last_error.as_deref(),
-    )
+    agent_runtime::get_agent_runtime_state_for_project(&connection, effective_project_id, agent_id)?
+        .ok_or_else(|| format!("Agent runtime state for {agent_id} was not found after create"))
 }
 
 fn agent_for_session(

@@ -633,11 +633,12 @@ pub fn get_session_header_cwd(
     session_file_header_cwd(&path)
 }
 
-pub fn create_session_file(
+fn create_session_file_internal(
     project_root: &Path,
     session_dir: &Path,
     title: Option<&str>,
     subscribed: bool,
+    update_catalog: bool,
 ) -> Result<StoredSession, String> {
     fs::create_dir_all(session_dir).map_err(|error| {
         format!(
@@ -704,12 +705,40 @@ pub fn create_session_file(
     })?;
 
     let stored = parse_session_file(&session_path, subscribed)?;
-    if let Some(context) = session_context_for_session_dir(session_dir) {
-        if let Ok(connection) = database::open_connection() {
-            let _ = upsert_session_catalog_entry(&connection, &context.project_slug, &stored);
+    if update_catalog {
+        if let Some(context) = session_context_for_session_dir(session_dir) {
+            if let Ok(connection) = database::open_connection() {
+                let _ = upsert_session_catalog_entry(&connection, &context.project_slug, &stored);
+            }
         }
     }
     Ok(stored)
+}
+
+pub(crate) fn create_session_file_unindexed(
+    project_root: &Path,
+    session_dir: &Path,
+    title: Option<&str>,
+    subscribed: bool,
+) -> Result<StoredSession, String> {
+    create_session_file_internal(project_root, session_dir, title, subscribed, false)
+}
+
+pub(crate) fn index_stored_session(
+    connection: &rusqlite::Connection,
+    project_slug: &str,
+    stored: &StoredSession,
+) -> Result<(), String> {
+    upsert_session_catalog_entry(connection, project_slug, stored)
+}
+
+pub fn create_session_file(
+    project_root: &Path,
+    session_dir: &Path,
+    title: Option<&str>,
+    subscribed: bool,
+) -> Result<StoredSession, String> {
+    create_session_file_internal(project_root, session_dir, title, subscribed, true)
 }
 
 pub fn list_sessions(

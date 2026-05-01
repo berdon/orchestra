@@ -159,6 +159,7 @@ pub fn build_interactive_launch_spec(
 
 pub fn spawn_interactive_pi(spec: &InteractivePiLaunchSpec) -> Result<Child, String> {
     let mut command = Command::new(&spec.executable);
+    command.env_remove("PI_PACKAGE_DIR");
     pi_sessions::apply_user_shell_environment(&mut command);
     let child = command
         .args(&spec.args)

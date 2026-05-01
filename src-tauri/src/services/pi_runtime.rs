@@ -169,6 +169,7 @@ pub fn apply_runtime_environment(
     runtime: &ResolvedPiRuntime,
     agent_dir_override: Option<&Path>,
 ) {
+    command.env_remove("PI_PACKAGE_DIR");
     for (key, value) in runtime_environment_variables(runtime, agent_dir_override) {
         command.env(key, value);
     }
@@ -756,6 +757,32 @@ fn validate_bundled_runtime_root(
         ));
     }
 
+    for (relative_path, description) in [
+        ("dist/main.js", "runtime entrypoint"),
+        (
+            "dist/modes/interactive/theme/dark.json",
+            "interactive dark theme asset",
+        ),
+    ] {
+        let required_path = package_dir.join(relative_path);
+        if !required_path.exists() {
+            return Err(runtime_error(
+                mode,
+                "bundled",
+                "bundled_runtime_file_missing",
+                format!(
+                    "Bundled Pi runtime package directory is missing the required {description}: {}",
+                    required_path.display()
+                ),
+                Some(&required_path),
+                Some(&manifest_path),
+                Some(agent_dir),
+                Some(mode.as_str().to_string()),
+                Some(manifest.package_version.clone()),
+            ));
+        }
+    }
+
     let bundled_bun_path = manifest
         .bundled_bun_relative_path
         .as_ref()
@@ -1327,6 +1354,17 @@ mod tests {
         );
     }
 
+    fn write_minimal_runtime_package(root: &Path) {
+        write_file(
+            &root.join("runtime/dist/main.js"),
+            "console.log('pi runtime');\n",
+        );
+        write_file(
+            &root.join("runtime/dist/modes/interactive/theme/dark.json"),
+            "{}\n",
+        );
+    }
+
     fn write_manifest(
         root: &Path,
         platform: &str,
@@ -1335,6 +1373,7 @@ mod tests {
         bundled_bun_relative_path: Option<&str>,
     ) {
         write_notice_and_sbom(root);
+        write_minimal_runtime_package(root);
         let manifest = json!({
             "schemaVersion": 1,
             "source": "test",
@@ -1417,6 +1456,35 @@ mod tests {
         assert_eq!(
             error.error_kind.as_deref(),
             Some("bundled_runtime_manifest_invalid")
+        );
+    }
+
+    #[test]
+    fn rejects_missing_required_runtime_asset_with_specific_error() {
+        let root = make_temp_dir("bundled-missing-runtime-asset");
+        let executable_path = root.join(executable_relative_path());
+        write_fake_executable(&executable_path);
+        write_notice_and_sbom(&root);
+        write_manifest(
+            &root,
+            expected_manifest_platform(),
+            expected_manifest_arch(),
+            vec![
+                manifest_file_entry(&root, executable_relative_path(), true),
+                manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+            ],
+            None,
+        );
+        std::fs::remove_file(root.join("runtime/dist/modes/interactive/theme/dark.json"))
+            .expect("dark theme should remove");
+        let agent_dir = make_temp_dir("agent-dir-missing-runtime-asset");
+
+        let error = validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect_err("bundled runtime should fail without required assets");
+
+        assert_eq!(
+            error.error_kind.as_deref(),
+            Some("bundled_runtime_file_missing")
         );
     }
 
@@ -1532,6 +1600,36 @@ mod tests {
             path_entries.first().map(String::as_str),
             Some("/tmp/pi-runtime/bun/bin")
         );
+    }
+
+    #[test]
+    fn apply_runtime_environment_clears_inherited_package_dir_for_system_runtime() {
+        let runtime = ResolvedPiRuntime {
+            source: "system".into(),
+            mode: "development".into(),
+            executable_path: PathBuf::from("/opt/homebrew/bin/pi"),
+            package_dir: None,
+            bundled_bun_path: None,
+            agent_dir: PathBuf::from("/tmp/orchestra/runtime/pi/agent"),
+            version: None,
+            built_at: None,
+            manifest_path: None,
+        };
+        let mut command = Command::new("env");
+        command.env("PI_PACKAGE_DIR", "/tmp/broken-runtime");
+
+        apply_runtime_environment(&mut command, &runtime, None);
+
+        let envs = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(envs.get("PI_PACKAGE_DIR"), Some(&None));
     }
 
     #[test]
