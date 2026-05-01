@@ -722,6 +722,39 @@ export interface ProjectSourceControlSettings {
   updatedAt?: string | null;
 }
 
+export type ProjectSecretAvailabilityStatus = "available" | "unsupported" | "locked" | "error";
+export type ProjectSecretValueState = "ready" | "missing_value" | "store_locked" | "store_error";
+
+export interface ProjectSecretsAvailability {
+  status: ProjectSecretAvailabilityStatus;
+  message?: string | null;
+}
+
+export interface ProjectSecretMetadata {
+  id: string;
+  projectId: string;
+  projectSlug: string;
+  secretKey: string;
+  description?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastRotatedAt: string;
+  valueState: ProjectSecretValueState;
+  valueStateMessage?: string | null;
+}
+
+export interface ProjectSecretsState {
+  projectSlug: string;
+  availability: ProjectSecretsAvailability;
+  secrets: ProjectSecretMetadata[];
+}
+
+export interface ProjectSecretUpsertInput {
+  secretKey: string;
+  description?: string | null;
+  value?: string | null;
+}
+
 export interface PiRuntimeSettings {
   extraExtensions: string[];
   defaultCompactionWindow: string;

@@ -284,6 +284,31 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Set the default repository for a project",
         "projects.update",
     ),
+    (
+        "list_project_secrets",
+        "List project secret metadata",
+        "projects.secrets.read",
+    ),
+    (
+        "get_project_secret",
+        "Load a project secret value",
+        "projects.secrets.use",
+    ),
+    (
+        "add_project_secret",
+        "Create a project secret",
+        "projects.secrets.write",
+    ),
+    (
+        "update_project_secret",
+        "Update a project secret",
+        "projects.secrets.write",
+    ),
+    (
+        "delete_project_secret",
+        "Delete a project secret",
+        "projects.secrets.write",
+    ),
     ("list_tasks", "List tasks", "tasks.read"),
     ("get_task", "Get a task", "tasks.read"),
     (
@@ -762,5 +787,95 @@ mod tests {
         )
         .expect_err("roles.update should be denied");
         assert!(error.contains("roles.update"));
+    }
+
+    #[test]
+    fn filters_project_secret_tools_by_read_use_and_write_permissions() {
+        let mut connection = open_test_connection("command-auth-project-secrets");
+        let read_role = roles::create_role(
+            &mut connection,
+            crate::models::RoleUpsertInput {
+                name: "Secret Reader".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["projects.secrets.read".into()],
+            },
+        )
+        .expect("read role should create");
+        let use_role = roles::create_role(
+            &mut connection,
+            crate::models::RoleUpsertInput {
+                name: "Secret User".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["projects.secrets.use".into()],
+            },
+        )
+        .expect("use role should create");
+        let write_role = roles::create_role(
+            &mut connection,
+            crate::models::RoleUpsertInput {
+                name: "Secret Writer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("off".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["projects.secrets.write".into()],
+            },
+        )
+        .expect("write role should create");
+
+        let read_tools = list_allowed_tools(
+            &connection,
+            Some(&AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: read_role.id,
+            }),
+        )
+        .expect("read tools should list");
+        assert!(read_tools.iter().any(|tool| tool.name == "list_project_secrets"));
+        assert!(!read_tools.iter().any(|tool| tool.name == "get_project_secret"));
+        assert!(!read_tools.iter().any(|tool| tool.name == "add_project_secret"));
+
+        let use_tools = list_allowed_tools(
+            &connection,
+            Some(&AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: use_role.id,
+            }),
+        )
+        .expect("use tools should list");
+        assert!(use_tools.iter().any(|tool| tool.name == "get_project_secret"));
+        assert!(!use_tools.iter().any(|tool| tool.name == "list_project_secrets"));
+        assert!(!use_tools.iter().any(|tool| tool.name == "update_project_secret"));
+
+        let write_tools = list_allowed_tools(
+            &connection,
+            Some(&AuthorizationContext {
+                actor_type: "role".into(),
+                actor_id: write_role.id,
+            }),
+        )
+        .expect("write tools should list");
+        assert!(write_tools.iter().any(|tool| tool.name == "add_project_secret"));
+        assert!(write_tools.iter().any(|tool| tool.name == "update_project_secret"));
+        assert!(write_tools.iter().any(|tool| tool.name == "delete_project_secret"));
+        assert!(!write_tools.iter().any(|tool| tool.name == "get_project_secret"));
     }
 }

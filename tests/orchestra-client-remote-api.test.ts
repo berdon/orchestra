@@ -285,6 +285,48 @@ describe("remote api orchestra client", () => {
     await expect(binding.client.skills.updateLocalSkill("skill-1", { name: "Skill", slug: "skill", markdownBody: "# Skill" })).resolves.toMatchObject({ id: "skill-1" });
   });
 
+  test("routes project secret settings CRUD through the remote API surface", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : undefined;
+      if (url === "https://orchestra.example.test/api/v1/project-settings/secrets?projectSlug=test-project") {
+        expect(init?.method ?? "GET").toBe("GET");
+        return jsonResponse({ projectSlug: "test-project", availability: { status: "available", message: null }, secrets: [] });
+      }
+      if (url === "https://orchestra.example.test/api/v1/project-settings/secrets" && (init?.method ?? "GET") === "POST") {
+        expect(body).toEqual({ projectSlug: "test-project", secretKey: "OPENAI_API_KEY", description: "Primary", value: "sk-create" });
+        return jsonResponse({ projectSlug: "test-project", availability: { status: "available", message: null }, secrets: [{ secretKey: "OPENAI_API_KEY", description: "Primary", valueState: "ready" }] });
+      }
+      if (url === "https://orchestra.example.test/api/v1/project-settings/secrets/OPENAI_API_KEY" && init?.method === "PATCH") {
+        expect(body).toEqual({ projectSlug: "test-project", description: "Rotated", value: "sk-update" });
+        return jsonResponse({ projectSlug: "test-project", availability: { status: "available", message: null }, secrets: [{ secretKey: "OPENAI_API_KEY", description: "Rotated", valueState: "ready" }] });
+      }
+      if (url === "https://orchestra.example.test/api/v1/project-settings/secrets/OPENAI_API_KEY?projectSlug=test-project") {
+        expect(init?.method).toBe("DELETE");
+        return jsonResponse({ projectSlug: "test-project", availability: { status: "available", message: null }, secrets: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl,
+    });
+
+    await expect(binding.client.settings.getProjectSecrets("test-project")).resolves.toMatchObject({ projectSlug: "test-project" });
+    await expect(binding.client.settings.createProjectSecret({ secretKey: "OPENAI_API_KEY", description: "Primary", value: "sk-create" }, "test-project")).resolves.toMatchObject({
+      projectSlug: "test-project",
+      secrets: [expect.objectContaining({ secretKey: "OPENAI_API_KEY", description: "Primary" })],
+    });
+    await expect(binding.client.settings.updateProjectSecret({ secretKey: "OPENAI_API_KEY", description: "Rotated", value: "sk-update" }, "test-project")).resolves.toMatchObject({
+      projectSlug: "test-project",
+      secrets: [expect.objectContaining({ secretKey: "OPENAI_API_KEY", description: "Rotated" })],
+    });
+    await expect(binding.client.settings.deleteProjectSecret("OPENAI_API_KEY", "test-project")).resolves.toMatchObject({
+      projectSlug: "test-project",
+      secrets: [],
+    });
+  });
+
   test("routes hosted-web Harness host-admin methods through the remote API surface", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

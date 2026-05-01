@@ -1151,6 +1151,52 @@ pub struct ProjectSourceControlSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectSecretsAvailability {
+    pub status: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSecretMetadata {
+    pub id: String,
+    pub project_id: String,
+    pub project_slug: String,
+    pub secret_key: String,
+    pub description: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_rotated_at: String,
+    pub value_state: String,
+    pub value_state_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSecretsState {
+    pub project_slug: String,
+    pub availability: ProjectSecretsAvailability,
+    pub secrets: Vec<ProjectSecretMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSecretUpsertInput {
+    pub secret_key: String,
+    pub description: Option<String>,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSecretValueResult {
+    pub project_slug: String,
+    pub secret_key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PiRuntimeSettings {
     pub extra_extensions: Vec<String>,
     pub default_compaction_window: String,

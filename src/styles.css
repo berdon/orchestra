@@ -3916,6 +3916,14 @@ strong {
   scroll-margin-top: 128px;
 }
 
+.project-detail-tabs-panel {
+  padding: 0;
+}
+
+.project-detail-tabs {
+  margin-bottom: 4px;
+}
+
 .task-detail-floating-header,
 .task-detail-tab-dock {
   position: fixed;
@@ -6259,7 +6267,8 @@ strong {
     padding-inline: 14px;
   }
 
-  .task-detail-tab-dock .task-detail-tabs--dock {
+  .task-detail-tab-dock .task-detail-tabs--dock,
+  .project-detail-tabs-panel .task-detail-tabs--dock {
     display: none;
   }
 

@@ -308,6 +308,22 @@ struct ProjectSourceControlSettingsPatchInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectSecretQuery {
+    project_slug: Option<String>,
+    secret_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectSecretUpsertApiInput {
+    project_slug: Option<String>,
+    secret_key: String,
+    description: Option<String>,
+    value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DefaultRepositoryInput {
     repository_id: Option<String>,
 }
@@ -1564,6 +1580,14 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route(
             "/api/v1/project-settings/source-control",
             get(get_project_source_control_settings).patch(patch_project_source_control_settings),
+        )
+        .route(
+            "/api/v1/project-settings/secrets",
+            get(get_project_secrets_settings).post(post_project_secret_settings),
+        )
+        .route(
+            "/api/v1/project-settings/secrets/:secret_key",
+            patch(patch_project_secret_settings).delete(delete_project_secret_settings),
         )
         .route(
             "/api/v1/project-settings/worker-overlay",
@@ -4142,6 +4166,66 @@ async fn patch_project_source_control_settings(
     )
     .map(Json)
     .map_err(command_api_error)
+}
+
+async fn get_project_secrets_settings(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Query(query): Query<ProjectSecretQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    project_setting_commands::get_project_secrets(query.project_slug)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_project_secret_settings(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Json(input): Json<ProjectSecretUpsertApiInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    project_setting_commands::create_project_secret(
+        input.project_slug,
+        crate::models::ProjectSecretUpsertInput {
+            secret_key: input.secret_key,
+            description: input.description,
+            value: input.value,
+        },
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn patch_project_secret_settings(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(secret_key): Path<String>,
+    Json(input): Json<ProjectSecretUpsertApiInput>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    project_setting_commands::update_project_secret(
+        input.project_slug,
+        crate::models::ProjectSecretUpsertInput {
+            secret_key,
+            description: input.description,
+            value: input.value,
+        },
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn delete_project_secret_settings(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(secret_key): Path<String>,
+    Query(query): Query<ProjectSecretQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    project_setting_commands::delete_project_secret(query.project_slug, secret_key)
+        .map(Json)
+        .map_err(command_api_error)
 }
 
 async fn get_worker_overlay_settings(

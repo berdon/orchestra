@@ -27,6 +27,8 @@ import type {
   PolicyDefinition,
   PolicySummary,
   ProjectDetail,
+  ProjectSecretUpsertInput,
+  ProjectSecretsState,
   ProjectSessionPromptSettings,
   ProjectSourceControlSettings,
   ProjectSummary,
@@ -544,6 +546,48 @@ export function createRemoteApiOrchestraClientBinding(
             workerType,
             workerSlug,
             prompt,
+          },
+        });
+      },
+      getProjectSecrets: (projectSlug) => {
+        transport.assertCapability("settings.getProjectSecrets", bootstrap.capabilities.admin.settings);
+        return transport.requestJson<ProjectSecretsState>("settings.getProjectSecrets", {
+          path: "/api/v1/project-settings/secrets",
+          query: {
+            projectSlug: projectSlug ?? undefined,
+          },
+        });
+      },
+      createProjectSecret: (input: ProjectSecretUpsertInput, projectSlug) => {
+        transport.assertCapability("settings.createProjectSecret", bootstrap.capabilities.admin.settings);
+        return transport.requestJson<ProjectSecretsState>("settings.createProjectSecret", {
+          method: "POST",
+          path: "/api/v1/project-settings/secrets",
+          body: {
+            projectSlug: projectSlug ?? null,
+            ...input,
+          },
+        });
+      },
+      updateProjectSecret: (input: ProjectSecretUpsertInput, projectSlug) => {
+        transport.assertCapability("settings.updateProjectSecret", bootstrap.capabilities.admin.settings);
+        return transport.requestJson<ProjectSecretsState>("settings.updateProjectSecret", {
+          method: "PATCH",
+          path: `/api/v1/project-settings/secrets/${encodeURIComponent(input.secretKey)}`,
+          body: {
+            projectSlug: projectSlug ?? null,
+            description: input.description ?? null,
+            value: input.value ?? null,
+          },
+        });
+      },
+      deleteProjectSecret: (secretKey, projectSlug) => {
+        transport.assertCapability("settings.deleteProjectSecret", bootstrap.capabilities.admin.settings);
+        return transport.requestJson<ProjectSecretsState>("settings.deleteProjectSecret", {
+          method: "DELETE",
+          path: `/api/v1/project-settings/secrets/${encodeURIComponent(secretKey)}`,
+          query: {
+            projectSlug: projectSlug ?? undefined,
           },
         });
       },

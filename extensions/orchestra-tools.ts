@@ -522,6 +522,136 @@ function workflowSchemaDescription(tool: OrchestraToolDefinition) {
   return `${tool.description} Requires permission: ${tool.requiredPermission}.`;
 }
 
+const SAFE_PROJECT_SECRET_COMMANDS = new Set([
+  "list_project_secrets",
+  "get_project_secret",
+  "add_project_secret",
+  "update_project_secret",
+  "delete_project_secret",
+]);
+
+function projectSecretScopeSchema() {
+  return {
+    projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id. Defaults to the active task project when available." })),
+    projectSlug: Type.Optional(Type.String({ description: "Optional Orchestra project slug. Defaults to the active task project when available." })),
+    taskId: Type.Optional(Type.String({ description: "Optional task id to resolve the owning project explicitly." })),
+  };
+}
+
+function requireSourceEnvVar(sourceEnvVar: string) {
+  const normalized = sourceEnvVar.trim();
+  if (!normalized) {
+    throw new Error("sourceEnvVar is required.");
+  }
+  const value = process.env[normalized];
+  if (!value) {
+    throw new Error(`Environment variable ${normalized} is not set in this session.`);
+  }
+  return { normalized, value };
+}
+
+async function executeProjectSecretList(params: { projectId?: string; projectSlug?: string; taskId?: string }) {
+  const payload = {
+    projectId: params.projectId,
+    projectSlug: params.projectSlug,
+    taskId: params.taskId,
+  };
+  const result = await invokeBridge("list_project_secrets", payload);
+  return { payload, result };
+}
+
+async function executeProjectSecretLoad(params: { secretKey: string; targetEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+  const payload = {
+    projectId: params.projectId,
+    projectSlug: params.projectSlug,
+    taskId: params.taskId,
+    secretKey: params.secretKey,
+  };
+  const result = await invokeBridge("get_project_secret", payload) as { projectSlug?: string | null; secretKey?: string | null; value?: string | null };
+  const targetEnvVar = (params.targetEnvVar?.trim() || params.secretKey.trim()).toUpperCase();
+  if (!result?.value) {
+    throw new Error(`Project secret ${params.secretKey} did not return a value.`);
+  }
+  process.env[targetEnvVar] = result.value;
+  return {
+    payload: { ...payload, targetEnvVar },
+    response: {
+      projectSlug: result.projectSlug ?? params.projectSlug ?? null,
+      secretKey: result.secretKey ?? params.secretKey,
+      targetEnvVar,
+      loaded: true,
+    },
+  };
+}
+
+async function executeProjectSecretWrite(
+  command: "add_project_secret" | "update_project_secret",
+  params: {
+    secretKey: string;
+    sourceEnvVar: string;
+    description?: string;
+    projectId?: string;
+    projectSlug?: string;
+    taskId?: string;
+  },
+) {
+  const { normalized, value } = requireSourceEnvVar(params.sourceEnvVar);
+  const payload = {
+    projectId: params.projectId,
+    projectSlug: params.projectSlug,
+    taskId: params.taskId,
+    secretKey: params.secretKey,
+    description: params.description,
+    value,
+  };
+  const result = await invokeBridge(command, payload);
+  return {
+    payload: {
+      projectId: params.projectId,
+      projectSlug: params.projectSlug,
+      taskId: params.taskId,
+      secretKey: params.secretKey,
+      description: params.description,
+      sourceEnvVar: normalized,
+    },
+    result,
+  };
+}
+
+async function executeProjectSecretDelete(params: { secretKey: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+  const payload = {
+    projectId: params.projectId,
+    projectSlug: params.projectSlug,
+    taskId: params.taskId,
+    secretKey: params.secretKey,
+  };
+  const result = await invokeBridge("delete_project_secret", payload);
+  return { payload, result };
+}
+
+async function runSafeProjectSecretCommandForUi(command: string, payload: Record<string, unknown>) {
+  if (command === "list_project_secrets") {
+    const { result } = await executeProjectSecretList(payload as { projectId?: string; projectSlug?: string; taskId?: string });
+    return JSON.stringify(result, null, 2);
+  }
+  if (command === "get_project_secret") {
+    const { response } = await executeProjectSecretLoad(payload as { secretKey: string; targetEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string });
+    return `Loaded ${response.secretKey} into env var ${response.targetEnvVar} for this session.`;
+  }
+  if (command === "add_project_secret" || command === "update_project_secret") {
+    const { payload: safePayload, result } = await executeProjectSecretWrite(
+      command,
+      payload as { secretKey: string; sourceEnvVar: string; description?: string; projectId?: string; projectSlug?: string; taskId?: string },
+    );
+    return JSON.stringify({ ok: true, command, payload: safePayload, result }, null, 2);
+  }
+  if (command === "delete_project_secret") {
+    const { result } = await executeProjectSecretDelete(payload as { secretKey: string; projectId?: string; projectSlug?: string; taskId?: string });
+    return JSON.stringify(result, null, 2);
+  }
+  throw new Error(`Unsupported safe project secret command: ${command}`);
+}
+
 export function createBridgeTool(tool: OrchestraToolDefinition) {
   if (tool.name === "list_projects") {
     return {
@@ -773,6 +903,82 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
           ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
         };
         const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "list_project_secrets") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Returns metadata only; secret values are never included.`,
+      parameters: Type.Object(projectSecretScopeSchema()),
+      async execute(_toolCallId: string, params: { projectId?: string; projectSlug?: string; taskId?: string }) {
+        const { payload, result } = await executeProjectSecretList(params);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_project_secret") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Loads the secret into this session's environment instead of returning the raw value.`,
+      parameters: Type.Object({
+        ...projectSecretScopeSchema(),
+        secretKey: Type.String({ description: "Project secret key to load." }),
+        targetEnvVar: Type.Optional(Type.String({ description: "Optional env var name to populate for this session. Defaults to secretKey." })),
+      }),
+      async execute(_toolCallId: string, params: { secretKey: string; targetEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+        const { payload, response } = await executeProjectSecretLoad(params);
+        return {
+          content: [{ type: "text" as const, text: `Loaded ${response.secretKey} into env var ${response.targetEnvVar} for this session.` }],
+          details: { command: tool.name, payload, result: response },
+        };
+      },
+    };
+  }
+
+  if (["add_project_secret", "update_project_secret"].includes(tool.name)) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Reads the secret value from an existing session env var so the raw value is not passed in tool arguments or output.`,
+      parameters: Type.Object({
+        ...projectSecretScopeSchema(),
+        secretKey: Type.String({ description: "Project secret key to create or update." }),
+        description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
+        sourceEnvVar: Type.String({ description: "Existing env var name whose current value should be stored." }),
+      }),
+      async execute(_toolCallId: string, params: { secretKey: string; description?: string; sourceEnvVar: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+        const { payload, result } = await executeProjectSecretWrite(tool.name as "add_project_secret" | "update_project_secret", params);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "delete_project_secret") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Deletes the stored secret value and metadata for the target project secret.`,
+      parameters: Type.Object({
+        ...projectSecretScopeSchema(),
+        secretKey: Type.String({ description: "Project secret key to delete." }),
+      }),
+      async execute(_toolCallId: string, params: { secretKey: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+        const { payload, result } = await executeProjectSecretDelete(params);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
           details: { command: tool.name, payload, result },
@@ -2350,6 +2556,11 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
       }
       const payloadText = jsonParts.join(" ").trim();
       const payload = payloadText ? JSON.parse(payloadText) : {};
+      if (SAFE_PROJECT_SECRET_COMMANDS.has(command)) {
+        const message = await runSafeProjectSecretCommandForUi(command, payload as Record<string, unknown>);
+        ctx.ui.notify(message, "info");
+        return;
+      }
       const result = await invokeBridge(command, payload as Record<string, unknown>);
       ctx.ui.notify(JSON.stringify(result, null, 2), "info");
     },

@@ -23,6 +23,8 @@ import type {
   PolicyDefinition,
   PolicySummary,
   ProjectDetail,
+  ProjectSecretUpsertInput,
+  ProjectSecretsState,
   ProjectSessionPromptSettings,
   ProjectSourceControlSettings,
   ProjectSummary,
@@ -115,6 +117,8 @@ export type {
   PolicyDefinition,
   PolicySummary,
   ProjectDetail,
+  ProjectSecretUpsertInput,
+  ProjectSecretsState,
   ProjectSessionPromptSettings,
   ProjectSourceControlSettings,
   ProjectSummary,
@@ -225,6 +229,10 @@ export interface OrchestraSettingsService {
   ): Promise<ProjectTaskAutomationSettings>;
   getWorkerOverlay(workerType: string, workerSlug: string, projectSlug?: string | null): Promise<ProjectWorkerOverlay>;
   updateWorkerOverlay(workerType: string, workerSlug: string, prompt: string, projectSlug?: string | null): Promise<ProjectWorkerOverlay>;
+  getProjectSecrets(projectSlug?: string | null): Promise<ProjectSecretsState>;
+  createProjectSecret(input: ProjectSecretUpsertInput, projectSlug?: string | null): Promise<ProjectSecretsState>;
+  updateProjectSecret(input: ProjectSecretUpsertInput, projectSlug?: string | null): Promise<ProjectSecretsState>;
+  deleteProjectSecret(secretKey: string, projectSlug?: string | null): Promise<ProjectSecretsState>;
 }
 
 export interface OrchestraWorkerService {

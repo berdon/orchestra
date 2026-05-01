@@ -30,9 +30,13 @@ import {
   listPolicies,
 } from "../policies";
 import {
+  createProjectSecret,
+  deleteProjectSecret,
+  getProjectSecrets,
   getSessionPromptSettings,
   getTaskAutomationSettings,
   getWorkerOverlay,
+  updateProjectSecret,
   updateSessionPromptSettings,
   updateTaskAutomationSettings,
   updateWorkerOverlay,
@@ -221,6 +225,10 @@ export const mockOrchestraClientServiceBindings: OrchestraClientServiceBindings 
     updateTaskAutomationSettings,
     getWorkerOverlay,
     updateWorkerOverlay,
+    getProjectSecrets,
+    createProjectSecret,
+    updateProjectSecret,
+    deleteProjectSecret,
   },
   workers: {
     validateAgent,

@@ -22,9 +22,13 @@ import {
   updateSourceControlSettings,
 } from "../sourceControlSettings";
 import {
+  createProjectSecret,
+  deleteProjectSecret,
+  getProjectSecrets,
   getSessionPromptSettings,
   getTaskAutomationSettings,
   getWorkerOverlay,
+  updateProjectSecret,
   updateSessionPromptSettings,
   updateTaskAutomationSettings,
   updateWorkerOverlay,
@@ -232,6 +236,10 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     updateTaskAutomationSettings,
     getWorkerOverlay,
     updateWorkerOverlay,
+    getProjectSecrets,
+    createProjectSecret,
+    updateProjectSecret,
+    deleteProjectSecret,
   },
   workers: {
     validateAgent,

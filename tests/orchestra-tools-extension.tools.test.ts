@@ -1124,4 +1124,127 @@ describe("orchestra tools extension bridge tool setup", () => {
       ]),
     );
   });
+
+  test("writes project secrets from existing session env vars", async () => {
+    process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON = JSON.stringify([
+      {
+        name: "update_project_secret",
+        description: "Update a project secret",
+        requiredPermission: "projects.secrets.write",
+      },
+    ]);
+    process.env.SOURCE_SECRET = "sk-env-source";
+
+    const registeredTools: Array<any> = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            projectSlug: "test-project",
+            availability: { status: "available", message: null },
+            secrets: [{ secretKey: "OPENAI_API_KEY", valueState: "ready" }],
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand() {},
+    } as any);
+
+    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
+    const result = await updateProjectSecretTool.execute("tool-call-update-secret", {
+      secretKey: "OPENAI_API_KEY",
+      description: "Rotated key",
+      sourceEnvVar: "SOURCE_SECRET",
+    });
+
+    expect(result.content[0]?.text).not.toContain("sk-env-source");
+    expect(JSON.stringify(result.details)).not.toContain("sk-env-source");
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.command).toBe("update_project_secret");
+    expect(requestBody.payload).toEqual({
+      secretKey: "OPENAI_API_KEY",
+      description: "Rotated key",
+      value: "sk-env-source",
+    });
+    expect(result.details.payload).toEqual({
+      secretKey: "OPENAI_API_KEY",
+      description: "Rotated key",
+      sourceEnvVar: "SOURCE_SECRET",
+      projectId: undefined,
+      projectSlug: undefined,
+      taskId: undefined,
+    });
+  });
+
+  test("loads project secrets into session env and routes orchestra-run through the same safe wrapper", async () => {
+    process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON = JSON.stringify([
+      {
+        name: "get_project_secret",
+        description: "Load a project secret value",
+        requiredPermission: "projects.secrets.use",
+      },
+    ]);
+
+    const registeredTools: Array<any> = [];
+    const registeredCommands = new Map<string, any>();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            projectSlug: "test-project",
+            secretKey: "OPENAI_API_KEY",
+            value: "sk-super-secret",
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand(name: string, definition: any) {
+        registeredCommands.set(name, definition);
+      },
+    } as any);
+
+    const getProjectSecretTool = registeredTools.find((tool) => tool.name === "get_project_secret");
+    expect(getProjectSecretTool.parameters.properties.secretKey).toBeTruthy();
+    expect(getProjectSecretTool.parameters.properties.sourceEnvVar).toBeUndefined();
+
+    const toolResult = await getProjectSecretTool.execute("tool-call-secret", {
+      secretKey: "OPENAI_API_KEY",
+    });
+    expect(toolResult.content[0]?.text).toContain("Loaded OPENAI_API_KEY into env var OPENAI_API_KEY");
+    expect(toolResult.content[0]?.text).not.toContain("sk-super-secret");
+    expect(JSON.stringify(toolResult.details)).not.toContain("sk-super-secret");
+    expect(process.env.OPENAI_API_KEY).toBe("sk-super-secret");
+
+    const orchestraRun = registeredCommands.get("orchestra-run");
+    const notify = vi.fn();
+    await orchestraRun.handler("get_project_secret {\"secretKey\":\"OPENAI_API_KEY\",\"targetEnvVar\":\"OPENAI_TOKEN\"}", {
+      ui: { notify },
+    });
+    expect(notify).toHaveBeenCalledWith("Loaded OPENAI_API_KEY into env var OPENAI_TOKEN for this session.", "info");
+    expect(process.env.OPENAI_TOKEN).toBe("sk-super-secret");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(firstRequest.command).toBe("get_project_secret");
+    expect(firstRequest.payload).toEqual({ secretKey: "OPENAI_API_KEY" });
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.command).toBe("get_project_secret");
+    expect(secondRequest.payload).toEqual({ secretKey: "OPENAI_API_KEY" });
+  });
 });

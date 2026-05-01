@@ -1,9 +1,9 @@
 use crate::{
     models::{
-        ProjectSessionPromptSettings, ProjectSourceControlSettings, ProjectTaskAutomationSettings,
-        ProjectWorkerOverlay,
+        ProjectSecretUpsertInput, ProjectSecretsState, ProjectSessionPromptSettings,
+        ProjectSourceControlSettings, ProjectTaskAutomationSettings, ProjectWorkerOverlay,
     },
-    services::{database, project_settings, projects},
+    services::{database, project_secrets, project_settings, projects},
 };
 
 fn resolve_project_slug(project_slug: Option<String>) -> Result<String, String> {
@@ -94,4 +94,33 @@ pub fn update_worker_overlay(
         &worker_slug,
         prompt,
     )
+}
+
+#[tauri::command]
+pub fn get_project_secrets(project_slug: Option<String>) -> Result<ProjectSecretsState, String> {
+    project_secrets::get_project_secrets(&resolve_project_slug(project_slug)?)
+}
+
+#[tauri::command]
+pub fn create_project_secret(
+    project_slug: Option<String>,
+    input: ProjectSecretUpsertInput,
+) -> Result<ProjectSecretsState, String> {
+    project_secrets::create_project_secret(&resolve_project_slug(project_slug)?, input)
+}
+
+#[tauri::command]
+pub fn update_project_secret(
+    project_slug: Option<String>,
+    input: ProjectSecretUpsertInput,
+) -> Result<ProjectSecretsState, String> {
+    project_secrets::update_project_secret(&resolve_project_slug(project_slug)?, input)
+}
+
+#[tauri::command]
+pub fn delete_project_secret(
+    project_slug: Option<String>,
+    secret_key: String,
+) -> Result<ProjectSecretsState, String> {
+    project_secrets::delete_project_secret(&resolve_project_slug(project_slug)?, &secret_key)
 }

@@ -1,5 +1,256 @@
 import { expect, test } from "@playwright/test";
 
+function fulfillJson(route: any, body: unknown, status = 200) {
+  return route.fulfill({
+    status,
+    contentType: "application/json",
+    body: JSON.stringify(body),
+  });
+}
+
+function createHostedWebSecretsApiMock() {
+  const now = () => new Date().toISOString();
+  const project = {
+    id: "project-secret-1",
+    slug: "secret-project",
+    name: "Secret Project",
+    description: "Hosted-web project secret CRUD coverage.",
+    taskPrefix: "SEC",
+    defaultRepositoryId: null,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    updatedAt: "2026-05-01T00:00:00.000Z",
+  };
+  const repositories: Array<Record<string, unknown>> = [];
+  let secretCounter = 1;
+  const secrets: Array<Record<string, string | null>> = [];
+
+  const bootstrap = {
+    contractVersion: "2026-04-23",
+    bootstrappedAt: "2026-04-23T00:00:00.000Z",
+    hostKind: "remote_api",
+    authMode: "same_origin_cookie",
+    urls: {
+      apiBaseUrl: "http://127.0.0.1:4173",
+      websocketUrl: null,
+    },
+    featureFlags: {
+      sharedCatalog: true,
+      sharedTasks: true,
+      sharedInbox: true,
+      sharedSessions: true,
+      sharedSkills: true,
+      taskSchedules: true,
+      sessionStreaming: true,
+      sessionControls: true,
+      taskComments: true,
+      taskFiles: true,
+      desktopWindows: false,
+      agentTerminal: false,
+    },
+    capabilities: {
+      app: {
+        bootstrap: { availability: "available" },
+        errorReporting: { availability: "available" },
+      },
+      catalog: {
+        projects: { availability: "available" },
+        agents: { availability: "available" },
+        roles: { availability: "available" },
+        workflows: { availability: "available" },
+      },
+      admin: {
+        projects: { availability: "available" },
+        settings: { availability: "available" },
+        workers: { availability: "available" },
+        workflows: { availability: "available" },
+        policies: { availability: "available" },
+        channels: { availability: "available" },
+        modelCatalog: { availability: "available" },
+        piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+      },
+      skills: {
+        read: { availability: "available" },
+        create: { availability: "available" },
+        update: { availability: "available" },
+        archive: { availability: "available" },
+        delete: { availability: "available" },
+        assign: { availability: "available" },
+      },
+      tasks: {
+        read: { availability: "available" },
+        write: { availability: "available" },
+        review: { availability: "available" },
+        comments: { availability: "available" },
+        todos: { availability: "available" },
+        dependencies: { availability: "available" },
+        attachments: { availability: "available" },
+        fileReferences: { availability: "available" },
+        fileContents: { availability: "available" },
+        schedules: { availability: "available" },
+      },
+      inbox: {
+        read: { availability: "available" },
+        write: { availability: "available" },
+        archive: { availability: "available" },
+      },
+      sessions: {
+        read: { availability: "available" },
+        write: { availability: "available" },
+        stream: { availability: "available" },
+        runtimeControls: { availability: "available" },
+        modelSelection: { availability: "available" },
+      },
+      host: {
+        logsWindow: { availability: "unavailable", reason: "Desktop only" },
+        agentTerminal: { availability: "unavailable", reason: "Desktop only" },
+        systemNotifications: { availability: "unavailable", reason: "Desktop only" },
+        bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
+        runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
+        harnessSettings: { availability: "available" },
+        remoteAccess: { availability: "unavailable", reason: "Desktop only" },
+      },
+    },
+    appInfo: {
+      appName: "Orchestra",
+      environment: "test",
+      backendStatus: "ready",
+      versionDisplay: "0.1.0",
+      dispatchBlocked: false,
+      dispatchBlockedReason: null,
+      piRuntimeDiagnostics: {
+        runtime: {
+          available: true,
+          source: "bundled",
+          packagedMode: false,
+          resolvedPath: null,
+          error: null,
+          message: "ready",
+        },
+        auth: {
+          configured: true,
+          agentDir: "/tmp/agent",
+          authPath: "/tmp/auth.json",
+          modelsPath: "/tmp/models.json",
+          settingsPath: "/tmp/settings.json",
+          authExists: true,
+          modelsExists: true,
+          legacyAgentDir: null,
+          legacyAuthAvailable: false,
+          legacyModelsAvailable: false,
+          authImportedAt: null,
+          modelsImportedAt: null,
+          message: "ready",
+        },
+        addOns: {
+          packagedMode: false,
+          allowed: true,
+          extraExtensions: [],
+          blockedExtensions: [],
+          message: "ready",
+        },
+      },
+    },
+  };
+
+  function currentSecretsState() {
+    return {
+      projectSlug: project.slug,
+      availability: { status: "available", message: null },
+      secrets: secrets.map(({ value, ...secret }) => secret),
+    };
+  }
+
+  return {
+    secrets,
+    async handle(route: any) {
+      const request = route.request();
+      const url = new URL(request.url());
+      const method = request.method();
+      const pathname = url.pathname;
+
+      if (pathname === "/api/v1/frontend/bootstrap") {
+        return fulfillJson(route, bootstrap);
+      }
+      if (pathname === "/api/v1/projects" && method === "GET") {
+        return fulfillJson(route, [project]);
+      }
+      if (pathname === `/api/v1/projects/${project.id}` && method === "GET") {
+        return fulfillJson(route, { ...project, repositories });
+      }
+      if (pathname === "/api/v1/project-settings/task-automation" && method === "GET") {
+        return fulfillJson(route, {
+          projectSlug: project.slug,
+          autoDispatchOnBlockerCompletion: true,
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        });
+      }
+      if (pathname === "/api/v1/project-settings/source-control" && method === "GET") {
+        return fulfillJson(route, url.searchParams.get("projectSlug")
+          ? {
+              projectSlug: project.slug,
+              gitUserNameTemplate: null,
+              gitEmailTemplate: null,
+              updatedAt: "2026-05-01T00:00:00.000Z",
+            }
+          : {
+              gitUserNameTemplate: null,
+              gitEmailTemplate: null,
+              updatedAt: "2026-05-01T00:00:00.000Z",
+            });
+      }
+      if (pathname === "/api/v1/project-settings/secrets" && method === "GET") {
+        return fulfillJson(route, currentSecretsState());
+      }
+      if (pathname === "/api/v1/project-settings/secrets" && method === "POST") {
+        const body = request.postDataJSON() as { secretKey: string; description?: string | null; value?: string | null };
+        const timestamp = now();
+        secrets.push({
+          id: `secret-${secretCounter++}`,
+          projectId: project.id,
+          projectSlug: project.slug,
+          secretKey: body.secretKey,
+          description: body.description ?? null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lastRotatedAt: timestamp,
+          valueState: "ready",
+          valueStateMessage: null,
+          value: body.value ?? null,
+        });
+        return fulfillJson(route, currentSecretsState());
+      }
+      const secretMatch = pathname.match(/^\/api\/v1\/project-settings\/secrets\/([^/]+)$/);
+      if (secretMatch && method === "PATCH") {
+        const secretKey = decodeURIComponent(secretMatch[1] ?? "");
+        const body = request.postDataJSON() as { description?: string | null; value?: string | null };
+        const secret = secrets.find((entry) => entry.secretKey === secretKey);
+        if (!secret) {
+          return fulfillJson(route, { error: "Not found" }, 404);
+        }
+        secret.description = body.description ?? null;
+        secret.updatedAt = now();
+        if (body.value) {
+          secret.value = body.value;
+          secret.lastRotatedAt = secret.updatedAt;
+        }
+        return fulfillJson(route, currentSecretsState());
+      }
+      if (secretMatch && method === "DELETE") {
+        const secretKey = decodeURIComponent(secretMatch[1] ?? "");
+        const index = secrets.findIndex((entry) => entry.secretKey === secretKey);
+        if (index >= 0) {
+          secrets.splice(index, 1);
+        }
+        return fulfillJson(route, currentSecretsState());
+      }
+      if (pathname === "/api/v1/agents" || pathname === "/api/v1/roles" || pathname === "/api/v1/workflows") {
+        return fulfillJson(route, []);
+      }
+      return fulfillJson(route, []);
+    },
+  };
+}
+
 test("settings projects panel creates a project and repository", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -30,6 +281,87 @@ test("settings projects panel creates a project and repository", async ({ page }
   expect(storedState?.taskPrefix).toBe("CLI");
   expect(storedState?.repositories?.length).toBe(1);
   expect(storedState?.repositories?.[0]?.name).toBe("Client repo");
+});
+
+test("project settings detail uses tabs and shows the browser unsupported secrets state", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+
+  await expect(page.locator('[data-role="project-detail-tab-general"][aria-selected="true"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-repositories"]')).toBeVisible();
+
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.locator('[data-role="project-name"]').fill("Secret Project");
+  await page.locator('[data-role="project-task-prefix"]').fill("SEC");
+  await page.getByRole("button", { name: /Create project/i }).click();
+
+  await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-repositories"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-automation"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-source-control"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-secrets"]')).toBeVisible();
+
+  await page.locator('[data-role="project-detail-tab-repositories"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-repositories"]')).toBeVisible();
+
+  await page.locator('[data-role="project-detail-tab-source-control"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).toBeVisible();
+
+  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("Unsupported");
+  await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("unavailable in the browser/mock host");
+  await expect(page.locator('[data-role="save-project-secret"]')).toBeDisabled();
+});
+
+test("project settings secrets tab supports hosted-web CRUD and rotation flows without revealing values", async ({ page }) => {
+  const api = createHostedWebSecretsApiMock();
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.__ORCHESTRA_HOST_MODE__ = "hosted_web";
+    window.confirm = () => true;
+  });
+  await page.route("**/api/v1/**", (route) => api.handle(route));
+
+  await page.goto("/?page=settings&settingsTab=projects");
+  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+
+  await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("Available");
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("No project secrets yet.");
+
+  await page.locator('[data-role="project-secret-key"]').fill("OPENAI_API_KEY");
+  await page.locator('[data-role="project-secret-description"]').fill("Primary provider key");
+  await page.locator('[data-role="project-secret-value"]').fill("sk-live-1");
+  await page.locator('[data-role="save-project-secret"]').click();
+
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("OPENAI_API_KEY");
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("Primary provider key");
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("Ready");
+  await expect(page.locator('[data-role="project-secret-key"]')).toHaveValue("");
+  await expect(page.locator('[data-role="project-secret-value"]')).toHaveValue("");
+  await expect(page.getByText("sk-live-1", { exact: true })).toHaveCount(0);
+  expect(api.secrets[0]?.value).toBe("sk-live-1");
+
+  await page.getByRole("button", { name: "Edit / rotate" }).click();
+  await expect(page.locator('[data-role="project-secret-key"]')).toBeDisabled();
+  await expect(page.locator('[data-role="project-secret-description"]')).toHaveValue("Primary provider key");
+  await expect(page.locator('[data-role="project-secret-value"]')).toHaveValue("");
+
+  await page.locator('[data-role="project-secret-description"]').fill("Rotated provider key");
+  await page.locator('[data-role="project-secret-value"]').fill("sk-live-2");
+  await page.locator('[data-role="save-project-secret"]').click();
+
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("Rotated provider key");
+  await expect(page.getByText("sk-live-2", { exact: true })).toHaveCount(0);
+  expect(api.secrets[0]?.value).toBe("sk-live-2");
+
+  await page.getByRole("button", { name: "Delete secret" }).click();
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("No project secrets yet.");
+  expect(api.secrets).toEqual([]);
 });
 
 test("new tasks use the configured project task prefix in browser mode", async ({ page }) => {

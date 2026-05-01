@@ -10,12 +10,15 @@ import {
   updateStoredMockProjectRuntimeSettings,
 } from "./mockProjectRuntimeSettings";
 import type {
+  ProjectSecretUpsertInput,
+  ProjectSecretsState,
   ProjectSessionPromptSettings,
   ProjectTaskAutomationSettings,
   ProjectWorkerOverlay,
 } from "../types";
 
 const DEFAULT_PROJECT_SLUG = "orchestra";
+const MOCK_PROJECT_SECRETS_UNSUPPORTED_MESSAGE = "Project secrets require a secure Orchestra host and are unavailable in the browser/mock host.";
 
 function nowIso() {
   return new Date().toISOString();
@@ -103,6 +106,21 @@ function resolveProjectSlug(projectSlug?: string | null) {
 
 function getHostedWebSettingsClient() {
   return getHostedWebOrchestraClientBinding()?.client.settings ?? null;
+}
+
+function getMockUnsupportedProjectSecretsState(projectSlug?: string | null): ProjectSecretsState {
+  return {
+    projectSlug: resolveProjectSlug(projectSlug),
+    availability: {
+      status: "unsupported",
+      message: MOCK_PROJECT_SECRETS_UNSUPPORTED_MESSAGE,
+    },
+    secrets: [],
+  };
+}
+
+function throwMockProjectSecretsUnsupported() {
+  throw new Error(MOCK_PROJECT_SECRETS_UNSUPPORTED_MESSAGE);
 }
 
 export async function getSessionPromptSettings(projectSlug?: string | null): Promise<ProjectSessionPromptSettings> {
@@ -250,4 +268,52 @@ export async function updateWorkerOverlay(workerType: string, workerSlug: string
   }
 
   return invoke<ProjectWorkerOverlay>("update_worker_overlay", { projectSlug: resolvedProjectSlug, workerType, workerSlug, prompt });
+}
+
+export async function getProjectSecrets(projectSlug?: string | null): Promise<ProjectSecretsState> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.getProjectSecrets(projectSlug);
+  }
+  if (!isTauriAvailable()) {
+    return getMockUnsupportedProjectSecretsState(projectSlug);
+  }
+
+  return invoke<ProjectSecretsState>("get_project_secrets", { projectSlug: resolveProjectSlug(projectSlug) });
+}
+
+export async function createProjectSecret(input: ProjectSecretUpsertInput, projectSlug?: string | null): Promise<ProjectSecretsState> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.createProjectSecret(input, projectSlug);
+  }
+  if (!isTauriAvailable()) {
+    throwMockProjectSecretsUnsupported();
+  }
+
+  return invoke<ProjectSecretsState>("create_project_secret", { projectSlug: resolveProjectSlug(projectSlug), input });
+}
+
+export async function updateProjectSecret(input: ProjectSecretUpsertInput, projectSlug?: string | null): Promise<ProjectSecretsState> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.updateProjectSecret(input, projectSlug);
+  }
+  if (!isTauriAvailable()) {
+    throwMockProjectSecretsUnsupported();
+  }
+
+  return invoke<ProjectSecretsState>("update_project_secret", { projectSlug: resolveProjectSlug(projectSlug), input });
+}
+
+export async function deleteProjectSecret(secretKey: string, projectSlug?: string | null): Promise<ProjectSecretsState> {
+  const hostedWebSettingsClient = getHostedWebSettingsClient();
+  if (hostedWebSettingsClient) {
+    return hostedWebSettingsClient.deleteProjectSecret(secretKey, projectSlug);
+  }
+  if (!isTauriAvailable()) {
+    throwMockProjectSecretsUnsupported();
+  }
+
+  return invoke<ProjectSecretsState>("delete_project_secret", { projectSlug: resolveProjectSlug(projectSlug), secretKey });
 }

@@ -13,7 +13,7 @@ use crate::services::{
         default_orchestra_root, discover_dev_checkout_root, infer_project_slug,
         managed_repository_checkout_dir, managed_repository_root, project_root, sanitize_slug,
     },
-    project_settings,
+    project_secrets, project_settings,
 };
 
 pub fn list_projects(connection: &Connection) -> Result<Vec<ProjectSummary>, String> {
@@ -634,11 +634,19 @@ pub fn delete_repository(
 pub fn delete_project(connection: &Connection, project_id: &str) -> Result<ProjectDetail, String> {
     let project = get_project(connection, project_id)?;
 
+    let orchestra_root = default_orchestra_root()?;
+    for warning in project_secrets::cleanup_project_secrets_for_project_id(
+        connection,
+        Some(&orchestra_root),
+        project_id,
+    ) {
+        eprintln!("[project.secret.cleanup.warning] project={} warning={warning}", project.slug);
+    }
+
     connection
         .execute("DELETE FROM projects WHERE id = ?1", [project_id])
         .map_err(|error| format!("Unable to delete project {project_id}: {error}"))?;
 
-    let orchestra_root = default_orchestra_root()?;
     let root = project_root(&orchestra_root, &project.slug);
     if root.exists() {
         fs::remove_dir_all(&root).map_err(|error| {
