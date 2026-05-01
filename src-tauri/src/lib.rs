@@ -3,6 +3,8 @@ mod commands;
 mod models;
 mod services;
 mod state;
+#[cfg(test)]
+mod test_support;
 
 pub(crate) fn tauri_context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()

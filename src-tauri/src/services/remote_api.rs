@@ -872,7 +872,6 @@ mod tests {
         env, fs,
         path::PathBuf,
         process::Command,
-        sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
     use tower::ServiceExt;
@@ -881,8 +880,6 @@ mod tests {
         app: tauri::App,
         auth_header: String,
     }
-
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn build_remote_api_parity_fixture(case: &str) -> Result<RemoteApiParityFixture, String> {
         database::initialize_database()
@@ -1208,7 +1205,7 @@ mod tests {
 
     #[test]
     fn frontend_bootstrap_route_reflects_authenticated_capabilities() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("frontend_bootstrap", &[])
@@ -1217,7 +1214,7 @@ mod tests {
 
     #[test]
     fn session_message_route_reuses_tauri_readiness_checks() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe(
@@ -1232,7 +1229,7 @@ mod tests {
 
     #[test]
     fn hosted_web_entrypoint_serves_the_main_frontend_shell() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("hosted_web_entrypoint", &[])
@@ -1241,7 +1238,7 @@ mod tests {
 
     #[test]
     fn tasks_route_matches_tauri_task_command_payloads() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("task_list_parity", &[])
@@ -1250,7 +1247,7 @@ mod tests {
 
     #[test]
     fn inbox_route_matches_tauri_inbox_command_payloads() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("inbox_parity", &[])
@@ -1259,7 +1256,7 @@ mod tests {
 
     #[test]
     fn session_routes_match_remote_session_helpers() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("sessions_parity", &[])
@@ -1268,7 +1265,7 @@ mod tests {
 
     #[test]
     fn skills_routes_match_skill_commands_when_authorized() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("skills_parity", &[])
@@ -1277,7 +1274,7 @@ mod tests {
 
     #[test]
     fn skills_routes_return_forbidden_without_required_permissions() {
-        let _probe_lock = TEST_ENV_LOCK
+        let _probe_lock = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe(

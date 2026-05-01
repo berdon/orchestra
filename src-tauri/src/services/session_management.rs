@@ -1802,17 +1802,12 @@ pub fn reconcile_sessions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        env,
-        sync::{Arc, Mutex},
-    };
+    use std::{env, sync::Arc};
 
     use rusqlite::Connection;
     use uuid::Uuid;
 
     use crate::services::database::initialize_database_at;
-
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn unique_temp_db(label: &str) -> PathBuf {
         env::temp_dir().join(format!(
@@ -1829,7 +1824,7 @@ mod tests {
     }
 
     fn with_temp_home<T>(label: &str, action: impl FnOnce() -> T) -> T {
-        let _guard = TEST_ENV_LOCK
+        let _guard = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let previous_home = env::var_os("HOME");

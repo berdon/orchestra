@@ -1117,21 +1117,11 @@ impl CanonicalSessionSeed {
 mod tests {
     use super::*;
     use crate::services::{database, orchestra_paths::project_root};
-    use std::{
-        env, fs,
-        path::PathBuf,
-        sync::{Mutex, OnceLock},
-    };
+    use std::{env, fs, path::PathBuf};
     use uuid::Uuid;
 
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn test_env_lock() -> &'static Mutex<()> {
-        TEST_ENV_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     fn with_temp_storage_root<T>(label: &str, action: impl FnOnce(PathBuf) -> T) -> T {
-        let _guard = test_env_lock()
+        let _guard = crate::test_support::global_test_env_lock()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let previous_root = env::var_os("ORCHESTRA_STORAGE_ROOT");

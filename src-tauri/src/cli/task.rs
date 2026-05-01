@@ -1290,7 +1290,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{Arc, Mutex, OnceLock},
+        sync::{Arc, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::broadcast::error::TryRecvError;
@@ -1423,7 +1423,6 @@ mod tests {
         .expect("workflow should create")
     }
 
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
     static CLI_HOME_ROOT: OnceLock<PathBuf> = OnceLock::new();
     static CLI_TEST_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
     static CLI_TEST_TOOL_BRIDGE: OnceLock<Arc<tool_bridge::ToolBridgeConfig>> = OnceLock::new();
@@ -1443,7 +1442,9 @@ mod tests {
     }
 
     fn with_cli_home<T>(label: &str, action: impl FnOnce() -> T) -> T {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock should acquire");
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let previous_home = std::env::var_os("HOME");
         let previous_project_root = std::env::var_os("ORCHESTRA_PROJECT_ROOT");
         let root = CLI_HOME_ROOT

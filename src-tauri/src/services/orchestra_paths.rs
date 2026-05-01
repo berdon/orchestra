@@ -434,6 +434,9 @@ mod tests {
 
     #[test]
     fn prefers_explicit_storage_root_override() {
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let explicit_root = std::env::temp_dir().join(format!(
             "orchestra-storage-root-{}-{}",
             std::process::id(),

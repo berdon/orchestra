@@ -2545,8 +2545,6 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
-
     fn unique_temp_db(label: &str) -> PathBuf {
         let suffix = format!(
             "{}-{}-{}",
@@ -2663,7 +2661,9 @@ mod tests {
     }
 
     fn with_temp_home<T>(label: &str, action: impl FnOnce() -> T) -> T {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock should acquire");
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let previous_home = env::var_os("HOME");
         let root = env::temp_dir().join(format!("{}-{}", label, Uuid::new_v4().simple()));
         fs::create_dir_all(&root).expect("temp home should create");
