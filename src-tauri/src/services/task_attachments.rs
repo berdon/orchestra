@@ -370,7 +370,8 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
     use crate::services::database;
-    use std::{fs, path::PathBuf};
+    use std::{env, fs, path::PathBuf};
+    use uuid::Uuid;
 
     fn in_memory_connection() -> Connection {
         let connection = Connection::open_in_memory().expect("open in-memory db");
@@ -378,110 +379,143 @@ mod tests {
         connection
     }
 
+    fn with_temp_storage_root<T>(label: &str, action: impl FnOnce(PathBuf) -> T) -> T {
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let previous_root = env::var_os("ORCHESTRA_STORAGE_ROOT");
+        let root = env::temp_dir().join(format!(
+            "task-attachments-{label}-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).expect("temp storage root should create");
+        unsafe {
+            env::set_var("ORCHESTRA_STORAGE_ROOT", &root);
+        }
+        let result = action(root.clone());
+        match previous_root {
+            Some(value) => unsafe { env::set_var("ORCHESTRA_STORAGE_ROOT", value) },
+            None => unsafe { env::remove_var("ORCHESTRA_STORAGE_ROOT") },
+        }
+        let _ = fs::remove_dir_all(root);
+        result
+    }
+
     fn create_task_record(connection: &mut Connection) -> String {
         let now = now_iso();
+        let task_id = format!("task-{}", Uuid::new_v4().simple());
         connection
             .execute(
                 "INSERT INTO tasks (id, project_id, sequence_number, number, title, task_type, status, priority, assignee_type, archived, created_at, updated_at) VALUES (?1, 'orchestra', 1, 'ORC-1', 'Task', 'task', 'ready', 'P2', 'user', 0, ?2, ?2)",
-                params!["task-1", now],
+                params![task_id, now],
             )
             .expect("insert task");
-        "task-1".into()
+        task_id
     }
 
     #[test]
     fn stores_attachment_metadata_and_preview() {
-        let mut connection = in_memory_connection();
-        let task_id = create_task_record(&mut connection);
-        let root = default_orchestra_root().expect("orchestra root");
-        let attachment_dir = task_attachments_dir(&root, DEFAULT_PROJECT_ID, &task_id);
-        if attachment_dir.exists() {
-            fs::remove_dir_all(&attachment_dir).ok();
-        }
+        with_temp_storage_root("preview", |_| {
+            let mut connection = in_memory_connection();
+            let task_id = create_task_record(&mut connection);
+            let root = default_orchestra_root().expect("orchestra root");
+            let attachment_dir = task_attachments_dir(&root, DEFAULT_PROJECT_ID, &task_id);
+            if attachment_dir.exists() {
+                fs::remove_dir_all(&attachment_dir).ok();
+            }
 
-        let attachment = add_task_attachment(
-            &mut connection,
-            &task_id,
-            TaskAttachmentInput {
-                file_name: "notes.txt".into(),
-                media_type: "text/plain".into(),
-                base64_data: STANDARD.encode("hello attachments"),
-                caption: Some("Spec notes".into()),
-            },
-        )
-        .expect("add attachment");
+            let attachment = add_task_attachment(
+                &mut connection,
+                &task_id,
+                TaskAttachmentInput {
+                    file_name: "notes.txt".into(),
+                    media_type: "text/plain".into(),
+                    base64_data: STANDARD.encode("hello attachments"),
+                    caption: Some("Spec notes".into()),
+                },
+            )
+            .expect("add attachment");
 
-        assert_eq!(attachment.file_name, "notes.txt");
-        assert_eq!(
-            attachment.preview_text.as_deref(),
-            Some("hello attachments")
-        );
-        assert!(PathBuf::from(&attachment.stored_path).exists());
+            assert_eq!(attachment.file_name, "notes.txt");
+            assert_eq!(
+                attachment.preview_text.as_deref(),
+                Some("hello attachments")
+            );
+            assert!(PathBuf::from(&attachment.stored_path).exists());
 
-        let attachments = load_task_attachments(&connection, &task_id).expect("load attachments");
-        assert_eq!(attachments.len(), 1);
-        let removed =
-            remove_task_attachment(&connection, &attachment.id).expect("remove attachment");
-        assert_eq!(removed.id, attachment.id);
-        assert!(!PathBuf::from(&removed.stored_path).exists());
+            let attachments =
+                load_task_attachments(&connection, &task_id).expect("load attachments");
+            assert_eq!(attachments.len(), 1);
+            let removed =
+                remove_task_attachment(&connection, &attachment.id).expect("remove attachment");
+            assert_eq!(removed.id, attachment.id);
+            assert!(!PathBuf::from(&removed.stored_path).exists());
+        });
     }
 
     #[test]
     fn loads_raw_attachment_bytes_even_when_preview_is_skipped() {
-        let mut connection = in_memory_connection();
-        let task_id = create_task_record(&mut connection);
-        let large_text = "a".repeat(MAX_TEXT_PREVIEW_BYTES + 1);
-        let attachment = add_task_attachment(
-            &mut connection,
-            &task_id,
-            TaskAttachmentInput {
-                file_name: "large.txt".into(),
-                media_type: "text/plain".into(),
-                base64_data: STANDARD.encode(large_text.as_bytes()),
-                caption: None,
-            },
-        )
-        .expect("add attachment");
+        with_temp_storage_root("bytes", |_| {
+            let mut connection = in_memory_connection();
+            let task_id = create_task_record(&mut connection);
+            let large_text = "a".repeat(MAX_TEXT_PREVIEW_BYTES + 1);
+            let attachment = add_task_attachment(
+                &mut connection,
+                &task_id,
+                TaskAttachmentInput {
+                    file_name: "large.txt".into(),
+                    media_type: "text/plain".into(),
+                    base64_data: STANDARD.encode(large_text.as_bytes()),
+                    caption: None,
+                },
+            )
+            .expect("add attachment");
 
-        assert_eq!(attachment.preview_text, None);
-        let (loaded_attachment, bytes) =
-            load_attachment_bytes(&connection, &attachment.id).expect("load bytes");
-        assert_eq!(loaded_attachment.file_name, "large.txt");
-        assert_eq!(bytes, large_text.as_bytes());
+            assert_eq!(attachment.preview_text, None);
+            let (loaded_attachment, bytes) =
+                load_attachment_bytes(&connection, &attachment.id).expect("load bytes");
+            assert_eq!(loaded_attachment.file_name, "large.txt");
+            assert_eq!(bytes, large_text.as_bytes());
+        });
     }
 
     #[test]
     fn copies_attachment_to_destination_path() {
-        let mut connection = in_memory_connection();
-        let task_id = create_task_record(&mut connection);
-        let root = default_orchestra_root().expect("orchestra root");
-        let download_dir =
-            task_attachments_dir(&root, DEFAULT_PROJECT_ID, &format!("{task_id}-downloads"));
-        if download_dir.exists() {
-            fs::remove_dir_all(&download_dir).ok();
-        }
-        let destination_path = download_dir.join("copied.bin");
-        let source_bytes = vec![0_u8, 159, 255, 42, 7];
-        let attachment = add_task_attachment(
-            &mut connection,
-            &task_id,
-            TaskAttachmentInput {
-                file_name: "payload.bin".into(),
-                media_type: "application/octet-stream".into(),
-                base64_data: STANDARD.encode(&source_bytes),
-                caption: None,
-            },
-        )
-        .expect("add attachment");
+        with_temp_storage_root("copy", |_| {
+            let mut connection = in_memory_connection();
+            let task_id = create_task_record(&mut connection);
+            let root = default_orchestra_root().expect("orchestra root");
+            let download_dir = task_attachments_dir(
+                &root,
+                DEFAULT_PROJECT_ID,
+                &format!("{task_id}-downloads"),
+            );
+            if download_dir.exists() {
+                fs::remove_dir_all(&download_dir).ok();
+            }
+            let destination_path = download_dir.join("copied.bin");
+            let source_bytes = vec![0_u8, 159, 255, 42, 7];
+            let attachment = add_task_attachment(
+                &mut connection,
+                &task_id,
+                TaskAttachmentInput {
+                    file_name: "payload.bin".into(),
+                    media_type: "application/octet-stream".into(),
+                    base64_data: STANDARD.encode(&source_bytes),
+                    caption: None,
+                },
+            )
+            .expect("add attachment");
 
-        let copied_attachment =
-            copy_attachment_to_path(&connection, &attachment.id, &destination_path)
-                .expect("copy attachment");
-        assert_eq!(copied_attachment.file_name, "payload.bin");
-        assert_eq!(
-            fs::read(&destination_path).expect("read copied attachment"),
-            source_bytes
-        );
+            let copied_attachment =
+                copy_attachment_to_path(&connection, &attachment.id, &destination_path)
+                    .expect("copy attachment");
+            assert_eq!(copied_attachment.file_name, "payload.bin");
+            assert_eq!(
+                fs::read(&destination_path).expect("read copied attachment"),
+                source_bytes
+            );
+        });
     }
 
     #[test]
