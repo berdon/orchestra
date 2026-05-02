@@ -41,7 +41,7 @@ type TaskDetailTab =
   | "timeline"
   | "history";
 
-type TaskDetailNavItem = "details" | TaskDetailTab;
+type TaskDetailNavItem = "details" | "comments" | TaskDetailTab;
 
 type TaskDependencyViewMode = "list" | "tree";
 
@@ -316,6 +316,7 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
 
 const NAV_OPTIONS: Array<{ id: TaskDetailNavItem; label: string }> = [
   { id: "details", label: "Details" },
+  { id: "comments", label: "Comments" },
   ...TAB_OPTIONS,
 ];
 
@@ -398,7 +399,7 @@ export function TaskDetailPage({
   onEditingStateChange,
 }: TaskDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
-  const [detailsNavActive, setDetailsNavActive] = useState(true);
+  const [activeNavAnchor, setActiveNavAnchor] = useState<"details" | "comments" | null>("details");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [closeReason, setCloseReason] = useState("");
@@ -433,6 +434,7 @@ export function TaskDetailPage({
   const compactHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
   const tabDockRef = useRef<HTMLDivElement | null>(null);
   const tabBodyRef = useRef<HTMLDivElement | null>(null);
+  const commentsSectionRef = useRef<HTMLElement | null>(null);
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const loadedFileContentPathRef = useRef<string | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
@@ -454,6 +456,7 @@ export function TaskDetailPage({
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
   const canClose = !["completed", "canceled"].includes(task.status);
+  const activeNavItem: TaskDetailNavItem = activeNavAnchor ?? activeTab;
   const activeSessionId = task.activeLaneAssignment?.sessionId ?? null;
   const effectiveActiveLaneAssignmentStatus = getEffectiveTaskDetailAssignmentStatus(task);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
@@ -496,7 +499,7 @@ export function TaskDetailPage({
   }, [commentDraft.author, replyTargetCommentId]);
 
   useEffect(() => {
-    if (!detailsNavActive || task.unreadCommentCount <= 0) {
+    if (activeNavItem !== "comments" || task.unreadCommentCount <= 0) {
       return;
     }
     const readKey = `${task.id}:${task.unreadCommentCount}`;
@@ -505,7 +508,7 @@ export function TaskDetailPage({
     }
     lastMarkedCommentsReadKeyRef.current = readKey;
     onCommentsTabViewed();
-  }, [detailsNavActive, onCommentsTabViewed, task.id, task.unreadCommentCount]);
+  }, [activeNavItem, onCommentsTabViewed, task.id, task.unreadCommentCount]);
 
   useEffect(() => {
     if (activeTab === "repo-files" && task.fileReferences.length > 0) {
@@ -576,7 +579,7 @@ export function TaskDetailPage({
   }, [historyLimit]);
 
   useEffect(() => {
-    setDetailsNavActive(true);
+    setActiveNavAnchor("details");
   }, [task.id]);
 
   useEffect(() => {
@@ -597,21 +600,35 @@ export function TaskDetailPage({
       currentAncestor = currentAncestor.parentElement;
     }
 
-    const syncDetailsNavState = () => {
-      const navBottom = tabDockRef.current?.getBoundingClientRect().bottom ?? 0;
-      const nextDetailsNavActive = tabBody.getBoundingClientRect().top > navBottom + 40;
-      setDetailsNavActive((current) => (current === nextDetailsNavActive ? current : nextDetailsNavActive));
+    const syncActiveNavAnchor = () => {
+      const activationThreshold = (tabDockRef.current?.getBoundingClientRect().bottom ?? 0) + 40;
+      if (tabBody.getBoundingClientRect().top <= activationThreshold) {
+        setActiveNavAnchor((current) => (current === null ? current : null));
+        return;
+      }
+
+      const commentsSection = commentsSectionRef.current;
+      if (commentsSection) {
+        const commentsRect = commentsSection.getBoundingClientRect();
+        const commentsActive = commentsRect.top <= activationThreshold && commentsRect.bottom > activationThreshold;
+        if (commentsActive) {
+          setActiveNavAnchor((current) => (current === "comments" ? current : "comments"));
+          return;
+        }
+      }
+
+      setActiveNavAnchor((current) => (current === "details" ? current : "details"));
     };
 
-    syncDetailsNavState();
-    scrollRoot?.addEventListener("scroll", syncDetailsNavState, { passive: true });
-    window.addEventListener("scroll", syncDetailsNavState, { passive: true });
-    window.addEventListener("resize", syncDetailsNavState);
+    syncActiveNavAnchor();
+    scrollRoot?.addEventListener("scroll", syncActiveNavAnchor, { passive: true });
+    window.addEventListener("scroll", syncActiveNavAnchor, { passive: true });
+    window.addEventListener("resize", syncActiveNavAnchor);
 
     return () => {
-      scrollRoot?.removeEventListener("scroll", syncDetailsNavState);
-      window.removeEventListener("scroll", syncDetailsNavState);
-      window.removeEventListener("resize", syncDetailsNavState);
+      scrollRoot?.removeEventListener("scroll", syncActiveNavAnchor);
+      window.removeEventListener("scroll", syncActiveNavAnchor);
+      window.removeEventListener("resize", syncActiveNavAnchor);
     };
   }, [activeTab, floatingChromeLayout, task.id]);
 
@@ -966,7 +983,7 @@ export function TaskDetailPage({
   }
 
   function selectTaskDetailTab(tabId: TaskDetailTab) {
-    setDetailsNavActive(false);
+    setActiveNavAnchor(null);
     setActiveTab(tabId);
   }
 
@@ -981,9 +998,16 @@ export function TaskDetailPage({
   }
 
   function handleScrollToTaskDetails() {
-    setDetailsNavActive(true);
+    setActiveNavAnchor("details");
     window.requestAnimationFrame(() => {
       primaryHeaderRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+
+  function handleScrollToTaskComments() {
+    setActiveNavAnchor("comments");
+    window.requestAnimationFrame(() => {
+      commentsSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
   }
 
@@ -1638,7 +1662,6 @@ export function TaskDetailPage({
         right: `${floatingChromeLayout.right}px`,
       }
     : undefined;
-  const activeNavItem: TaskDetailNavItem = detailsNavActive ? "details" : activeTab;
   const compactHeaderActionMenuActions = headerActionMenuActions.map((action) => ({ ...action, dataRole: undefined }));
 
   function renderHeaderActions(compact = false) {
@@ -1820,7 +1843,101 @@ export function TaskDetailPage({
               )}
             </div>
 
-            <section className="task-detail-summary__comments task-history-card" data-role="task-detail-summary-comments">
+            {unfinishedCurrentLaneTodos.length ? (
+              <section className="task-history-card" data-role="task-overview-todo-warning">
+                <div className="workflow-section__header">
+                  <div>
+                    <p className="eyebrow">Current lane todos</p>
+                    <h4>Remaining checklist items</h4>
+                  </div>
+                  <span className="status-badge status-badge--warning">{unfinishedCurrentLaneTodos.length} open</span>
+                </div>
+                <p className="error-copy">This lane still has unfinished todo items. Orchestra will block transitions until they are marked finished.</p>
+                <ul className="task-detail-summary__history-list">
+                  {unfinishedCurrentLaneTodos.map((todo) => (
+                    <li key={todo.id}>{todo.description}</li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            <div className="task-detail-summary__file task-history-card">
+              <div className="workflow-section__header">
+                <div>
+                  <p className="eyebrow">Default repo file</p>
+                  <h4>{defaultFile ? `${defaultFile.repositoryName} · ${defaultFile.relativePath}` : "No default repo file"}</h4>
+                </div>
+                {defaultFile?.isDefault ? <span className="status-badge status-badge--neutral">Default</span> : null}
+              </div>
+              {defaultFile ? (
+                <>
+                  <p className="muted-copy">{defaultFile.exists ? `Resolved file: ${defaultFile.relativePath}` : `File is currently missing from the resolved workspace path for ${defaultFile.relativePath}.`}</p>
+                  {defaultFile.exists ? (
+                    loadingDefaultFileContent ? (
+                      <p className="muted-copy">Loading file preview…</p>
+                    ) : (
+                      <CommentableFileViewer
+                        taskId={task.id}
+                        tasks={tasks}
+                        agents={agents}
+                        roles={roles}
+                        commentDraft={commentDraft}
+                        comments={task.comments}
+                        content={defaultFileContent ?? ""}
+                        fileReferences={task.fileReferences}
+                        language={detectLanguage(defaultFile.relativePath)}
+                        onAddComment={onAddComment}
+                        onCommentDraftChange={onCommentDraftChange}
+                        onDeleteComment={onDeleteComment}
+                        onOpenFileReference={handleOpenCommentFileReference}
+                        onOpenTask={onOpenTask}
+                        onOpenAgent={onOpenAgent}
+                        onOpenRole={onOpenRole}
+                        onUpdateComment={onUpdateComment}
+                        reference={defaultFile}
+                      />
+                    )
+                  ) : null}
+                </>
+              ) : (
+                <p className="muted-copy">Set a default repo file from the Repo files tab to keep the most important file visible here.</p>
+              )}
+            </div>
+
+            <section className="task-detail-summary__history">
+              <div className="task-detail-summary__history-header">
+                <div>
+                  <p className="eyebrow">Recent history</p>
+                  <h4>Latest activity</h4>
+                </div>
+                <label className="field-group">
+                  <span className="field-group__label">Items</span>
+                  <select className="select-input" data-role="task-history-limit" value={String(historyLimit)} onChange={(event) => setHistoryLimit(Number(event.target.value))}>
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                  </select>
+                </label>
+              </div>
+              {recentHistory.length ? (
+                <div className="task-detail-summary__history-list">
+                  {recentHistory.map((item) => (
+                    <article className="task-detail-summary__history-item" key={item.id}>
+                      <div className="workflow-section__header">
+                        <strong>{item.title}</strong>
+                        <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
+                      </div>
+                      <p>{item.description}</p>
+                      <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-copy">No recent activity yet.</p>
+              )}
+            </section>
+
+            <section className="task-detail-summary__comments task-history-card" data-role="task-detail-summary-comments" ref={commentsSectionRef}>
               <div className="task-detail-summary__history-header">
                 <div>
                   <p className="eyebrow">Discussion</p>
@@ -1967,100 +2084,6 @@ export function TaskDetailPage({
                 </div>
               ) : <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>}
             </section>
-
-            {unfinishedCurrentLaneTodos.length ? (
-              <section className="task-history-card" data-role="task-overview-todo-warning">
-                <div className="workflow-section__header">
-                  <div>
-                    <p className="eyebrow">Current lane todos</p>
-                    <h4>Remaining checklist items</h4>
-                  </div>
-                  <span className="status-badge status-badge--warning">{unfinishedCurrentLaneTodos.length} open</span>
-                </div>
-                <p className="error-copy">This lane still has unfinished todo items. Orchestra will block transitions until they are marked finished.</p>
-                <ul className="task-detail-summary__history-list">
-                  {unfinishedCurrentLaneTodos.map((todo) => (
-                    <li key={todo.id}>{todo.description}</li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-
-            <div className="task-detail-summary__file task-history-card">
-              <div className="workflow-section__header">
-                <div>
-                  <p className="eyebrow">Default repo file</p>
-                  <h4>{defaultFile ? `${defaultFile.repositoryName} · ${defaultFile.relativePath}` : "No default repo file"}</h4>
-                </div>
-                {defaultFile?.isDefault ? <span className="status-badge status-badge--neutral">Default</span> : null}
-              </div>
-              {defaultFile ? (
-                <>
-                  <p className="muted-copy">{defaultFile.exists ? `Resolved file: ${defaultFile.relativePath}` : `File is currently missing from the resolved workspace path for ${defaultFile.relativePath}.`}</p>
-                  {defaultFile.exists ? (
-                    loadingDefaultFileContent ? (
-                      <p className="muted-copy">Loading file preview…</p>
-                    ) : (
-                      <CommentableFileViewer
-                        taskId={task.id}
-                        tasks={tasks}
-                        agents={agents}
-                        roles={roles}
-                        commentDraft={commentDraft}
-                        comments={task.comments}
-                        content={defaultFileContent ?? ""}
-                        fileReferences={task.fileReferences}
-                        language={detectLanguage(defaultFile.relativePath)}
-                        onAddComment={onAddComment}
-                        onCommentDraftChange={onCommentDraftChange}
-                        onDeleteComment={onDeleteComment}
-                        onOpenFileReference={handleOpenCommentFileReference}
-                        onOpenTask={onOpenTask}
-                        onOpenAgent={onOpenAgent}
-                        onOpenRole={onOpenRole}
-                        onUpdateComment={onUpdateComment}
-                        reference={defaultFile}
-                      />
-                    )
-                  ) : null}
-                </>
-              ) : (
-                <p className="muted-copy">Set a default repo file from the Repo files tab to keep the most important file visible here.</p>
-              )}
-            </div>
-
-            <section className="task-detail-summary__history">
-              <div className="task-detail-summary__history-header">
-                <div>
-                  <p className="eyebrow">Recent history</p>
-                  <h4>Latest activity</h4>
-                </div>
-                <label className="field-group">
-                  <span className="field-group__label">Items</span>
-                  <select className="select-input" data-role="task-history-limit" value={String(historyLimit)} onChange={(event) => setHistoryLimit(Number(event.target.value))}>
-                    <option value="5">5</option>
-                    <option value="10">10</option>
-                    <option value="25">25</option>
-                  </select>
-                </label>
-              </div>
-              {recentHistory.length ? (
-                <div className="task-detail-summary__history-list">
-                  {recentHistory.map((item) => (
-                    <article className="task-detail-summary__history-item" key={item.id}>
-                      <div className="workflow-section__header">
-                        <strong>{item.title}</strong>
-                        <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
-                      </div>
-                      <p>{item.description}</p>
-                      <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted-copy">No recent activity yet.</p>
-              )}
-            </section>
           </div>
         )}
       </section>
@@ -2132,6 +2155,10 @@ export function TaskDetailPage({
                   handleScrollToTaskDetails();
                   return;
                 }
+                if (nextItem === "comments") {
+                  handleScrollToTaskComments();
+                  return;
+                }
                 handleTabSelect(nextItem);
               }}
             >
@@ -2142,14 +2169,14 @@ export function TaskDetailPage({
           </label>
           <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Task detail panels">
             {NAV_OPTIONS.map((item) => {
-              if (item.id === "details") {
+              if (item.id === "details" || item.id === "comments") {
                 return (
                   <button
                     key={item.id}
                     className={activeNavItem === item.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab task-detail-tab--jump"}
-                    data-role="task-detail-tab-summary"
+                    data-role={item.id === "details" ? "task-detail-tab-summary" : "task-detail-tab-comments"}
                     type="button"
-                    onClick={handleScrollToTaskDetails}
+                    onClick={item.id === "details" ? handleScrollToTaskDetails : handleScrollToTaskComments}
                   >
                     {item.label}
                   </button>

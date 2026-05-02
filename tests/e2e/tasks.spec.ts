@@ -3276,6 +3276,9 @@ test("task comment unread badges hide on completed tasks but still clear for act
     page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread active task comments" }).locator('[data-role="task-table-unread-comments-badge"]'),
   ).toContainText("1 unread");
   await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread active task comments" }).first().click();
+  await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toContainText('1 unread');
+  await expect(page.locator('[data-role="nav-badge-tasks"]')).toContainText('1');
+  await page.getByRole('button', { name: 'Comments' }).click();
   await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toHaveCount(0);
   await expect(page.locator('[data-role="nav-badge-tasks"]')).toHaveCount(0);
 });
@@ -4524,6 +4527,7 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
   await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeHidden();
   expect(await page.evaluate(() => Array.from(document.querySelectorAll('[data-role="task-detail-tab-dock"] button')).map((button) => (button.firstElementChild?.textContent ?? button.textContent ?? '').trim()))).toEqual([
     'Details',
+    'Comments',
     'Runtime',
     'Hierarchy',
     'Dependencies',
@@ -4554,6 +4558,9 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
 
   await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'hidden');
   await expect(page.locator('[data-role="task-detail-tab-dock"]')).toBeVisible();
+  await tabDock.getByRole('button', { name: 'Comments' }).click();
+  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveClass(/task-detail-tab--active/);
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toContainText('Comment 8');
   await tabDock.getByRole('button', { name: 'Details' }).click();
   await page.waitForFunction(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -4669,6 +4676,7 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeVisible();
   expect(await mobileSectionSelect.evaluate((select) => Array.from((select as HTMLSelectElement).options).map((option) => ({ value: option.value, label: option.textContent?.trim() ?? '' })))).toEqual([
     { value: 'details', label: 'Details' },
+    { value: 'comments', label: 'Comments' },
     { value: 'runtime', label: 'Runtime' },
     { value: 'hierarchy', label: 'Hierarchy' },
     { value: 'dependencies', label: 'Dependencies' },
@@ -4681,6 +4689,10 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await expect(mobileSectionSelect).toHaveValue("details");
   await expect(page.getByRole("tablist", { name: "Task detail panels" })).toBeHidden();
   await expect(page.locator('[data-role="task-detail-summary-comments"]')).toContainText('Task conversation');
+
+  await mobileSectionSelect.selectOption("comments");
+  await expect(mobileSectionSelect).toHaveValue("comments");
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
 
   await mobileSectionSelect.selectOption("todos");
   await expect(mobileSectionSelect).toHaveValue("todos");

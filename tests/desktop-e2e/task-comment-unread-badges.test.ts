@@ -187,7 +187,19 @@ describe("desktop task comment unread badges", () => {
 
       await clickSelector(sessionId, `[data-role="task-table-row"][data-task-id="${activeTask.id}"]`);
       await sleep(500);
-      const unreadState = await executeScript(
+      let unreadState = await executeScript(
+        sessionId,
+        `return {
+          footer: Boolean(document.querySelector('[data-role="task-unread-comments-footer-badge"]')),
+          navBadge: Boolean(document.querySelector('[data-role="nav-badge-tasks"]'))
+        };`,
+      );
+      expect(unreadState.footer).toBe(true);
+      expect(unreadState.navBadge).toBe(true);
+
+      await clickSelector(sessionId, '[data-role="task-detail-tab-comments"]');
+      await sleep(500);
+      unreadState = await executeScript(
         sessionId,
         `return {
           footer: Boolean(document.querySelector('[data-role="task-unread-comments-footer-badge"]')),
