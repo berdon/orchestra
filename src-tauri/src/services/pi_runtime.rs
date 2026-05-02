@@ -758,11 +758,9 @@ fn validate_bundled_runtime_root(
     }
 
     for (relative_path, description) in [
-        ("dist/main.js", "runtime entrypoint"),
-        (
-            "dist/modes/interactive/theme/dark.json",
-            "interactive dark theme asset",
-        ),
+        ("package.json", "runtime package manifest"),
+        ("theme/dark.json", "interactive dark theme asset"),
+        ("export-html/template.html", "HTML export template asset"),
     ] {
         let required_path = package_dir.join(relative_path);
         if !required_path.exists() {
@@ -1356,12 +1354,13 @@ mod tests {
 
     fn write_minimal_runtime_package(root: &Path) {
         write_file(
-            &root.join("runtime/dist/main.js"),
-            "console.log('pi runtime');\n",
+            &root.join("runtime/package.json"),
+            "{\n  \"name\": \"@mariozechner/pi-coding-agent\",\n  \"version\": \"0.71.1\"\n}\n",
         );
+        write_file(&root.join("runtime/theme/dark.json"), "{}\n");
         write_file(
-            &root.join("runtime/dist/modes/interactive/theme/dark.json"),
-            "{}\n",
+            &root.join("runtime/export-html/template.html"),
+            "<html></html>\n",
         );
     }
 
@@ -1475,7 +1474,7 @@ mod tests {
             ],
             None,
         );
-        std::fs::remove_file(root.join("runtime/dist/modes/interactive/theme/dark.json"))
+        std::fs::remove_file(root.join("runtime/theme/dark.json"))
             .expect("dark theme should remove");
         let agent_dir = make_temp_dir("agent-dir-missing-runtime-asset");
 
