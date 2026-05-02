@@ -6411,26 +6411,32 @@ strong {
 
 .notes-page {
   min-height: 0;
+  height: 100%;
 }
 
 .notes-page__navigation,
 .notes-page__detail-shell,
 .notes-page__detail,
-.notes-page__nav {
+.notes-page__nav,
+.notes-page__nav-tree {
   min-height: 0;
 }
 
 .notes-page__navigation {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
   background: var(--panel-background);
   border-right: 1px solid var(--panel-border);
 }
 
 .notes-page__nav {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .notes-page__nav-header,
@@ -6448,6 +6454,16 @@ strong {
 .notes-page__detail-header {
   justify-content: space-between;
   align-items: flex-start;
+}
+
+.notes-page__nav-tree {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: auto;
+  padding-right: 0.25rem;
 }
 
 .notes-root {
@@ -6559,6 +6575,10 @@ strong {
   gap: 1rem;
   min-height: 0;
   flex: 1;
+}
+
+.notes-editor__panes--preview-hidden {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .notes-editor__pane {

@@ -213,6 +213,7 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
   const [savedMarkdown, setSavedMarkdown] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -500,48 +501,50 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
         </button>
       </div>
       {!tree?.roots.length ? <p className="empty-state">No project selected.</p> : null}
-      {tree?.roots.map((root) => {
-        const key = `root:${rootKey(root)}`;
-        const expanded = expandedKeys.has(key);
-        const selected = selection?.kind === "root" && selection.location.scope === root.scope && (selection.location.repositoryId ?? null) === (root.repositoryId ?? null);
-        return (
-          <section className="notes-root" key={key}>
-            <div className="notes-tree__row notes-tree__row--root">
-              <button className="notes-tree__toggle" type="button" aria-label={expanded ? "Collapse section" : "Expand section"} onClick={() => toggleExpandedKey(key)}>
-                {expanded ? "▾" : "▸"}
-              </button>
-              <button
-                className={selected ? "notes-tree__button notes-tree__button--active notes-tree__button--root" : "notes-tree__button notes-tree__button--root"}
-                type="button"
-                onClick={() => {
-                  void requestSelection(createRootSelection(root));
-                  if (!expanded) {
-                    toggleExpandedKey(key);
-                  }
-                }}
-              >
-                <span className="notes-tree__icon">📚</span>
-                <span className="notes-tree__label">{root.label}</span>
-              </button>
-            </div>
-            {expanded ? (
-              root.children.length ? (
-                <NotesTreeBranch
-                  nodes={root.children}
-                  selection={selection}
-                  expandedKeys={expandedKeys}
-                  onSelect={(nextSelection) => void requestSelection(nextSelection)}
-                  onToggle={toggleExpandedKey}
-                  scope={root.scope}
-                  repositoryId={root.repositoryId ?? null}
-                />
-              ) : (
-                <p className="notes-root__empty">No notes yet under docs/.</p>
-              )
-            ) : null}
-          </section>
-        );
-      })}
+      <div className="notes-page__nav-tree" data-role="notes-nav-tree">
+        {tree?.roots.map((root) => {
+          const key = `root:${rootKey(root)}`;
+          const expanded = expandedKeys.has(key);
+          const selected = selection?.kind === "root" && selection.location.scope === root.scope && (selection.location.repositoryId ?? null) === (root.repositoryId ?? null);
+          return (
+            <section className="notes-root" key={key}>
+              <div className="notes-tree__row notes-tree__row--root">
+                <button className="notes-tree__toggle" type="button" aria-label={expanded ? "Collapse section" : "Expand section"} onClick={() => toggleExpandedKey(key)}>
+                  {expanded ? "▾" : "▸"}
+                </button>
+                <button
+                  className={selected ? "notes-tree__button notes-tree__button--active notes-tree__button--root" : "notes-tree__button notes-tree__button--root"}
+                  type="button"
+                  onClick={() => {
+                    void requestSelection(createRootSelection(root));
+                    if (!expanded) {
+                      toggleExpandedKey(key);
+                    }
+                  }}
+                >
+                  <span className="notes-tree__icon">📚</span>
+                  <span className="notes-tree__label">{root.label}</span>
+                </button>
+              </div>
+              {expanded ? (
+                root.children.length ? (
+                  <NotesTreeBranch
+                    nodes={root.children}
+                    selection={selection}
+                    expandedKeys={expandedKeys}
+                    onSelect={(nextSelection) => void requestSelection(nextSelection)}
+                    onToggle={toggleExpandedKey}
+                    scope={root.scope}
+                    repositoryId={root.repositoryId ?? null}
+                  />
+                ) : (
+                  <p className="notes-root__empty">No notes yet under docs/.</p>
+                )
+              ) : null}
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 
@@ -590,11 +593,20 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
               <span className={dirty ? "status-badge status-badge--warning" : "status-badge status-badge--success"}>{dirty ? "Unsaved" : "Saved"}</span>
             </div>
             <div className="notes-editor__toolbar-group">
+              <button
+                className="secondary-button"
+                type="button"
+                data-role="notes-preview-toggle"
+                aria-pressed={previewVisible}
+                onClick={() => setPreviewVisible((current) => !current)}
+              >
+                {previewVisible ? "Hide preview" : "Show preview"}
+              </button>
               <button className="secondary-button" type="button" onClick={handleRevert} disabled={!dirty || saving}>Revert</button>
               <button className="primary-button" type="button" onClick={() => void handleSave()} disabled={!canWrite || !dirty || saving}>{saving ? "Saving…" : "Save"}</button>
             </div>
           </div>
-          <div className="notes-editor__panes">
+          <div className={previewVisible ? "notes-editor__panes" : "notes-editor__panes notes-editor__panes--preview-hidden"}>
             <div className="notes-editor__pane">
               <label className="notes-editor__label" htmlFor="notes-markdown-editor">Markdown</label>
               <SyntaxHighlightedMarkdownEditor
@@ -606,12 +618,14 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
                 spellCheck={false}
               />
             </div>
-            <div className="notes-editor__pane">
-              <p className="notes-editor__label">Preview</p>
-              <div className="notes-editor__preview">
-                {draftMarkdown.trim() ? <MarkdownContent message={draftMarkdown} /> : <p className="empty-state">Nothing to preview yet.</p>}
+            {previewVisible ? (
+              <div className="notes-editor__pane">
+                <p className="notes-editor__label">Preview</p>
+                <div className="notes-editor__preview" data-role="notes-preview-panel">
+                  {draftMarkdown.trim() ? <MarkdownContent message={draftMarkdown} /> : <p className="empty-state">Nothing to preview yet.</p>}
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
         </div>
       ) : (
