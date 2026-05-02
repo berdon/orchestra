@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { MarkdownContent } from "../components/MarkdownContent";
 import { NotesCreateDialog, type NotesCreateDialogMode } from "../components/NotesCreateDialog";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SyntaxHighlightedMarkdownEditor } from "../components/SyntaxHighlightedMarkdownEditor";
+import type { TaskActionMenuAction } from "../components/TaskActionMenu";
 import { useOrchestraClient } from "../lib/orchestraClient";
 import type { NoteDetail, NoteLocation, NoteTreeNode, NotesRoot, NotesTree } from "../types";
 
@@ -42,6 +44,74 @@ function createRootSelection(root: NotesRoot): NotesSelection {
       path: "",
     },
   };
+}
+
+interface NotesMobileSubnavOption {
+  id: string;
+  label: string;
+  selection: NotesSelection;
+}
+
+function selectionKey(selection: NotesSelection) {
+  return `${selection.kind}:${locationKey(selection.location)}`;
+}
+
+function mergeExpandedKeysForSelection(current: Set<string>, selection: NotesSelection) {
+  const next = new Set(current);
+  next.add(`root:${selection.location.scope === "project" ? "project" : `repository:${selection.location.repositoryId ?? "missing"}`}`);
+  const segments = selection.location.path.split("/").filter(Boolean);
+  const directoryDepth = selection.kind === "note" ? segments.length - 1 : segments.length;
+  for (let index = 1; index <= directoryDepth; index += 1) {
+    next.add(`node:${segments.slice(0, index).join("/")}`);
+  }
+  return next;
+}
+
+function formatNotesMobileSubnavLabel(root: NotesRoot, selection: NotesSelection) {
+  if (selection.kind === "root") {
+    return `${root.label} · Root`;
+  }
+  return `${root.label} · ${selection.kind === "directory" ? "Folder" : "Note"} · ${selection.location.path}`;
+}
+
+function collectNotesMobileSubnavOptions(root: NotesRoot, nodes: NoteTreeNode[]): NotesMobileSubnavOption[] {
+  const options: NotesMobileSubnavOption[] = [];
+  for (const node of nodes) {
+    const selection = {
+      kind: node.kind,
+      location: {
+        scope: root.scope,
+        repositoryId: root.repositoryId ?? null,
+        path: node.path,
+      },
+    } satisfies NotesSelection;
+    options.push({
+      id: selectionKey(selection),
+      label: formatNotesMobileSubnavLabel(root, selection),
+      selection,
+    });
+    if (node.kind === "directory" && node.children?.length) {
+      options.push(...collectNotesMobileSubnavOptions(root, node.children));
+    }
+  }
+  return options;
+}
+
+function buildNotesMobileSubnavOptions(tree: NotesTree | null): NotesMobileSubnavOption[] {
+  if (!tree) {
+    return [];
+  }
+  return tree.roots.flatMap((root) => {
+    const rootSelection = createRootSelection(root);
+    return [
+      {
+        id: selectionKey(rootSelection),
+        label: formatNotesMobileSubnavLabel(root, rootSelection),
+        selection: rootSelection,
+      },
+      ...collectNotesMobileSubnavOptions(root, root.children),
+    ];
+  });
 }
 
 function findNode(nodes: NoteTreeNode[], path: string): NoteTreeNode | null {
@@ -252,6 +322,9 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
       const fallbackSelection = nextTree.roots[0] ? createRootSelection(nextTree.roots[0]) : null;
       const nextSelection = resolved ? requestedSelection : fallbackSelection;
       setSelection(nextSelection);
+      if (nextSelection) {
+        setExpandedKeys((current) => mergeExpandedKeysForSelection(current, nextSelection));
+      }
       if (!resolveSelection(nextTree, nextSelection)?.node || resolveSelection(nextTree, nextSelection)?.kind !== "note") {
         setSelectedNote(null);
         setDraftMarkdown("");
@@ -322,6 +395,7 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     }
     setStatusMessage(null);
     setSelection(nextSelection);
+    setExpandedKeys((current) => mergeExpandedKeysForSelection(current, nextSelection));
     if (nextSelection.kind !== "note") {
       setSelectedNote(null);
       setDraftMarkdown("");
@@ -512,6 +586,90 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     }
   }, [canWrite, loadTree, orchestraClient.notes, projectId, promptForDestination, selection]);
 
+  const notesMobileSubnavOptions = useMemo(() => buildNotesMobileSubnavOptions(tree), [tree]);
+  const notesMobileSubnavValue = selection ? selectionKey(selection) : null;
+  const notesMobileSubnavSelectionMap = useMemo(
+    () => new Map(notesMobileSubnavOptions.map((option) => [option.id, option.selection])),
+    [notesMobileSubnavOptions],
+  );
+
+  const refreshAction = useMemo<TaskActionMenuAction>(() => ({
+    id: "refresh-notes",
+    label: loading ? "Refreshing…" : "Refresh",
+    onClick: () => void loadTree(),
+    disabled: loading || !projectId,
+    dataRole: "notes-refresh",
+  }), [loadTree, loading, projectId]);
+
+  const detailActions = useMemo<TaskActionMenuAction[]>(() => {
+    if (!canWrite) {
+      return [];
+    }
+    const canCreate = Boolean(tree?.roots.length) && !saving;
+    const canManageSelection = Boolean(selection && selection.kind !== "root") && !saving;
+    return [
+      {
+        id: "new-note",
+        label: "New note",
+        onClick: () => handleOpenCreateDialog("note"),
+        disabled: !canCreate,
+        dataRole: "notes-new-note",
+      },
+      {
+        id: "new-folder",
+        label: "New folder",
+        onClick: () => handleOpenCreateDialog("directory"),
+        disabled: !canCreate,
+        dataRole: "notes-new-folder",
+      },
+      {
+        id: "move-rename-note",
+        label: "Move / rename",
+        onClick: () => void handleMoveOrRenameSelected(),
+        disabled: !canManageSelection,
+        dataRole: "notes-move-rename",
+      },
+      {
+        id: "copy-note",
+        label: "Copy",
+        onClick: () => void handleCopySelected(),
+        disabled: !canManageSelection,
+        dataRole: "notes-copy",
+      },
+      {
+        id: "delete-note",
+        label: "Delete",
+        onClick: () => void handleDeleteSelected(),
+        disabled: !canManageSelection,
+        variant: "danger",
+        dataRole: "notes-delete",
+      },
+    ];
+  }, [canWrite, handleCopySelected, handleDeleteSelected, handleMoveOrRenameSelected, handleOpenCreateDialog, saving, selection, tree]);
+
+  const mobileSubnavActions = useMemo(() => [refreshAction, ...detailActions], [detailActions, refreshAction]);
+
+  const renderActionButton = useCallback((action: TaskActionMenuAction, className?: string) => (
+    <button
+      key={action.id}
+      className={[
+        action.variant === "danger"
+          ? "secondary-button secondary-button--danger"
+          : action.variant === "primary"
+            ? "primary-button"
+            : "secondary-button",
+        className,
+      ].filter(Boolean).join(" ")}
+      type="button"
+      onClick={action.onClick}
+      disabled={action.disabled}
+      data-role={action.dataRole}
+      title={action.tooltip}
+    >
+      {action.label}
+    </button>
+  ), []);
+
   const navigation = (
     <div className="notes-page__nav">
       <div className="notes-page__nav-header">
@@ -519,12 +677,10 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
           <p className="eyebrow">Notes</p>
           <h2>Project notes</h2>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void loadTree()} disabled={loading}>
-          Refresh
-        </button>
+        {renderActionButton(refreshAction, "settings-mobile-subnav-redundant-actions")}
       </div>
       {!tree?.roots.length ? <p className="empty-state">No project selected.</p> : null}
-      <div className="notes-page__nav-tree" data-role="notes-nav-tree">
+      <div className="notes-page__nav-tree settings-mobile-subnav-list" data-role="notes-nav-tree">
         {tree?.roots.map((root) => {
           const key = `root:${rootKey(root)}`;
           const expanded = expandedKeys.has(key);
@@ -590,20 +746,8 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
           </h2>
           {selection ? <p className="muted-copy">docs/{selection.location.path || ""}</p> : null}
         </div>
-        <div className="notes-page__actions">
-          {canWrite ? (
-            <>
-              <button className="secondary-button" type="button" onClick={() => handleOpenCreateDialog("note")} disabled={!tree?.roots.length || saving}>New note</button>
-              <button className="secondary-button" type="button" onClick={() => handleOpenCreateDialog("directory")} disabled={!tree?.roots.length || saving}>New folder</button>
-              {selection && selection.kind !== "root" ? (
-                <>
-                  <button className="secondary-button" type="button" onClick={() => void handleMoveOrRenameSelected()} disabled={saving}>Move / rename</button>
-                  <button className="secondary-button" type="button" onClick={() => void handleCopySelected()} disabled={saving}>Copy</button>
-                  <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleDeleteSelected()} disabled={saving}>Delete</button>
-                </>
-              ) : null}
-            </>
-          ) : null}
+        <div className="notes-page__actions settings-mobile-subnav-redundant-actions">
+          {detailActions.map((action) => renderActionButton(action))}
         </div>
       </div>
       {loading ? <p className="supporting-copy">Loading notes…</p> : null}
@@ -661,12 +805,30 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
 
   return (
     <>
+      {projectId ? (
+        <SettingsMobileSubnavHeader
+          dataRolePrefix="notes"
+          selectLabel="Location"
+          ariaLabel="Note location"
+          value={notesMobileSubnavValue}
+          emptyOptionLabel={loading ? "Loading notes…" : tree?.roots.length ? "Select note location" : "No notes available"}
+          options={notesMobileSubnavOptions.map(({ id, label }) => ({ id, label }))}
+          onChange={(value) => {
+            const nextSelection = notesMobileSubnavSelectionMap.get(value);
+            if (nextSelection) {
+              void requestSelection(nextSelection);
+            }
+          }}
+          actions={mobileSubnavActions}
+          actionMenuLabel="Note actions"
+        />
+      ) : null}
       <ResizableSidebarLayout
         className="notes-page"
         storageKey="orchestra.notes.secondary-nav-width"
         navigation={navigation}
         detail={detail}
-        navigationClassName="notes-page__navigation"
+        navigationClassName="notes-page__navigation settings-mobile-subnav-panel"
         detailClassName="notes-page__detail-shell"
         minWidth={240}
         maxWidth={420}
