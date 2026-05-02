@@ -173,6 +173,8 @@ test("mobile top-level pages show a supervisor chat launcher instead of the task
   await expect(page.locator('[data-role="new-task"]')).toHaveCount(0);
   await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
   await expect(page.locator('[data-role="open-mobile-supervisor-chat"]')).toHaveAccessibleName('Open Supervisor chat');
+  await expect(page.locator('[data-role="open-mobile-supervisor-chat"]')).toHaveText('');
+  await expect(page.locator('[data-role="open-mobile-supervisor-chat"] .page-fab__label')).toHaveCount(0);
 
   await openMobileNavigation(page);
   await page.getByRole('button', { name: 'Agents' }).click();

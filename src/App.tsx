@@ -4343,7 +4343,7 @@ export function App() {
       {showMobileSupervisorChatFab ? (
         <div className="page-fab" data-role="mobile-supervisor-chat-fab">
           <button
-            className="primary-button page-fab__button"
+            className="primary-button page-fab__button page-fab__button--icon-only"
             data-role="open-mobile-supervisor-chat"
             type="button"
             aria-label="Open Supervisor chat"
@@ -4352,7 +4352,6 @@ export function App() {
             <span className="page-fab__icon" aria-hidden="true">
               <NavIcon pageId="chat" className="nav-item__icon-svg" />
             </span>
-            <span className="page-fab__label">Supervisor</span>
           </button>
         </div>
       ) : null}
