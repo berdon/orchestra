@@ -42,6 +42,8 @@ type TaskDetailTab =
   | "timeline"
   | "history";
 
+type TaskDetailNavItem = "details" | TaskDetailTab;
+
 type TaskDependencyViewMode = "list" | "tree";
 
 interface TaskDetailPageProps {
@@ -303,15 +305,20 @@ function groupTodosByLane(task: TaskDetail) {
 }
 
 const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
-  { id: "repo-files", label: "Repo files" },
-  { id: "comments", label: "Comments" },
-  { id: "todos", label: "Todos" },
-  { id: "attachments", label: "Attachments" },
+  { id: "runtime", label: "Runtime" },
   { id: "hierarchy", label: "Hierarchy" },
   { id: "dependencies", label: "Dependencies" },
+  { id: "repo-files", label: "Repo files" },
+  { id: "todos", label: "Todos" },
+  { id: "attachments", label: "Attachments" },
+  { id: "comments", label: "Comments" },
   { id: "timeline", label: "Timeline" },
   { id: "history", label: "Lane history" },
-  { id: "runtime", label: "Runtime" },
+];
+
+const NAV_OPTIONS: Array<{ id: TaskDetailNavItem; label: string }> = [
+  { id: "details", label: "Details" },
+  ...TAB_OPTIONS,
 ];
 
 const DELETE_HOLD_MS = 2000;
@@ -393,6 +400,7 @@ export function TaskDetailPage({
   onEditingStateChange,
 }: TaskDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TaskDetailTab>("repo-files");
+  const [detailsNavActive, setDetailsNavActive] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [closeReason, setCloseReason] = useState("");
@@ -425,6 +433,7 @@ export function TaskDetailPage({
   const detailPageRef = useRef<HTMLDivElement | null>(null);
   const primaryHeaderRef = useRef<HTMLDivElement | null>(null);
   const compactHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
+  const tabDockRef = useRef<HTMLDivElement | null>(null);
   const tabBodyRef = useRef<HTMLDivElement | null>(null);
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const loadedFileContentPathRef = useRef<string | null>(null);
@@ -568,6 +577,46 @@ export function TaskDetailPage({
       window.localStorage.setItem("orchestra.taskDetail.historyLimit", String(historyLimit));
     }
   }, [historyLimit]);
+
+  useEffect(() => {
+    setDetailsNavActive(true);
+  }, [task.id]);
+
+  useEffect(() => {
+    const detailPage = detailPageRef.current;
+    const tabBody = tabBodyRef.current;
+    if (!detailPage || !tabBody || typeof window === "undefined") {
+      return;
+    }
+
+    let scrollRoot: HTMLElement | null = null;
+    let currentAncestor = detailPage.parentElement;
+    while (currentAncestor) {
+      const styles = window.getComputedStyle(currentAncestor);
+      if (["auto", "scroll", "overlay"].includes(styles.overflowY)) {
+        scrollRoot = currentAncestor;
+        break;
+      }
+      currentAncestor = currentAncestor.parentElement;
+    }
+
+    const syncDetailsNavState = () => {
+      const navBottom = tabDockRef.current?.getBoundingClientRect().bottom ?? 0;
+      const nextDetailsNavActive = tabBody.getBoundingClientRect().top > navBottom + 40;
+      setDetailsNavActive((current) => (current === nextDetailsNavActive ? current : nextDetailsNavActive));
+    };
+
+    syncDetailsNavState();
+    scrollRoot?.addEventListener("scroll", syncDetailsNavState, { passive: true });
+    window.addEventListener("scroll", syncDetailsNavState, { passive: true });
+    window.addEventListener("resize", syncDetailsNavState);
+
+    return () => {
+      scrollRoot?.removeEventListener("scroll", syncDetailsNavState);
+      window.removeEventListener("scroll", syncDetailsNavState);
+      window.removeEventListener("resize", syncDetailsNavState);
+    };
+  }, [activeTab, floatingChromeLayout, task.id]);
 
   useEffect(() => {
     const detailPage = detailPageRef.current;
@@ -919,21 +968,27 @@ export function TaskDetailPage({
     setRelaneNotes("");
   }
 
+  function selectTaskDetailTab(tabId: TaskDetailTab) {
+    setDetailsNavActive(false);
+    setActiveTab(tabId);
+  }
+
   function handleOpenCommentFileReference(reference: TaskFileReference) {
     setPendingScrollReferenceId(reference.id);
-    setActiveTab("repo-files");
+    selectTaskDetailTab("repo-files");
     setSelectedFileReference(reference.id);
     loadFileContent(reference);
   }
 
   function handleScrollToTaskDetails() {
+    setDetailsNavActive(true);
     window.requestAnimationFrame(() => {
       primaryHeaderRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
   }
 
   function handleTabSelect(tabId: TaskDetailTab) {
-    setActiveTab(tabId);
+    selectTaskDetailTab(tabId);
     window.requestAnimationFrame(() => {
       tabBodyRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
@@ -1725,6 +1780,7 @@ export function TaskDetailPage({
         right: `${floatingChromeLayout.right}px`,
       }
     : undefined;
+  const activeNavItem: TaskDetailNavItem = detailsNavActive ? "details" : activeTab;
   const compactHeaderActionMenuActions = headerActionMenuActions.map((action) => ({ ...action, dataRole: undefined }));
 
   function renderHeaderActions(compact = false) {
@@ -2026,7 +2082,7 @@ export function TaskDetailPage({
                         {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
                         <div className="task-comment-thread__actions">
                           <button className="secondary-button" data-role="reply-task-comment-summary" data-comment-id={comment.id} type="button" onClick={() => {
-                            setActiveTab("comments");
+                            selectTaskDetailTab("comments");
                             openReplyComposer(comment);
                           }}>
                             Reply
@@ -2167,48 +2223,65 @@ export function TaskDetailPage({
       ) : null}
 
       {stickyChromeStyle ? (
-        <div className="task-detail-tab-dock" data-role="task-detail-tab-dock" style={stickyChromeStyle}>
+        <div className="task-detail-tab-dock" data-role="task-detail-tab-dock" ref={tabDockRef} style={stickyChromeStyle}>
           <label className="task-detail-section-select" data-role="task-detail-section-select-mobile">
             <span className="task-detail-section-select__label">Section</span>
             <select
               className="select-input task-detail-section-select__control"
               data-role="task-detail-section-select-control"
               aria-label="Task detail section"
-              value={activeTab}
-              onChange={(event) => handleTabSelect(event.target.value as TaskDetailTab)}
+              value={activeNavItem}
+              onChange={(event) => {
+                const nextItem = event.target.value as TaskDetailNavItem;
+                if (nextItem === "details") {
+                  handleScrollToTaskDetails();
+                  return;
+                }
+                handleTabSelect(nextItem);
+              }}
             >
-              {TAB_OPTIONS.map((tab) => (
-                <option key={tab.id} value={tab.id}>{tab.label}</option>
+              {NAV_OPTIONS.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
               ))}
             </select>
           </label>
           <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Task detail panels">
-            <button
-              className="task-detail-tab task-detail-tab--jump"
-              data-role="task-detail-tab-summary"
-              type="button"
-              onClick={handleScrollToTaskDetails}
-            >
-              Task details
-            </button>
-            {TAB_OPTIONS.map((tab) => (
-              <button
-                key={tab.id}
-                className={activeTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
-                data-role={`task-detail-tab-${tab.id}`}
-                role="tab"
-                aria-selected={activeTab === tab.id}
-                type="button"
-                onClick={() => handleTabSelect(tab.id)}
-              >
-                <span>{tab.label}</span>
-                {tab.id === "comments" && shouldShowUnreadCommentAttention(task) ? (
-                  <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-tab-badge">
-                    {task.unreadCommentCount}
-                  </span>
-                ) : null}
-              </button>
-            ))}
+            {NAV_OPTIONS.map((item) => {
+              if (item.id === "details") {
+                return (
+                  <button
+                    key={item.id}
+                    className={activeNavItem === item.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab task-detail-tab--jump"}
+                    data-role="task-detail-tab-summary"
+                    type="button"
+                    onClick={handleScrollToTaskDetails}
+                  >
+                    {item.label}
+                  </button>
+                );
+              }
+
+              const tabId = item.id as TaskDetailTab;
+
+              return (
+                <button
+                  key={tabId}
+                  className={activeNavItem === tabId ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
+                  data-role={`task-detail-tab-${tabId}`}
+                  role="tab"
+                  aria-selected={activeNavItem === tabId}
+                  type="button"
+                  onClick={() => handleTabSelect(tabId)}
+                >
+                  <span>{item.label}</span>
+                  {item.id === "comments" && shouldShowUnreadCommentAttention(task) ? (
+                    <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-tab-badge">
+                      {task.unreadCommentCount}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}

@@ -4531,6 +4531,18 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
   const tabDock = page.getByRole('tablist', { name: 'Task detail panels' });
   await expect(tabDock).toBeVisible();
   await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeHidden();
+  expect(await page.evaluate(() => Array.from(document.querySelectorAll('[data-role="task-detail-tab-dock"] button')).map((button) => (button.firstElementChild?.textContent ?? button.textContent ?? '').trim()))).toEqual([
+    'Details',
+    'Runtime',
+    'Hierarchy',
+    'Dependencies',
+    'Repo files',
+    'Todos',
+    'Attachments',
+    'Comments',
+    'Timeline',
+    'Lane history',
+  ]);
 
   const initialDockGap = await tabDock.evaluate((node) => Math.round(window.innerHeight - node.getBoundingClientRect().bottom));
   expect(initialDockGap).toBeLessThanOrEqual(32);
@@ -4552,7 +4564,7 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
 
   await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'hidden');
   await expect(page.locator('[data-role="task-detail-tab-dock"]')).toBeVisible();
-  await tabDock.getByRole('button', { name: 'Task details' }).click();
+  await tabDock.getByRole('button', { name: 'Details' }).click();
   await page.waitForFunction(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
     return Boolean((content && content.scrollTop < 220) || window.scrollY < 220);
@@ -4646,10 +4658,41 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await openTasksOverviewOnMobile(page);
   await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
 
+  await page.evaluate(() => {
+    const key = 'orchestra.mock.tasks';
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === 'Implement task foundation shell');
+    if (!target) {
+      throw new Error('Expected seeded task was not found');
+    }
+    target.description = Array.from({ length: 60 }, (_, index) => `Mobile detail section line ${index + 1}`).join('\n\n');
+    target.updatedAt = new Date().toISOString();
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent('orchestra:task-change', {
+      detail: {
+        taskIds: [target.id],
+        reason: 'task.updated',
+      },
+    }));
+  });
+
   await expect(page.locator('[data-role="task-detail-panel"]')).toBeVisible();
   const mobileSectionSelect = page.locator('[data-role="task-detail-section-select-control"]');
   await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeVisible();
-  await expect(mobileSectionSelect).toHaveValue("repo-files");
+  expect(await mobileSectionSelect.evaluate((select) => Array.from((select as HTMLSelectElement).options).map((option) => ({ value: option.value, label: option.textContent?.trim() ?? '' })))).toEqual([
+    { value: 'details', label: 'Details' },
+    { value: 'runtime', label: 'Runtime' },
+    { value: 'hierarchy', label: 'Hierarchy' },
+    { value: 'dependencies', label: 'Dependencies' },
+    { value: 'repo-files', label: 'Repo files' },
+    { value: 'todos', label: 'Todos' },
+    { value: 'attachments', label: 'Attachments' },
+    { value: 'comments', label: 'Comments' },
+    { value: 'timeline', label: 'Timeline' },
+    { value: 'history', label: 'Lane history' },
+  ]);
+  await expect(mobileSectionSelect).toHaveValue("details");
   await expect(page.getByRole("tablist", { name: "Task detail panels" })).toBeHidden();
 
   await mobileSectionSelect.selectOption("comments");
@@ -4659,6 +4702,14 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await mobileSectionSelect.selectOption("todos");
   await expect(mobileSectionSelect).toHaveValue("todos");
   await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toBeVisible();
+
+  await mobileSectionSelect.selectOption("details");
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    return Boolean((content && content.scrollTop < 220) || window.scrollY < 220);
+  });
+  await expect(mobileSectionSelect).toHaveValue("details");
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText('Implement task foundation shell');
 
   await page.locator('[data-role="open-task-comments"]').click();
   await expect(mobileSectionSelect).toHaveValue("comments");
